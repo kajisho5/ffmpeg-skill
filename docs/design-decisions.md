@@ -76,6 +76,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
 - [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
+- [After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)](#after-363--a-tagged-version-npm-never-got-is-finished-by-dispatch-on-its-tag-448)
 <!-- contents:end -->
 
 ## Time limits
@@ -407,6 +408,47 @@ exists. When a decision changes, edit the entry in the same PR.
   before that write. Through 2.2.3 a hand-corrected transcript was replaced on a re-run. Code:
   `_common.refuse_existing_outputs()`. Test:
   `test_caption_sidecars_are_refused_like_the_video_without_overwrite`.
+- **The output check is made again where the file is replaced** (#470). The check above runs
+  before the encode and decides whether an existing target may be replaced (`--overwrite`, this
+  run's own file, `batch.py`'s own delivery); the replace runs after it. The check records each
+  target's identity (size, mtime, inode, device: `owned_identity()`, none when absent), a write of
+  this run records the identity it left, and under the output lock the write already holds, just
+  before the replace, `refuse_changed_output()` compares it again: a different file at the path, or
+  one at a path that was absent, was put there by another process during the run and is refused
+  (`kind: input`, `reason: output_exists`, `details.outputs[].changed_during_run`), the new
+  output's temp removed and nothing replaced -- as `batch.py`'s `deliver()` already did. `run()`
+  compares before staging and before its `os.replace`, `place_output()` before its rename and
+  before the copy's rename, and a file a tool replaces itself goes through `replace_checked()`
+  (export.py's fill and `--normalize`, silence.py's `--timemap`). The check is keyed by the path
+  as named (its directory resolved, its last component not), so a symlink created at a target
+  that was absent is a new file there, not a different path with no check. Files that belong
+  together go through `replace_checked_together()`: export.py stages the key as well as the fill
+  (its placeholder counted as this run's own, so run()'s check does not refuse it) and puts both
+  in place only when both targets passed, moving an earlier file aside and putting it back if the
+  second replace fails, so a refused or failed pair never leaves a new file beside an old one. The
+  check also records the directory the path resolved to, and is found by the name as well as the
+  resolved place (the name first, so a place another checked path also reaches does not stand in
+  for it; a write through another spelling of the same path updates every record of that place):
+  a directory link switched during the run is refused, not looked up as a place never checked. A process that ignores the lock file can still write the target between the last
+  comparison and the replace. Every temp is removed on any way out short of the replace, a held lock included.
+  `--overwrite` still replaces
+  whatever is at the path, changed or not: it is consent to replace that path, not one file
+  (`deliver()` reads it the same way); a path no check recorded is not compared. What remains:
+  `run()` stages only an existing target, so a target absent at the check is opened by ffmpeg
+  itself, and a file created at that name after the lock's comparison and before ffmpeg opens it
+  is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
+  itself); files written with a plain `open()` after their check (EDLs, SRTs, chapter lists) are
+  not compared. Code: `runner.refuse_changed_output()`, `replace_checked()`, `run()`,
+  `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`
+  (`test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced`,
+  `test_a_target_created_after_the_check_is_refused_unless_overwrite`,
+  `test_overwrite_still_replaces_a_target_swapped_during_the_encode`,
+  `test_place_output_refuses_a_target_put_there_after_its_check`,
+  `test_a_side_file_a_tool_replaces_itself_is_rechecked`, `test_a_link_created_at_an_absent_target_is_refused`,
+  `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,
+  `test_a_pair_whose_second_replace_fails_leaves_what_was_there`,
+  `test_a_directory_link_switched_during_the_run_is_refused`; `test_export_key_fill_without_overwrite_writes_both`
+  in `tests/test_delivery.py`).
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
@@ -2185,7 +2227,9 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   (`runner.report_committed()`, called where a write lands); `deliver()` compares the final path's
   identity again under the output lock and records the one it leaves. An SRT edited while the same
   item's video was still encoding no longer matches what was written and is refused next pass. A file another process puts there between that check and the
-  write itself is the same window every tool's own `--overwrite` check has. A side file a step
+  write itself is refused there too: the step compares the identity its check recorded under the
+  output lock before it replaces (see "The output check is made again where the file is
+  replaced"). A side file a step
   writes without that check, or one of an item that failed, is not recorded, so the next pass
   refuses it. A plain batch (no `--watch`) has no previous poll and processes what is there.
   Code: `batch.settle_poll()`, `is_own_output()`, `deliver()`, `owned_config()`,
@@ -3440,3 +3484,23 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   as given: its caller chose the tokens. Code: `_common.option_args()`, `mcp/server.build_argv()`,
   render.py's stage commands. Tests: `test_mcp_value_starting_with_a_dash_is_a_value_for_every_tool`,
   `test_dash_leading_text_over_mcp_and_in_a_render_project`.
+
+## After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)
+
+- **`release.yml`'s `recover` job refuses a run whose commit is not the tag's.** It is dispatched
+  with `--ref vX.Y.Z` and checks out `refs/tags/vX.Y.Z`; dispatched on `main` it publishes only
+  while `main`'s tip is still the tagged commit. npm's provenance attestation names the run's
+  commit (`GITHUB_SHA`) as the package's source, so a package built from the tag in a run on
+  another commit would carry an attestation for a commit it was not built from. The cost is that
+  a tag cut before the job existed (every tag up to v3.6.3) has no dispatch trigger at its own
+  commit and cannot be recovered by CI. The job lives in `release.yml`, not a workflow file of its
+  own, so it shares the `release` concurrency group and the workflow filename an npm trusted
+  publisher would name; the publish authenticates as the `release` job's does (`NPM_TOKEN`, with
+  `--provenance`).
+- **A recovered version below one npm has is published as `backport`; the plugin branch takes it
+  only when the branch's tip is older, and the MCP Registry only when it goes out as `latest`.**
+  `latest` is what `npx ffmpeg-skill` installs, so it never moves back; the plugin branch only
+  moves forward and hosts read its tip; the registry's newest entry is the one clients read. A second dispatch stops at "npm already has
+  it", so a plugin branch or registry step that failed during a recovery is finished by hand, as
+  the job's last steps say. Code: `.github/scripts/recover_release.py`. Test:
+  `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.

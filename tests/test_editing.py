@@ -1051,6 +1051,67 @@ class EditingTests(MediaFixtures):
         gap = json.loads(proc.stdout)["diagnostics"]["warnings"][0]
         self.assertEqual((gap["code"], gap["missing"], gap["frames_left_out"]), ("sequence_gap", "frame_0002.png", 2))
 
+    def test_sequence_frame_durations_add_up_to_the_frame_grid(self):
+        """#474: every frame was written `duration 0.033333` at 30 fps, 3.3e-7 s short, and the
+        concat demuxer adds them up: half a frame behind after about 50,000 frames. The written
+        list is read back and summed as the demuxer does (whole microseconds): at every frame the
+        running total is i/rate to within half a microsecond, at a whole-microsecond-free rate too."""
+        from fractions import Fraction
+        sys.path.insert(0, str(SCRIPTS))
+        import sequence as seq_mod  # noqa: E402
+        n = 60000
+        frames = [Path(f"/frames/f{i:05d}.png") for i in range(n)]
+        for rate in (Fraction(30), Fraction(30000, 1001), Fraction(24000, 1001), Fraction(60000, 1001)):
+            text = seq_mod.concat_list(frames, rate)
+            written = [line.split()[1] for line in text.splitlines() if line.startswith("duration ")]
+            self.assertEqual(len(written), n)
+            total = 0
+            for i, d in enumerate(written):
+                whole, frac = d.split(".")
+                self.assertEqual(len(frac), 6, d)
+                total += int(whole) * 1_000_000 + int(frac)
+                self.assertLessEqual(abs(Fraction(total) - Fraction((i + 1) * 1_000_000) / rate),
+                                     Fraction(1, 2), f"{rate}: frame {i + 1} at {total} us")
+
+    def test_sequence_at_an_ntsc_rate_renders_every_frame(self):
+        """#474: a small real render at 29.97 (30000/1001, a frame time that is no whole number of
+        microseconds) still has one output frame per input frame."""
+        frames_dir = OUT / "seqframes_ntsc"
+        frames_dir.mkdir(exist_ok=True)
+        for i in range(37):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c={'red' if i % 2 == 0 else 'blue'}:s=64x48", "-frames:v", "1", frames_dir / f"f_{i:03d}.png")
+        out = OUT / "seq_ntsc.mp4"
+        script("sequence.py", "--dir", frames_dir, "--pattern", "f_%03d.png", "--fps", "29.97", "-o", out)
+        counted = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                                  "-show_entries", "stream=nb_read_frames,r_frame_rate", "-of", "json", str(out)],
+                                 stdout=subprocess.PIPE, check=True).stdout
+        stream = json.loads(counted)["streams"][0]
+        self.assertEqual((int(stream["nb_read_frames"]), stream["r_frame_rate"]), (37, "30000/1001"))
+
+    def test_sequence_keeps_every_picture_in_order_at_a_high_rate(self):
+        """Each image is read at the requested rate (`option framerate` per concat entry), not the
+        image demuxer's default 25: at 120 fps two images used to land on one input timestamp, so
+        the fps filter dropped one and repeated a neighbour -- the frame count stayed right."""
+        frames_dir = OUT / "seqframes_order"
+        frames_dir.mkdir(exist_ok=True)
+        n = 40
+        for i in range(n):
+            v = 6 * i
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c=0x{v:02x}{v:02x}{v:02x}:s=32x32", "-frames:v", "1", frames_dir / f"f_{i:03d}.png")
+        for fps in ("120", "29.97"):
+            with self.subTest(fps=fps):
+                out = OUT / f"seq_order_{fps}.mov"
+                script("sequence.py", "--dir", frames_dir, "--pattern", "f_%03d.png", "--start-number", "0",
+                       "--fps", fps, "--codec", "prores", "-o", out, "--overwrite")
+                raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-vf", "format=gray,scale=1:1",
+                                      "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+                got = list(raw)
+                self.assertEqual(len(got), n)
+                wrong = [(i, g, 6 * i) for i, g in enumerate(got) if abs(g - 6 * i) > 2]
+                self.assertEqual(wrong, [], f"frames out of order at {fps} fps (index, got, expected)")
+
     def test_sequence_glob_pattern(self):
         frames_dir = OUT / "seqframes_glob"
         frames_dir.mkdir(exist_ok=True)

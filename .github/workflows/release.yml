@@ -47,9 +47,21 @@ name: release
 # run on the bump commit would only find the tag already present. Without the
 # secret the push falls back to GITHUB_TOKEN (works on an unprotected main).
 
+#
+# A second way in: `workflow_dispatch` with a `version` runs only the `recover` job at the end of
+# this file, never the `release` job. It finishes a version that has its tag but never reached npm
+# (the npm publish failed and the run that tagged it cannot be re-run into a publish: its re-run
+# sees the tag and skips). See that job's comments for what it checks and why it lives here.
+
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "X.Y.Z of a tagged version npm does not have. Dispatch on the tag: gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z"
+        required: true
+        type: string
 
 # Two merges in quick succession must release one after the other, never side by side: each
 # run resolves "the next version" from the same last tag, so two concurrent runs would both
@@ -63,6 +75,8 @@ permissions:
 
 jobs:
   release:
+    # A dispatch runs `recover` alone: the auto-bump and tag steps below only ever answer a push.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write        # bump commit, tag, GitHub release, plugin branch
@@ -380,7 +394,7 @@ jobs:
           if [ "$NPM_STATE" -ne 0 ]; then
             if grep -q "E404" npm-view.err; then
               rm -f npm-view.err
-              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. Nothing here publishes it: this workflow skips npm publish once the tag exists. Publishing it by hand from the tag v$VERSION is a maintainer's decision: a local publish carries no provenance attestation, and if npm already has a newer version it needs --tag so that latest does not move back."; exit 1
+              echo "::error::$PKG@$VERSION is tagged but npm does not have it, so the MCP Registry cannot list it. This job skips npm publish once the tag exists; the recover job publishes it, with provenance and a dist-tag that never moves latest back: gh workflow run release.yml --ref v$VERSION -f version=$VERSION (see README, Releasing)."; exit 1
             fi
             cat npm-view.err >&2
             echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
@@ -459,4 +473,276 @@ jobs:
         if: always() && steps.plugin_branch.outcome == 'failure'
         run: |
           echo "::error::the plugin branch was not updated for this release (see the 'Publish the plugin branch' step); npm and the GitHub Release are unaffected. Run .github/scripts/publish_plugin_branch.sh from the release commit to publish it."
+          exit 1
+
+  # Finishing a release that was tagged (GitHub Release included) but never reached npm (#448).
+  # The `release` job cannot do it: once the tag exists, a re-run skips every publish step, and its
+  # MCP Registry step only reports the gap. Dispatch this on the tag, for that tag's version:
+  #
+  #   gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z
+  #
+  # Why here and not in a workflow file of its own: the npm publish authenticates the way the
+  # `release` job's does (the NPM_TOKEN secret, with `--provenance` signed through this job's
+  # OIDC token). Kept in release.yml it stays on the one workflow file an npm trusted publisher
+  # would name if the package moves to trusted publishing (a trusted publisher names a repository
+  # and a workflow filename, optionally an environment, not a branch), and in the `release`
+  # concurrency group, so it never runs beside a release.
+  #
+  # Why it runs on the tag and refuses anything else: the provenance attestation npm publishes
+  # names the run's commit (GITHUB_SHA) and ref as the package's source. Dispatched on main with
+  # the tag checked out, the tarball would be built from the tag while its attestation named main's
+  # tip, a different commit. So the job checks out refs/tags/vX.Y.Z and refuses to publish unless
+  # that is GITHUB_SHA: dispatched with --ref vX.Y.Z (which runs the release.yml committed at the
+  # tag), or on main while main's tip is still the tagged commit. The cost: a tag cut before this
+  # job existed has no dispatch trigger at its own commit, and cannot be recovered here.
+  #
+  # What it checks before publishing, each a refusal with its own message: the input is X.Y.Z; the
+  # tag vX.Y.Z exists; package.json at the tag carries that version; npm answers E404 for it (a
+  # version npm has is refused, and an npm that cannot be asked is not read as "absent"). It
+  # publishes under `latest` only when the version is above every stable version npm has, and
+  # under `backport` otherwise (.github/scripts/recover_release.py), so `latest` never moves back.
+  # Then the two steps the failed run may have skipped, each only when it is still missing: the
+  # plugin branch (no commit for this version on it, and its tip is an older version; the branch
+  # only moves forward) and the MCP Registry entry (not listed; a `backport` is not listed, as the
+  # registry's newest entry is the one clients read). The GitHub Release is not touched.
+  recover:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # the plugin branch push; reading the tag
+      id-token: write        # `npm publish --provenance` and the MCP Registry's github-oidc login
+    steps:
+      # Nothing is checked out yet, and the input is untrusted text: it reaches the shell only
+      # through the environment, and nothing below reads it before this step has matched it.
+      - name: Refuse a version that is malformed or not tagged
+        id: gate
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version must be X.Y.Z (no leading v); got '$VERSION'"; exit 1
+          fi
+          TAG="v$VERSION"
+          TAG_STATE=0
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .ref > "$RUNNER_TEMP/tag-ref.out" 2> "$RUNNER_TEMP/tag-ref.err" || TAG_STATE=$?
+          if [ "$TAG_STATE" -ne 0 ]; then
+            if grep -q "HTTP 404" "$RUNNER_TEMP/tag-ref.err"; then
+              echo "::error::there is no tag $TAG; recovery only finishes a version that was tagged"; exit 1
+            fi
+            cat "$RUNNER_TEMP/tag-ref.err" >&2
+            echo "::error::could not ask GitHub whether $TAG exists (gh api exited $TAG_STATE)"; exit 1
+          fi
+          if [ "$(cat "$RUNNER_TEMP/tag-ref.out")" != "refs/tags/$TAG" ]; then
+            echo "::error::GitHub answered '$(cat "$RUNNER_TEMP/tag-ref.out")' for refs/tags/$TAG"; exit 1
+          fi
+          rm -f "$RUNNER_TEMP/tag-ref.out" "$RUNNER_TEMP/tag-ref.err"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The tagged commit, never main. Credentials stay: the plugin branch step pushes.
+          ref: refs/tags/${{ steps.gate.outputs.tag }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Refuse unless the tag is this run's commit and npm does not have the version
+        id: state
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-parse "refs/tags/$TAG^{commit}")
+          if [ "$HEAD_SHA" != "$TAG_SHA" ]; then
+            echo "::error::checked out $HEAD_SHA, but $TAG is $TAG_SHA"; exit 1
+          fi
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG is $TAG_SHA but this run is $GITHUB_REF at $GITHUB_SHA. The provenance attestation would name $GITHUB_SHA as the source of a package built from $TAG. Dispatch on the tag: gh workflow run release.yml --ref $TAG -f version=$VERSION"; exit 1
+          fi
+          PKG=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::package.json at $TAG says $PKG_VERSION, not $VERSION"; exit 1
+          fi
+          # E404 is the one answer that means "npm does not have it". A version npm has is refused
+          # (npm never takes a version twice), and any other failure is "could not ask".
+          NPM_STATE=0
+          npm view "$PKG@$VERSION" version --cache /tmp/npm-recover-cache > "$RUNNER_TEMP/npm-view.out" 2> "$RUNNER_TEMP/npm-view.err" || NPM_STATE=$?
+          if [ "$NPM_STATE" -eq 0 ]; then
+            echo "::error::npm already has $PKG@$(cat "$RUNNER_TEMP/npm-view.out"); there is nothing to recover"; exit 1
+          fi
+          if ! grep -q "E404" "$RUNNER_TEMP/npm-view.err"; then
+            cat "$RUNNER_TEMP/npm-view.err" >&2
+            echo "::error::could not ask npm whether $PKG@$VERSION exists (npm view exited $NPM_STATE)"; exit 1
+          fi
+          # The package exists (every recovered version follows one that reached npm), so a failure
+          # to list its versions stops the step under set -e; it is never read as "no versions".
+          npm view "$PKG" versions --json --cache /tmp/npm-recover-cache > "$RUNNER_TEMP/npm-versions.json"
+          DIST_TAG=$(python3 .github/scripts/recover_release.py dist-tag "$VERSION" "$RUNNER_TEMP/npm-versions.json")
+          case "$DIST_TAG" in
+            latest|backport) ;;
+            *) echo "::error::no dist-tag decided for $VERSION (got '$DIST_TAG')"; exit 1 ;;
+          esac
+          rm -f "$RUNNER_TEMP/npm-view.out" "$RUNNER_TEMP/npm-view.err"
+          echo "npm does not have $PKG@$VERSION; it is published under the dist-tag $DIST_TAG"
+          echo "package=$PKG" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # The same publish as the `release` job's, with the dist-tag named: npm's default would be
+      # `latest` whatever the version.
+      - name: Publish the tagged version to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ steps.state.outputs.dist_tag }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+      # As in the `release` job: whether npm has the version gates what follows; whether the
+      # dist-tag has caught up is slower to answer and fails the job at its end instead.
+      - name: Verify the recovered version landed under its dist-tag
+        id: npm_verify
+        env:
+          PKG: ${{ steps.state.outputs.package }}
+          EXPECTED: ${{ steps.gate.outputs.version }}
+          DIST_TAG: ${{ steps.state.outputs.dist_tag }}
+        run: |
+          for i in $(seq 1 30); do
+            HAVE=$(npm view "$PKG@$EXPECTED" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+            [ "$HAVE" = "$EXPECTED" ] && break
+            echo "npm has no $PKG@$EXPECTED yet (attempt $i/30)"; sleep 10
+          done
+          if [ "$HAVE" != "$EXPECTED" ]; then
+            echo "::error::npm does not have $PKG@$EXPECTED after publishing it"; exit 1
+          fi
+          for i in $(seq 1 60); do
+            TAGGED=$(npm view "$PKG" "dist-tags.$DIST_TAG" --cache /tmp/npm-verify-cache 2>/dev/null || true)
+            [ "$TAGGED" = "$EXPECTED" ] && break
+            echo "npm $DIST_TAG=$TAGGED, expected $EXPECTED (attempt $i/60)"; sleep 10
+          done
+          if [ "$TAGGED" != "$EXPECTED" ]; then
+            echo "::warning::npm has $PKG@$EXPECTED but its $DIST_TAG dist-tag still reads '$TAGGED'; the job fails at its end"
+            echo "tag_lag=${TAGGED:-unknown}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "recovered $PKG@$EXPECTED under $DIST_TAG"
+
+      # Missing means: no commit on the branch says it was built for this version, and the branch's
+      # tip is an older version (or there is no branch). A newer tip stays: hosts read the tip, and
+      # the branch only moves forward. A branch that cannot be asked stops the step.
+      - name: Ask whether the plugin branch still lacks this version
+        id: plugin_state
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          REMOTE_STATE=0
+          git ls-remote --exit-code --heads origin plugin >/dev/null || REMOTE_STATE=$?
+          if [ "$REMOTE_STATE" -eq 2 ]; then
+            echo "there is no plugin branch yet"; echo "publish=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$REMOTE_STATE" -ne 0 ]; then
+            echo "::error::could not ask origin whether the plugin branch exists (git ls-remote exited $REMOTE_STATE)"; exit 1
+          fi
+          git fetch --quiet origin refs/heads/plugin
+          if git log --format=%s FETCH_HEAD | grep -qF "plugin: ffmpeg-skill $VERSION (built from "; then
+            echo "the plugin branch already has a commit for $VERSION"; echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          TIP=$(git show FETCH_HEAD:ffmpeg-skill/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))')
+          NEWER=0
+          python3 .github/scripts/recover_release.py newer "$VERSION" "$TIP" || NEWER=$?
+          case "$NEWER" in
+            0) echo "the plugin branch is at $TIP, older than $VERSION"; echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "the plugin branch is at $TIP, not older than $VERSION; it stays there"; echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::could not compare $VERSION with the plugin branch's version '$TIP'"; exit 1 ;;
+          esac
+
+      - name: Publish the plugin branch for the recovered version
+        id: plugin_branch
+        if: steps.plugin_state.outputs.publish == 'true'
+        continue-on-error: true
+        run: bash .github/scripts/publish_plugin_branch.sh
+
+      # The same three steps as the `release` job's, asked for the tag's server.json, and skipped
+      # for a `backport`.
+      - name: Ask whether the MCP Registry still lacks the recovered version
+        id: registry_state
+        if: steps.state.outputs.dist_tag == 'latest'
+        continue-on-error: true
+        env:
+          EXPECTED: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./server.json').name")
+          VERSION=$(node -p "require('./server.json').version")
+          if [ "$VERSION" != "$EXPECTED" ]; then
+            echo "::error::server.json at the tag says $VERSION, not $EXPECTED"; exit 1
+          fi
+          ENCODED=$(NAME="$NAME" node -p 'encodeURIComponent(process.env.NAME)')
+          STATUS=$(curl --silent --show-error --max-time 60 --output /dev/null --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0/servers/$ENCODED/versions/$VERSION") || {
+            echo "::error::could not ask the MCP Registry whether $NAME $VERSION is listed"; exit 1; }
+          case "$STATUS" in
+            200) echo "the MCP Registry already lists $NAME $VERSION"; echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "the MCP Registry does not list $NAME $VERSION yet"; echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::the MCP Registry answered HTTP $STATUS for $NAME $VERSION"; exit 1 ;;
+          esac
+
+      - name: Install cosign for the recovered version
+        id: cosign
+        if: steps.registry_state.outputs.publish == 'true'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Publish the recovered version to the MCP Registry
+        id: mcp_registry
+        if: steps.registry_state.outputs.publish == 'true' && steps.cosign.outcome == 'success'
+        continue-on-error: true
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$WORK/$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$WORK/$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$WORK/$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$WORK/$archive"
+          tar xzf "$WORK/$archive" -C "$WORK" mcp-publisher
+          "$WORK/mcp-publisher" login github-oidc
+          "$WORK/mcp-publisher" publish
+
+      # always(): each failure is reported, whichever failed first. A second dispatch cannot finish
+      # either step: npm has the version by then, so it stops at its first check, by design.
+      - name: Fail the recovery when its dist-tag did not move
+        if: always() && steps.npm_verify.outputs.tag_lag != ''
+        env:
+          EXPECTED: ${{ steps.gate.outputs.version }}
+          DIST_TAG: ${{ steps.state.outputs.dist_tag }}
+          TAGGED: ${{ steps.npm_verify.outputs.tag_lag }}
+        run: |
+          echo "::error::npm has $EXPECTED but its $DIST_TAG dist-tag still read $TAGGED after ten minutes. Check 'npm view <package> dist-tags' and move it by hand if it is still behind."
+          exit 1
+
+      - name: Fail the recovery when the plugin branch was not published
+        if: always() && (steps.plugin_state.outcome == 'failure' || steps.plugin_branch.outcome == 'failure')
+        run: |
+          echo "::error::the plugin branch was not updated for the recovered version (see the two plugin branch steps); npm is unaffected. Run .github/scripts/publish_plugin_branch.sh from the tag to publish it."
+          exit 1
+
+      - name: Fail the recovery when the MCP Registry was not updated
+        if: always() && (steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure')
+        run: |
+          echo "::error::the MCP Registry entry was not published for the recovered version (see the three MCP Registry steps); npm is unaffected. Publish server.json from the tag with mcp-publisher by hand."
           exit 1

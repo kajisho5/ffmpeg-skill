@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import argparse
+import contextlib
 import re
 import shutil
 import subprocess
@@ -329,7 +330,7 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
+    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode")
@@ -356,6 +357,7 @@ class Context:
         self.overwrite = False                       # --overwrite: an existing output may be replaced
         self.written: set = set()                    # output paths this process has written itself
         self.preexisting: dict = {}                  # output path -> (size, mtime_ns) of a file that was there before we ran
+        self.checked: dict = {}                      # real output path -> owned_identity() at its output check (None: absent), or as this run left it; refuse_changed_output() compares it at the replace
         self.plan: Optional[str] = None              # --plan FILE: write the dry-run as a plan document (implies --dry-run)
         self.plan_written = False                    # write_plan() ran (emit or the exit hook), so the hook does not write twice
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
@@ -1226,6 +1228,9 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
             real = os.path.realpath(output)
         except OSError:
             continue
+        # what the decision below is about: compared again where the file is replaced
+        # (refuse_changed_output), so one put there during the run is not replaced unasked
+        _record_checked(output, _checked_state(output) if exists else None)
         if not exists or real in STATE.written:
             continue
         size = mtime_ns = None
@@ -1259,11 +1264,163 @@ def _remember_output(cmd: Sequence[str]) -> None:
     output = cmd[-1]
     if output == "-" or output.startswith("pipe:") or output.startswith("-"):
         return
-    try:
-        STATE.written.add(os.path.realpath(output))
-    except OSError:
-        pass
+    _remember_identity(output)
     report_committed(output)
+
+
+def _checked_key(path: str) -> str:
+    """The place a check is about: `path`'s directory resolved, its last component as named, so a
+    symlink created at an absent target since the check is still that target (#480 review)."""
+    full = os.path.abspath(path)
+    return os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
+
+
+def _parent(path: str) -> str:
+    return os.path.realpath(os.path.dirname(os.path.abspath(path)))
+
+
+def _checked_state(path: str) -> "Optional[Tuple[Optional[Dict[str, int]], bool]]":
+    """What is at `path` now: (owned_identity, is a symlink), or None when nothing is there."""
+    if not os.path.lexists(path):
+        return None
+    return (owned_identity(path), os.path.islink(path))
+
+
+def _record_checked(path: str, state: Any) -> None:
+    """Record what a check (or this run's own write) found at `path`, with the directory the path
+    resolved to then, under the resolved place and under the path as named: a directory symlink
+    switched since is then found by the name and refused, not looked up as a place never checked."""
+    entry = (_parent(path), state)
+    key = _checked_key(path)
+    STATE.checked[key] = entry
+    STATE.checked[os.path.abspath(path)] = entry
+    # the same file reached by another spelling of its path (a write through the resolved name
+    # after a check through a link) is the same record: a later replace through either matches
+    # -- only a record made in the same directory: one whose link has been switched since keeps
+    # what it saw, so the replace through it is still refused
+    for named in [k for k in STATE.checked if k != key]:
+        try:
+            if _checked_key(named) == key and STATE.checked[named][0] == entry[0]:
+                STATE.checked[named] = entry
+        except OSError:
+            pass
+
+
+def _remember_identity(path: str) -> None:
+    """Count `path` as this run's own and record the identity this run left it with, which a
+    later replace of it compares (refuse_changed_output)."""
+    try:
+        real = os.path.realpath(path)
+        STATE.written.add(real)
+    except OSError:
+        return
+    _record_checked(path, _checked_state(path))
+
+
+def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = None) -> None:
+    """Refuse to replace `path` when it is no longer the file its output check decided about.
+
+    refuse_existing_outputs() decides before the encode whether an existing target may be
+    replaced (--overwrite, this run's own file, batch.py's own delivery) and records the
+    target's identity (owned_identity(), None when absent); _remember_identity() records it again
+    when this run writes it. Called under the output's lock just before the replace: a file
+    another process put there meanwhile -- a different file at an existing target, or one at a
+    target that was absent -- is refused (`kind: input`, `reason: output_exists`) and `cleanup`
+    removes the new output's temp, unless --overwrite gave consent to replace whatever is at the
+    path (as batch.py's deliver() does). A path with no recorded check is left alone."""
+    if STATE.overwrite or not path or path == "-" or path.startswith("pipe:") or path.startswith("-"):
+        return
+    try:
+        key, named, real = _checked_key(path), os.path.abspath(path), os.path.realpath(path)
+        # the name first: a resolved place another path also reached says nothing about this one
+        recorded = STATE.checked.get(named) or STATE.checked.get(key)
+        if recorded is None:
+            return
+        (parent_then, expected), parent_now, now = recorded, _parent(path), _checked_state(path)
+    except OSError:
+        return
+    if now == expected and parent_now == parent_then:
+        return
+    if cleanup:
+        cleanup()
+    if parent_now != parent_then:
+        why = (f"is now in another directory ({parent_now!r}, checked in {parent_then!r}): a directory "
+               "link on its path was changed during the run")
+    elif expected is None:
+        why = "did not exist when the run checked it and another process created it during the run"
+    elif now is None:
+        why = "was removed or replaced by something that is not a regular file during the run"
+    else:
+        why = "changed during the run (another process wrote or replaced it after the output check)"
+    refuse("input", "output_exists",
+           f"refusing to replace {path!r}: it {why}; the new output was not put there. Pass --overwrite to "
+           "replace it anyway, or choose another -o path",
+           hint="pass --overwrite, or choose another -o path",
+           outputs=[{"path": path, "resolved": real, "changed_during_run": True,
+                     "expected": expected, "found": now}])
+
+
+def _remove_quietly(path: Optional[str]) -> None:
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def replace_checked(tmp: str, final: str) -> None:
+    """os.replace(tmp, final) for a file a tool writes itself (a time map, a normalised export):
+    under `final`'s output lock, after refuse_changed_output(), which removes `tmp` when it
+    refuses."""
+    replace_checked_together([(tmp, final)])
+
+
+def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
+    """Replace each (tmp, final) only once every final has passed refuse_changed_output(), all
+    under their output locks: files that belong together (a fill and its key). A file already at a
+    final is moved aside first and put back if a later replace fails, so a failed pair leaves
+    what was there. Every tmp is removed on a refusal, a refused lock or a failed replace (#480
+    review)."""
+    def cleanup() -> None:
+        for tmp, _final in pairs:
+            _remove_quietly(tmp)
+    aside: List[Tuple[str, Optional[str]]] = []  # (final, where its earlier file went, or None)
+    try:
+        with contextlib.ExitStack() as stack:
+            for final in sorted({final for _tmp, final in pairs}):
+                stack.enter_context(_OutputLock(final))
+            for _tmp, final in pairs:
+                refuse_changed_output(final, cleanup)
+            try:
+                for tmp, final in pairs:
+                    kept = None
+                    if len(pairs) > 1 and os.path.lexists(final):
+                        d, base = os.path.split(final)
+                        stem, ext = os.path.splitext(base)
+                        kept = reserve_sibling(d, stem, ext, "keep")
+                        os.replace(final, kept)
+                    try:
+                        os.replace(tmp, final)
+                    except BaseException:
+                        if kept:
+                            os.replace(kept, final)
+                        raise
+                    aside.append((final, kept))  # replaced: undone below if a later one fails
+            except BaseException:
+                for final, kept in reversed(aside):
+                    if kept:
+                        try:
+                            os.replace(kept, final)
+                        except OSError:
+                            pass
+                    elif os.path.exists(final):
+                        _remove_quietly(final)
+                raise
+            for _final, kept in aside:
+                _remove_quietly(kept)
+    except BaseException:
+        cleanup()
+        raise
 
 
 # set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:
@@ -1376,10 +1533,7 @@ def remember_written(*paths: Optional[str]) -> None:
     as replacing someone else's file (#415)."""
     for path in paths:
         if path and os.path.isfile(path):
-            try:
-                STATE.written.add(os.path.realpath(path))
-            except OSError:
-                pass
+            _remember_identity(path)
             report_committed(path)
 
 
@@ -1638,6 +1792,9 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     if is_ffmpeg:
         flush_drawtext_textfiles(cmd)
     with _OutputLock(cmd[-1] if is_ffmpeg else "-"):
+        if is_ffmpeg:
+            # a file put at the output since the check above is not ours to stage over
+            refuse_changed_output(cmd[-1])
         exec_cmd, final, tmp = _stage_existing_output(cmd) if is_ffmpeg else (list(cmd), None, None)
         def even_retry(proc: subprocess.CompletedProcess, ran: List[str]) -> "Tuple[subprocess.CompletedProcess, List[str]]":
             """An attempt that failed on odd dimensions, run again with an even scale: after the
@@ -1694,6 +1851,9 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
             _fail(tried, proc.returncode, proc.stderr or "", ctx=ctx, retried=retried)
         if final and tmp:
             if proc.returncode == 0:
+                # still under the lock: the target the check let this run replace, not a file
+                # another process put there during the encode
+                refuse_changed_output(final, lambda: _cleanup_partial_output(exec_cmd))
                 try:
                     os.replace(tmp, final)
                 except OSError as e:
@@ -2104,6 +2264,9 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
     with _OutputLock(dst):
+        # under the lock: the target the check above decided about, not one put there since
+        # (`src` is the caller's to remove, as on every other refusal)
+        refuse_changed_output(dst)
         if move:
             try:
                 os.replace(src, dst)
@@ -2114,6 +2277,7 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
         tmp = None
         try:
             tmp = copy_to_sibling(src, dst)
+            refuse_changed_output(dst, lambda: _remove_quietly(tmp))
             os.replace(tmp, dst)
         except OSError as e:
             if tmp:

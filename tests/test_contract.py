@@ -652,6 +652,136 @@ class ContractTests(unittest.TestCase):
         self.assertIn("security-events: write", scorecard)
         self.assertIn("id-token: write", scorecard)
 
+    def test_release_recovery_publishes_only_a_tagged_version_npm_lacks(self):
+        """#448: a version that was tagged but never reached npm had no way back through CI (a
+        re-run sees the tag and skips the publish). release.yml's `recover` job, run by
+        workflow_dispatch with a `version`, publishes it from the tagged commit with provenance,
+        under `latest` only when it is the highest version, and then fills in the plugin branch
+        and the MCP Registry where they are still missing. It refuses a malformed version, a
+        missing tag, a run whose commit is not the tag's (the attestation would name another
+        commit) and a version npm already has."""
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        on = release[release.index("\non:\n"):release.index("\nconcurrency:")]
+        self.assertIn("  push:\n    branches: [main]\n", on)
+        self.assertRegex(on, r"  workflow_dispatch:\n    inputs:\n      version:\n        description: .+\n"
+                             r"        required: true\n        type: string\n")
+        # a dispatch never reaches the auto-bump/tag job, and a push never reaches the recovery
+        jobs = release[release.index("\njobs:\n"):]
+        recover = jobs[jobs.index("\n  recover:\n"):]
+        normal = jobs[:jobs.index("\n  recover:\n")]
+        self.assertIn("\n  release:\n    # A dispatch runs `recover` alone", normal)
+        self.assertIn("    if: github.event_name == 'push'\n", normal)
+        self.assertIn("\n  recover:\n    if: github.event_name == 'workflow_dispatch'\n", recover)
+        perms = re.search(r"\n    permissions:\n((?:      \S.*\n)+)", recover).group(1)
+        self.assertEqual(sorted(line.split("#")[0].strip() for line in perms.splitlines()),
+                         ["contents: write", "id-token: write"])
+
+        def step(name):
+            start = recover.index(f"      - name: {name}\n")
+            nxt = recover.find("\n      - ", start + 1)
+            return recover[start:nxt if nxt != -1 else len(recover)]
+
+        # untrusted text never reaches a run: block through ${{ }}; the input only enters as env
+        runs, inside = [], False
+        for line in recover.splitlines():
+            if re.match(r"^        run: \|$", line):
+                inside = True
+                continue
+            if inside and line.strip() and not line.startswith("          "):
+                inside = False
+            if inside:
+                runs.append(line)
+            elif re.match(r"^        run: \S", line):
+                runs.append(line)
+        self.assertGreater(len(runs), 50)
+        self.assertNotIn("${{", "\n".join(runs))
+        self.assertEqual(recover.count("inputs.version"), 1)
+        gate = step("Refuse a version that is malformed or not tagged")
+        self.assertIn("VERSION: ${{ inputs.version }}", gate)
+        # the version is matched before anything else reads it: X.Y.Z only
+        regex = re.search(r'\[\[ "\$VERSION" =~ (\S+) \]\]', gate).group(1)
+        bash = shutil.which("bash")
+        if bash and platform.system() != "Windows":
+            for value, ok in (("3.6.3", True), ("10.0.0", True), ("v3.6.3", False), ("3.6", False),
+                              ("03.6.3", False), ("3.6.3;id", False), ("3.6.3\nx", False), ("", False),
+                              ("3.6.3-rc.1", False)):
+                proc = subprocess.run([bash, "-c", f'[[ "$1" =~ {regex} ]]', "_", value])
+                self.assertEqual(proc.returncode == 0, ok, repr(value))
+        # a missing tag is refused by name; a GitHub that cannot be asked is not "no tag"
+        self.assertIn('git/ref/tags/$TAG"', gate)
+        self.assertIn('grep -q "HTTP 404"', gate)
+        self.assertIn("there is no tag $TAG", gate)
+        self.assertIn("could not ask GitHub", gate)
+        # it builds from the tag, never main
+        checkout = recover[recover.index("actions/checkout@"):recover.index("      - name: Refuse unless")]
+        self.assertIn("ref: refs/tags/${{ steps.gate.outputs.tag }}", checkout)
+        self.assertNotIn("ref: main", recover)
+        self.assertLess(recover.index("id: gate"), recover.index("actions/checkout@"))
+        state = step("Refuse unless the tag is this run's commit and npm does not have the version")
+        self.assertIn('if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then', state)
+        self.assertIn('if [ "$PKG_VERSION" != "$VERSION" ]; then', state)
+        # npm already having it is a refusal; only E404 means absent; anything else is "could not ask"
+        has = state[state.index('if [ "$NPM_STATE" -eq 0 ]; then'):]
+        self.assertIn("there is nothing to recover\"; exit 1", has[:has.index("fi")])
+        self.assertIn('if ! grep -q "E404"', state)
+        self.assertIn("could not ask npm", state)
+        self.assertNotIn("|| true", state)
+        # the dist-tag is decided from npm's version list and checked before it is used
+        self.assertIn("recover_release.py dist-tag", state)
+        self.assertIn("latest|backport) ;;", state)
+        publish = step("Publish the tagged version to npm")
+        self.assertIn('run: npm publish --provenance --access public --tag "$DIST_TAG"', publish)
+        self.assertIn("DIST_TAG: ${{ steps.state.outputs.dist_tag }}", publish)
+        self.assertLess(recover.index("id: state"), recover.index("name: Publish the tagged version to npm"))
+        self.assertIn('"dist-tags.$DIST_TAG"', step("Verify the recovered version landed under its dist-tag"))
+        # what the failed run skipped, only when still missing, and never moving a branch back
+        plugin = step("Ask whether the plugin branch still lacks this version")
+        self.assertIn('grep -qF "plugin: ffmpeg-skill $VERSION (built from "', plugin)
+        self.assertIn("recover_release.py newer", plugin)
+        self.assertIn('if [ "$REMOTE_STATE" -eq 2 ]; then', plugin)
+        self.assertIn("if: steps.plugin_state.outputs.publish == 'true'",
+                      step("Publish the plugin branch for the recovered version"))
+        registry = step("Ask whether the MCP Registry still lacks the recovered version")
+        self.assertIn("if: steps.state.outputs.dist_tag == 'latest'", registry)
+        self.assertIn("404) echo", registry)
+        self.assertIn("could not ask the MCP Registry", registry)
+        self.assertIn("if: steps.registry_state.outputs.publish == 'true' && steps.cosign.outcome == 'success'",
+                      step("Publish the recovered version to the MCP Registry"))
+        self.assertLess(recover.index("name: Verify the recovered"), recover.index("name: Ask whether the plugin branch"))
+        self.assertEqual(recover.count("continue-on-error: true"), 5)
+        self.assertEqual(recover.count("if: always() && "), 3)
+        # the release job's E404 points at this path instead of a hand publish
+        self.assertIn("gh workflow run release.yml --ref v$VERSION -f version=$VERSION", normal)
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "recover_release", ROOT / ".github" / "scripts" / "recover_release.py")
+        rr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rr)
+        published = ["3.5.0", "3.6.0", "3.6.2", "3.6.3"]
+        self.assertEqual(rr.dist_tag("3.6.4", published), "latest")
+        self.assertEqual(rr.dist_tag("4.0.0", published), "latest")
+        self.assertEqual(rr.dist_tag("3.6.1", published), "backport")
+        self.assertEqual(rr.dist_tag("3.10.0", ["3.9.0"]), "latest", "numeric, not string, order")
+        self.assertEqual(rr.dist_tag("3.6.4", published + ["4.0.0-rc.1"]), "latest", "a pre-release is not stable")
+        self.assertEqual(rr.dist_tag("1.0.1", "1.0.0"), "latest", "npm prints a bare string for one version")
+        with self.assertRaises(ValueError):
+            rr.dist_tag("3.6.3", published)
+        with self.assertRaises(ValueError):
+            rr.dist_tag("v3.6.4", published)
+        self.assertEqual(rr.main(["newer", "3.6.4", "3.6.3"]), 0)
+        self.assertEqual(rr.main(["newer", "3.6.3", "3.6.3"]), 1)
+        self.assertEqual(rr.main(["newer", "3.6.3", "3.10.0"]), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            versions = Path(tmp) / "versions.json"
+            versions.write_text(json.dumps(published), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(ROOT / ".github" / "scripts" / "recover_release.py"),
+                                   "dist-tag", "3.6.1", str(versions)], capture_output=True, text=True)
+            self.assertEqual((proc.returncode, proc.stdout), (0, "backport\n"))
+            proc = subprocess.run([sys.executable, str(ROOT / ".github" / "scripts" / "recover_release.py"),
+                                   "dist-tag", "3.6.3", str(versions)], capture_output=True, text=True)
+            self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+
     def test_workflows_pin_actions_and_grant_writes_per_job(self):
         """Scorecard Pinned-Dependencies and Token-Permissions: every `uses:` names a full
         commit SHA (a tag can be moved under a job that holds a write token or the release
@@ -7906,6 +8036,315 @@ class SideFileGuardTests(unittest.TestCase):
         err = self.failed(tool("probe", "x:y.mp4", "--json", check=False, cwd=self.tmp))
         self.assertEqual(err["reason"], "media_path_is_url", err)
         self.assertIn("./name", err["message"])
+
+
+class OutputChangedDuringRunTests(unittest.TestCase):
+    """#470: whether an existing target may be replaced is decided at the output check, before the
+    encode; the replace comes after it. A file another process puts at the path in between (a
+    different file at a target batch.py owned, or one at a target that did not exist) is refused
+    under the output lock, the new output's temp removed, unless --overwrite consented to replacing
+    whatever is at that path. No ffmpeg runs: the encode is a mock that writes its output and,
+    where the case asks for it, swaps the target as another process would."""
+
+    def setUp(self):
+        from _common import runner
+        self.runner = runner
+        self.work = Path(tempfile.mkdtemp(prefix="ffskill_race_"))
+        _common.STATE.reset()
+        _common.STATE.json = True
+
+    def tearDown(self):
+        _common.STATE.reset()
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def call(self, fn, *args, env=None):
+        """(None, None) when fn ran through; (kind, reason) of the refusal it exited with."""
+        from unittest import mock
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                fn(*args)
+            except SystemExit:
+                doc = json.loads(out.getvalue())
+                return doc["error"]["kind"], doc["error"].get("reason")
+        return None, None
+
+    def encode(self, during=None):
+        """A stand-in for _execute(): ffmpeg writes `new` to its last argument, then `during` runs."""
+        def fake(exec_cmd):
+            Path(exec_cmd[-1]).write_bytes(b"new")
+            if during:
+                during()
+            return subprocess.CompletedProcess(list(exec_cmd), 0, "", "")
+        return fake
+
+    def owned(self, path, name):
+        """batch.py's snapshot naming `path` as the file it delivered there (runner.OWNED_ENV)."""
+        cfg = self.work / name
+        report = self.work / f"{name}.report"
+        report.mkdir()
+        cfg.write_text(json.dumps({"replaceable": {os.path.realpath(path): self.runner.owned_identity(str(path))},
+                                   "report": str(report)}), encoding="utf-8")
+        return {self.runner.OWNED_ENV: str(cfg)}
+
+    def swap(self, path, data=b"theirs"):
+        def go():
+            other = path.with_name(path.name + ".other")
+            other.write_bytes(data)
+            os.replace(other, path)  # a new inode at the path, as another process's save leaves
+        return go
+
+    def temps(self):
+        return sorted(p.name for p in self.work.iterdir() if ".ffskill-" in p.name)
+
+    def cmd(self, out):
+        return ["ffmpeg", "-f", "lavfi", "-i", "nullsrc", str(out)]
+
+    def test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced(self):
+        from unittest import mock
+        out = self.work / "out.mp4"
+        out.write_bytes(b"delivered")
+        env = self.owned(out, "c1.json")
+        # batch.py's own delivery, swapped during the encode: refused, the other file kept
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), ("input", "output_exists"))
+        self.assertEqual(out.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [], "the new output's temp is removed")
+        # the same delivery left alone during the encode is replaced, as before
+        _common.STATE.reset()
+        _common.STATE.json = True
+        out.write_bytes(b"delivered again")
+        env = self.owned(out, "c2.json")
+        with mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+        # this run's own output (a second pass) is rewritten without --overwrite
+        with mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+
+    def test_a_target_created_after_the_check_is_refused_unless_overwrite(self):
+        from unittest import mock
+        out = self.work / "fresh.mp4"
+        real_check = self.runner._check_existing_output
+
+        def check_then_create(cmd):
+            real_check(cmd)
+            if not out.exists():
+                out.write_bytes(b"theirs")  # created by another process once the check passed
+        with mock.patch.object(self.runner, "_check_existing_output", check_then_create), \
+                mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), ("input", "output_exists"))
+            self.assertEqual(out.read_bytes(), b"theirs")
+            self.assertEqual(self.temps(), [])
+            # --overwrite consented to replacing whatever is at the path
+            out.unlink()
+            _common.STATE.overwrite = True
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+            self.assertEqual(out.read_bytes(), b"new")
+
+    def test_overwrite_still_replaces_a_target_swapped_during_the_encode(self):
+        """--overwrite is consent to replace what is at the path (as batch.py's deliver() reads
+        it); without it the same swap is refused."""
+        from unittest import mock
+        out = self.work / "ow.mp4"
+        out.write_bytes(b"old")
+        _common.STATE.overwrite = True
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+        _common.STATE.reset()
+        _common.STATE.json = True
+        out.write_bytes(b"delivered")
+        env = self.owned(out, "c3.json")
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), ("input", "output_exists"))
+        self.assertEqual(out.read_bytes(), b"theirs")
+
+    def test_place_output_refuses_a_target_put_there_after_its_check(self):
+        """place_output()'s rename (move=True) and its copy path, as render.py and cut.py use them."""
+        from unittest import mock
+        real_check = self.runner._check_existing_output
+        for move in (True, False):
+            with self.subTest(move=move):
+                dst, src = self.work / f"placed{int(move)}.mp4", self.work / f"src{int(move)}.bin"
+                src.write_bytes(b"new")
+
+                def check_then_create(cmd, dst=dst):
+                    real_check(cmd)
+                    dst.write_bytes(b"theirs")
+                with mock.patch.object(self.runner, "_check_existing_output", check_then_create):
+                    self.assertEqual(self.call(self.runner.place_output, str(src), str(dst), move),
+                                     ("input", "output_exists"))
+                self.assertEqual(dst.read_bytes(), b"theirs")
+                self.assertEqual(self.temps(), [])
+                # unchanged since the check (here: absent), it is placed
+                dst.unlink()
+                self.assertEqual(self.call(self.runner.place_output, str(src), str(dst), move), (None, None))
+                self.assertEqual(dst.read_bytes(), b"new")
+
+    def test_a_side_file_a_tool_replaces_itself_is_rechecked(self):
+        """silence.py --timemap (as export.py's fill and --normalize) replaces through
+        replace_checked(): a map that appeared after refuse_existing_outputs() is refused."""
+        import silence
+        path = self.work / "map.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        path.write_text("theirs", encoding="utf-8")
+        tm = {"kept": [], "removed": []}
+        self.assertEqual(self.call(silence.write_time_map, str(path), tm), ("input", "output_exists"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "theirs")
+        self.assertEqual([p.name for p in self.work.iterdir()], ["map.json"], "the staged map is removed")
+        path.unlink()
+        self.assertEqual(self.call(silence.write_time_map, str(path), tm), (None, None))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), tm)
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_link_created_at_an_absent_target_is_refused(self):
+        """The check is about the path as named, not where it resolves: a symlink another process
+        creates at a target that was absent is refused, the file it points at untouched."""
+        path = self.work / "map.json"
+        elsewhere = self.work / "theirs.json"
+        elsewhere.write_text("theirs", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        os.symlink(elsewhere, path)
+        staged = self.work / ".map.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_exists"))
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(elsewhere.read_text(encoding="utf-8"), "theirs")
+        self.assertFalse(staged.exists(), "the staged file is removed")
+
+    def test_files_committed_together_are_both_kept_back_when_one_is_refused(self):
+        """export.py's fill and key: when either target changed during the run, neither temp is
+        put in place, so a refused fill never leaves a new key beside it."""
+        fill, key = self.work / "a.mov", self.work / "a_key.mov"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(fill), str(key)]), (None, None))
+        key.write_bytes(b"theirs")  # appeared during the encode
+        fill_tmp, key_tmp = self.work / ".a.ffskill-f.mov", self.work / ".a_key.ffskill-k.mov"
+        fill_tmp.write_bytes(b"fill")
+        key_tmp.write_bytes(b"key")
+        self.assertEqual(self.call(self.runner.replace_checked_together, [(str(fill_tmp), str(fill)), (str(key_tmp), str(key))]),
+                         ("input", "output_exists"))
+        self.assertFalse(fill.exists(), "the fill is not committed without its key")
+        self.assertEqual(key.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [])
+        key.unlink()
+        fill_tmp.write_bytes(b"fill")
+        key_tmp.write_bytes(b"key")
+        self.assertEqual(self.call(self.runner.replace_checked_together, [(str(fill_tmp), str(fill)), (str(key_tmp), str(key))]),
+                         (None, None))
+        self.assertEqual((fill.read_bytes(), key.read_bytes()), (b"fill", b"key"))
+
+    def test_a_pair_whose_second_replace_fails_leaves_what_was_there(self):
+        """The first file of a pair is put back when the second replace fails: a fill never ends
+        up beside an old or missing key."""
+        from unittest import mock
+        fill, key = self.work / "b.mov", self.work / "b_key.mov"
+        fill.write_bytes(b"old fill")
+        key.write_bytes(b"old key")
+        _common.STATE.overwrite = True
+        fill_tmp, key_tmp = self.work / ".b.ffskill-f.mov", self.work / ".b_key.ffskill-k.mov"
+        fill_tmp.write_bytes(b"new fill")
+        key_tmp.write_bytes(b"new key")
+        real_replace = os.replace
+        def failing(src, dst):
+            if str(src) == str(key_tmp):
+                raise OSError("disk full")
+            return real_replace(src, dst)
+        with mock.patch.object(self.runner.os, "replace", failing):
+            with self.assertRaises(OSError):
+                self.runner.replace_checked_together([(str(fill_tmp), str(fill)), (str(key_tmp), str(key))])
+        self.assertEqual((fill.read_bytes(), key.read_bytes()), (b"old fill", b"old key"))
+        self.assertEqual(self.temps(), [], "temps and the kept copies are removed")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_directory_link_switched_during_the_run_is_refused(self):
+        """A path whose directory link points elsewhere at the replace is not the file its check
+        decided about, whatever is in the new directory."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        (b / "out.json").write_text("theirs", encoding="utf-8")
+        link = self.work / "dir"
+        os.symlink(a, link)
+        path = link / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        link.unlink()
+        os.symlink(b, link)
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_exists"))
+        self.assertEqual((b / "out.json").read_text(encoding="utf-8"), "theirs")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_switched_link_is_refused_when_its_new_target_was_checked_too(self):
+        """A link checked as /link/out (into a/) and a second output b/out checked in the same run:
+        once the link points at b/, replacing /link/out is about the first check, not b/out's."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, direct = link / "out.json", b / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link), str(direct)]), (None, None))
+        direct.write_text("this run's other output", encoding="utf-8")
+        self.runner.remember_written(str(direct))
+        link.unlink()
+        os.symlink(b, link)
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), ("input", "output_exists"))
+        self.assertEqual(direct.read_text(encoding="utf-8"), "this run's other output")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_link_switched_before_an_own_write_elsewhere_is_still_refused(self):
+        """The link is switched first, then this run writes its other output in the link's new
+        directory: that write does not refresh the link's record, which still names a/."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, direct = link / "out.json", b / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link), str(direct)]), (None, None))
+        link.unlink()
+        os.symlink(b, link)
+        direct.write_text("this run's other output", encoding="utf-8")
+        self.runner.remember_written(str(direct))
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), ("input", "output_exists"))
+        self.assertEqual(direct.read_text(encoding="utf-8"), "this run's other output")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_an_own_write_through_another_spelling_of_the_path_is_still_own(self):
+        """Checked through a link, written through the resolved name: replacing it again through
+        the link is replacing this run's own file."""
+        a = self.work / "a"
+        a.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, resolved = link / "o.json", a / "o.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link)]), (None, None))
+        resolved.write_text("first pass", encoding="utf-8")
+        self.runner.remember_written(str(resolved))
+        staged = a / ".o.ffskill-x.json"
+        staged.write_text("second pass", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), (None, None))
+        self.assertEqual(resolved.read_text(encoding="utf-8"), "second pass")
+
+    def test_a_refused_lock_removes_the_staged_file(self):
+        """replace_checked() removes its temp on every way out short of the replace, a lock held
+        by another live writer included."""
+        from unittest import mock
+        path = self.work / "n.mov"
+        staged = self.work / ".n.ffskill-x.mov"
+        staged.write_bytes(b"ours")
+        def held(self_):
+            self.runner.refuse("input", "output_locked", "held")
+        with mock.patch.object(self.runner._OutputLock, "__enter__", held):
+            self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_locked"))
+        self.assertFalse(staged.exists())
 
 
 class Issue415Tests(unittest.TestCase):

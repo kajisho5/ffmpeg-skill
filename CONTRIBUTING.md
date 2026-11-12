@@ -110,6 +110,15 @@ would have caught the original bug isn't done yet.
   that directory). Never commit to that branch by hand and never force-push it; hosts
   fast-forward it. `bash .github/scripts/publish_plugin_branch.sh --tree-only DIR` builds the
   tree locally without touching git.
+- A release whose npm publish failed keeps its tag, and a re-run skips the publish. Finish it by
+  dispatching `release.yml` on the tag: `gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`.
+  Its `recover` job refuses a version npm already has, a missing tag and a run on any other commit,
+  publishes with provenance (`latest` only when the version is above every stable one on npm, else `backport`), and
+  then publishes the plugin branch only when its tip is an older version and the MCP Registry
+  entry only for a `latest` version: a backport fills in neither. A tag from before the job
+  existed (up to v3.6.3) cannot be recovered this way. Do not
+  publish by hand: a local publish has no provenance and, without `--tag`, moves `latest`. README's "Releasing" and
+  the job's comments say why it is built this way.
 
 ## Publishing the MCP listing
 
