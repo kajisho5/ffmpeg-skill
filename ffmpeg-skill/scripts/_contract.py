@@ -243,7 +243,7 @@ DRY_RUN_ANALYSIS = {
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
     "report": "probe, loudness and contact-sheet measurements run; the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
-    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use",
+    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use; so does --transcribe with --sentence-min-silence or --sentence-margin-tail",
     "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement (or, when it is skipped, the audio row's volumedetect) and the --content decode run under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
@@ -500,6 +500,7 @@ DIAGNOSTIC_CODES = {
     "sync_low_confidence": ("warnings", "sync.py / multicam.py: a source's offset has a correlation confidence below 0.1; {path, confidence}"),
     "cropdetect_windows_failed": ("warnings", "cropdetect.py: sampled windows ffmpeg could not decode (windows_failed); {failed, windows, starts}"),
     "filler_words_untimed": ("warnings", "silence.py --filler: listed words in the transcript with no usable timing were not removed (filler.matched_untimed); {count}"),
+    "sentence_ends_not_found": ("warnings", "silence.py --sentence-min-silence / --sentence-margin-tail: the transcript has no sentence-final punctuation, so every silence used --min-silence and --margin-tail (sentence.sentence_end_words is 0)"),
     "cut_near_sound": ("warnings", "silence.py: a cut point's level is within CUT_SOUND_MARGIN_DB of --threshold, so it may land in a breath or a word's weak tail (cut_warnings lists them)"),
     "cut_levels_unmeasured": ("warnings", "silence.py: the source could not be decoded to measure the level at each cut; cut_points and cut_warnings are null (unmeasured, not silent)"),
     "filler_removal_caution": ("warnings", "silence.py --filler: a removed word that is often an ordinary word, or a discourse marker added with --filler-extra (also in filler.warnings)"),
@@ -652,7 +653,9 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "beat_grid": {"type": "object", "description": "--beats (1.17): {supported_beats, tempo_bpm, interval, confidence, phase, onsets, supported, unsupported, method, step_s (the envelope's real step: 220/22050 s for --beat-step 0.01, after 3.2.0), range_bpm, usable, onset_refinement (after 3.2.0: pcm-window-ratio when each onset was placed on the decoded samples, else null)}"}}
     elif name == "silence":
         extra = {"silences": {"type": "array"}, "keep": {"type": "array"}, "input_duration": {"type": "number"}, "kept_duration": {"type": "number"}, "removed_seconds": {"type": "number"},
-                 "margins": {"type": "object", "description": "{lead, tail}: the seconds of each silence kept before speech starts (--margin-lead) and after it ends (--margin-tail); both are --margin unless one is named; absent under --filler without --speech-aware, which removes no silences"},
+                 "margins": {"type": "object", "description": "{lead, tail}: the seconds of each silence kept before speech starts (--margin-lead) and after it ends (--margin-tail); both are --margin unless one is named; absent under --filler with neither --speech-aware nor a sentence flag, which removes no silences"},
+                 "silence_positions": {"type": "array", "description": "--sentence-min-silence / --sentence-margin-tail: per entry of silences, sentence_end when the transcript word before it ends in sentence-final punctuation, else inside"},
+                 "sentence": {"type": "object", "description": "--sentence-min-silence / --sentence-margin-tail: {min_silence, margin_tail (the floor and tail given to a silence after a sentence end), source, word_timings, sentence_end_words (transcript words that end a sentence; 0 means none did, so every silence used --min-silence and --margin-tail), silences (how many of silences are sentence_end)}"},
                  "removed_seconds_total": {"type": "number", "description": "--filler: seconds removed in all, silence plus filler words (removed_seconds stays the silence alone)"},
                  "cut_points": {"type": ["array", "null"], "description": "2.22: per cut {source_time, output_time, edge (out|in), rms_dbfs (the loudest channel 50 ms either side on the source; null for digital silence), filler (true on a removed filler word's edge)}; null when the source could not be decoded for it (cut_levels_unmeasured warning)"},
                  "cut_warnings": {"type": ["array", "null"], "description": "the cut_points (not filler cuts) within 10 dB of --threshold: where to listen (a cut_near_sound warning); verified is unchanged"},
