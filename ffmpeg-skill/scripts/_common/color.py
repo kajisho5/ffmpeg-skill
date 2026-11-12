@@ -74,7 +74,8 @@ def is_rgb(meta: Optional[Dict[str, Any]]) -> bool:
 _EVEN_PAD = "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,"
 _MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s)$"
                                % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
-_INPUT_VIDEO_REF = re.compile(r"\[(\d+):v(?::0)?\]")
+# [N:v], [N:v:0] and [N:V:0] (PROBED_VIDEO: the motion picture, not an attached cover)
+_INPUT_VIDEO_REF = re.compile(r"\[(\d+):[vV](?::0)?\]")
 
 
 def bt709_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -263,7 +264,7 @@ def fold_bt709_matrix(cmd: Sequence[str]) -> List[str]:
 
     - no other filter: unchanged (the -vf is the graph);
     - a -vf: the conversion is prepended to that chain;
-    - a -filter_complex: every `[N:v]` / `[N:v:0]` reference to an input that reads the same file
+    - a -filter_complex: every `[N:v]` / `[N:v:0]` / `[N:V:0]` reference to an input that reads the same file
       as input 0 (the file the encoder line was built for; cut.py's segment join opens it once
       per segment) reads that input through the conversion instead. Other inputs are untouched.
 
@@ -298,7 +299,7 @@ def fold_bt709_matrix(cmd: Sequence[str]) -> List[str]:
         graph = _INPUT_VIDEO_REF.sub(through, str(out[graph_at + 1]))
         if not refs:
             die("internal: a BT.709 matrix conversion was requested for a -filter_complex that never reads "
-                "input 0's video as [0:v]", kind="ffmpeg")
+                "input 0's video as [0:v] or [0:V:0]", kind="ffmpeg")
         # one conversion per input, split when the graph reads that input more than once
         # (speedramp.py trims [0:v] once per segment)
         chains = [f"{ref}{conv}" + (f",split={len(labels)}" if len(labels) > 1 else "") + "".join(labels)

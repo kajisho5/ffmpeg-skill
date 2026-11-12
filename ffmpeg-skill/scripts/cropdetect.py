@@ -35,7 +35,7 @@ from typing import Dict, List, Optional, Tuple
 
 from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames, frame_flow
 from _common.emit import note, warn
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note
 
 MOTION_CENTRE_FPS = 2.0
 MOTION_CENTRE_W, MOTION_CENTRE_H = 64, 36
@@ -57,7 +57,7 @@ def detect(path: str, seconds: float, samples: int, limit: float, round_to: int,
         start = 0.0 if duration <= 0 else (duration - per_window) * i / max(1, samples - 1) if samples > 1 else 0.0
         start = max(0.0, start)
         cmd = [ffmpeg, "-hide_banner", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{per_window:.3f}",
-               "-vf", (square + "," if square else "") + f"cropdetect=limit={limit:g}:round={round_to}:reset=1", "-f", "null", "-"]
+               "-map", f"0:{PROBED_VIDEO}", "-vf", (square + "," if square else "") + f"cropdetect=limit={limit:g}:round={round_to}:reset=1", "-f", "null", "-"]
         proc = run_analysis(cmd, check=False)
         if proc.returncode != 0:
             # One window ffmpeg cannot decode (a damaged stretch) is skipped; the other windows

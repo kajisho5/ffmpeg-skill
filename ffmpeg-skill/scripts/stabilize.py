@@ -27,6 +27,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _common.probe import PROBED_VIDEO
+from _common.runner import default_selection_maps
 from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
@@ -79,8 +81,9 @@ def main() -> int:
             # A frame number, not a boolean: frame 1 is the standard reference for "lock to
             # this fixed frame" (mirrors vidstabtransform's own tripod=1 below).
             detect_vf += ":tripod=1"
+        # both passes read the picture probe() describes (its size chose the even scale above)
         detect_cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", args.input,
-                      "-vf", detect_vf, "-f", "null", "-"]
+                      "-map", f"0:{PROBED_VIDEO}", "-vf", detect_vf, "-f", "null", "-"]
         # Pass 1 is a measurement into a temp file (the transforms), so it runs under --dry-run
         # as well; only pass 2, the write, is skipped there.
         if not dry_run_input_pending(args.input):
@@ -94,7 +97,7 @@ def main() -> int:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.
             transform_vf += ":tripod=1"
-        cmd = ffmpeg_base() + ["-i", args.input, "-vf", transform_vf]
+        cmd = ffmpeg_base() + ["-i", args.input] + default_selection_maps(meta, output) + ["-vf", transform_vf]
         cmd += video_args(meta, args.crf, args.preset)
         cmd += cfr_args(meta)
         if has_audio:

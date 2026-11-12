@@ -37,6 +37,7 @@ from _common import video_args, add_common, apply_common, emit, aac_args, audio_
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
+from _common.runner import default_selection_maps
 
 SR = 8000  # decode sample rate
 
@@ -392,14 +393,15 @@ def main() -> int:
             # Even a keyframe on the trim point moved the picture by its B-frame delay (+69 ms).
             # The re-encode below starts on the frame itself; a sound-only file is still copied.
             if head_trim > 0 and not drift_af and not has_video:
-                cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second, "-c", "copy"]
+                # the second file's first audio track: the one decode_pcm_mono() measured
+                cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + default_selection_maps(second_meta, output) + ["-c", "copy"]
                 if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
                     cmd += ["-movflags", "+faststart"]
                 cmd += ["-avoid_negative_ts", "make_zero", output]
                 proc = run(cmd, check=False)
                 fail_if_classified(proc)
                 if proc.returncode != 0:
-                    cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]
+                    cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + default_selection_maps(second_meta, output) + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]
                     run(cmd)
             else:
                 # Seek SEEK_MARGIN early and drop the margin on the output side, as cut.py's
@@ -415,7 +417,9 @@ def main() -> int:
                     cmd += ["-ss", f"{head_trim - m:.6f}"]
                     if m > 0:
                         out_seek = ["-ss", f"{m / (drift_ratio if drift_af else 1.0):.6f}"]
-                cmd += ["-i", args.second] + out_seek
+                # -map after the output-side -ss: both are output options, so the order is the
+                # same command, and the seek stays next to the -i it drops the margin from
+                cmd += ["-i", args.second] + out_seek + default_selection_maps(second_meta, output)
                 af_parts = on_clock + drift_af
                 if delay_ms > 0:
                     af_parts.append(f"adelay={delay_ms}:all=1")

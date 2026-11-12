@@ -24,7 +24,7 @@ from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
-from _common.probe import display_size, square_pixels, square_pixels_note  # noqa: E402
+from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
 # Action and title safe are SMPTE ST 2046-1's 93 % and 90 % of a 16:9 picture; the 4:3 centre cut
@@ -337,7 +337,7 @@ def main() -> int:
                 conv = "," + conv if conv else ""
                 return (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{conv}{pre},"
                         f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
-            fc = (f"[0:v]{lab}{sq}{fit(tm)}[a];[1:v]{lab2}{csq}{fit(tm2)}[b];"
+            fc = (f"[0:{PROBED_VIDEO}]{lab}{sq}{fit(tm)}[a];[1:{PROBED_VIDEO}]{lab2}{csq}{fit(tm2)}[b];"
                   f"[a][b]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
@@ -354,7 +354,7 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
+            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:
@@ -384,7 +384,7 @@ def main() -> int:
         tc_sheet = tc
         vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',{lab}{sq}scale={tile_w}:-2{tc_sheet},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        cmd = ffmpeg_base() + ["-copyts", "-start_at_zero", "-ss", f"{seek:.6f}", *still_input_args(args.input), "-i", args.input, "-vf", vf, "-frames:v", "1", "-update", "1", out]
+        cmd = ffmpeg_base() + ["-copyts", "-start_at_zero", "-ss", f"{seek:.6f}", *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", vf, "-frames:v", "1", "-update", "1", out]
         run(cmd)
         outputs.append(out)
         info(f"contact sheet: {n} frames every {step:.2f}s")

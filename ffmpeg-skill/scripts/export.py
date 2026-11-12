@@ -50,7 +50,7 @@ from _common.runner import child_exit_code, fail_if_classified, kept_clause, mar
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
-from _common.probe import square_pixels, square_pixels_note
+from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
@@ -204,8 +204,8 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     key_chain = ",".join(vf + ["alphaextract", "format=yuv422p10le"])
     tc = ((meta.get("timecode") or {}).get("value"))
     tc_args = ["-timecode", tc] if tc else []
-    cmd = cmd + ["-filter_complex", f"[0:v:0]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
-    cmd += ["-map", "[fill]"] + (["-map", "0:a:0"] if has_audio else []) + p["video"] + tc_args + cfr_args(meta)
+    cmd = cmd + ["-filter_complex", f"[0:{PROBED_VIDEO}]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
+    cmd += ["-map", "[fill]"] + probed_maps(meta, video=False, audio=has_audio) + p["video"] + tc_args + cfr_args(meta)
     # the fill is always written to a hidden sibling and moved into place only after the encode
     # succeeds: run() stages and cleans up only ffmpeg's last output (the key), so a failed encode
     # left a partial new fill (the retry was refused as output_exists) or truncated an existing one
@@ -410,7 +410,9 @@ def media_damage(path: str) -> Dict[str, int]:
     PTS) and every other error line, counted. What --repair is measured by, before and after."""
     # repeat+: every occurrence on its own line, not "Last message repeated N times", which hid
     # N timestamp warnings and was itself counted as a decode error
-    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "repeat+warning", "-i", path, "-f", "null", "-"],
+    # the streams a copy export writes (probed_maps), not the ones default selection would decode
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-v", "repeat+warning", "-i", path,
+                         "-map", f"0:{PROBED_VIDEO}?", "-map", f"0:{PROBED_AUDIO}?", "-f", "null", "-"],
                         check=False, record=True)
     lines = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
     # "Packet corrupt (stream = 0, dts = ...)" names a dts but is damage, not a timestamp problem
@@ -585,16 +587,19 @@ def main() -> int:
     # Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are
     # kept where the container can hold them: ffmpeg's default stream selection takes one video
     # and one audio stream only, and through 2.22.1 every preset dropped the rest without a word.
-    # Mapping them means mapping the picture and the sound too, the same streams probe() describes.
+    # The picture and the sound are mapped on every export, the same streams probe() describes:
+    # until A118 they were mapped only beside a subtitle or data stream, and without one ffmpeg's
+    # default selection took the larger picture and the track with the default disposition or the
+    # most channels, so which audio track an export kept depended on whether it had subtitles.
     subs = meta.get("subtitle_stream_details") or []
     data = _data_streams(args.input) if meta.get("data_streams") else []
     sub_codecs = [_subtitle_codec(s.get("codec") or "", out_ext) for s in subs]
-    if args.preset != "gif" and not p.get("keyfill") and (subs or data):
-        cmd += ["-map", "0:V:0"] + (["-map", "0:a:0"] if has_audio else [])
+    if args.preset != "gif" and not p.get("keyfill"):
+        cmd += probed_maps(meta, audio=has_audio)
 
     if args.preset == "gif":
         chain = ",".join(([gif_label] if gif_label else []) + ["fps=12"] + vf)
-        fc = f"[0:v]{chain},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+        fc = f"[0:{PROBED_VIDEO}]{chain},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
         cmd += ["-filter_complex", fc, "-loop", "0", output]
         run(cmd)
         info(f"wrote {output}")
