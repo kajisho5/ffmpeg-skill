@@ -130,9 +130,34 @@ def output_rate(fps: float, first: Dict[str, Any], asked: bool) -> Fraction:
                 q = Fraction(str(first.get(key) or ""))
             except (ValueError, ZeroDivisionError):
                 continue
-            if 0 < q <= 240 and abs(float(q) - fps) < 1e-3:
+            # the declared rate also wins when the average was taken over a length that leaves out
+            # the last frame's duration (#475: 5 frames in 0.1333 s read 37.5 fps, and the whole
+            # join ran at 75/2)
+            if 0 < q <= 240 and (abs(float(q) - fps) < 1e-3 or short_last_frame(first, q)):
                 return q
     return exact_rate(fps)
+
+
+def short_last_frame(video: Optional[Dict[str, Any]], q: Fraction) -> bool:
+    """Whether a picture's duration is its frame count less one frame at rate `q`: a container
+    that stores no duration for the last frame (MOV written with -fps_mode passthrough, seen on
+    FFmpeg 7.1) reads 5 frames as 0.1333 s at 30 fps (#475)."""
+    v = video or {}
+    nb, dur = v.get("nb_frames"), v.get("duration")
+    if not nb or nb < 2 or not dur or q <= 0:
+        return False
+    step = float(1 / q)
+    return abs(dur - (nb - 1) * step) < 0.25 * step and abs(dur - nb * step) > 0.25 * step
+
+
+def with_whole_picture(meta: Dict[str, Any], q: Fraction) -> Dict[str, Any]:
+    """`meta` with its picture counted as every frame it holds when its duration leaves out the
+    last one (short_last_frame), so the clip-length rule does not read the sound as running a
+    frame past the picture and hold the clip longer (#475). Other clips are returned as they are."""
+    v = meta.get("video") or {}
+    if not short_last_frame(v, q):
+        return meta
+    return dict(meta, video=dict(v, duration=float(v["nb_frames"] / q)))
 
 
 def clip_frames(meta: Dict[str, Any], length: float, q: Fraction) -> int:
@@ -732,7 +757,8 @@ def main() -> int:
     # (0.166667 s) up to 0.167 s, the concat filter started the next clip after it, and 60 such
     # clips left one-frame holes from about 8 s on. Sample counts come from the running frame
     # total, so the sound never drifts from the picture by more than one sample.
-    frames = [clip_frames(m, clip_length(m, fps), rate_q) for m in metas]
+    lmetas = [with_whole_picture(m, rate_q) for m in metas]
+    frames = [clip_frames(m, clip_length(m, fps), rate_q) for m in lmetas]
     # the transition is a whole number of frames too, so xfade's offsets (and acrossfade's
     # overlap) land on frames of the output rate (#468). A transition is at least one frame:
     # --duration 0 used to build acrossfade=ns=0, which FFmpeg refuses
@@ -837,7 +863,7 @@ def main() -> int:
     # its last frame, then cut both there -- each clip boundary is then the same for both chains
     # -- by frame and by sample, never by rounded seconds (#455)
     for i in range(n):
-        vlen = (metas[i].get("video") or {}).get("duration") or lens[i]
+        vlen = (lmetas[i].get("video") or {}).get("duration") or lens[i]
         have = round(vlen * fps)
         # one frame more than the gap is held, and the trim cuts at the clip's last frame
         hold = f"tpad=stop_mode=clone:stop={frames[i] - have + 1}," if frames[i] > have else ""

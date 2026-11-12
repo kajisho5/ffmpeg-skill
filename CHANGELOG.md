@@ -20,6 +20,11 @@
   (at least one: `--duration 0` with a transition built `acrossfade=ns=0`, which FFmpeg refuses)
   and each acrossfade overlaps the samples of those frames, taken from the output's rounded frame
   positions so the sound never runs a sample longer per transition.
+- **`join.py` reads a short clip without a last-frame duration at its own rate** (#475). FFmpeg 7.1
+  read a 5-frame MOV that stores no duration for its last frame as 0.1333 s at 37.5 fps; join.py
+  ran the whole join at that rate and held every clip to its 0.1667 s sound, 7 frames each (60
+  clips: 418 frames for 300). The clip's declared `r_frame_rate` is used when the average is short
+  by exactly the last frame, and its picture counts every frame it holds.
 - **A slow `latest` on npm no longer stops the MCP Registry publish.** The release job waited five
   minutes for npm's `latest` to read the new version and then failed, which skipped every later
   step: 3.6.2 was on npm but not on the MCP Registry until the job was re-run. It now waits for

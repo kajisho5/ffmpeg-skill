@@ -1666,6 +1666,31 @@ class EditingTests(MediaFixtures):
                 self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
                                  "acrossfade overlaps the sound by the frames xfade overlaps")
 
+    def test_join_reads_a_clip_without_a_last_frame_duration_at_its_own_rate(self):
+        """#475: FFmpeg 7.1 read a 5-frame MOV with no duration for its last frame as 0.1333 s at
+        37.5 fps (avg_frame_rate = 5 / 0.1333). join.py took that as the join's rate (75/2) and,
+        at it, read the 0.1667 s sound as running past the picture and held every clip to 7
+        frames: 60 such clips gave 418 frames for 300. The declared r_frame_rate is used when the
+        average is short by exactly the last frame, and the picture counts every frame it holds."""
+        import importlib
+        from fractions import Fraction
+        sys.path.insert(0, str(SCRIPTS))
+        join = importlib.import_module("join")
+        for rate, dur, avg in (("30/1", 0.133333, "75/2"), ("30000/1001", 0.133467, "37463/1000")):
+            with self.subTest(rate=rate):
+                q = Fraction(rate)
+                video = {"nb_frames": 5, "duration": dur, "fps": float(Fraction(avg)), "r_frame_rate": rate,
+                         "avg_frame_rate": avg}
+                meta = {"video": video, "audio": {"duration": float(5 / q)}, "duration": float(5 / q)}
+                got = join.output_rate(video["fps"], video, False)
+                self.assertEqual(got, q, "the join runs at the clip's declared rate, not the short average")
+                whole = join.with_whole_picture(meta, got)
+                self.assertEqual(join.clip_frames(whole, join.clip_length(whole, float(got)), got), 5)
+        # a clip whose duration holds every frame is left as it is, and --fps still decides
+        full = {"nb_frames": 5, "duration": 5 / 30, "fps": 30.0, "r_frame_rate": "30/1", "avg_frame_rate": "30/1"}
+        self.assertIs(join.with_whole_picture({"video": full}, Fraction(30))["video"], full)
+        self.assertEqual(join.output_rate(25.0, full, True), Fraction(25))
+
     def test_join_sound_overlaps_add_up_to_the_picture(self):
         """A transition whose length is not a whole number of samples: 9 frames at 30000/1001 is
         14414.4 samples. Each acrossfade's overlap was rounded on its own (14414), so the sound
