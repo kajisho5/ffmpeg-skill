@@ -1583,12 +1583,15 @@ class EditingTests(MediaFixtures):
                    "sine=f=440:r=48000", "-frames:v", "300", "-t", "11", "-c:v", "ffv1", "-c:a", "pcm_s16le", src)
                 clips = []
                 for k in range(60):
-                    clip = d / f"c{tag}_{k:02d}.mp4"
+                    # PCM in MOV: a sound exactly as long as the clip's frames. An AAC clip's tail
+                    # is read differently by FFmpeg versions (7.1 ran each 5-frame clip 1-2 frames
+                    # long, #475), which is not what this test measures
+                    clip = d / f"c{tag}_{k:02d}.mov"
                     s0, s1 = round(5 * k * 48000 / q), round(5 * (k + 1) * 48000 / q)
                     sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf",
                        f"trim=start_frame={5 * k}:end_frame={5 * k + 5},setpts=PTS-STARTPTS", "-af",
                        f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "libx264", "-qp", "0",
-                       "-preset", "ultrafast", "-c:a", "aac", clip)
+                       "-preset", "ultrafast", "-c:a", "pcm_s16le", clip)
                     clips.append(clip)
                 self.assertEqual(probe(str(clips[0]))["video"]["nb_frames"], 5, "the premise: 5 frames a clip")
                 out = d / f"joined_{tag}.mp4"
@@ -1596,7 +1599,7 @@ class EditingTests(MediaFixtures):
                                         "-o", out).stdout)
                 self.assertTrue(doc["verified"], doc["verification"])
                 pts = self._frame_pts(out)
-                self.assertEqual(len(pts), 300, "total frames == the clips' frames")
+                self.assertEqual(len(pts), 300, f"total frames == the clips' frames (clip_frames {doc.get('clip_frames')})")
                 step = 1 / float(q)
                 worst = max(abs((b - a) - step) for a, b in zip(pts, pts[1:]))
                 self.assertLess(worst, 0.002, f"no hole in the picture's timeline (worst step off by {worst:.4f} s)")
