@@ -608,7 +608,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("server.json", release)
         # release.yml publishes the entry itself, after npm has the version (the registry reads
         # mcpName from the npm package), with GitHub's OIDC token and no stored secret
-        self.assertRegex(release, r"(?m)^  id-token: write")
+        self.assertRegex(release, r"(?m)^      id-token: write")  # granted to the release job (Scorecard Token-Permissions)
         npm_step = release.index("name: Publish to npm")
         ask = release.index("name: Ask whether the MCP Registry already lists this version")
         publish = release.index("name: Publish to the MCP Registry")
@@ -651,6 +651,46 @@ class ContractTests(unittest.TestCase):
         self.assertIn("branch_protection_rule:", scorecard)
         self.assertIn("security-events: write", scorecard)
         self.assertIn("id-token: write", scorecard)
+
+    def test_workflows_pin_actions_and_grant_writes_per_job(self):
+        """Scorecard Pinned-Dependencies and Token-Permissions: every `uses:` names a full
+        commit SHA (a tag can be moved under a job that holds a write token or the release
+        PAT), and no workflow grants a write scope at the top level -- writes are granted to
+        the one job that needs them. The landing page loads its one third-party asset with
+        Subresource Integrity."""
+        wf = ROOT / ".github" / "workflows"
+        for f in sorted(wf.glob("*.yml")):
+            text = f.read_text(encoding="utf-8")
+            for ref in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", text, re.M):
+                if ref.startswith("./"):
+                    continue
+                self.assertRegex(ref, r"@[0-9a-f]{40}$", f"{f.name}: {ref} is not pinned to a commit")
+            top = text[:text.index("\njobs:")]
+            block = re.search(r"^permissions:(.*?)(?=^\S)", top + "\nEND", re.M | re.S)
+            self.assertIsNotNone(block, f"{f.name} has no top-level permissions")
+            self.assertNotIn("write", block.group(0), f"{f.name} grants a write scope at the top level")
+        site = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("unpkg.com", site)
+        for tag in re.findall(r"<(?:script|link)\b[^>]*\b(?:src|href)=\"https://[^\"]*\"[^>]*>", site):
+            if "rel=\"stylesheet\"" in tag or "<script" in tag:
+                if "fonts.googleapis.com" in tag:
+                    continue  # Google Fonts serves CSS per user agent; SRI cannot pin it
+                self.assertIn("integrity=\"sha384-", tag, tag)
+                self.assertIn("crossorigin=\"anonymous\"", tag, tag)
+
+    def test_every_fuzz_target_runs_on_its_seeds(self):
+        """ClusterFuzzLite builds fuzz/*_fuzzer.py with atheris; without atheris each target runs
+        its seed inputs instead, so a target that no longer imports or that crashes on a seed
+        fails here on every CI run, not only in the weekly fuzz job."""
+        targets = sorted((ROOT / "fuzz").glob("*_fuzzer.py"))
+        self.assertGreaterEqual(len(targets), 3)
+        for target in targets:
+            seeds = sorted((ROOT / "fuzz" / "seeds" / target.stem[:-len("_fuzzer")]).iterdir())
+            self.assertTrue(seeds, target.name)
+            proc = subprocess.run([sys.executable, str(target), *map(str, seeds)], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, (target.name, proc.stderr[-2000:]))
+        build = (ROOT / ".clusterfuzzlite" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(build, r"(?m)^FROM \S+@sha256:[0-9a-f]{64}$")
 
     def test_pages_site_builds_with_no_dead_links(self):
         """The GitHub Pages site (pages.yml) is assembled from the repo's own Markdown by
