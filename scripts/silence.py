@@ -73,10 +73,11 @@ def ends_sentence(word: str) -> bool:
     return bool(text) and text[-1] in SENTENCE_END
 
 
-def silence_positions(silences: List[Tuple[float, float]], words: "list") -> List[str]:
+def silence_positions(silences: List[Tuple[float, float]], words: "list",
+                      duration: Optional[float] = None) -> List[str]:
     """Per silence, `sentence_end` when the word spoken before it ends a sentence, else `inside`.
     The word before a silence is the last one whose own midpoint lies before the silence's
-    midpoint (before its start, for a silence that runs to the end of the file). An engine
+    midpoint; a silence that runs to the end of the file ends at `duration`. An engine
     stretches a word's timing into the pause beside it, the end of the word before or the start
     of the word after (on demos/footage/ai_talk_en.mp4 three word starts sit 0.45 to 0.5 s before
     the sound does), and a word's midpoint stays on its own side of the pause either way. A
@@ -84,7 +85,9 @@ def silence_positions(silences: List[Tuple[float, float]], words: "list") -> Lis
     timed = sorted(words, key=lambda w: w["start"] + w["end"])
     out: List[str] = []
     for s, e in silences:
-        ref = s if e == float("inf") else (s + e) / 2
+        if e == float("inf"):
+            e = max(s, duration) if duration is not None else s
+        ref = (s + e) / 2
         before = [w for w in timed if (w["start"] + w["end"]) / 2 < ref]
         out.append("sentence_end" if before and ends_sentence(before[-1]["word"]) else "inside")
     return out
@@ -658,7 +661,7 @@ def main() -> int:
     sentence_info: Optional[Dict[str, Any]] = None
     if by_sentence:
         words, words_source = sentence_words(args)
-        found = silence_positions(silences, words)
+        found = silence_positions(silences, words, duration)
         # a silence that runs to the end of the file is as long as what is left of the file
         kept_pairs = [(span, pos) for span, pos in zip(silences, found)
                       if (duration if span[1] == float("inf") else span[1]) - span[0]

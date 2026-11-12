@@ -2587,7 +2587,10 @@ class EditingTests(MediaFixtures):
         self.assertEqual(silence.silence_positions(
             [(2.0, 4.0), (6.0, 8.0), (10.0, float("inf"))],
             [{"word": "one", "start": 0.1, "end": 2.3}, {"word": "two.", "start": 4.1, "end": 6.4},
-             {"word": "three!", "start": 8.2, "end": 9.9}]), ["inside", "sentence_end", "sentence_end"])
+             {"word": "three!", "start": 8.2, "end": 9.9}], 12.0), ["inside", "sentence_end", "sentence_end"])
+        # the last word's timing reaches into the silence that runs to the end of the file
+        self.assertEqual(silence.silence_positions(
+            [(2.0, float("inf"))], [{"word": "Done.", "start": 1.5, "end": 3.0}], 10.0), ["sentence_end"])
         self.assertEqual(silence.silence_positions([(0.0, 1.0)], [{"word": "late.", "start": 1.2, "end": 2}]), ["inside"])
         # an engine stretches a word into the pause beside it: the next word's start (2.6, before
         # the pause's midpoint) must not make it the word before the pause, nor the previous
