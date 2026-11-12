@@ -1271,6 +1271,40 @@ class SourceCarryTests(MediaFixtures):
             self.assertEqual(self._timecode_written(OUT / name), [want], args)
             self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), f"{args}: {doc.get('source_carry')}")
 
+    def test_the_start_label_rounds_once_and_a_rate_below_one_fps_drops_it(self):
+        """00:00:00:02 at 25 fps plus 0.08 s is 4.8 frames at 30 fps: rounded once it is frame 5,
+        and the source label and the offset rounded apart made it 2 + 2 = 4. A delivered rate
+        below 1 fps rounded to a zero-length day and fit --fps 0.4 raised ZeroDivisionError
+        before encoding; no frame count names a frame there, so the label is removed."""
+        from _common.timeline import output_timecode_args
+        meta = {"timecode": {"value": "00:00:00:02"}, "video": {"fps": 25.0}}
+        self.assertEqual(output_timecode_args(meta, 0.08, 30)[1], "timecode=00:00:00:05")
+        self.assertEqual(output_timecode_args(meta, 0.08)[1], "timecode=00:00:00:04")
+        self.assertEqual(output_timecode_args(meta, 0.0, 0.4), ["-metadata:s:v:0", "timecode=", "-metadata", "timecode="])
+
+    def test_fit_trim_seeks_early_and_drops_the_margin_on_the_output_side(self):
+        """fit --method trim seeked straight to its start before -i, which can land on a
+        keyframe whose picture follows it (a B-frame HEVC source) and lose the frames before it,
+        while the start timecode names the requested frame. It now seeks SEEK_MARGIN early and
+        drops the margin after -i, as cut.py does, and still delivers the requested length."""
+        src = OUT / "fit_trim_seek.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
+           "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-pix_fmt", "yuv420p", src)
+        plan = json.loads(script("fit.py", src, "--duration", "2", "--method", "trim", "--from-center",
+                                 "-o", OUT / "fit_trim_seek_out.mp4", "--overwrite", "--dry-run", "--json").stdout)
+        cmd = (plan.get("commands") or [{}])[0]
+        argv = cmd.get("argv") if isinstance(cmd, dict) else cmd
+        argv = argv.split() if isinstance(argv, str) else list(argv)
+        i = argv.index("-i")
+        self.assertEqual(argv[argv.index("-ss"):argv.index("-ss") + 2], ["-ss", "0.000"], argv)
+        self.assertEqual(argv[i + 1:].count("-ss"), 1, argv)
+        self.assertEqual(argv[argv.index("-ss", i) + 1], "1.000", argv)
+        out = OUT / "fit_trim_seek_out.mp4"
+        script("fit.py", src, "--duration", "2", "--method", "trim", "--from-center", "--preset", "ultrafast",
+               "-o", out, "--overwrite")
+        self.assertEqual(probe(str(out))["video"].get("nb_frames") or 50, 50)
+        self.assertAlmostEqual(probe(str(out))["duration"], 2.0, delta=0.05)
+
 
 class GeometryAuditDeliveryTests(unittest.TestCase):
     """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""

@@ -178,13 +178,16 @@ def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float], rat
         src_rate = exact_rate(float(fps))
         out_rate = exact_rate(float(rate)) if rate else src_rate
         drop = _drop_frame(tc.get("drop_frame"), out_rate)
-        nominal = int(round(float(out_rate)))
-        day = (nominal * 600 - (nominal // 15) * 9) * 144 if drop else nominal * 86400
-        base = start_tc_frames(tc, src_rate)
-        if out_rate != src_rate:
-            base = int(round(Fraction(base) * out_rate / src_rate))
-        frames = base + int(round(Fraction(first_frame).limit_denominator(1000000) * out_rate))
-        label = _tc_label(frames % day, out_rate, drop)
+        nominal = round(float(out_rate))
+        if nominal >= 1:
+            day = (nominal * 600 - (nominal // 15) * 9) * 144 if drop else nominal * 86400
+            # the source label and the offset to the first frame, both in output frames, rounded
+            # once: 00:00:00:02 at 25 fps plus 0.08 s is 4.8 frames at 30, so frame 5, not 2 + 2
+            pos = (Fraction(start_tc_frames(tc, src_rate)) / src_rate
+                   + Fraction(first_frame).limit_denominator(1000000)) * out_rate
+            label = _tc_label(round(pos) % day, out_rate, drop)
+        # below 1 fps no frame count can name a frame: the label is removed, as when the first
+        # frame is unknown, rather than divide by a zero-length day
     STATE.expected_timecode = label
     return ["-metadata:s:v:0", f"timecode={label}", "-metadata", f"timecode={label}"]
 

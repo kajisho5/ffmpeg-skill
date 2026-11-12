@@ -39,7 +39,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import delivered_rate, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
@@ -178,8 +178,13 @@ def main() -> int:
         else:
             if target < src_dur:
                 start = (src_dur - target) / 2 if args.from_center else 0.0
-                pre_input += ["-ss", f"{start:.3f}"]
-                post += ["-t", f"{target:.3f}"]
+                # seek SEEK_MARGIN early and drop the margin on the output side, as cut.py does:
+                # an input seek straight to `start` can land on a keyframe whose picture comes
+                # after it (a B-frame HEVC source) and lose the frames before it, so the first
+                # picture would not be the one the start timecode below names
+                m = min(SEEK_MARGIN, round(start, 3))
+                pre_input += ["-ss", f"{start - m:.3f}"]
+                post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", f"{target:.3f}"]
                 # the output starts on the first frame at or after the seek (a seek before a
                 # picture that starts after the file's origin: on its first frame): its start
                 # timecode is that frame's, not the source's first frame's
