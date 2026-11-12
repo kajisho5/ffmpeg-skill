@@ -716,7 +716,7 @@ def main() -> int:
     if silences or not args.filler or args.speech_aware or by_sentence:
         # the seconds of each silence this run kept: `tail` from where the silence starts (after
         # the speech before it), `lead` up to where it ends (before the speech after it). Absent
-        # under --filler alone, which detects no silences and so applies neither.
+        # under --filler with neither --speech-aware nor a sentence flag: no silence is detected.
         summary["margins"] = {"lead": lead, "tail": tail}
     if sentence_info is not None:
         # which of `silences` follow a sentence end, and the floor and tail those were given
