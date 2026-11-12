@@ -2165,8 +2165,10 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   because the video was batch's own), it gives each step a snapshot of the files it delivered
   (`runner.OWNED_ENV`, internal to batch.py), and the step's own output check
   (`refuse_existing_outputs()`) passes an existing target only while it is still that file and
-  reports back each path it was allowed to write; `deliver()` compares the final path's identity
-  again under the output lock. A file another process puts there between that check and the
+  reports back each path it was allowed to write, with the identity each had when it was written
+  (`runner.report_committed()`, called where a write lands); `deliver()` compares the final path's
+  identity again under the output lock and records the one it leaves. An SRT edited while the same
+  item's video was still encoding no longer matches what was written and is refused next pass. A file another process puts there between that check and the
   write itself is the same window every tool's own `--overwrite` check has. A side file a step
   writes without that check, or one of an item that failed, is not recorded, so the next pass
   refuses it. A plain batch (no `--watch`) has no previous poll and processes what is there.
@@ -2176,6 +2178,7 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   `test_batch_watch_rechecks_its_own_output_where_it_replaces_it`,
   `test_batch_watch_step_refuses_its_own_output_replaced_before_its_check`,
   `test_batch_watch_replaces_its_own_side_files_but_not_an_edited_one`,
+  `test_batch_watch_does_not_adopt_a_side_file_edited_while_the_step_ran`,
   `test_batch_item_never_replaces_a_side_file_another_item_delivered`,
   `test_a_step_replaces_only_the_files_batch_delivered_unchanged`,
   `test_batch_watch_reports_a_source_still_settling_when_it_stops`.

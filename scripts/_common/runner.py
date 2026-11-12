@@ -1263,17 +1263,21 @@ def _remember_output(cmd: Sequence[str]) -> None:
         STATE.written.add(os.path.realpath(output))
     except OSError:
         pass
+    report_committed(output)
 
 
 # set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:
 # owned_identity()}, "report": directory}. "replaceable" is every file that batch process
 # delivered (a --watch loop's earlier passes) as it left it; a step replaces one of those without
 # --overwrite while it is still that file, and nothing else. Each process that passes the output
-# check writes the paths it was allowed to write to <report>/<pid>.json, so batch learns the side
-# files (an .srt beside the video) it delivered, not only the final path.
+# check writes <report>/<pid>.json: {"targets": the paths it was allowed to write, "committed":
+# {real path: owned_identity()} taken when each of them was written (report_committed), so batch
+# learns the side files (an .srt beside the video) it delivered as they were when written, not as
+# they are when the item ends -- an edit made while a later step ran is not adopted.
 OWNED_ENV = "_FFMPEG_SKILL_OWNED"
 _OWNED_CACHE: Dict[str, Dict[str, Any]] = {}
 _OWNED_TARGETS: Dict[str, List[str]] = {}
+_OWNED_COMMITTED: Dict[str, Dict[str, Dict[str, int]]] = {}
 
 
 def owned_identity(path: str) -> "Optional[Dict[str, int]]":
@@ -1334,11 +1338,36 @@ def report_owned_targets(paths: Sequence[Optional[str]], config: Optional[str] =
                 continue
             if real not in targets:
                 targets.append(real)
+    _write_owned_report(config, report)
+
+
+def _write_owned_report(config: str, report: str) -> None:
+    doc = {"targets": _OWNED_TARGETS.get(config, []), "committed": _OWNED_COMMITTED.get(config, {})}
     try:
         with open(os.path.join(report, f"{os.getpid()}.json"), "w", encoding="utf-8") as fh:
-            json.dump(targets, fh)
+            json.dump(doc, fh)
     except OSError:
         pass
+
+
+def report_committed(path: Optional[str], config: Optional[str] = None) -> None:
+    """Under batch.py: record the identity `path` has right now, just after this process wrote it,
+    if it passed this process's output check. What batch later lets a step replace is that file
+    as it was written; one edited afterwards no longer matches and is refused."""
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    report = _owned_config(config).get("report")
+    if not path or not isinstance(report, str) or not report:
+        return
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return
+    if real not in _OWNED_TARGETS.get(config, []):
+        return
+    ident = owned_identity(real)
+    if ident:
+        _OWNED_COMMITTED.setdefault(config, {})[real] = ident
+        _write_owned_report(config, report)
 
 
 def remember_written(*paths: Optional[str]) -> None:
@@ -1351,6 +1380,7 @@ def remember_written(*paths: Optional[str]) -> None:
                 STATE.written.add(os.path.realpath(path))
             except OSError:
                 pass
+            report_committed(path)
 
 
 def _timed_out(cmd: Sequence[str], seconds: float) -> "None":

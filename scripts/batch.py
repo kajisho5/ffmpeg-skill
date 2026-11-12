@@ -267,19 +267,19 @@ def is_own_output(src: Path, final: Path) -> bool:
     return expected is not None and owned_identity(str(final)) == expected
 
 
-def record_own(src: Path, paths: "List[str]", work: Path) -> None:
-    """Remember the files this item delivered, as they are now: the item's next pass may replace
-    each one while it is still that file. Paths in the item's work directory go with it and are
-    skipped. Replaces what an earlier pass of the item recorded."""
+def record_own(src: Path, committed: "Dict[str, Dict[str, int]]", work: Path) -> None:
+    """Remember the files this item delivered, each with the identity it had when it was written
+    (a step's report_committed(), deliver() for the final path), never as it is now: a sidecar
+    edited while a later step ran no longer matches, so the item's next pass refuses it. Paths in
+    the item's work directory go with it and are skipped. Replaces what an earlier pass of the item
+    recorded."""
     base = os.path.realpath(str(work))
     mine: Dict[str, Dict[str, int]] = {}
-    for p in paths:
+    for p, ident in committed.items():
         real = os.path.realpath(p)
-        if real == base or real.startswith(base + os.sep):
+        if real == base or real.startswith(base + os.sep) or not isinstance(ident, dict):
             continue
-        ident = owned_identity(real)
-        if ident:
-            mine[real] = ident
+        mine[real] = ident
     with _OWN_LOCK:
         _OWN_OUTPUTS[str(src)] = mine
 
@@ -297,20 +297,23 @@ def owned_config(src: Path, work: Path, i: int) -> Path:
     return cfg
 
 
-def owned_reports(work: Path) -> List[str]:
-    """Every path the item's steps reported writing (owned_config's report directory)."""
-    found: List[str] = []
+def owned_reports(work: Path) -> "Dict[str, Dict[str, int]]":
+    """{path: identity when written} for every file the item's steps reported committing
+    (owned_config's report directory). A path a step was allowed to write but never reported
+    writing is not in it."""
+    found: Dict[str, Dict[str, int]] = {}
     for f in sorted((work / "owned-report").glob("*.json")) if (work / "owned-report").is_dir() else []:
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(doc, list):
-            found.extend(p for p in doc if isinstance(p, str))
+        committed = doc.get("committed") if isinstance(doc, dict) else None
+        if isinstance(committed, dict):
+            found.update({p: i for p, i in committed.items() if isinstance(p, str) and isinstance(i, dict)})
     return found
 
 
-def deliver(src: str, final: Path, expected: "Optional[Dict[str, int]]" = None) -> None:
+def deliver(src: str, final: Path, expected: "Optional[Dict[str, int]]" = None) -> "Optional[Dict[str, int]]":
     """Move an item's last written intermediate to its final path, under the output guard every
     tool applies: an existing file is replaced only with --overwrite, or when it is still exactly
     `expected` -- the file this process delivered there on an earlier pass -- checked under the
@@ -351,7 +354,10 @@ def deliver(src: str, final: Path, expected: "Optional[Dict[str, int]]" = None) 
                         pass
                 raise ItemError({"step": None, "tool": None, "kind": "output",
                                  "message": f"could not deliver {src} to {final}: {exc}"})
+        # the delivered file as it was put there, taken under the lock: what a later pass may replace
+        ident = owned_identity(str(final))
     log(f"  delivered the last written file to {final}")
+    return ident
 
 
 def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
@@ -363,7 +369,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
     # existing file it would write against it; deliver() checks the final path under its lock
     track = not STATE.dry_run and not STATE.overwrite
 
-    delivered: List[str] = []
+    delivered: Dict[str, Dict[str, int]] = {}
 
     def owned(i: int) -> "Optional[Path]":
         return owned_config(src, work, i) if track else None
@@ -440,14 +446,15 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             # the last step wrote nothing: the item's deliverable is the last file a step wrote,
             # which is in this item's work directory and would be removed with it (#415)
             try:
-                deliver(cur, final, expected=own_expected(src, final))
-                delivered.append(str(final))
+                ident = deliver(cur, final, expected=own_expected(src, final))
+                if ident:
+                    delivered[str(final)] = ident
             except ItemError as exc:
                 ok, failure = False, exc.error
     if ok and track:
-        # what this item delivered, as it left it: every path its steps passed the output check
-        # for (side files included) and the final path deliver() moved into place
-        record_own(src, owned_reports(work) + delivered, work)
+        # what this item delivered, each file as it was when written: the paths its steps reported
+        # committing (side files included) and the final path deliver() moved into place
+        record_own(src, {**owned_reports(work), **delivered}, work)
     result: Dict[str, Any] = {"file": str(src), **row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if failure:
         result["error"] = failure

@@ -5914,12 +5914,14 @@ class BatchSourcePathTests(unittest.TestCase):
         return code, json.loads(out.getvalue())
 
     @staticmethod
-    def child_step(argv, owned, sidecars=(), before_check=None, also=()):
+    def child_step(argv, owned, sidecars=(), before_check=None, also=(), while_encoding=None):
         """A step as every tool runs its output guard (runner.refuse_existing_outputs): each
         existing file it would write -- the -o output, `sidecars` (suffixes beside it) and `also`
         (paths) -- is
         refused without --overwrite unless it is a file batch delivered and nobody changed
-        (runner.owned_replaceable), and the paths that pass are reported back. Copies {in}."""
+        (runner.owned_replaceable), and the paths that pass are reported back. Writes the side
+        files first, as caption.py writes its SRT before the video, each reported as written
+        (runner.report_committed); `while_encoding` runs between them and the video. Copies {in}."""
         from _common import runner
         src, out = argv[1], argv[argv.index("-o") + 1]
         targets = [out] + [os.path.splitext(out)[0] + sfx for sfx in sidecars] + [str(p) for p in also]
@@ -5932,9 +5934,13 @@ class BatchSourcePathTests(unittest.TestCase):
             return False, {"status": "failed", "error": {"kind": "input", "reason": "output_exists",
                                                          "message": f"refusing to overwrite existing outputs {taken!r}"}}
         runner.report_owned_targets(targets, cfg)
-        shutil.copyfile(src, out)
         for p in targets[1:]:
             Path(p).write_text("1\n00:00:00,000 --> 00:00:01,000\n" + Path(src).name + "\n", encoding="utf-8")
+            runner.report_committed(p, cfg)
+        if while_encoding:
+            while_encoding(out)
+        shutil.copyfile(src, out)
+        runner.report_committed(out, cfg)
         return True, {"status": "completed", "verified": True}
 
     def watch(self, folder, recipe, polls, run_step, *extra):
@@ -6073,6 +6079,36 @@ class BatchSourcePathTests(unittest.TestCase):
         self.assertEqual(srt.read_text(encoding="utf-8"), "hand-corrected\n")
         self.assertEqual(final.read_bytes(), b"B" * 100)
 
+    def test_batch_watch_does_not_adopt_a_side_file_edited_while_the_step_ran(self):
+        """caption.py writes its SRT before the video finishes encoding. Batch recorded each file it
+        delivered by statting it when the whole item ended, so an SRT the user corrected while the
+        video encoded was recorded as batch's own, and the next pass replaced the correction
+        without --overwrite. Each file is now recorded as it was when its writer wrote it: the
+        edited SRT no longer matches, is refused (output_exists) and is kept."""
+        folder = self.work / "in"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        self.settled_source(src, b"A" * 100)
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_c",
+                                      "steps": [["caption.py", "{in}", "--text", "t.txt", "-o", "{out}"]]}), encoding="utf-8")
+        srt = folder / "out" / "a_c.srt"
+        edits = []
+
+        def edit_srt(_out):
+            if not edits:
+                srt.write_text("corrected while the video encoded\n", encoding="utf-8")
+                edits.append(True)
+
+        def run_step(argv, per_call=None, owned=None):
+            return self.child_step(argv, owned, sidecars=(".srt",), while_encoding=edit_srt)
+        code, doc = self.watch(folder, recipe, [
+            lambda: self.settled_source(src, b"B" * 100),      # pass 2: the source changed (settling)
+            None,                                              # pass 3: refused
+        ], run_step)
+        self.assertEqual((code, doc["results"][0]["error"]["reason"]), (1, "output_exists"), doc)
+        self.assertEqual(srt.read_text(encoding="utf-8"), "corrected while the video encoded\n")
+
     def test_batch_item_never_replaces_a_side_file_another_item_delivered(self):
         """The permission is per item: two items whose step names one side file (a fixed
         --write-srt) do not share it -- the second is refused as before, and the first's file is
@@ -6125,7 +6161,7 @@ class BatchSourcePathTests(unittest.TestCase):
             ident = runner.owned_identity(str(ours))
             cfg = config("c1.json", {os.path.realpath(ours): ident})
             self.assertEqual(check(cfg, [ours]), "passed")
-            self.assertEqual(json.loads((report / f"{os.getpid()}.json").read_text()), [os.path.realpath(ours)])
+            self.assertEqual(json.loads((report / f"{os.getpid()}.json").read_text())["targets"], [os.path.realpath(ours)])
             self.assertEqual(check(cfg, [ours, theirs]), "refused")
             ours.write_bytes(b"edited")
             self.assertEqual(check(config("c2.json", {os.path.realpath(ours): ident}), [ours]), "refused")

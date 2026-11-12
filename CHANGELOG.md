@@ -53,8 +53,9 @@
   output and any side file a step wrote, such as an `.srt`), and nobody changed since, is
   replaced when its source changes. Each file is checked on its own, by the output check of the
   step that writes it (batch passes no `--overwrite`) or under the output lock when batch moves
-  the output into place, so an edited sidecar, or an output another process put there meanwhile,
-  is still refused without `--overwrite`.
+  the output into place, so an edited sidecar (also one edited while the same item was still
+  encoding: each file is recorded as it was when written), or an output another process put there
+  meanwhile, is still refused without `--overwrite`.
 - **Text symbols are no longer taken for emoji.** `♪ ✓ ★` (not emoji in Unicode's emoji-data)
   and `♥ ✔ ☺` (emoji only when VS16 follows) were counted as emoji because the whole Misc
   Symbols, Dingbats and Misc Symbols and Arrows blocks were. A `mode: none` run (auto on macOS, or
