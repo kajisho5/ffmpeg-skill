@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.5
+
+_Automated release: version and notes generated from pull requests merged since 3.6.4._
+
 ### Fixed
 
 - **Caller text and JSON files are read one way, and odd input is read as ffmpeg reads it or
@@ -28,6 +34,9 @@
   reader's docstring says, while valid words elsewhere in the file are still read;
   `silence.py --words` refuses a file only when no valid word is left. `caption.py --ass`
   with `--offset` refuses a file that is not UTF-8 on the real run as the dry run does.
+- fix: one reader for caller text and JSON files; SRT cues keyed on timing lines (#483)
+- test(join): cut, crop and join of three H.264 + AAC parts keeps every frame (#482)
+- test(join): short H.264 + AAC MP4 clips keep their frames (#481)
 
 ## 3.6.4
 
