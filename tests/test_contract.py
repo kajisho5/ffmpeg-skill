@@ -4029,7 +4029,8 @@ class ContractTests(unittest.TestCase):
         pv.write_text(json.dumps({"output": "bed.wav", "clips": [{"src": str(self.src)}], "audio": {"music": "bed.wav"}}),
                       encoding="utf-8")
         proc = tool("render", pv, "--stop-after", "clips", "--overwrite", "--dry-run", "--json", check=False)
-        self.assertNotEqual((json.loads(proc.stdout).get("error") or {}).get("reason"), "output_is_input", proc.stderr)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIsNone(json.loads(proc.stdout).get("error"), proc.stdout)
         self.assertEqual(bed.read_bytes(), before)
 
     def test_a_colour_is_six_hex_digits_or_refused(self):
