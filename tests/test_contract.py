@@ -3915,6 +3915,37 @@ class ContractTests(unittest.TestCase):
                 err = json.loads(proc.stdout)["error"]
                 self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
         self.assertFalse((work / "out.mp4").exists())
+        # DASH and IMF are told by content, as ffmpeg's own probes tell them: a manifest named .mp4
+        # made every tool follow its BaseURL to another local file (and over HTTP). The case and a
+        # long comment before <MPD do not hide it from ffmpeg, so they do not hide it here.
+        mpd = (f'<MPD profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static" '
+               f'mediaPresentationDuration="PT1S"><Period><AdaptationSet mimeType="video/mp4"><Representation id="1" '
+               f'bandwidth="1000"><BaseURL>{self.src}</BaseURL></Representation></AdaptationSet></Period></MPD>\n')
+        dash = work / "dash.mp4"
+        dash.write_text('<?xml version="1.0"?>\n' + mpd, encoding="utf-8")
+        hidden = work / "dash_hidden.mov"
+        hidden.write_text("<!--" + "x" * 5000 + "-->\n" + mpd.replace("<MPD", "<mpd").replace("</MPD>", "</mpd>"), encoding="utf-8")
+        named_mpd = work / "manifest.mpd"
+        named_mpd.write_text(mpd, encoding="utf-8")
+        # dash_probe() also accepts the 3GPP profile in place of dash:profile
+        dash3gpp = work / "dash_3gpp.mp4"
+        dash3gpp.write_text(mpd.replace("urn:mpeg:dash:profile:isoff-on-demand:2011", "urn:3GPP:PSS:profile:DASH1"), encoding="utf-8")
+        imf = work / "cpl.mp4"
+        imf.write_text('<?xml version="1.0"?>\n<CompositionPlaylist xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">'
+                       "<Id>urn:uuid:0</Id><ContentTitle>x</ContentTitle></CompositionPlaylist>\n", encoding="utf-8")
+        self.assertEqual(sh("ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", dash).stdout.strip(),
+                         "dash", "the fixture must be what ffprobe reads as DASH")
+        self.assertEqual(sh("ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", dash3gpp,
+                            check=False).stdout.strip(), "dash", "ffprobe reads the 3GPP profile as DASH too")
+        for path in (dash, hidden, named_mpd, dash3gpp, imf):
+            for name, args in (("probe", [path]), ("cut", [path, "--start", "0", "--end", "0.5", "-o", work / "pulled.mp4"])):
+                proc = tool(name, *args, "--json", check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
+        self.assertFalse((work / "pulled.mp4").exists())
+        # a real media file is not read past its first NUL byte, and is not refused
+        import importlib
+        self.assertIsNone(importlib.import_module("_common.runner")._manifest_kind(str(self.src)))
         if hasattr(os, "mkfifo"):  # a pipe is refused before anything opens it (an open would block)
             fifo = work / "pipe.mp4"
             if not fifo.exists():
@@ -3926,6 +3957,191 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((err["kind"], err["reason"]), ("input", "output_looks_like_option"))
         self.assertEqual([p.name for p in work.glob("ffmpeg-*.log")], [], "the output reached ffmpeg as -report")
 
+    def test_render_refuses_an_output_that_is_any_file_the_project_names(self):
+        """render.py's last stage is a copy from its work directory, so run()'s own guard never sees
+        the sources: the guard compared the output with the clips and overlay videos only, and
+        with --overwrite a project whose output was its own music bed replaced it."""
+        work = self.out("render_guard"); work.mkdir(exist_ok=True)
+        bed = work / "bed.wav"
+        shutil.copy(self.wav, bed)
+        before = bed.read_bytes()
+        brand = work / "brand.json"
+        brand.write_text('{"name": "x"}', encoding="utf-8")
+        for key, value, output in (("audio", {"music": "bed.wav"}, "bed.wav"),
+                                   ("brand", "brand.json", "brand.json"),
+                                   ("overlays", [{"image": "bed.wav"}], "bed.wav"),
+                                   ("overlays", [{"text": "hi", "font_file": "brand.json"}], "brand.json")):
+            proj = work / f"p_{key}.json"
+            proj.write_text(json.dumps({"output": output, "clips": [{"src": str(self.src)}], key: value}), encoding="utf-8")
+            for extra in ([], ["--dry-run"]):
+                proc = tool("render", proj, "--overwrite", "--json", *extra, check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["reason"], "output_is_input", (key, extra, proc.stderr))
+        self.assertEqual(bed.read_bytes(), before)
+        self.assertEqual(brand.read_text(encoding="utf-8"), '{"name": "x"}')
+        # inline caption text is not a path: a cue that happens to read like the output is no refusal
+        import importlib
+        render = importlib.import_module("render")
+        found = render.project_input_files({"captions": {"text": "final.mp4"}, "clips": []}, lambda p: str(work / p))
+        self.assertEqual(found, [])
+        # an overlays value of the wrong type is the overlay stage's to refuse, not a traceback here
+        self.assertEqual(render.project_input_files({"overlays": 42}, lambda p: str(work / p)), [])
+        # the audiogram image reaches waveform.py resolved against the project file, the path the
+        # guard checked, not against the caller's working directory
+        img = work / "cover.png"
+        ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", img)
+        ag = work / "p_audiogram.json"
+        ag.write_text(json.dumps({"output": "ag.mp4", "clips": [{"src": str(self.wav)}],
+                                  "audiogram": {"image": "cover.png"}}), encoding="utf-8")
+        proc = tool("render", ag, "--dry-run", "--json", cwd=self.work)
+        def forwarded_path(stage: str, flag: str) -> str:
+            line = next((l for l in proc.stderr.splitlines() if stage in l), "")
+            m = re.search(re.escape(flag) + r" (.+?) --", line)
+            self.assertTrue(m, proc.stderr)
+            return m.group(1)
+        # the same file, whatever spelling (a Windows 8.3 short name) the temp directory has
+        self.assertTrue(os.path.samefile(forwarded_path("waveform.py", "--image"), img), proc.stderr)
+        # an overlay font_file reaches overlay.py resolved the same way
+        ov = work / "p_font.json"
+        ov.write_text(json.dumps({"output": "f.mp4", "clips": [{"src": str(self.src)}],
+                                  "overlays": [{"text": "hi", "font_file": "brand.json"}]}), encoding="utf-8")
+        proc = tool("render", ov, "--dry-run", "--json", cwd=self.work)
+        self.assertTrue(os.path.samefile(forwarded_path("overlay.py", "--font-file"), brand), proc.stderr)
+        # and the project file itself is an input: its own output may not replace it
+        selfout = work / "selfout.json"
+        selfout.write_text(json.dumps({"output": "selfout.json", "clips": [{"src": str(self.src)}]}), encoding="utf-8")
+        text = selfout.read_text(encoding="utf-8")
+        proc = tool("render", selfout, "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input", proc.stderr)
+        self.assertEqual(selfout.read_text(encoding="utf-8"), text)
+        # the brand's own font file, resolved against the brand file, is an input too
+        font = work / "brandfont.ttf"
+        font.write_bytes(b"not really a font")
+        (work / "brand2.json").write_text('{"font_file": "brandfont.ttf"}', encoding="utf-8")
+        bp = work / "p_brandfont.json"
+        bp.write_text(json.dumps({"output": "brandfont.ttf", "clips": [{"src": str(self.src)}], "brand": "brand2.json"}),
+                      encoding="utf-8")
+        proc = tool("render", bp, "--overwrite", "--dry-run", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input", proc.stderr)
+        self.assertEqual(font.read_bytes(), b"not really a font")
+        # a --stop-after preview never writes `output`, so naming an input there is no refusal
+        pv = work / "p_preview.json"
+        pv.write_text(json.dumps({"output": "bed.wav", "clips": [{"src": str(self.src)}], "audio": {"music": "bed.wav"}}),
+                      encoding="utf-8")
+        proc = tool("render", pv, "--stop-after", "clips", "--overwrite", "--dry-run", "--json", check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIsNone(json.loads(proc.stdout).get("error"), proc.stdout)
+        self.assertEqual(bed.read_bytes(), before)
+
+    def test_a_colour_is_six_hex_digits_or_refused(self):
+        """color_hex() checked the length only: a six-letter name ("yellow", "orange") drew black text
+        reported verified, and a quote or a comma reached the filter graph as kind ffmpeg."""
+        for name, args in (("caption", [self.src, "--text", "hi", "--color", "yellow"]),
+                           ("caption", [self.src, "--text", "hi", "--outline-color", "'],abc"]),
+                           ("graphics", [self.src, "--template", "title", "--title", "HI", "--text-color", "orange"])):
+            proc = tool(name, *args, "-o", self.out("colour.mp4"), "--dry-run", "--json", check=False)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual(err["kind"], "input", (args, proc.stderr))
+            self.assertIn("hex", err["message"], err)
+        import importlib
+        color = importlib.import_module("_common.color")
+        self.assertEqual(color.color_hex("#ffd200"), "FFD200")
+        self.assertEqual(color.color_hex("0xFFD200"), "FFD200")
+
+    def test_a_path_with_a_line_break_never_reaches_a_concat_list(self):
+        """The concat demuxer reads each line as a directive and has no escape for a line break, so
+        a name containing one added `file` entries to the list: loop.py on "a\\nfile <other>"
+        pulled <other>, named nowhere on the command line, into the output."""
+        if os.name == "nt":
+            self.skipTest("Windows file names cannot hold a line break")
+        work = self.out("line_break"); work.mkdir(exist_ok=True)
+        odd = work / "a\nfile b.mp4"
+        shutil.copy(self.src, odd)
+        for name, args in (("loop", [odd, "--times", "2", "-o", work / "looped.mp4"]),
+                           ("join", ["--copy", "--transition", "none", odd, odd, "-o", work / "joined.mp4"])):
+            proc = tool(name, *args, "--json", check=False)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_has_line_break"), (name, proc.stderr))
+        self.assertEqual([p.name for p in work.iterdir() if p.suffix == ".mp4" and "\n" not in p.name], [])
+
+    def test_hidden_temp_names_are_never_written_through_a_planted_link(self):
+        """The staging temp, place_output's temp and a lock's default audit log are fixed hidden
+        names in the caller's output directory. A symlink planted at one was followed: an
+        --overwrite run wrote the encode into the link's target and left the output a symlink to
+        it. The temps are now created exclusively, and the default audit log is opened without
+        following a link."""
+        if os.name == "nt":
+            self.skipTest("symlinks need privileges on Windows")
+        import importlib
+        runner = importlib.import_module("_common.runner")
+        emit = importlib.import_module("_common.emit")
+        work = self.out("planted"); work.mkdir(exist_ok=True)
+        victim = work / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        first = work / f".out.ffskill-{os.getpid()}.mp4"
+        if first.is_symlink() or first.exists():
+            first.unlink()
+        first.symlink_to(victim)
+        out = work / "out.mp4"
+        out.write_bytes(b"old")
+        cmd, final, tmp = runner._stage_existing_output(["ffmpeg", "-i", str(self.src), str(out)])
+        self.assertEqual(final, str(out))
+        self.assertNotEqual(tmp, str(first))
+        self.assertTrue(os.path.isfile(tmp) and not os.path.islink(tmp), tmp)
+        self.assertEqual(cmd[-1], tmp)
+        os.remove(tmp)
+        # place_output() and batch.py copy through the descriptor that created the temp
+        again = runner.copy_to_sibling(str(self.src), str(out))
+        self.assertNotEqual(again, str(first))
+        self.assertTrue(os.path.isfile(again) and not os.path.islink(again))
+        self.assertEqual(Path(again).read_bytes(), Path(self.src).read_bytes())
+        os.remove(again)
+        self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+        # a name that could not be created exclusively is never handed out
+        from unittest import mock
+        with mock.patch.object(runner, "_reserve", return_value=(str(work / ".x"), None)):
+            with self.assertRaises(SystemExit):
+                runner.reserve_sibling(str(work), "out", ".mp4")
+            with self.assertRaises(OSError):
+                runner.copy_to_sibling(str(self.src), str(out))
+        log = work / ".out.mp4.ffskill-audit.jsonl"
+        if log.is_symlink() or log.exists():
+            log.unlink()
+        log.symlink_to(victim)
+        with unittest.mock.patch.object(emit, "warn"):
+            res = emit.audit("stale_lock_taken_over", {"lock": "x"}, default_path=str(log))
+        self.assertFalse(res["written"], res)
+        self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+        # without O_NOFOLLOW (Windows) a link at the name is refused, and so is one that appears
+        # between the look and the open
+        nofollow = os.O_NOFOLLOW
+        real_open = os.open
+        def swap_then_open(p, *a, **k):
+            if os.path.lexists(p):
+                os.unlink(p)
+            os.symlink(victim, p)
+            return real_open(p, *a, **k)
+        def swap_then_hardlink(p, *a, **k):
+            fd = swap_then_open(p, *a, **k)
+            os.unlink(p)
+            os.link(victim, p)  # the identity check alone would now pass
+            return fd
+        try:
+            del os.O_NOFOLLOW
+            for opener in (real_open, swap_then_open, swap_then_hardlink):
+                if not log.is_symlink():
+                    if log.exists():
+                        log.unlink()
+                    if opener is real_open:
+                        log.symlink_to(victim)
+                with unittest.mock.patch.object(emit, "warn"), unittest.mock.patch.object(emit.os, "open", opener):
+                    res = emit.audit("stale_lock_taken_over", {"lock": "x"}, default_path=str(log))
+                self.assertFalse(res["written"], (opener, res))
+                self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+                log.unlink()
+        finally:
+            os.O_NOFOLLOW = nofollow
+
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
         """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
         The skill reads and writes local files only, so such an input or output is refused as
@@ -3934,8 +4150,14 @@ class ContractTests(unittest.TestCase):
         import importlib, socket
         runner = importlib.import_module("_common.runner")
         for url in ("tcp:127.0.0.1:9?x=.mkv", "http://127.0.0.1:9/../../x.mkv", "file:other.mp4", "FILE:x.mp4",
-                    "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA=="):
+                    "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA==",
+                    # ffmpeg's url_find_protocol() reads `subfile,<options>:<url>` as the subfile
+                    # protocol: the scheme stops at the comma, so the regex alone missed it
+                    "subfile,,start,0,end,0,,:clip.mp4"):
             self.assertTrue(runner.looks_like_url(url), url)
+        self.assertEqual(runner.url_scheme("subfile,,start,0,end,0,,:clip.mp4"), "subfile")
+        self.assertFalse(runner.looks_like_url("subfile_clip.mp4"))
+        self.assertFalse(runner.looks_like_url("subfile,clip.mp4"))
         for path in ("./clip:1.mp4", "clips/a:b.mp4", "pipe:1", "-", "a.mp4",
                      "/abs/a.mp4", "sine=frequency=440:sample_rate=48000"):
             self.assertFalse(runner.looks_like_url(path), path)
@@ -7477,13 +7699,14 @@ class Issue415Tests(unittest.TestCase):
                 raise OSError(18, "Invalid cross-device link")
             return real_replace(a, b)
 
-        def copyfile(a, b):
-            Path(b).write_bytes(b"ne")
+        def copyfileobj(fin, fout, *args):
+            # the copy now writes the descriptor that created the temp (never reopening its name)
+            fout.write(b"ne")
             raise OSError(28, "No space left on device")
         saved = (batch.STATE.dry_run, batch.STATE.overwrite)
         try:
             batch.STATE.dry_run, batch.STATE.overwrite = False, True
-            with mock.patch("os.replace", replace), mock.patch("shutil.copyfile", copyfile):
+            with mock.patch("os.replace", replace), mock.patch("shutil.copyfileobj", copyfileobj):
                 with self.assertRaises(batch.ItemError):
                     batch.deliver(str(src), final)
         finally:

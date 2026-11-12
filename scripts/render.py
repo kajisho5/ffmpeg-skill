@@ -464,6 +464,64 @@ def check_overlay(ov: Any, label: str) -> None:
         die(f"{label}: scale sizes an image, logo or video layer; text size is font_size", kind="input")
 
 
+def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
+    """Every file a project names as an input: clip sources, music/replace/effects, the brand,
+    caption files (a --text value that names an existing file), overlay images, videos and fonts, the
+    audiogram image, a beat grid's source and the chapters file. Values of the wrong type are left
+    to the stage that reads them."""
+    found: List[str] = []
+
+    def add(value: Any, must_exist: bool = False) -> None:
+        if isinstance(value, str) and value:
+            p = rel(value)
+            if not must_exist or os.path.isfile(p):
+                found.append(p)
+
+    for c in proj.get("clips") or []:
+        if isinstance(c, dict):
+            add(c.get("src"))
+            if isinstance(c.get("snap"), dict):
+                add(c["snap"].get("source"))
+    for key in ("audio", "captions", "audiogram", "snap"):
+        if not isinstance(proj.get(key), dict):
+            continue
+        obj = proj[key]
+        if key == "audio":
+            for k in ("music", "replace", "effects"):
+                add(obj.get(k))
+        elif key == "captions":
+            add(obj.get("srt"))
+            add(obj.get("ass"))
+            add(obj.get("text"), must_exist=True)  # inline cue text is not a path
+        elif key == "audiogram":
+            add(obj.get("image"))
+        else:
+            add(obj.get("source"))
+    add(proj.get("brand"))
+    brand = proj.get("brand")
+    if isinstance(brand, str) and brand:
+        # the brand's own logo and font_file are read by the overlay and caption stages, resolved
+        # against the brand file as load_brand() resolves them; an unreadable brand is left to them
+        try:
+            data = json.loads(Path(rel(brand)).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            base = Path(rel(brand)).resolve().parent
+            for k in ("logo", "font_file"):
+                v = data.get(k)
+                if isinstance(v, str) and v and "://" not in v:
+                    found.append(v if os.path.isabs(v) else str(base / v))
+    add(proj.get("chapters"), must_exist=True)
+    overlays = proj.get("overlays")
+    for ov in (overlays if isinstance(overlays, list) else []):  # any other type is the overlay stage's to refuse
+        if isinstance(ov, dict):
+            add(ov.get("image"))
+            add(ov.get("video"))
+            add(ov.get("font_file"))
+    return found
+
+
 def require_object(obj: Any, label: str) -> None:
     """Refuse a value that is not an object where the run reads it with .get(): "export": "reels"
     in a render, a string frame, a clip written as a bare path. 2.2.1 died there with a traceback
@@ -1216,8 +1274,13 @@ def main() -> int:
     if not clips:
         die("project.clips is empty")
     output = rel(proj.get("output") or "final.mp4")
-    # the final stage is a copy from the work dir, so run()'s own guard never sees the sources (review 5)
-    refuse_output_is_input(output, *[rel(c.get("src")) for c in clips if c.get("src")])
+    # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
+    # (review 5): every file the project names is passed here, not only the clips, or --overwrite
+    # replaced a music bed or a brand file named as the output
+    if not args.stop_after or args.stop_after == "export":
+        # only a run that ends in the final copy writes `output`; a --stop-after preview writes
+        # its stage file inside the work directory and leaves `output` alone
+        refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel))
     if _reaches("overlays", args.stop_after):
         # #326: an overlay video is the caller's file, never an earlier stage's output, so a
         # missing one is refused here, under --dry-run too, not after every stage before it ran
@@ -1396,7 +1459,12 @@ def main() -> int:
                           ("color", "--color"), ("background", "--background"),
                           ("width", "--width"), ("height", "--height"), ("fps", "--fps")):
             if ag.get(key) is not None:
-                argv += [flag, str(ag[key])]
+                value = ag[key]
+                if key == "image" and isinstance(value, str) and "://" not in value:
+                    # against the project file, as every other path here and as the output guard
+                    # checks it; it used to reach waveform.py as written, against the cwd
+                    value = rel(value)
+                argv += [flag, str(value)]
         argv += brand_args
         sh("waveform.py", *argv, stage="audiogram")
         current = nxt
@@ -1542,7 +1610,8 @@ def main() -> int:
         for k, flag in (("position", "--position"), ("start", "--start"), ("end", "--end"), ("fade", "--fade"), ("opacity", "--opacity"), ("scale", "--scale"), ("font_size", "--font-size"), ("font", "--font"), ("font_file", "--font-file"), ("margin", "--margin"), ("platform", "--platform"),
                         ("chromakey", "--chromakey"), ("chromakey_similarity", "--chromakey-similarity"), ("chromakey_blend", "--chromakey-blend")):
             if ov.get(k) is not None:
-                argv += [flag, str(ov[k])]
+                # font_file is a path: the same one project_input_files() guards
+                argv += [flag, rel(ov[k]) if k == "font_file" and ov[k] else str(ov[k])]
         if ov.get("box"):
             argv.append("--box")
         # review 12: the overlay stage was the one stage that never heard which destination this

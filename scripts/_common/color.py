@@ -312,13 +312,20 @@ def fold_bt709_matrix(cmd: Sequence[str]) -> List[str]:
     return out[:at] + ["-vf", conv] + out[at:]
 
 
+_HEX6 = re.compile(r"^[0-9A-Fa-f]{6}$")
+
+
 def color_hex(value: str) -> str:
-    """Normalise '#ffd200' / 'ffd200' / '0xFFD200' to 'FFD200'."""
+    """Normalise '#ffd200' / 'ffd200' / '0xFFD200' to 'FFD200'. Six hex digits only: the result is
+    written into libass styles and drawtext/color options, so a six-letter colour name ("yellow")
+    used to pass the length check and draw black, reported verified, and a quote or comma reached
+    the filter graph."""
     v = str(value).strip().lstrip("#")
     if v.lower().startswith("0x"):
         v = v[2:]
-    if len(v) != 6:
-        die(f"colour must be RRGGBB, got '{value}'")
+    if not _HEX6.match(v):
+        die(f"colour must be six hex digits RRGGBB (e.g. FFD200 or #ffd200), got '{value}'; colour names are not "
+            "accepted here")
     return v.upper()
 
 
