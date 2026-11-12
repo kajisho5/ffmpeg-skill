@@ -4,25 +4,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- **A tool writes the picture and the sound it measured, on a file with two of either** (A110,
-  A118, A128, A258). Where a command had no `-map`, FFmpeg's default selection chose the largest
-  picture and the track with the default disposition or the most channels, while every
-  measurement and check was taken from what `probe()` describes: the first picture that is not a
-  cover (`V:0`) and the first audio track (`a:0`). `loudness.py` measured track 1 and applied that
-  gain to track 0 (a -16 LUFS target came out more than 10 LU short); `export.py` exported a different track
-  depending on whether the source had a subtitle stream; `cut.py` and `crop.py` wrote the larger
-  picture they never probed (`crop.py`'s rectangle was checked against the other one);
-  `stabilize.py` analysed and wrote it too. `audio.py --mono` read the channel count of track 0
-  for the `--audio-stream` track, so a stereo track came out stereo and a mono one lost 6 dB.
-  `_common.probe.probed_maps()` now maps those streams, and the shared measurements
-  (`decode_pcm_mono`, `decode_gray_frames`, `measured_level_dbfs`, `detect_silences`,
-  `detect_scenes`, `analyze_levels`) read them, as do `check.py`'s loudness row, `cropdetect.py`,
-  `look.py`, `scenes.py --sheet`, `silence.py`'s cut levels and `sync.py`'s output. A file with
-  one picture and one sound builds the same `cut.py` stream copy as before; with several, the copy
-  maps the first subtitle stream where the container holds it as it is and reports it dropped
-  (`dropped_non_av_streams`) where it does not.
+(nothing yet)
 
 ## 3.6.6
 
