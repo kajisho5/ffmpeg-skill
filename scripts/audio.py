@@ -157,6 +157,22 @@ def find_silent_tracks(args: argparse.Namespace, problems: List[Dict[str, Any]])
     return silent
 
 
+def main_track_channels(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
+    """Channel count of the track audio.py processes: --replace's first audio track, else the
+    input's --audio-stream track; 0 when it is not known (a dry run's pending input)."""
+    if args.replace:
+        if dry_run_input_pending(args.replace) or not os.path.isfile(args.replace):
+            return 0
+        proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0", "-show_entries",
+                    "stream=channels", "-of", "csv=p=0", args.replace], quiet=True, check=False)
+        first = (proc.stdout or "").strip().splitlines()[:1]
+        return int(first[0]) if first and first[0].strip().isdigit() else 0
+    streams = meta.get("audio_streams") or []
+    if 0 <= args.audio_stream < len(streams):
+        return streams[args.audio_stream].get("channels") or 0
+    return (meta.get("audio") or {}).get("channels") or 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -279,7 +295,10 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(streams)} audio stream(s), 0..{len(streams) - 1}")
     if args.audio_stream and not streams and not STATE.dry_run:
         die("--audio-stream needs an input with audio streams")
-    in_channels = (meta.get("audio") or {}).get("channels") or 0
+    # the channels of the track the graph processes (main_src below): the --audio-stream track,
+    # or --replace's first track. meta["audio"] is the input's first track, so a mono a:0 left a
+    # stereo --audio-stream 1 unfolded by --mono, and a stereo a:0 halved a mono one (A128)
+    in_channels = main_track_channels(args, meta)
     if args.stereo_widen is not None:
         if args.mono:
             die("--stereo-widen and --mono contradict each other: there is no stereo image in a 1-channel output")
@@ -324,7 +343,7 @@ def main() -> int:
     if args.limit:
         fx.append(dynamics_filter("alimiter", args))
     if args.mono:
-        in_ch = (meta.get("audio") or {}).get("channels") or 2
+        in_ch = in_channels or 2
         if in_ch == 2:
             fx.append("pan=mono|c0=0.5*c0+0.5*c1")
         elif in_ch > 2:

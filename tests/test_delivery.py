@@ -17,7 +17,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, sar_clip, script, sh  # noqa: E402
+from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, make_multistream,  # noqa: E402
+                       sar_clip, script, sh, written_track)
 from _common import probe  # noqa: E402
 
 
@@ -717,6 +718,23 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual([(d["type"], d["reason"]) for d in doc["non_av_streams"]["dropped"]], [("subtitle", "gif")])
         self.assertTrue(doc["dropped_non_av_streams"])
         self.assertTrue(any("GIF" in n for n in doc["notes"]), doc.get("notes"))
+
+    def test_export_writes_the_probed_streams_with_or_without_a_subtitle_track(self):
+        """A118: the picture and sound were mapped only beside a subtitle or data stream; without
+        one, FFmpeg's default selection exported the larger picture and the track with the most
+        channels, so the same source exported a different audio track once its subtitles were
+        stripped. Both now export v:0 and a:0, the streams probe() describes."""
+        for subtitle in (True, False):
+            src = make_multistream(OUT / f"export_multi_{int(subtitle)}.mkv", subtitle=subtitle)
+            for preset in ("youtube", "copy"):
+                with self.subTest(subtitle=subtitle, preset=preset):
+                    out = OUT / f"export_multi_{int(subtitle)}_{preset}.mkv" if preset == "copy" else \
+                        OUT / f"export_multi_{int(subtitle)}_{preset}.mp4"
+                    script("export.py", src, "--preset", preset, "--no-scale", "--fast", "-o", out, "--json")
+                    m = probe(str(out))
+                    self.assertEqual((m["video"]["width"], m["video"]["height"]), MULTI_PROBED["size"])
+                    self.assertEqual(written_track(out), "a:0")
+                    self.assertEqual(m["subtitle_streams"], int(subtitle))
 
     def test_export_converts_the_track_to_the_containers_own_text_format(self):
         """mov_text cannot be copied into Matroska nor SubRip into MP4 (ffmpeg refuses the header):

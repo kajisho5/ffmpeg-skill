@@ -23,6 +23,7 @@ from _platforms import TP_TOLERANCE_DB
 
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
+from _common.probe import PROBED_AUDIO, probed_maps
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -65,7 +66,11 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     if dry_run_input_pending(path):
         return {"input_i": "-20.0", "input_tp": "-3.0", "input_lra": "8.0", "input_thresh": "-30.0", "target_offset": "0.0", "silent": False, "placeholder": True}
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
+    # the first audio track, the one pass 2 normalises and probe() describes: without a -map,
+    # FFmpeg measured the track with the default disposition or the most channels, and the gain
+    # for that track was applied to a:0 (A110)
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
+           "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
     # Pass 1 is a measurement: it runs under --dry-run too, so the planned pass-2 command and
     # the reported input_i are real (before 1.4.6 a dry run returned a made-up -20 LUFS).
     proc = run_analysis(cmd, check=False, record=True)
@@ -112,9 +117,9 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             af += f",atrim=duration={float(in_audio):.6f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
-            cmd += ["-vn"] + audio_codec_for(output, bitrate)
+            cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn"] + audio_codec_for(output, bitrate)
         else:
-            cmd += ["-map", "0:v:0", "-map", "0:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
+            cmd += probed_maps(meta) + ["-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
             if ext in (".mp4", ".mov", ".m4v"):
                 cmd += ["-movflags", "+faststart"]
             dropped_streams = run_keeping_subtitles(cmd, output)

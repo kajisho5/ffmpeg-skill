@@ -61,7 +61,8 @@ from typing import List, Tuple
 from _common.runner import JsonTooDeep, fail_if_classified, read_json
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
-from _common.probe import TS_EXTS, signatures_match, stream_signature
+from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
+from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
@@ -145,6 +146,29 @@ def copy_args(meta: dict, dst: str) -> List[str]:
     if os.path.splitext(dst)[1].lower() in (".mp4", ".mov", ".m4v"):
         args += ["-movflags", "+faststart"]
     return args
+
+
+def stream_maps(meta: dict, dst: str, copy: bool) -> List[str]:
+    """The -map arguments of a cut: the picture and the sound probe() describes, which every
+    measurement here (keyframes, start skew, timecode, length) is taken from. ffmpeg's default
+    selection wrote the largest picture and the track with the default disposition or the most
+    channels instead (A258). A stream copy of a file with one picture and one sound keeps the
+    default selection, command for command (it also carries a subtitle stream into a container
+    whose muxer names a subtitle codec, such as Matroska). With several, the first subtitle stream
+    is mapped when the container holds it as it is, and is otherwise left out and reported
+    (DROPPED_STREAMS)."""
+    audio_only = is_audio_output(dst) or not meta.get("video")
+    if copy and not several_av_streams(meta):
+        return []
+    maps = probed_maps(meta, video=not audio_only)
+    subs = meta.get("subtitle_stream_details") or []
+    if copy and not audio_only and subs:
+        codec, ext = subs[0].get("codec") or "", os.path.splitext(dst)[1].lstrip(".").lower()
+        if subtitle_container_holds(codec, ext) and subtitle_codec_for(codec, ext) == "copy":
+            maps += ["-map", "0:s:0"]
+        else:
+            DROPPED_STREAMS.append(dst)
+    return maps
 
 
 LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}
@@ -870,7 +894,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             # -ss before -i seeks, then decoding discards samples up to the exact start
             # (accurate_seek); atrim bounds the decoded stream to the requested length at sample
             # resolution.
-            cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"]
+            cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=False)
             cmd += ["-af", f"atrim=end={dur:.6f},asetpts=PTS-STARTPTS"]
         else:
             # Seek SEEK_MARGIN early, then drop the margin on the output side, which decodes and
@@ -879,6 +903,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             # `start` and lose the frames before it (-ss 9.9 on a B-frame HEVC file began at 10.0).
             m = min(SEEK_MARGIN, start)
             cmd = ffmpeg_base() + ["-ss", f"{start - m:.6f}", "-i", src, "-ss", f"{m:.6f}", "-t", f"{dur:.6f}"]
+            cmd += stream_maps(meta, dst, copy=False)
         # ffmpeg's default stream selection also picks one subtitle stream; a re-encode cannot
         # trim it (the cues kept their timestamps and the container grew to 2 s for a 1 s cut,
         # sweep F2), so the re-encode carries video/audio only and the result says so
@@ -901,7 +926,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     elif audio_only:
         # output-side seek: an input seek on a video file lands on the previous video keyframe and on
         # FLAC/MP3 on a coarse index; reading from the start and dropping packets is exact to the packet
-        cmd = ffmpeg_base() + ["-i", src, "-ss", f"{start:.6f}", "-t", f"{dur:.6f}"] + copy_args(meta, dst) + ["-avoid_negative_ts", "make_zero", dst]
+        cmd = (ffmpeg_base() + ["-i", src, "-ss", f"{start:.6f}", "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=True)
+               + copy_args(meta, dst) + ["-avoid_negative_ts", "make_zero", dst])
     else:
         # With --edit-list a single MP4/MOV output keeps the edit list the plain copy writes: the
         # keyframe's pre-roll is stored but hidden, so the picture and the sound start at `start`.
@@ -913,7 +939,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         # Other concat parts (Matroska, MPEG-TS) keep make_zero.
         edit_list = (edit_list_ok or copy_t is not None) and os.path.splitext(dst)[1].lower() in EDIT_LIST_EXTS
         cmd = (ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur if copy_t is None else copy_t:.6f}"]
-               + copy_args(meta, dst) + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
+               + stream_maps(meta, dst, copy=True) + copy_args(meta, dst)
+               + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
     if not audio_only and (meta.get("timecode") or {}).get("value"):
         cmd[-1:-1] = output_timecode_args(meta, first_frame_from(src, meta, start, reencode, edit_list and copy_t is None),
                                           delivered_rate(meta) if reencode else None)
@@ -1098,7 +1125,7 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
             # concat filter starts the next segment after the longer stream, so a short picture
             # would leave a hole in the video there
             pad = f"tpad=stop_mode=clone:stop_duration={e - vend + 1.0:.6f}," if first + i in hold else ""
-            graph.append(f"[{i}:v:0]{pad}trim=start={a - half:.6f}:end={b - half:.6f},setpts=PTS-{a:.6f}/TB[v{i}]")
+            graph.append(f"[{i}:{PROBED_VIDEO}]{pad}trim=start={a - half:.6f}:end={b - half:.6f},setpts=PTS-{a:.6f}/TB[v{i}]")
             pads += f"[v{i}]"
         if has_a:
             # fade only the sides that meet another segment: the file's own start and end stay as cut
@@ -1109,7 +1136,7 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
                 fades += f",afade=t=in:st=0:d={fade:.6f}"
             if fade > 0 and n < (len(segments) if total is None else total) - 1:
                 fades += f",afade=t=out:st={b - a - fade:.6f}:d={fade:.6f}"
-            graph.append(f"[{i}:a:0]atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB,"
+            graph.append(f"[{i}:{PROBED_AUDIO}]atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB,"
                          f"aresample=async=1:first_pts=0{fades}[a{i}]")
             pads += f"[a{i}]"
     outs = ("[v]" if has_v else "") + ("[a]" if has_a else "")

@@ -34,6 +34,7 @@ from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_inp
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
 from _common.decision import frame_rate, stream_starts
+from _common.probe import PROBED_AUDIO
 
 
 
@@ -305,7 +306,8 @@ def cut_levels(path: str, tm: Dict[str, Any], duration: float,
     out = []
     with tempfile.TemporaryDirectory(prefix="silence-levels-") as tmp:
         raw = os.path.join(tmp, "pcm.s16le")
-        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vn",
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                             "-map", f"0:{PROBED_AUDIO}", "-vn",
                              "-ac", str(channels), "-ar", str(CUT_LEVEL_RATE), "-f", "s16le", "-y", raw],
                             check=False, text=False)
         if proc.returncode != 0 or not os.path.isfile(raw) or not os.path.getsize(raw):

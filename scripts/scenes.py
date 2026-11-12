@@ -30,7 +30,7 @@ from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter  # noqa: E402
-from _common.probe import square_pixels  # noqa: E402
+from _common.probe import PROBED_VIDEO, square_pixels  # noqa: E402
 from _common import dry_run_input_pending  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
@@ -348,7 +348,7 @@ def main() -> int:
         vf = (f"select='{expr}'," + (lab + "," if lab else "") + (square + "," if square else "")
               + f"scale={tile_w}:-2{stamp},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        run(ffmpeg_base() + ["-i", args.input, "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
+        run(ffmpeg_base() + ["-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
 

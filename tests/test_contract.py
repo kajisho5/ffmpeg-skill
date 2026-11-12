@@ -3024,7 +3024,7 @@ class ContractTests(unittest.TestCase):
             ("overlay", [pc, "--image", self.logo], {lim: 1}),
             ("overlay", [self.src, "--image", self.logo], {"out_range=tv,": 1}),  # the logo's own conversion only
             ("look", [self.src, "--at", "1"], {"setparams=colorspace=bt709:range=tv,scale=": 1}),
-            ("export", [self.src, "--preset", "gif"], {"[0:v]setparams=colorspace=bt709:range=tv,fps=12": 1}),
+            ("export", [self.src, "--preset", "gif"], {"[0:V:0]setparams=colorspace=bt709:range=tv,fps=12": 1}),
         ]
         for k, (name, args, want) in enumerate(cases):
             with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
