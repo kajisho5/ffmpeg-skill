@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.3
+
+_Automated release: version and notes generated from pull requests merged since 3.6.2._
+
 ### Fixed
 
 - **`join.py` cuts every clip to whole frames and its sound to whole samples** (#455). Each clip
@@ -30,6 +36,7 @@
   step: 3.6.2 was on npm but not on the MCP Registry until the job was re-run. It now waits for
   npm to have the version (that is what the registry steps need), runs the registry steps, and
   only then fails the job if `latest` is still behind after ten minutes.
+- fix(join): whole-frame clip lengths and frame-exact xfade offsets; release waits for the npm version, not for latest (#473)
 
 ## 3.6.2
 
