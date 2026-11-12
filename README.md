@@ -592,7 +592,7 @@ Where it can be installed from today. Each route is spelled out below the table.
 | MCP Registry | clients that install from the registry | `io.github.kajisho5/ffmpeg-skill` ([entry](https://registry.modelcontextprotocol.io/v0/servers/io.github.kajisho5%2Fffmpeg-skill/versions/latest)); the release workflow publishes a new version there after npm, and a failed registry step leaves the entry on the previous version |
 | GitHub release | a pinned copy | [releases](https://github.com/kajisho5/ffmpeg-skill/releases) |
 
-Not listed in a directory yet: the Claude plugin directory, the Cursor Marketplace, the Gemini CLI extension gallery and Glama (each is submitted and waiting on its review or crawl). This table gains a row when a listing goes live; until then the routes above are the whole list.
+Not listed in a directory yet. The Claude plugin directory accepts a plugin that ships scripts or programs only from an organization Anthropic has marked Verified, and there is no way to ask for that yet, so the submission is on hold (the tools are Python files; a text-only build would install nothing that runs). The Cursor Marketplace, the Gemini CLI extension gallery and Glama are submitted and waiting on their review or crawl. This table gains a row when a listing goes live; until then the routes above are the whole list.
 
 ```bash
 npx ffmpeg-skill              # Claude Code   → ~/.claude/skills/ffmpeg-skill
