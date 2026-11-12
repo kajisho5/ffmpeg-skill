@@ -1755,6 +1755,40 @@ class EditingTests(MediaFixtures):
         self.assertIs(join.with_whole_picture({"video": full}, Fraction(24))["video"], full)
         self.assertEqual(join.output_rate(25.0, full, True), Fraction(25))
 
+    def test_join_short_h264_mp4_clips_keep_their_frames(self):
+        """#475's first report: 5-frame H.264 + AAC clips in MP4, as a camera or an export writes
+        them, joined with no transition. 6.1 gave 5 frames each; 7.1 gave 7 (418 frames for 60
+        clips). Diagnostics print what probe() read, so a failure on another FFmpeg says why."""
+        from fractions import Fraction
+        d = OUT / "join_h264_short"
+        d.mkdir(exist_ok=True)
+        sys.path.insert(0, str(SCRIPTS))
+        from _common import probe
+        from _common.decision import stream_starts
+        for rate in ("30", "30000/1001"):
+            with self.subTest(rate=rate):
+                q = Fraction(rate)
+                clips = []
+                for k in range(12):
+                    clip = d / f"c{rate.replace('/', '_')}_{k}.mp4"
+                    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                       f"testsrc2=s=64x48:r={rate}", "-f", "lavfi", "-i", "sine=f=440:r=48000",
+                       "-frames:v", "5", "-t", f"{5 / float(q):.6f}", "-c:v", "libx264", "-qp", "0",
+                       "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", clip)
+                    clips.append(clip)
+                out = d / f"joined_{rate.replace('/', '_')}.mp4"
+                doc = json.loads(script("join.py", *clips, "--transition", "none", "--json", "-o", out).stdout)
+                m = probe(str(clips[0]))
+                diag = {"video": {k: m["video"].get(k) for k in ("start_time", "duration", "nb_frames", "fps",
+                                                                  "r_frame_rate", "avg_frame_rate")},
+                        "audio": {k: (m.get("audio") or {}).get(k) for k in ("start_time", "duration")},
+                        "stream_starts": stream_starts(m), "clip_frames": doc.get("clip_frames"),
+                        "frame_rate": doc.get("frame_rate")}
+                self.assertEqual(doc.get("clip_frames"), [5] * 12, f"clip diagnostics: {diag}")
+                counted = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries",
+                             "stream=nb_read_frames", "-of", "csv=p=0", out).stdout.strip().split(",")[0]
+                self.assertEqual(int(counted), 60, f"clip diagnostics: {diag}")
+
     def test_join_sound_overlaps_add_up_to_the_picture(self):
         """A transition whose length is not a whole number of samples: 9 frames at 30000/1001 is
         14414.4 samples. Each acrossfade's overlap was rounded on its own (14414), so the sound
