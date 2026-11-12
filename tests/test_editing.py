@@ -1604,7 +1604,15 @@ class EditingTests(MediaFixtures):
                                         "-o", out).stdout)
                 self.assertTrue(doc["verified"], doc["verification"])
                 pts = self._frame_pts(out)
-                self.assertEqual(len(pts), 300, f"total frames == the clips' frames (clip_frames {doc.get('clip_frames')})")
+                if len(pts) != 300:
+                    # what this FFmpeg reports for one clip, for #475 (the clip-length rule)
+                    from _common.decision import stream_starts
+                    m0 = probe(str(clips[0]))
+                    seen = {"clip_frames": doc.get("clip_frames"), "stream_starts": stream_starts(m0),
+                            "video": {k: m0["video"].get(k) for k in ("duration", "start_time", "fps", "nb_frames")},
+                            "audio": {k: (m0.get("audio") or {}).get(k) for k in ("duration", "start_time")},
+                            "duration": m0.get("duration")}
+                    self.fail(f"total frames {len(pts)} != the clips' 300: {seen}")
                 step = 1 / float(q)
                 worst = max(abs((b - a) - step) for a, b in zip(pts, pts[1:]))
                 self.assertLess(worst, 0.002, f"no hole in the picture's timeline (worst step off by {worst:.4f} s)")
