@@ -1046,6 +1046,8 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
             die(f'brand file {path}: "{key}" must be a string, got {type(value).__name__}', kind="input")
     base = Path(path).resolve().parent
     for k, v in data.items():
+        if v is None and isinstance(brand.get(k), dict):
+            continue  # a null block keeps its defaults: readers walk it as an object (#483 review)
         if isinstance(v, dict) and isinstance(brand.get(k), dict):
             brand[k].update(v)
         else:

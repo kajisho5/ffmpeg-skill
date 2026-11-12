@@ -23,9 +23,10 @@
   `export.preset`; a plan's `inputs`, `unbound_inputs`, `verify`, `commands`, `cwd`; a recipe's `glob`, `project`,
   `output_dir`, `suffix`, `ext`, `clip_key`, an absolute glob or a step that is not a list; a brand
   that is not an object or whose `caption`/`styles.caption` is not one), are refused as
-  `kind: input`; a plan gets the new `error.reason` `plan_field_invalid`. A whisper word-timing
-  JSON of the wrong shape (a segment that is a string or a list) is no word timings, as its
-  docstring says, and `silence.py --words` then refuses it for having none. `caption.py --ass`
+  `kind: input`; a plan gets the new `error.reason` `plan_field_invalid`. In a whisper word-timing
+  JSON, a segment of the wrong shape (a string or a list) contributes no word timings, as the
+  reader's docstring says, while valid words elsewhere in the file are still read;
+  `silence.py --words` refuses a file only when no valid word is left. `caption.py --ass`
   with `--offset` refuses a file that is not UTF-8 on the real run as the dry run does.
 
 ## 3.6.4

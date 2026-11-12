@@ -8895,6 +8895,24 @@ class TextAndJsonReaderTests(unittest.TestCase):
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
+    def test_a_null_brand_block_keeps_its_defaults(self):
+        """{"colors": null} merged None over the defaults and caption.py's bc.get() raised
+        AttributeError; a null object block now keeps the defaults (#483 review)."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common.decision import load_brand, BRAND_DEFAULTS
+        path = self.write("null_brand.json", {"colors": None, "caption": None, "logo": None})
+        brand = load_brand(str(path))
+        self.assertEqual(brand["colors"], BRAND_DEFAULTS["colors"])
+        self.assertEqual(brand["caption"], BRAND_DEFAULTS["caption"])
+        self.assertIsNone(brand.get("logo"))
+
+    def test_a_null_clip_key_is_clip_zero_where_it_is_used(self):
+        """batch.py accepted "clip_key": null as clip 0 and then int(None) failed every item."""
+        import re as _re
+        src = (SCRIPTS / "batch.py").read_text(encoding="utf-8")
+        self.assertNotIn('int(recipe.get("clip_key", 0))', src)
+        self.assertTrue(_re.search(r'int\(recipe\.get\("clip_key"\) or 0\)', src))
+
     def write(self, name, body):
         path = self.work / name
         if isinstance(body, bytes):

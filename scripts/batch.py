@@ -422,7 +422,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         if not isinstance(proj, dict):
             raise ItemError({"step": None, "tool": "render.py", "kind": "input", "reason": "recipe_project_unreadable",
                              "message": f"recipe.project: {recipe['project']} is not a JSON object"})
-        idx = int(recipe.get("clip_key", 0))
+        idx = int(recipe.get("clip_key") or 0)  # null is clip 0, as check_recipe_types() reads it
         proj.setdefault("clips", [{}])
         while len(proj["clips"]) <= idx:
             proj["clips"].append({})
