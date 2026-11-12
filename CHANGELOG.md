@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.0
+
+_Automated release: version and notes generated from pull requests merged since 3.5.0._
+
 ### Added
 
 - **`silence.py --sentence-min-silence` and `--sentence-margin-tail`.** With word timings
@@ -16,6 +22,7 @@
   and the run warns `sentence_ends_not_found`. With `--filler` the flags turn silence removal on
   as well. Refused with
   `--speech-aware` and without a transcript. Second part of #449.
+- feat(silence): --sentence-min-silence and --sentence-margin-tail for the pause after a sentence end (#452)
 
 ## 3.5.0
 
