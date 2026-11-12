@@ -1004,6 +1004,42 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "output_dir_not_writable", f"output directory {parent!r} is not writable", output=output, directory=parent)
 
 
+# What the WebM muxer takes (6.1: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and
+# WebVTT subtitles are supported for WebM"), by the encoder a command names (#488).
+_WEBM_VIDEO_ENCODER_RE = re.compile(r"^(?:libvpx(?:-vp9)?|vp8|vp9|libaom-av1|libsvtav1|librav1e|av1|vp8_\w+|vp9_\w+|av1_\w+)$")
+_WEBM_AUDIO_ENCODER_RE = re.compile(r"^(?:libopus|opus|libvorbis|vorbis)$")
+_CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec$")
+
+
+def _check_container_codecs(cmd: Sequence[str]) -> None:
+    """A `.webm` output whose command encodes a picture or a sound WebM cannot hold (the tools'
+    H.264/HEVC and AAC lines) is refused before anything runs, dry runs included: the muxer
+    refused it only after the encode had started, as `kind: ffmpeg` with "Nothing was written
+    into output file", and a dry run said completed (#488). A stream copy is left to the muxer:
+    what it copies is not named in the command."""
+    output = cmd[-1]
+    if os.path.splitext(output)[1].lower() != ".webm":
+        return
+    refused: List[str] = []
+    for i, tok in enumerate(cmd[:-2]):
+        m = _CODEC_OPTION_RE.match(tok)
+        if not m:
+            continue
+        stream, value = m.group(1) or m.group(2), cmd[i + 1]
+        if value == "copy" or stream is None:
+            continue
+        allowed = _WEBM_VIDEO_ENCODER_RE if stream == "v" else _WEBM_AUDIO_ENCODER_RE
+        if not allowed.match(value) and value not in refused:
+            refused.append(value)
+    if refused:
+        refuse("input", "output_container_codecs",
+               f"output {output!r} is WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound; this tool "
+               f"encodes {' and '.join(refused)} for it",
+               hint="name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); "
+                    "a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha",
+               output=output, container="webm", encoders=refused)
+
+
 EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
 
 
@@ -1797,6 +1833,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _refuse_url_media(cmd)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
+        _check_container_codecs(cmd)
         _check_existing_output(cmd)
         ctx.commands.append(_cmdline(cmd))
     if not quiet:

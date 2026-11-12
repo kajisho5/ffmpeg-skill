@@ -119,6 +119,15 @@ _Automated release: version and notes generated from pull requests merged since 
   or a track beside a stream-copied picture, could be up to 24 samples (48 kHz) longer or shorter
   than the source. It is now `apad=whole_len=N,atrim=end_sample=N`, N counted at the track's own
   rate (pinned with `aformat`), as `join.py` has done since #455.
+- **A `.webm` output of an H.264/AAC encode is refused before anything runs** (#488).
+  `crop.py -o out.webm` failed in the muxer after the encode had started ("Nothing was written into
+  output file", `kind: ffmpeg`) while its dry run said completed. The cause is shared: every
+  re-encoding tool writes H.264 (or HEVC) and AAC, which WebM cannot hold, and the sweep of every
+  tool in `tests/sweep.py` with a `.webm` output failed the same way (24 of 25; `look` writes a
+  PNG). The one check every ffmpeg command passes now refuses it, real run and dry run alike, as
+  `kind: input` with reason `output_container_codecs` and the encoders in `details`; name a
+  `.mp4`/`.mov`/`.mkv` output instead. VP9/Opus lines (`--alpha-codec vp9`, `export.py --preset
+  vp9-alpha`) and stream copies are unchanged.
 
 ## 3.6.6
 

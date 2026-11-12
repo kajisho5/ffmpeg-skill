@@ -2029,7 +2029,8 @@ it) or the copy fails, the video is re-encoded with the tags on its frames
 `verification`'s `color_tags` step. Tags that are still wrong after the
 re-encode fail the run with `kind: verification`. The re-encode is H.264
 unless `--codec` says otherwise, so an output container that cannot hold it
-(`.webm`) fails with `kind: ffmpeg` instead of completing with the old tags.
+(`.webm`) is refused before it runs (`kind: input`, reason `output_container_codecs`) instead of
+completing with the old tags.
 
 ### audio.py — clean-up, music, ducking, layout
 ```

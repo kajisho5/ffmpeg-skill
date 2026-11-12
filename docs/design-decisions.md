@@ -2928,10 +2928,17 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
 - **A `.webm` source's default output name is `.mp4`.** The re-encoding tools write x264/x265/AV1
   video and AAC sound, which WebM does not take, so `clip_loudnorm.webm` failed in the muxer after a
   dry run that said completed. Of the two consistent answers (an `.mp4` default, or VP9/Opus encodes
-  for a WebM target), the default name is one line in `default_output()` and changes no encoder; a
-  caller who names `-o x.webm` still gets the muxer's refusal. metadata.py and `export.py --preset
-  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Test:
-  `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`.
+  for a WebM target), the default name is one line in `default_output()` and changes no encoder. A
+  caller who names `-o x.webm` got the muxer's refusal, which came only after the encode had
+  started, as `kind: ffmpeg` with "Nothing was written into output file", and a dry run said
+  completed (#488: every re-encoding tool, swept). Since #488 such a command is refused before
+  anything runs, dry runs included (`kind: input`, reason `output_container_codecs`, the encoders
+  named in `details`), by the one check every ffmpeg command passes (`runner._check_container_codecs`);
+  the encoders are still not switched to VP9/Opus for a WebM name. A stream copy is still left to
+  the muxer, since what it copies is not in the command. metadata.py and `export.py --preset
+  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Tests:
+  `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`,
+  `test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs`.
 - **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
   and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
   does not write, so their planned font size and motion offset are 0 (the real run's are measured
