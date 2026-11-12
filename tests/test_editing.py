@@ -2541,6 +2541,52 @@ class EditingTests(MediaFixtures):
                 self.assertEqual(err["kind"], "input")
                 self.assertIn("--margin", err["message"])
 
+    def test_margin_lead_and_tail_are_kept_on_their_own_sides(self):
+        """#449: --margin kept the same amount on both sides of a silence. --margin-tail is what
+        stays after speech ends (the start of the silence), --margin-lead what stays before speech
+        starts again (its end); each falls back to --margin."""
+        import silence
+        self.assertEqual(silence.inside_margin([(2.0, 3.0)], 10, 0.4, 0.1), [(2.4, 2.9)])
+        self.assertEqual(silence.inside_margin([(2.0, 3.0)], 10, 0.2), [(2.2, 2.8)])
+        # too short to hold both: nothing of it is removed
+        self.assertEqual(silence.inside_margin([(2.0, 2.4)], 10, 0.4, 0.1), [])
+        # a silence that runs to the end of the file has no speech after it: only the tail is kept
+        self.assertEqual(silence.inside_margin([(8.0, float("inf"))], 10, 0.4, 0.1), [(8.4, 10)])
+        gappy = self._gappy()
+        even = json.loads(script("silence.py", gappy, "--list", "--json", "--margin", "0.25").stdout)
+        split = json.loads(script("silence.py", gappy, "--list", "--json", "--margin", "0.25",
+                                  "--margin-lead", "0.1", "--margin-tail", "0.4").stdout)
+        only_tail = json.loads(script("silence.py", gappy, "--list", "--json", "--margin", "0.25",
+                                      "--margin-tail", "0.4").stdout)
+        self.assertEqual(even["margins"], {"lead": 0.25, "tail": 0.25})
+        self.assertEqual(split["margins"], {"lead": 0.1, "tail": 0.4})
+        self.assertEqual(only_tail["margins"], {"lead": 0.25, "tail": 0.4})
+        self.assertEqual(even["silences"], split["silences"])
+        # --filler alone detects no silences, so it applies no margin and reports none
+        filler = json.loads(script("silence.py", gappy, "--filler", "--words", self._words_json(),
+                                   "--filler-list", "--margin-tail", "0.4", "--json").stdout)
+        self.assertNotIn("margins", filler)
+        inner = [(s, e) for s, e in even["silences"] if s > 0.3 and e is not None]
+        self.assertTrue(inner, even["silences"])
+        s, e = inner[0]
+        # the kept range before this silence ends `tail` into it; the one after starts `lead` before its end
+        frame = 1 / 30
+        ends = [k[1] for k in split["keep"]]
+        starts = [k[0] for k in split["keep"]]
+        self.assertTrue(any(abs(x - (s + 0.4)) <= frame for x in ends), (s, ends))
+        self.assertTrue(any(abs(x - (e - 0.1)) <= frame for x in starts), (e, starts))
+        self.assertTrue(any(abs(x - (s + 0.25)) <= frame for x in [k[1] for k in even["keep"]]), (s, even["keep"]))
+
+    def test_margin_lead_and_tail_must_be_finite_and_non_negative(self):
+        for flag in ("--margin-lead", "--margin-tail"):
+            for bad in ("nan", "inf", "-0.1"):
+                with self.subTest(flag=flag, value=bad):
+                    r = script("silence.py", self._gappy(), flag, bad, "-o", OUT / "margin_side_bad.mp4",
+                               "--dry-run", "--json", expect_fail=True)
+                    err = json.loads(r.stdout)["error"]
+                    self.assertEqual(err["kind"], "input")
+                    self.assertIn(flag, err["message"])
+
     def test_filler_alone_does_not_say_the_output_equals_the_input(self):
         """#427 review: --filler without --speech-aware has no silences, and the run said "no
         removable silence found; output would equal the input" before rendering a shorter file."""

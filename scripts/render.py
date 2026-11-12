@@ -134,7 +134,7 @@ OBJECT_KEYS: Dict[str, frozenset] = {
     "snap": frozenset({"to", "tolerance", "min_confidence", "source"}),
     "frame": frozenset({"aspect", "width", "height", "fps", "fit"}),
     "transition": frozenset({"type", "duration"}),
-    "silence": frozenset({"threshold", "min_silence", "margin"}),
+    "silence": frozenset({"threshold", "min_silence", "margin", "margin_lead", "margin_tail"}),
     # 1.16: the picture an audio-only source gets before the rest of the chain can work on it
     "audiogram": frozenset({"image", "image_fit", "style", "position", "vis_height", "opacity",
                             "platform", "title", "color", "background", "width", "height", "fps"}),
@@ -1428,7 +1428,8 @@ def main() -> int:
     if sil:
         nxt = str(work / f"tight{mid}")
         argv = [current, "-o", nxt]
-        for k, flag in (("threshold", "--threshold"), ("min_silence", "--min-silence"), ("margin", "--margin")):
+        for k, flag in (("threshold", "--threshold"), ("min_silence", "--min-silence"), ("margin", "--margin"),
+                        ("margin_lead", "--margin-lead"), ("margin_tail", "--margin-tail")):
             if sil.get(k) is not None:
                 argv += [flag, str(sil[k])]
         sh("silence.py", *argv, stage="silence")

@@ -9,6 +9,7 @@ cut.py --segments --accurate cuts them (both streams on one set of frame-grid bo
 Examples:
   python3 silence.py talk.mp4                                 # -35 dB, gaps >= 0.6 s, 0.2 s margin
   python3 silence.py talk.mp4 --threshold -40 --min-silence 1 --margin 0.25
+  python3 silence.py talk.mp4 --margin-lead 0.1 --margin-tail 0.4   # less before a word, more after one
   python3 silence.py talk.mp4 --list                          # print the silences and the resulting cut list, no output
   python3 silence.py talk.mp4 --edl keep.txt                  # also save the kept ranges (START-END per line, cut.py --segments format)
 """
@@ -83,9 +84,12 @@ def speech_aware_silences(path: str, threshold: float, min_silence: float) -> "T
     return boundaries, breaths
 
 
-def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: float) -> List[Tuple[float, float]]:
-    """Each silence with --margin kept on both sides: the stretch actually removed. A silence too
-    short to hold two margins removes nothing (it is dropped, never turned inside out).
+def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: float,
+                  lead: Optional[float] = None) -> List[Tuple[float, float]]:
+    """Each silence with a margin kept on both sides: the stretch actually removed. `margin` is
+    kept after the speech that ends where the silence starts (--margin-tail), `lead` before the
+    speech that starts where it ends (--margin-lead; the same as `margin` when not given). A
+    silence too short to hold both removes nothing (it is dropped, never turned inside out).
 
     The margin is applied to the silences alone, before they are merged with filler spans (#414):
     a filler word's span is the word itself plus --filler-pad, and taking a 0.2 s margin off each
@@ -94,7 +98,7 @@ def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: 
     out: List[Tuple[float, float]] = []
     for s, e in silences:
         a = s + margin
-        b = duration if e == float("inf") else min(duration, e - margin)
+        b = duration if e == float("inf") else min(duration, e - (margin if lead is None else lead))
         if b > a:
             out.append((a, b))
     return out
@@ -455,6 +459,13 @@ def main() -> int:
     ap.add_argument("--threshold", type=float, default=-35.0, help="silence level in dBFS (default -35; use -40..-45 for quiet rooms)")
     ap.add_argument("--min-silence", type=float, default=0.6, help="only remove gaps at least this long in seconds (default 0.6)")
     ap.add_argument("--margin", type=float, default=0.2, help="seconds of silence to keep on each side of speech (default 0.2; 0.15 before 2.22)")
+    ap.add_argument("--margin-lead", type=float, default=None, metavar="SECONDS",
+                    help="seconds of silence to keep before speech starts, when it should differ from --margin "
+                         "(default: --margin)")
+    ap.add_argument("--margin-tail", type=float, default=None, metavar="SECONDS",
+                    help="seconds of silence to keep after speech ends, when it should differ from --margin "
+                         "(default: --margin); a speaker whose last syllable trails off needs more here than "
+                         "before the next word")
     ap.add_argument("--min-keep", type=float, default=0.2, help="drop kept pieces shorter than this (default 0.2)")
     ap.add_argument("--speech-aware", action="store_true",
                     help="keep breaths shorter than --min-silence when they sit inside a sentence "
@@ -525,6 +536,13 @@ def main() -> int:
     if not math.isfinite(args.margin) or args.margin < 0:
         # nan made inside_margin() drop every silence and re-encode the whole file unchanged
         die(f"--margin must be a finite number of seconds, 0 or more (got {args.margin:g})", kind="input")
+    for flag, value in (("--margin-lead", args.margin_lead), ("--margin-tail", args.margin_tail)):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            die(f"{flag} must be a finite number of seconds, 0 or more (got {value:g})", kind="input")
+    # what is kept after speech ends and before it starts again; --margin is the value of both
+    # unless one is named
+    tail = args.margin if args.margin_tail is None else args.margin_tail
+    lead = args.margin if args.margin_lead is None else args.margin_lead
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
             "(end before start) and the span is then silently dropped, so nothing is removed",
@@ -549,7 +567,7 @@ def main() -> int:
     # time-range removal, so it reuses keep_ranges() and the same select chain.
     # --margin is kept around the silences only (inside_margin), not around filler spans, whose
     # own trim is --filler-pad (#414); the merged list then goes through with no further margin.
-    removals = merge_spans(inside_margin(silences, duration, args.margin) + list(filler_ranges))
+    removals = merge_spans(inside_margin(silences, duration, tail, lead) + list(filler_ranges))
     keeps = keep_ranges(removals, duration, 0.0, args.min_keep)
     # what the render holds (on a picture, each bound on its nearest frame): the report, the EDL
     # and the time map all describe these, so a re-cut or a sum of `keep` is the rendered edit
@@ -564,7 +582,7 @@ def main() -> int:
     # the silences alone; everything removed is `removed_seconds_total`.
     silence_only = removed
     if args.filler:
-        silence_keeps = keep_ranges(merge_spans(inside_margin(silences, duration, args.margin)), duration, 0.0, args.min_keep)
+        silence_keeps = keep_ranges(merge_spans(inside_margin(silences, duration, tail, lead)), duration, 0.0, args.min_keep)
         silence_only = max(0.0, duration - sum(e - s for s, e in rendered_ranges(silence_keeps, meta, duration, video_out)))
     kinds = silence_kinds(args.input, silences, duration, args.threshold)
     summary = {
@@ -574,6 +592,11 @@ def main() -> int:
         "kept_duration": round(kept, 3),
         "removed_seconds": round(silence_only, 3),
     }
+    if silences or not args.filler or args.speech_aware:
+        # the seconds of each silence this run kept: `tail` from where the silence starts (after
+        # the speech before it), `lead` up to where it ends (before the speech after it). Absent
+        # under --filler alone, which detects no silences and so applies neither.
+        summary["margins"] = {"lead": lead, "tail": tail}
     if kinds:
         summary.update(kinds)
     if args.speech_aware:
@@ -641,7 +664,8 @@ def main() -> int:
         if near:
             where = ", ".join("%.2fs" % c["source_time"] for c in near[:5]) + (", ..." if len(near) > 5 else "")
             warn(f"{len(near)} cut point(s) sit within {CUT_SOUND_MARGIN_DB:g} dB of --threshold ({where}): "
-                 "a breath or a word's weak tail may be cut; listen there, or lower --threshold / raise --margin",
+                 "a breath or a word's weak tail may be cut; listen there, or lower --threshold / raise --margin "
+                 "(--margin-tail for an `out` edge, --margin-lead for an `in` edge)",
                  "cut_near_sound", cuts=len(near))
 
     def finish_time_map() -> None:

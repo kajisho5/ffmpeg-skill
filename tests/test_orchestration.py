@@ -642,14 +642,14 @@ class OrchestrationTests(MediaFixtures):
             self.assertEqual(out["stages"][-1], stage)
         # single uncut clip (so silence.py can analyse a real file under --dry-run), silence stage,
         # captions from .ass, mono/downmix/duck audio, voice flag: the other branches of the same tables
-        alt = dict(full, clips=[{"src": "source.mp4"}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1},
+        alt = dict(full, clips=[{"src": "source.mp4"}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1, "margin_lead": 0.05, "margin_tail": 0.3},
                    captions={"ass": ass.name}, audio={"music": "long_ref.wav", "mono": True, "downmix": True, "duck": True, "voice": True, "duck_amount": 8}, graphics=[], overlays=[])
         ass.write_text("[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,hi\n", encoding="utf-8")
         (OUT / "render_full_alt.json").write_text(json.dumps(alt), encoding="utf-8")
         proc = script("render.py", OUT / "render_full_alt.json", "--dry-run", "--json")
         self.assertEqual(json.loads(proc.stdout)["stages"], ["clips", "silence", "fit", "captions", "audio", "loudness", "export"])
         forwarded = "\n".join(l for l in proc.stderr.splitlines() if l.startswith("→ "))
-        for needle in ("--ass", "--min-silence 0.4", "--mono", "--downmix", "--duck-amount 8", "--voice"):
+        for needle in ("--ass", "--min-silence 0.4", "--margin-lead 0.05", "--margin-tail 0.3", "--mono", "--downmix", "--duck-amount 8", "--voice"):
             self.assertIn(needle, forwarded, f"{needle} not forwarded:\n{forwarded}")
         out = json.loads(script("render.py", OUT / "render_full_alt.json", "--dry-run", "--stop-after", "silence", "--json").stdout)
         self.assertEqual(out["stages"], ["clips", "silence"])

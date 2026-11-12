@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+### Added
+
+- **`silence.py --margin-lead` and `--margin-tail`.** `--margin` kept the same amount of each
+  silence on both sides. The two flags name the sides: `--margin-tail` is kept after speech ends,
+  `--margin-lead` before it starts again, and each defaults to `--margin`. A last syllable that
+  trails off into breath can keep 0.4 s while the next word keeps 0.1 s. The result's `margins`
+  gives the two values the run used, and a `render.py` project takes `silence.margin_lead` and
+  `silence.margin_tail`. First part of #449.
+
 ### Docs
 
 - README: the MCP Registry is in the table of install routes. The entry
