@@ -51,7 +51,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, run_analysis as _run_analysis, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
@@ -213,7 +213,7 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     if not STATE.dry_run:
         d, base = os.path.split(output)
         stem, ext = os.path.splitext(base)
-        fill_tmp = os.path.join(d, f".{stem}.ffskill-fill-{os.getpid()}{ext}")
+        fill_tmp = reserve_sibling(d, stem, ext, "fill")  # created exclusively: never through a planted link
     cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
     cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
     try:

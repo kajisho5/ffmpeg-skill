@@ -20,7 +20,8 @@
   concat list is a directive, so such a name added entries and pulled a file named nowhere on the
   command line into the output.
 - **The hidden temp files in the output directory are created exclusively.** The staging temp of
-  an `--overwrite` run and `place_output()`'s temp had a fixed name and were opened through
+  an `--overwrite` run, `place_output()`'s temp, `export.py`'s key/fill temp and `batch.py`'s
+  cross-filesystem delivery temp had fixed names and were opened through
   whatever was already there, a planted symlink included: the encode was written into the link's
   target and the output left as a symlink to it. A lock's default audit log is opened without
   following a symlink.

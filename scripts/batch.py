@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, env_hw, stop_children
+from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, env_hw, reserve_sibling, stop_children
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 
 HERE = Path(__file__).resolve().parent
@@ -266,7 +266,9 @@ def deliver(src: str, final: Path) -> None:
             # another filesystem: copy beside the final path and rename, so a copy that fails part
             # way never leaves a truncated file where the caller's was
             import shutil
-            tmp = final.with_name(f".{final.stem}.ffskill-{os.getpid()}-{threading.get_ident()}{final.suffix}")
+            # created exclusively (O_EXCL): never through an entry planted at the name, and two
+            # threads delivering beside each other get two names
+            tmp = Path(reserve_sibling(str(final.parent), final.stem, final.suffix))
             try:
                 shutil.copyfile(src, tmp)
                 os.replace(tmp, final)

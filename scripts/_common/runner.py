@@ -1299,7 +1299,7 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
     return list(cmd[:-1]) + [tmp], output, tmp
 
 
-def reserve_sibling(d: str, stem: str, ext: str) -> str:
+def reserve_sibling(d: str, stem: str, ext: str, tag: str = "") -> str:
     """Create the hidden sibling `.<stem>.ffskill-<pid><ext>` (or `...-<pid>-<n><ext>` when that
     name is taken) exclusively, and return its path. O_EXCL never opens an existing entry, a
     symlink included, so a name planted in the output directory beforehand is never written
@@ -1308,7 +1308,8 @@ def reserve_sibling(d: str, stem: str, ext: str) -> str:
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     n = 1
     while True:
-        path = os.path.join(d, f".{stem}.ffskill-{os.getpid()}" + (f"-{n}" if n > 1 else "") + ext)
+        path = os.path.join(d, f".{stem}.ffskill-" + (f"{tag}-" if tag else "") + f"{os.getpid()}"
+                            + (f"-{n}" if n > 1 else "") + ext)
         try:
             os.close(os.open(path, flags, 0o666))
             return path
