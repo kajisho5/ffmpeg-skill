@@ -977,7 +977,8 @@ failed row's `error: {step, tool, kind, message, code, reason, details, hint, ex
 failing step's own document, and `cache_miss` when a cache entry was not served because its output
 changed or could not be checked; an interrupted batch has a row for every input
 (`interrupted: true`, or `skipped: "interrupted"` when it had not started) and `total` counts them
-all. `verify.py`'s steps keep the tool's `kind`, `reason`, `message` and `exit_code`, and the steps
+all; under `--watch` a source that has not settled since the previous poll is `skipped: "settling"`
+(`ok: false`, not cached) and processed on a later pass. `verify.py`'s steps keep the tool's `kind`, `reason`, `message` and `exit_code`, and the steps
 that do not apply are listed under each file's `skipped` with a reason.
 
 **Audit log.** Events a later reader must be able to reconstruct are appended as JSON lines,

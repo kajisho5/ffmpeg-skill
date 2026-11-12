@@ -2129,6 +2129,22 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   warning. Code: `batch.cached_output_changed()`, `recipe_key()`. Tests:
   `test_batch_serves_a_cached_output_only_while_it_is_unchanged_and_records_a_reset_cache`,
   `test_batch_recipe_key_records_an_unreadable_project`.
+- **`batch.py --watch` processes a source only once it has settled, and replaces only its own
+  earlier output.** A pass took every file that existed, so a file still being copied into the
+  folder was delivered as the fraction already written (`ok`, and `verified` for an MKV or TS,
+  whose checks compare with the input as read), and once the copy finished every later pass met
+  that output as someone else's and refused it (`output_exists`). A source is processed once it
+  has the same size and mtime as at the previous poll, or, first seen, was last modified at least
+  one interval ago; until then its row is `skipped: "settling"` (`ok: false`, not cached), and a
+  watch stopped there fails with that row, since the file was not processed. One poll interval is
+  the whole rule: a writer that pauses longer than the interval is read early, and the pass after
+  its next write processes the file again. An output an earlier pass of the same watch delivered,
+  with the size and mtime it had then, is this run's own file under the overwrite rule above and
+  is replaced without `--overwrite`; one replaced or edited since, or left by an earlier run, is
+  refused as before. A plain batch (no `--watch`) has no previous poll and processes what is
+  there. Code: `batch.settle_poll()`, `is_own_output()`. Tests:
+  `test_batch_watch_waits_for_a_source_to_settle_and_replaces_only_its_own_output`,
+  `test_batch_watch_reports_a_source_still_settling_when_it_stops`.
 - **`verify.py` keeps each tool's own failure.** Steps run with `--json`; a failed step keeps the
   tool's `kind`, `reason`, `message`, `details` and `exit_code` (`step_timeout`,
   `step_output_unparsed` where the tool printed none), and the probe of an unreadable file keeps

@@ -28,12 +28,13 @@ Examples:
 import argparse
 import json
 import math
+import os
 import sys
 from typing import Dict, List, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, warn
-from _common.decision import av_trim
+from _common.decision import av_trim, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
 from sync import measure_offset
 
@@ -335,6 +336,10 @@ def main() -> int:
         # a replacement: the combined output below is still written as usual.
         project = {"output": default_output(args.inputs[0], "multicam_project", "mp4"),
                    "clips": project_clips}
+        # the inputs are named as given, relative to the working directory, and render.py reads a
+        # project's relative paths against the project file's directory: written elsewhere
+        # (--write-project out/cut.json), they named files that are not there
+        project = rebase_project_paths(project, os.getcwd())
         if not STATE.dry_run:
             with open(args.write_project, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(project, indent=2) + "\n")

@@ -1012,6 +1012,52 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     return brand
 
 
+# Every key of a render.py project that names a file. render.py reads each one relative to the
+# project file (its rel()); a copy of the project written anywhere else -- batch.py's per-item
+# project in its work directory, multicam.py --write-project -- has to carry them absolute, or
+# render looks for "bed.wav" beside the copy. A path is (section, key): section None is the
+# project's top level, "x[]" each entry of the list x. tests/test_contract.py checks that every
+# rel() in render.py reads one of these.
+PROJECT_PATH_KEYS = (
+    (None, "output"), (None, "brand"), (None, "chapters"),
+    ("clips[]", "src"), ("clips[].snap", "source"), ("snap", "source"),
+    ("audio", "music"), ("audio", "replace"), ("audio", "effects"),
+    ("captions", "text"), ("captions", "srt"), ("captions", "ass"),
+    ("overlays[]", "image"), ("overlays[]", "video"), ("overlays[]", "font_file"),
+    ("audiogram", "image"),
+)
+
+
+def rebase_project_paths(proj: Dict[str, Any], base: "os.PathLike[str] | str") -> Dict[str, Any]:
+    """A copy of a render.py project whose relative file paths (PROJECT_PATH_KEYS) are joined onto
+    `base`, the directory they were written relative to; absolute paths, URLs, non-strings, inline
+    chapter lists and keys the project does not have are left as they are."""
+    import copy
+    out = copy.deepcopy(proj)
+    base = Path(base)
+
+    def fix(obj: Any, key: str) -> None:
+        value = obj.get(key) if isinstance(obj, dict) else None
+        # a URL is left for the tool to refuse by what it is (waveform.py: no network access)
+        if isinstance(value, str) and value and not os.path.isabs(value) and "://" not in value:
+            obj[key] = str(base / value)
+
+    def nodes(section: "Optional[str]") -> List[Any]:
+        found: List[Any] = [out]
+        for part in (section.split(".") if section else []):
+            name, many = (part[:-2], True) if part.endswith("[]") else (part, False)
+            nxt: List[Any] = []
+            for node in found:
+                value = node.get(name) if isinstance(node, dict) else None
+                nxt.extend(value if many and isinstance(value, list) else [] if many else [value])
+            found = nxt
+        return found
+    for section, key in PROJECT_PATH_KEYS:
+        for node in nodes(section):
+            fix(node, key)
+    return out
+
+
 def brand_states_font(brand: Dict[str, Any]) -> bool:
     """Did the brand FILE actually name a font (top-level `font`, `caption.font` or
     `styles.caption.font`)? BRAND_DEFAULTS always supplies one, so the merged document can never

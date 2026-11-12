@@ -77,6 +77,7 @@ from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
+from _common.decision import rebase_project_paths
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -1259,6 +1260,12 @@ def main() -> int:
         info(f"wrote {args.write_project}; edit it and run: render.py {args.write_project}")
         emit(args.write_project, template=args.template, stages=[], check=None)
         return 0
+
+    # every file the project names is read against the project file's directory (a template's,
+    # the working directory): the same keys batch.py and multicam.py rebase on a copy they write
+    # elsewhere, including the two rel() below never saw (audiogram.image, overlays[].font_file
+    # were read against the working directory)
+    proj = rebase_project_paths(proj, base)
 
     def rel(p: Any) -> str:
         p = str(p)

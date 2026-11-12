@@ -5831,6 +5831,189 @@ class SilentResultTests(unittest.TestCase):
         self.assertIn("missing.mp4", r["message"])
 
 
+class BatchSourcePathTests(unittest.TestCase):
+    """batch.py's two ways of meeting the wrong file: a project copy that resolved its relative
+    paths against the item's work directory, and a --watch pass that read a source still being
+    written. In-process, with the steps replaced: no media is encoded."""
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="ffskill_batchsrc_"))
+
+    def tearDown(self):
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def run_batch(self, folder, recipe, *extra, sleep=None, run_step=None):
+        """batch.main() with run_step (and time.sleep, for --watch) replaced; (exit code, document)."""
+        import batch
+        import signal
+        from unittest import mock
+        out = io.StringIO()
+        handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, getattr(signal, "SIGTERM", signal.SIGINT))}
+        code = 0
+        patches = [mock.patch.object(batch, "run_step", run_step),
+                   mock.patch.object(sys, "argv", ["batch.py", str(folder), "--recipe", str(recipe), "--json", *extra])]
+        if sleep is not None:
+            patches.append(mock.patch.object(batch.time, "sleep", sleep))
+        try:
+            with contextlib.ExitStack() as stack:
+                for p in patches:
+                    stack.enter_context(p)
+                stack.enter_context(contextlib.redirect_stdout(out))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                _common.STATE.reset()
+                try:
+                    batch.main()
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            for s, h in handlers.items():
+                signal.signal(s, h)
+            _common.STATE.reset()
+        return code, json.loads(out.getvalue())
+
+    def test_every_render_project_path_is_rebased_by_one_list(self):
+        """render.py reads a project's files against the project file's directory with rel();
+        batch.py's per-item copy lives in a work directory, so it must carry them absolute, and
+        the list of keys it rebases is the one render itself applies. Every rel() in render.py
+        reads a key on that list; audiogram.image and overlays[].font_file, which never went
+        through rel(), are on it too."""
+        from _common.decision import PROJECT_PATH_KEYS, rebase_project_paths
+        leaves = {k for _, k in PROJECT_PATH_KEYS}
+        src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
+        indirect = {"au[k]": {"music", "replace", "effects"}, "ch": {"chapters"}, "p: Any": set()}
+        for arg in re.findall(r"\brel\(((?:[^()]|\([^()]*\))+)\)", src):
+            named = re.findall(r"[\"'](\w+)[\"']", arg)
+            keys = {named[-1]} if named else indirect.get(arg.strip())
+            self.assertIsNotNone(keys, f"rel({arg}) reads a key this test cannot name: add it to PROJECT_PATH_KEYS")
+            self.assertLessEqual(keys, leaves, f"rel({arg}) reads a key batch.py would not rebase")
+        base = self.work / "proj"
+        proj = {"output": "final.mp4", "brand": "brand.json", "chapters": "ch.txt",
+                "clips": [{"src": "a.mp4", "snap": {"to": "beats", "source": "beat.wav"}}, {"src": "/abs/b.mp4"}],
+                "snap": {"source": "music.wav"},
+                "audio": {"music": "bed.wav", "replace": "vo.wav", "effects": "sfx.wav", "gain": 2},
+                "captions": {"srt": "subs/a.srt"},
+                "overlays": [{"image": "logo.png", "font_file": "fonts/x.ttf"}, {"video": "layer.mov"}, {"text": "hi"}],
+                "audiogram": {"image": "https://example.com/c.png"}}
+        got = rebase_project_paths(proj, base)
+        self.assertEqual(proj["audio"]["music"], "bed.wav", "the caller's project was changed in place")
+        self.assertEqual(got["audio"], {"music": str(base / "bed.wav"), "replace": str(base / "vo.wav"),
+                                        "effects": str(base / "sfx.wav"), "gain": 2})
+        self.assertEqual([c["src"] for c in got["clips"]], [str(base / "a.mp4"), "/abs/b.mp4"])
+        self.assertEqual(got["clips"][0]["snap"]["source"], str(base / "beat.wav"))
+        self.assertEqual((got["output"], got["brand"], got["chapters"], got["snap"]["source"], got["captions"]["srt"]),
+                         tuple(str(base / n) for n in ("final.mp4", "brand.json", "ch.txt", "music.wav", "subs/a.srt")))
+        self.assertEqual(got["overlays"], [{"image": str(base / "logo.png"), "font_file": str(base / "fonts/x.ttf")},
+                                           {"video": str(base / "layer.mov")}, {"text": "hi"}])
+        self.assertEqual(got["audiogram"]["image"], "https://example.com/c.png", "a URL is the tool's to refuse")
+        inline = {"chapters": [{"at": 0, "title": "x"}]}
+        self.assertEqual(rebase_project_paths(inline, base), inline)
+
+    def test_batch_project_recipe_reads_its_side_files_beside_the_project(self):
+        """The item's project.json was written into .work/<n>-xxx/ unchanged, so render looked for
+        the project's "bed.wav" there and every item failed after its earlier stages had run."""
+        folder = self.work / "in"
+        (self.work / "proj").mkdir(parents=True)
+        folder.mkdir()
+        (folder / "clip.mp4").write_bytes(b"x" * 64)
+        project = {"clips": [{"src": "PLACEHOLDER"}], "audio": {"music": "bed.wav"}, "brand": "brand.json",
+                   "captions": {"srt": "subs/clip.srt"}, "export": {"preset": "copy"}}
+        (self.work / "proj" / "project.json").write_text(json.dumps(project), encoding="utf-8")
+        recipe = self.work / "batch.json"
+        recipe.write_text(json.dumps({"project": "proj/project.json", "clip_key": 0}), encoding="utf-8")
+        seen = []
+
+        def run_step(argv, per_call=None):
+            seen.append(json.loads(Path(argv[1]).read_text(encoding="utf-8")))
+            return True, {"status": "completed", "verified": True}
+        code, doc = self.run_batch(folder, recipe, "--force", run_step=run_step)
+        self.assertEqual(code, 0, doc)
+        base = (self.work / "proj").resolve()
+        item = seen[0]
+        self.assertEqual((item["audio"]["music"], item["brand"], item["captions"]["srt"]),
+                         (str(base / "bed.wav"), str(base / "brand.json"), str(base / "subs/clip.srt")))
+        self.assertEqual(item["clips"][0]["src"], str((folder / "clip.mp4").resolve()))
+
+    def test_batch_watch_waits_for_a_source_to_settle_and_replaces_only_its_own_output(self):
+        """--watch processed a file still being copied, reported the fraction it read as ok, and
+        once the copy finished every pass refused that output as someone else's (output_exists),
+        so the truncated file stayed. A source is now processed once it is unchanged across one
+        poll; an output this watch delivered and nobody touched since is replaced; one edited by
+        someone else is still refused."""
+        folder = self.work / "in"
+        folder.mkdir()
+        growing, steady = folder / "a.mp4", folder / "b.mp4"
+        growing.write_bytes(b"A" * 100)                  # being copied: modified just now
+        steady.write_bytes(b"B" * 100)
+        old = time.time() - 3600
+        os.utime(steady, (old, old))                     # long since written: processed at once
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_w",
+                                      "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"]]}), encoding="utf-8")
+        final = folder / "out" / "a_w.mp4"
+        calls = []
+
+        def run_step(argv, per_call=None):
+            # the child's own output guard, as every tool applies it
+            src, out = argv[1], argv[argv.index("-o") + 1]
+            calls.append((Path(src).name, "--overwrite" in argv))
+            if os.path.exists(out) and "--overwrite" not in argv:
+                return False, {"status": "failed", "error": {"kind": "input", "reason": "output_exists",
+                                                             "message": f"refusing to overwrite existing output {out!r}"}}
+            shutil.copyfile(src, out)
+            return True, {"status": "completed", "verified": True}
+
+        def grow():
+            with open(growing, "ab") as fh:
+                fh.write(b"A" * 100)
+        polls = iter([
+            grow,                                         # pass 2: still growing
+            None,                                         # pass 3: settled, processed
+            grow,                                         # pass 4: edited in place again
+            None,                                         # pass 5: settled; the output is this watch's own
+            lambda: (final.write_bytes(b"someone else's"), grow()),  # pass 6: the output was replaced too
+            None,                                         # pass 7: settled; that output is refused
+        ])
+        sizes = []
+
+        def sleep(_seconds):
+            sizes.append(final.stat().st_size if final.exists() else None)
+            action = next(polls, "stop")
+            if action == "stop":
+                raise KeyboardInterrupt
+            if action:
+                action()
+        code, doc = self.run_batch(folder, recipe, "--watch", "5", sleep=sleep, run_step=run_step)
+        # pass 1 delivered only b; a's output appeared at pass 3 with the whole file and was
+        # replaced at pass 5 with the edited one
+        self.assertEqual(sizes, [None, None, 200, 200, 300, 14, 14], calls)
+        self.assertEqual(calls, [("b.mp4", False), ("a.mp4", False), ("a.mp4", True), ("a.mp4", False)])
+        rows = {Path(r["file"]).name: r for r in doc["results"]}
+        self.assertEqual((code, rows["a.mp4"]["error"]["reason"]), (1, "output_exists"))
+        self.assertTrue(rows["b.mp4"]["cached"])
+        self.assertEqual(final.read_bytes(), b"someone else's")
+
+    def test_batch_watch_reports_a_source_still_settling_when_it_stops(self):
+        """A watch stopped while a file is still being written says so: the row is skipped:
+        "settling", nothing ran for it, and nothing was cached."""
+        folder = self.work / "in"
+        folder.mkdir()
+        (folder / "a.mp4").write_bytes(b"A" * 100)
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"]]}),
+                          encoding="utf-8")
+
+        def run_step(argv, per_call=None):
+            raise AssertionError("a settling source was processed")
+
+        def sleep(_seconds):
+            raise KeyboardInterrupt
+        code, doc = self.run_batch(folder, recipe, "--watch", "60", sleep=sleep, run_step=run_step)
+        row = doc["results"][0]
+        self.assertEqual((code, row["ok"], row["skipped"]), (1, False, "settling"))
+        self.assertIn("settling", doc["error"]["message"])
+        self.assertFalse((folder / "out" / ".ffskill_cache.json").exists())
+
+
 class SilentFallbackTests(unittest.TestCase):
     """docs/design-decisions.md, "Nothing happens silently" (part 3): the fallbacks, skips and
     stderr-only warnings that remained, each now a `diagnostics` record or a structured field.

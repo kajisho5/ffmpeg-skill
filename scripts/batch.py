@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
 from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, stop_children
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
+from _common.decision import rebase_project_paths
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -117,6 +118,11 @@ def gpu_key() -> str:
 JOBS_CAP = 8   # beyond this, concurrent encodes contend for the same cores and memory
 
 _LOG = threading.local()
+# final path -> output_identity() of every output this process delivered (a --watch loop's earlier
+# passes): an existing final path that is still exactly that file is this run's own, not someone
+# else's, so a later pass replaces it (design-decisions: "A path this same run wrote ... is never
+# someone else's file"). A file edited since, or one an earlier run left, is still refused.
+_OWN_OUTPUTS: Dict[str, Dict[str, int]] = {}
 # set by batch.py's signal handler: a --jobs worker between two steps must not start the next one
 _STOP = threading.Event()
 
@@ -240,7 +246,13 @@ def row_output(src: Path, recipe: Dict[str, Any], outdir: Path) -> Dict[str, Any
     return fields
 
 
-def deliver(src: str, final: Path) -> None:
+def is_own_output(final: Path) -> bool:
+    """Whether `final` is still the file this process delivered there (_OWN_OUTPUTS)."""
+    expected = _OWN_OUTPUTS.get(str(final))
+    return expected is not None and output_identity(str(final)) == expected
+
+
+def deliver(src: str, final: Path, replace: bool = False) -> None:
     """Move an item's last written intermediate to its final path, under the output guard every
     tool applies: an existing file is replaced only with --overwrite. A dry run writes nothing."""
     if STATE.dry_run:
@@ -257,7 +269,7 @@ def deliver(src: str, final: Path) -> None:
     # under the output lock every tool's write holds, so the existence check and the move are one
     # step for another run delivering or writing the same path
     with _OutputLock(str(final), on_locked=locked):
-        if final.exists() and not STATE.overwrite:
+        if final.exists() and not (STATE.overwrite or replace):
             raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
                              "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
         try:
@@ -286,6 +298,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             deadline: "Optional[float]" = None) -> Dict[str, Any]:
     final = final_path(src, recipe, outdir)
     t0 = time.time()
+    own = not STATE.dry_run and is_own_output(final)
+    if own:
+        log(f"  {final.name} is this run's own earlier output, unchanged since: it is replaced")
 
     def budget() -> "Optional[float]":
         """What is left of the BATCH's time limit -- not a fresh one per item. A --timeout is a
@@ -306,11 +321,15 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         proj.setdefault("clips", [{}])
         while len(proj["clips"]) <= idx:
             proj["clips"].append({})
+        # the copy is written in the item's work directory, and render.py reads a project's
+        # relative paths against the project file's own directory: they are made absolute
+        # against the recipe's project, or "bed.wav" beside it was looked for in .work/<n>-xxx/
+        proj = rebase_project_paths(proj, Path(str(recipe["project"])).resolve().parent)
         proj["clips"][idx]["src"] = str(src.resolve())
         proj["output"] = str(final.resolve())
         pj = work / "project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
-        ok, _doc = run_step(["render.py", str(pj)], budget())
+        ok, _doc = run_step(["render.py", str(pj)] + (["--overwrite"] if own else []), budget())
         step_docs = [("render", _doc)]
         failure = None if ok else step_error(0, "render.py", _doc)
         cut_reencoded: List[bool] = []
@@ -334,6 +353,8 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             # what this one read, and when it is the last, the last file written is delivered (#415)
             writes = step_writes(step)
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
+            if own and last and writes and "--overwrite" not in argv:
+                argv.append("--overwrite")
             step_ok, doc = run_step(argv, budget())
             step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut (or its
@@ -353,7 +374,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             # the last step wrote nothing: the item's deliverable is the last file a step wrote,
             # which is in this item's work directory and would be removed with it (#415)
             try:
-                deliver(cur, final)
+                deliver(cur, final, replace=own)
             except ItemError as exc:
                 ok, failure = False, exc.error
     result: Dict[str, Any] = {"file": str(src), **row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
@@ -434,6 +455,7 @@ def main() -> int:
     apply_common(args)
 
     started = time.time()
+    _OWN_OUTPUTS.clear()
     folder = Path(args.folder).resolve()  # relative 'bdir' used to become bdir/bdir/out once joined with the default outdir
     if not folder.is_dir():
         die(f"not a folder: {folder}")
@@ -553,6 +575,35 @@ def main() -> int:
                 except (ValueError, OSError):
                     pass
 
+    # --watch: each source's (size, mtime_ns) at the previous poll. A folder files are copied,
+    # downloaded or recorded into is read while they grow: a file processed mid-copy delivered a
+    # fraction of itself as ok (verified, for an MKV or TS), and once it settled every later pass
+    # met that output as someone else's and refused it. A source is processed once it is
+    # unchanged across one poll interval -- the same size and mtime as at the previous poll, or,
+    # first seen, last modified at least one interval ago; until then its row is
+    # skipped: "settling", not cached, and the next pass looks again.
+    last_seen: Dict[str, "tuple[int, int]"] = {}
+
+    def settle_poll(files: List[Path]) -> "set":
+        if not args.watch:
+            return set()
+        unsettled = set()
+        now = time.time()
+        current: Dict[str, "tuple[int, int]"] = {}
+        for src in files:
+            try:
+                st = src.stat()
+            except OSError:
+                continue  # gone since the scan: file_key() reports it as before
+            sig = (st.st_size, st.st_mtime_ns)
+            current[str(src)] = sig
+            before = last_seen.get(str(src))
+            if (before != sig) if before is not None else (now - st.st_mtime < args.watch):
+                unsettled.add(str(src))
+        last_seen.clear()
+        last_seen.update(current)
+        return unsettled
+
     def one_pass() -> List[Dict[str, Any]]:
         files = sorted(p for p in folder.glob(glob) if p.is_file() and p.suffix.lower() in MEDIA_EXT and outdir not in p.parents)
         # Two different sources can compute the same final path (most often a fixed recipe "ext"
@@ -614,6 +665,8 @@ def main() -> int:
                     del cache[stale]
                 # the output as this run left it: a later hit is served only while it is unchanged
                 cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] and r.get("written", True) else None)
+                if cache[key]["output_identity"]:
+                    _OWN_OUTPUTS[r["output"]] = cache[key]["output_identity"]
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
                 # then silently treats as "no cache" (a ValueError -> {}), discarding every prior
@@ -632,7 +685,13 @@ def main() -> int:
         pending: List[tuple] = []
         cache_miss: Dict[int, Dict[str, Any]] = {}
         pass_key = rkey + side_inputs_key(recipe)
+        polled = settle_poll(files)
         for i, src in enumerate(files):
+            if str(src) in polled:
+                info(f"skip (still being written) {src.name}: it changed since the last poll")
+                slots[i] = {"file": str(src), **row_output(src, recipe, outdir), "ok": False, "verified": False,
+                            "seconds": 0.0, "skipped": "settling"}
+                continue
             key = f"{file_key(src)}:{pass_key}"
             hit = cache.get(key)
             if isinstance(hit, dict) and not args.force:
@@ -842,7 +901,9 @@ def main() -> int:
             timed_out=True)
     if done != len(results):
         failed_files = [r["file"] for r in results if not r["ok"]]
-        die(f"{len(results) - done} of {len(results)} items failed: {', '.join(failed_files[:5])}" + (" ..." if len(failed_files) > 5 else ""),
+        settling = sum(1 for r in results if r.get("skipped") == "settling")
+        die(f"{len(results) - done} of {len(results)} items failed: {', '.join(failed_files[:5])}" + (" ..." if len(failed_files) > 5 else "")
+            + (f" ({settling} of them still being written when the watch stopped, skipped: settling, not processed)" if settling else ""),
             kind="verification", output=None, dry_run=STATE.dry_run, results=results, processed=done, total=len(results))
     # cut.py's own `reencoded`, rolled up across every cut.py step this batch ran: how much of the
     # folder landed on the fast lossless path (mode "copy") vs re-encoded on at least one range.

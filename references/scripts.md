@@ -1376,7 +1376,18 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   row has `written: false` (`output` keeps its path string), a note says so, and `ok` follows the steps' exit codes.
   Final names that differ only in case are a
   collision (they are one file on macOS and Windows).
-- `--watch` composes: each pass is parallel, passes are sequential.
+- `--watch` composes: each pass is parallel, passes are sequential. A pass processes a
+  source only once it has settled: the same size and mtime as at the previous poll, or, the
+  first time it is seen, last modified at least one interval ago. Until then its row is
+  `"skipped": "settling"` (`ok: false`, not cached), so a file still being copied, downloaded
+  or recorded into the folder is not delivered as a fraction of itself; a writer that pauses
+  longer than the interval can still be read early, and the pass after it changes again
+  processes it again. An output an earlier pass of the same watch delivered, unchanged since,
+  is that pass's own and is replaced without `--overwrite`; one someone else replaced or edited,
+  or one an earlier run left, is still refused (`output_exists`).
+- A `project` recipe's relative paths (`clips[].src`, `audio.music`, `brand`, `captions.srt`,
+  `overlays[].image`, `chapters`, ...) are read against the project file's directory, as
+  `render.py` reads them: each item's copy of the project carries them absolute.
 
 ### caption.py --transcribe — optional local speech-to-text
 If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` (whisper.cpp),
