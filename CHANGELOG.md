@@ -114,6 +114,11 @@ _Automated release: version and notes generated from pull requests merged since 
   default: 240 samples at 48 kHz) and drifted off a stream-copied picture. It now runs with
   `latency=1`; so does `--voice strong`'s limiter, the one other `alimiter` in the skill. The
   limited sound starts on the input's own sample (measured, within 3 samples) and keeps its length.
+- **`audio.py` pads and trims to the sample** (#478). The sound was conformed to the source with
+  `apad,atrim=0:{seconds:.3f}`, rounded to the millisecond, so a `--replace` or `--music` result,
+  or a track beside a stream-copied picture, could be up to 24 samples (48 kHz) longer or shorter
+  than the source. It is now `apad=whole_len=N,atrim=end_sample=N`, N counted at the track's own
+  rate (pinned with `aformat`), as `join.py` has done since #455.
 
 ## 3.6.6
 

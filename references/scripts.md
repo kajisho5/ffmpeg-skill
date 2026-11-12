@@ -2091,6 +2091,9 @@ when the container can hold it (`dropped_non_av_streams` says when it could not)
 `--limit` (and `--voice strong`'s limiter) is `alimiter` with `level=disabled:latency=1`: the
 look-ahead is compensated, so the limited sound starts on the input's own sample instead of
 `--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476).
+With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
+source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
+so it is exact to the sample, not to the millisecond (#478).
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation

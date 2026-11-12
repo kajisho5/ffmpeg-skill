@@ -146,10 +146,11 @@ class AudioTests(MediaFixtures):
         a different word in the help is worse than no preset."""
         out = OUT / "voice_level.mp4"
         bare, _ = self._audio_filters(self.src, "--voice", "-o", out)
+        n = round(probe(str(self.src))["duration"] * 48000)
         self.assertEqual(bare, "[0:a:0]highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,"
                                "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2[main];"
-                               "[main]apad,atrim=0:12.000[out]",
-                         "a bare --voice is the 1.12 chain, unchanged")
+                               f"[main]aformat=sample_rates=48000,apad=whole_len={n},atrim=end_sample={n}[out]",
+                         "a bare --voice is the 1.12 chain, unchanged (conformed to the picture in samples since #478)")
         chains = {}
         for level in ("light", "medium", "strong"):
             chains[level], data = self._audio_filters(self.src, "--voice", level, "-o", out)
@@ -493,6 +494,30 @@ class AudioTests(MediaFixtures):
             script("audio.py", src, "--voice", level, "-o", out)
             onsets[level] = self._onset(self._pcm(out), level=300)
         self.assertLessEqual(abs(onsets["strong"] - onsets["medium"]), 3, onsets)
+
+    def test_audio_pad_and_trim_are_exact_to_the_sample(self):
+        """#478: the sound was conformed with `atrim=0:{dur:.3f}`, to the millisecond, so a length
+        that is not a whole millisecond came out up to 24 samples (48 kHz) off. A replacement that
+        is shorter (padded), longer (trimmed), and a music bed now give the input's sample count,
+        at 48 kHz and at 44.1 kHz."""
+        for rate, samples in ((48000, 59244), (44100, 54433)):
+            src = OUT / f"exact_src_{rate}.wav"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"sine=f=440:sample_rate={rate}", "-af", f"atrim=end_sample={samples}", "-c:a", "pcm_s16le", src)
+            self.assertEqual(self._samples(src)[2], samples, "fixture")
+            self.assertNotEqual(round(round(samples / rate, 3) * rate), samples, "not a whole millisecond: the old rounding missed it")
+            beds = {}
+            for name, secs in (("short", 0.7), ("long", 2.0)):
+                beds[name] = OUT / f"exact_bed_{name}_{rate}.wav"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   f"sine=f=660:sample_rate={rate}:d={secs}", "-c:a", "pcm_s16le", beds[name])
+            for flags in (("--replace", beds["short"]), ("--replace", beds["long"]), ("--music", beds["long"])):
+                with self.subTest(rate=rate, flags=flags[0], bed=Path(flags[1]).stem):
+                    out = OUT / f"exact_out_{rate}.wav"
+                    script("audio.py", src, *flags, "-o", out)
+                    self.assertEqual(self._samples(out)[1], rate)
+                    self.assertEqual(self._samples(out)[2], samples)
+                    self.assertEqual(len(self._pcm(out)), samples)
 
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the

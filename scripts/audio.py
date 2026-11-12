@@ -176,6 +176,31 @@ def main_track_channels(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
     return (meta.get("audio") or {}).get("channels") or 0
 
 
+def main_track_rate(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
+    """Sample rate of the track audio.py processes (as main_track_channels() picks it); 0 when it
+    is not known (a dry run's pending input)."""
+    if args.replace:
+        if dry_run_input_pending(args.replace) or not os.path.isfile(args.replace):
+            return 0
+        proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0", "-show_entries",
+                    "stream=sample_rate", "-of", "csv=p=0", args.replace], quiet=True, check=False)
+        first = (proc.stdout or "").strip().splitlines()[:1]
+        return int(first[0]) if first and first[0].strip().isdigit() else 0
+    streams = meta.get("audio_streams") or []
+    track = streams[args.audio_stream] if 0 <= args.audio_stream < len(streams) else (meta.get("audio") or {})
+    try:
+        return int(track.get("sample_rate") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def conform_filter(samples: int, rate: int) -> str:
+    """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
+    seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
+    aformat pins the rate the count is in, so a resampler FFmpeg inserts sits ahead of the count."""
+    return f"aformat=sample_rates={rate},apad=whole_len={samples},atrim=end_sample={samples}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -410,8 +435,15 @@ def main() -> int:
     # frames of a stream-copied picture gone (#164). Padding the audio, not cutting the picture,
     # is the only correct answer for a tool whose contract says the video is never touched.
     keep_video = has_video and not audio_out
+    rate = main_track_rate(args, meta)
+    conform_samples = None
     if dur and (args.replace or args.music or keep_video):
-        post.append(f"apad,atrim=0:{dur:.3f}")
+        if rate:
+            conform_samples = round(dur * rate)
+            post.append(conform_filter(conform_samples, rate))
+        else:
+            # a dry run's pending input: no rate to count in yet; the real run counts samples
+            post.append(f"apad,atrim=0:{dur:.6f}")
     if post:
         graph.append(f"[{last}]{','.join(post)}[out]")
         last = "out"
