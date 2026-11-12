@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.1
+
+_Automated release: version and notes generated from pull requests merged since 3.6.0._
+
 ### Security
 
 - **A DASH manifest or an IMF composition playlist given as media is refused, whatever it is
@@ -42,6 +48,7 @@
   was on the length only: a six-letter name such as `yellow` or `orange` drew black text and was
   reported verified, and a quote or comma reached the filter graph and failed as `kind: ffmpeg`.
   It is now a `kind: input` refusal.
+- fix(security): refuse DASH/IMF manifests and subfile URLs, refuse line breaks in concat paths, never write temps through a planted link (#456)
 
 ## 3.6.0
 
