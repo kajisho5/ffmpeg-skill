@@ -312,7 +312,14 @@ jobs:
       # says the package "may take a few minutes to become available": 1.1.0 was not visible after
       # 60 s and this step went red on a release that was in fact fine, so the window is now five
       # minutes. A failure here never re-publishes anything (the next run sees the tag and skips).
+      # Two questions, asked apart. Whether npm has the version is what the MCP Registry steps
+      # below need, and a version npm does not have fails here. Whether `latest` has moved to it
+      # is slower to answer: npm's dist-tag read lagged more than five minutes behind the publish
+      # on 3.6.2, the step failed, and every later step (the MCP Registry among them) was skipped
+      # for a version npm already had. A `latest` still behind after the wait is recorded and
+      # fails the job in its last step, after the registry steps have run.
       - name: Verify the publish landed as intended
+        id: npm_verify
         if: steps.check.outputs.already_released == 'false'
         env:
           EXPECTED: ${{ steps.check.outputs.version }}
@@ -320,16 +327,25 @@ jobs:
           AUTO_BUMPED: ${{ steps.setup.outputs.needs_auto_bump }}
         run: |
           PKG=$(node -p "require('./package.json').name")
-          for i in $(seq 1 30); do
-            LATEST=$(npm view "$PKG" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
-            [ "$LATEST" = "$EXPECTED" ] && break
-            echo "registry latest=$LATEST, expected $EXPECTED (attempt $i/30)"; sleep 10
-          done
-          if [ "$LATEST" != "$EXPECTED" ]; then
-            echo "::error::npm reports latest=$LATEST after publishing $EXPECTED"; exit 1
-          fi
           if [ "$AUTO_BUMPED" = "true" ] && [ "${EXPECTED%%.*}" != "${PREVIOUS%%.*}" ]; then
             echo "::error::automatic release crossed a major boundary: $PREVIOUS -> $EXPECTED"; exit 1
+          fi
+          for i in $(seq 1 30); do
+            HAVE=$(npm view "$PKG@$EXPECTED" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+            [ "$HAVE" = "$EXPECTED" ] && break
+            echo "npm has no $PKG@$EXPECTED yet (attempt $i/30)"; sleep 10
+          done
+          if [ "$HAVE" != "$EXPECTED" ]; then
+            echo "::error::npm does not have $PKG@$EXPECTED after publishing it"; exit 1
+          fi
+          for i in $(seq 1 60); do
+            LATEST=$(npm view "$PKG" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+            [ "$LATEST" = "$EXPECTED" ] && break
+            echo "npm latest=$LATEST, expected $EXPECTED (attempt $i/60)"; sleep 10
+          done
+          if [ "$LATEST" != "$EXPECTED" ]; then
+            echo "::warning::npm has $PKG@$EXPECTED but still reports latest=$LATEST; the job fails at its end"
+            echo "latest_lag=${LATEST:-unknown}" >> "$GITHUB_OUTPUT"
           fi
           echo "published $PKG@$EXPECTED (previous tag $PREVIOUS)"
 
@@ -426,6 +442,15 @@ jobs:
         if: steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'
         run: |
           echo "::error::the MCP Registry entry was not published (see the three MCP Registry steps, which say why). The tag, the GitHub Release and npm do not depend on it. A re-run publishes the version that is on main when it runs: if main has moved on to a newer version by then, that one is listed and this one is not."
+          exit 1
+
+      - name: Fail the job when npm's latest did not move to this version
+        if: always() && steps.npm_verify.outputs.latest_lag != ''
+        env:
+          EXPECTED: ${{ steps.check.outputs.version }}
+          LATEST: ${{ steps.npm_verify.outputs.latest_lag }}
+        run: |
+          echo "::error::npm has $EXPECTED but its latest dist-tag still read $LATEST after ten minutes. The MCP Registry steps above ran. Check 'npm view <package> dist-tags' and move latest by hand if it is still behind."
           exit 1
 
       # always(): the step above may already have failed the job, and a second failure still has

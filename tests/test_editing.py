@@ -1558,6 +1558,183 @@ class EditingTests(MediaFixtures):
         script("join.py", a, b, "--transition", "dissolve", "--duration", "0.3", "--preset", "ultrafast", "-o", out)
         self.assertEqual(probe(str(out))["video"]["nb_frames"], 51)
 
+    @staticmethod
+    def _frame_pts(path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                              "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout
+        return [float(x.strip(",")) for x in out.split()]
+
+    def test_join_clip_lengths_are_whole_frames_and_samples(self):
+        """#455, the class "a frame-exact clip length written as rounded seconds into a filter": 5
+        frames at 30 fps are 0.166667 s, which `trim=duration=0.167` rounded up, and the concat
+        filter started the next clip after it -- 60 such clips left one-frame holes from about 8 s.
+        Each clip is now cut to its frames (`trim=end_frame`) and its sound to the samples those
+        frames last, at a whole rate and an NTSC one: every source frame once, in order, no hole,
+        and the sound as long as the picture."""
+        from fractions import Fraction
+        d = OUT / "join_frame_exact"
+        d.mkdir(exist_ok=True)
+        for rate in ("30", "30000/1001"):
+            with self.subTest(rate=rate):
+                q, tag = Fraction(rate), rate.replace("/", "_")
+                # NUT keeps the source's frame times exact (Matroska rounds them to the millisecond)
+                src = d / f"src_{tag}.nut"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   f"nullsrc=s=64x48:r={rate},geq=lum='mod(N*23+X*2,256)':cb=128:cr=128", "-f", "lavfi", "-i",
+                   "sine=f=440:r=48000", "-frames:v", "300", "-t", "11", "-c:v", "ffv1", "-c:a", "pcm_s16le", src)
+                clips = []
+                for k in range(60):
+                    # FFV1 + PCM in MOV: every frame a keyframe (no reordering delay), exact frame
+                    # times (Matroska rounds them to the millisecond), and a sound exactly as long as
+                    # the clip's frames. An H.264 clip in MP4/MOV is read with different stream
+                    # starts by FFmpeg 7.1 (each 5-frame clip was held to 7 frames, AAC or PCM:
+                    # #475), which is not what this test measures
+                    clip = d / f"c{tag}_{k:02d}.mov"
+                    s0, s1 = round(5 * k * 48000 / q), round(5 * (k + 1) * 48000 / q)
+                    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf",
+                       f"trim=start_frame={5 * k}:end_frame={5 * k + 5},setpts=PTS-STARTPTS", "-af",
+                       f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "ffv1",
+                       "-c:a", "pcm_s16le", "-r", rate, clip)
+                    clips.append(clip)
+                first = self._frame_pts(clips[0])
+                self.assertEqual(len(first), 5, f"the premise: 5 frames a clip (pts {first}, "
+                                 f"{ {k: v for k, v in probe(str(clips[0])).items() if k in ('video', 'audio', 'duration')} })")
+                out = d / f"joined_{tag}.mp4"
+                doc = json.loads(script("join.py", *clips, "--transition", "none", "--preset", "ultrafast", "--json",
+                                        "-o", out).stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                pts = self._frame_pts(out)
+                if len(pts) != 300:
+                    # what this FFmpeg reports for one clip, for #475 (the clip-length rule)
+                    from _common.decision import stream_starts
+                    m0 = probe(str(clips[0]))
+                    seen = {"clip_frames": doc.get("clip_frames"), "stream_starts": stream_starts(m0),
+                            "video": {k: m0["video"].get(k) for k in ("duration", "start_time", "fps", "nb_frames")},
+                            "audio": {k: (m0.get("audio") or {}).get(k) for k in ("duration", "start_time")},
+                            "duration": m0.get("duration")}
+                    self.fail(f"total frames {len(pts)} != the clips' 300: {seen}")
+                step = 1 / float(q)
+                worst = max(abs((b - a) - step) for a, b in zip(pts, pts[1:]))
+                self.assertLess(worst, 0.002, f"no hole in the picture's timeline (worst step off by {worst:.4f} s)")
+                ours, theirs = self._gray_frames(out), self._gray_frames(src)
+                self.assertEqual(len(ours), 300)
+                moved = [i for i in range(300) if self._frame_psnr(ours[i], theirs[i]) < 35.0]
+                self.assertEqual(moved, [], "every source frame once, in order: no repeated and no lost frame")
+                m = probe(str(out))
+                self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
+                                 "the sound lasts as long as the picture, to one AAC frame")
+                self.assertClose(m["video"]["duration"], 300 / float(q), 0.5 / float(q))
+                self.assertEqual((doc["frame_rate"], doc["clip_frames"], doc["transition_frames"]),
+                                 (f"{q.numerator}/{q.denominator}", [5] * 60, 0))
+                cmd = doc["commands"][0] if isinstance(doc["commands"][0], str) else " ".join(doc["commands"][0])
+                self.assertIn("trim=end_frame=5[", cmd)
+                self.assertNotIn("trim=duration", cmd)
+
+    def test_join_transition_starts_on_its_frame(self):
+        """#468, the same class through xfade: its offset was `sum(lens) - i*d` written to the
+        millisecond, and xfade starts on the first frame at or after the offset, so 2.566667 s
+        written 2.567 started the fade a frame late (92 + 60 frames at 30 fps with 0.5 s: 138
+        frames, where 91 + 60 gave the exact 136). Offsets are now frames of the output rate,
+        written rounded down; a chain of clips at 30000/1001 lands on every frame too."""
+        from fractions import Fraction
+        d = OUT / "join_xfade_frames"
+        d.mkdir(exist_ok=True)
+        for rate, counts, want in (("30", (92, 60), 137), ("30", (91, 60), 136),
+                                   ("30000/1001", (92, 61, 47, 77), 92 + 61 + 47 + 77 - 3 * 15)):
+            with self.subTest(rate=rate, counts=counts):
+                q = Fraction(rate)
+                clips = []
+                for k, nf in enumerate(counts):
+                    clip = d / f"{rate.replace('/', '_')}_{k}_{nf}.mp4"
+                    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                       f"testsrc2=s=64x48:r={rate}", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-frames:v", str(nf),
+                       "-t", f"{nf / float(q):.6f}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", clip)
+                    clips.append(clip)
+                out = d / f"x_{rate.replace('/', '_')}_{'_'.join(map(str, counts))}.mp4"
+                doc = json.loads(script("join.py", *clips, "--transition", "fade", "--duration", "0.5", "--preset",
+                                        "ultrafast", "--json", "-o", out).stdout)
+                self.assertEqual(len(self._frame_pts(out)), want)
+                self.assertEqual((doc["clip_frames"], doc["transition_frames"]), (list(counts), 15))
+                cmd = doc["commands"][0] if isinstance(doc["commands"][0], str) else " ".join(doc["commands"][0])
+                start = 0
+                for nf, offset in zip(counts, re.findall(r"xfade=[^;\[]*:offset=([0-9.]+)", cmd)):
+                    start += nf - 15
+                    self.assertLessEqual(Fraction(offset), start / q, "the offset is never after its frame")
+                    self.assertGreater(Fraction(offset), (start - Fraction(1, 100)) / q)
+                self.assertTrue(doc["verified"], doc["verification"])
+                m = probe(str(out))
+                self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
+                                 "acrossfade overlaps the sound by the frames xfade overlaps")
+
+    def test_join_reads_a_clip_without_a_last_frame_duration_at_its_own_rate(self):
+        """#475: FFmpeg 7.1 read a 5-frame MOV with no duration for its last frame as 0.1333 s at
+        37.5 fps (avg_frame_rate = 5 / 0.1333). join.py took that as the join's rate (75/2) and,
+        at it, read the 0.1667 s sound as running past the picture and held every clip to 7
+        frames: 60 such clips gave 418 frames for 300. The declared r_frame_rate is used when the
+        average is short by exactly the last frame, and the picture counts every frame it holds."""
+        import importlib
+        from fractions import Fraction
+        sys.path.insert(0, str(SCRIPTS))
+        join = importlib.import_module("join")
+        for rate, dur, avg in (("30/1", 0.133333, "75/2"), ("30000/1001", 0.133467, "37463/1000")):
+            with self.subTest(rate=rate):
+                q = Fraction(rate)
+                video = {"nb_frames": 5, "duration": dur, "fps": float(Fraction(avg)), "r_frame_rate": rate,
+                         "avg_frame_rate": avg}
+                meta = {"video": video, "audio": {"duration": float(5 / q)}, "duration": float(5 / q)}
+                got = join.output_rate(video["fps"], video, False)
+                self.assertEqual(got, q, "the join runs at the clip's declared rate, not the short average")
+                whole = join.with_whole_picture(meta, got)
+                self.assertEqual(join.clip_frames(whole, join.clip_length(whole, float(got)), got), 5)
+        # a clip whose duration holds every frame is left as it is, and --fps still decides
+        full = {"nb_frames": 5, "duration": 5 / 30, "fps": 30.0, "r_frame_rate": "30/1", "avg_frame_rate": "30/1"}
+        self.assertIs(join.with_whole_picture({"video": full}, Fraction(30))["video"], full)
+        # ... also at another output rate: 5/30 s is 4 frames at 24, but the clip is checked at its
+        # own declared 30 fps, so a complete clip is not stretched to 5/24 s under --fps 24
+        self.assertIs(join.with_whole_picture({"video": full}, Fraction(24))["video"], full)
+        self.assertEqual(join.output_rate(25.0, full, True), Fraction(25))
+
+    def test_join_sound_overlaps_add_up_to_the_picture(self):
+        """A transition whose length is not a whole number of samples: 9 frames at 30000/1001 is
+        14414.4 samples. Each acrossfade's overlap was rounded on its own (14414), so the sound
+        kept 0.4 samples more than the picture per transition (five 90-frame clips: 663,064
+        samples for a 414-frame picture of 663,062.4). Every clip's samples and every overlap are
+        now differences of the output's rounded frame positions, so the planned sound is the
+        picture's length to the sample. --duration 0 with a transition is one frame, not
+        acrossfade=ns=0 (which FFmpeg refuses)."""
+        from fractions import Fraction
+        d = OUT / "join_xfade_samples"
+        d.mkdir(exist_ok=True)
+        q = Fraction(30000, 1001)
+        clips = []
+        for k in range(5):
+            clip = d / f"c{k}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "testsrc2=s=64x48:r=30000/1001", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-frames:v", "90",
+               "-t", f"{90 / float(q):.6f}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", clip)
+            clips.append(clip)
+        for duration, tframes in (("0.3", 9), ("0", 1)):
+            with self.subTest(duration=duration):
+                out = d / f"x_{duration}.mp4"
+                doc = json.loads(script("join.py", *clips, "--transition", "fade", "--duration", duration,
+                                        "--preset", "ultrafast", "--json", "-o", out).stdout)
+                self.assertEqual(doc["transition_frames"], tframes)
+                cmd = doc["commands"][0] if isinstance(doc["commands"][0], str) else " ".join(doc["commands"][0])
+                kept = sum(int(n) for n in re.findall(r"atrim=end_sample=(\d+)", cmd))
+                overlap = sum(int(n) for n in re.findall(r"acrossfade=ns=(\d+)", cmd))
+                self.assertNotIn("acrossfade=ns=0", cmd)
+                frames_out = 5 * 90 - 4 * tframes
+                self.assertEqual(kept - overlap, round(frames_out * 48000 / q),
+                                 "the planned sound is the picture's length to the sample")
+                self.assertEqual(len(self._frame_pts(out)), frames_out)
+                m = probe(str(out))
+                self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
+                                 "the written sound lasts as long as the picture, to one AAC frame")
+        r = script("join.py", *clips[:2], "--transition", "fade", "--duration", "-1", "--json",
+                   "-o", d / "neg.mp4", expect_fail=True)
+        self.assertNotEqual(r.returncode, 0, "a negative --duration is refused, not taken as one frame")
+        self.assertIn("--duration must be 0 or more", r.stdout + r.stderr)
+
     def test_join_two_or_more_audio_less_clips(self):
         """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
         builds this itself, not this test's fixtures) -- `idx` must be this ffmpeg input's actual position

@@ -4,7 +4,32 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`join.py` cuts every clip to whole frames and its sound to whole samples** (#455). Each clip
+  was trimmed to its length in milliseconds (`trim=duration=0.167` for 5 frames at 30 fps), and the
+  next clip started after it: 60 five-frame clips had one-frame holes from about 8 s. The picture
+  is now cut with `trim=end_frame`, the sound with `atrim=end_sample` at the samples those frames
+  last (counted from the running total, so the sound stays within a sample of the picture), at the
+  first clip's exact rate (30000/1001, where the fps filter used to run at 29.97). The result
+  reports `frame_rate`, `clip_frames` and `transition_frames`.
+- **A `join.py` transition starts on its frame** (#468). The xfade offset was written to the
+  millisecond, and xfade starts on the first frame at or after it: 2.566667 s written 2.567
+  started the fade a frame late (138 frames where 137 were due). Offsets are now frames of the
+  output rate, written rounded down to the microsecond, the transition is a whole number of frames
+  (at least one: `--duration 0` with a transition built `acrossfade=ns=0`, which FFmpeg refuses)
+  and each acrossfade overlaps the samples of those frames, taken from the output's rounded frame
+  positions so the sound never runs a sample longer per transition.
+- **`join.py` reads a short clip without a last-frame duration at its own rate** (#475). FFmpeg 7.1
+  read a 5-frame MOV that stores no duration for its last frame as 0.1333 s at 37.5 fps; join.py
+  ran the whole join at that rate and held every clip to its 0.1667 s sound, 7 frames each (60
+  clips: 418 frames for 300). The clip's declared `r_frame_rate` is used when the average is short
+  by exactly the last frame, and its picture counts every frame it holds.
+- **A slow `latest` on npm no longer stops the MCP Registry publish.** The release job waited five
+  minutes for npm's `latest` to read the new version and then failed, which skipped every later
+  step: 3.6.2 was on npm but not on the MCP Registry until the job was re-run. It now waits for
+  npm to have the version (that is what the registry steps need), runs the registry steps, and
+  only then fails the job if `latest` is still behind after ten minutes.
 
 ## 3.6.2
 

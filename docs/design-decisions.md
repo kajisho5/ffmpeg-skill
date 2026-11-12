@@ -1210,6 +1210,22 @@ not a new file format this tool would have to maintain.
   cut), the picture's otherwise (the tail is trimmed). Tests:
   `test_join_none_holds_a_picture_shorter_than_its_sound`,
   `test_join_none_trims_a_sound_tail_under_a_frame`.
+- **That length is a whole number of frames of the join's rate, and its sound the samples those
+  frames last** (#455, #468). The rate is an exact fraction (the first clip's `r_frame_rate`, so
+  30000/1001 and not 29.97, or `--fps` through `timeline.exact_rate`); the picture's length is
+  rounded to the nearest frame, a sound past it rounded *up* to the frame that covers it (narration
+  is still never cut), and the transition to the nearest whole frame (at least one). The graph cuts
+  with `trim=end_frame` and `apad=whole_len`/`atrim=end_sample`, sample counts taken from the
+  running frame total so the sound never drifts more than a sample from the picture, and
+  `acrossfade=ns` overlaps exactly the frames xfade does. Each xfade offset is its frame's time
+  rounded *down* to the microsecond, because xfade starts on the first frame at or after it: a
+  length or offset written to the millisecond and rounded up put the next clip or the fade one
+  frame late (one-frame holes from about 8 s for 60 five-frame clips; 138 frames where 137 were
+  due). The picture chain keeps the fps filter's time base (one frame) instead of `settb=AVTB`, so
+  every timestamp downstream is a frame number and a microsecond offset rescales to its frame on
+  any FFmpeg. `clip_frames`, `transition_frames` and `frame_rate` report what was used. Code:
+  `join.output_rate()`, `join.clip_frames()`, `join.frame_time()`. Tests:
+  `test_join_clip_lengths_are_whole_frames_and_samples`, `test_join_transition_starts_on_its_frame`.
 
 ## 2.6.0 — the GPU
 
