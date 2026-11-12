@@ -276,8 +276,10 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(cmd[i + 2:i + 4], ["-ss", f"{SEEK_MARGIN:.6f}"], "the margin is dropped on the output side")
         frames = sh("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
                     "stream=nb_read_frames", "-of", "csv=p=0", out).stdout.strip()
-        # frames 118 (3.933 s) .. 209 (6.967 s): every frame from the trim point to the end
-        self.assertEqual(int(frames), 210 - 118)
+        # frames 118 (3.933 s) .. 209 (6.967 s): every frame from the trim point to the end.
+        # FFmpeg 8's ffprobe prints the stream's section twice in csv ("92\n\n92"): the first
+        # value is the stream's
+        self.assertEqual(int(frames.split()[0]), 210 - 118, frames)
         got = probe(str(out))
         self.assertLess(abs((got["video"]["start_time"] or 0.0) - (got["audio"]["start_time"] or 0.0)), 0.03, got)
         again = json.loads(script("sync.py", ref, out, "--json").stdout)
