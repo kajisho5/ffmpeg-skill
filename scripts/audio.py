@@ -42,7 +42,7 @@ VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=thresh
 VOICE_LEVELS = {
     "light": "highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1",
     "medium": VOICE_CHAIN,
-    "strong": VOICE_CHAIN + ",deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled",
+    "strong": VOICE_CHAIN + ",deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled:latency=1",
 }
 
 # The sidechain threshold the music bed has used since 1.4 is the linear 0.05 that ffmpeg's
@@ -95,6 +95,9 @@ def dynamics_filter(name: str, args: argparse.Namespace) -> str:
             opts.append(f"{opt}={value:g}")
     if name == "alimiter":
         opts.append("level=disabled")  # keep the level: a limiter must not normalise the whole track upwards
+        # latency compensation: without it the output is the input delayed by the look-ahead
+        # (--limit-attack, 5 ms by default: 240 samples at 48 kHz) and drifts off the picture (#476)
+        opts.append("latency=1")
     return name + ("=" + ":".join(opts) if opts else "")
 
 

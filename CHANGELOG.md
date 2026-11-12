@@ -109,6 +109,11 @@ _Automated release: version and notes generated from pull requests merged since 
   `bt470bg` (PAL/NTSC-tagged sources), which failed the same alpha line and made `cut.py --smart`
   fall back to a full re-encode. `_common/color.carried_tag()` now spells every such tag the way
   its destination takes it.
+- **`audio.py --limit` no longer delays the sound** (#476). `alimiter` ran without latency
+  compensation, so the output was the input delayed by the look-ahead (`--limit-attack`, 5 ms by
+  default: 240 samples at 48 kHz) and drifted off a stream-copied picture. It now runs with
+  `latency=1`; so does `--voice strong`'s limiter, the one other `alimiter` in the skill. The
+  limited sound starts on the input's own sample (measured, within 3 samples) and keeps its length.
 
 ## 3.6.6
 

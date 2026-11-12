@@ -2051,7 +2051,7 @@ produced. The exact filter chains:
 | --- | --- |
 | `light` | `highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1` |
 | `medium` | `highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2` |
-| `strong` | the `medium` chain, then `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled` |
+| `strong` | the `medium` chain, then `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled:latency=1` |
 
 `light` for a good room (rumble and level only, noise floor and sibilance left
 alone), `medium` for a normal talking head, `strong` for phone/laptop audio.
@@ -2088,6 +2088,9 @@ alone comes out 7.7 dB lower than it went in (9.9 dB on 7.1; follow with `loudne
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
 when the container can hold it (`dropped_non_av_streams` says when it could not).
+`--limit` (and `--voice strong`'s limiter) is `alimiter` with `level=disabled:latency=1`: the
+look-ahead is compensated, so the limited sound starts on the input's own sample instead of
+`--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476).
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation

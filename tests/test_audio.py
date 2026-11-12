@@ -451,6 +451,49 @@ class AudioTests(MediaFixtures):
         self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
 
 
+    @staticmethod
+    def _pcm(path):
+        """The first audio track's first channel as signed 16-bit samples at its own rate."""
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:a:0",
+                              "-af", "pan=mono|c0=c0", "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        import array
+        pcm = array.array("h")
+        pcm.frombytes(raw[:len(raw) // 2 * 2])
+        if sys.byteorder == "big":
+            pcm.byteswap()
+        return pcm
+
+    @staticmethod
+    def _onset(pcm, level=1000):
+        return next(i for i, s in enumerate(pcm) if abs(s) > level)
+
+    def test_audio_limiter_does_not_delay_the_sound(self):
+        """#476: alimiter without latency=1 delays its output by the look-ahead (--limit-attack,
+        5 ms: 240 samples at 48 kHz). With latency compensation the limited sound starts on the
+        input's own sample, at every attack, and --voice strong's limiter adds no delay over the
+        medium chain it extends."""
+        src = OUT / "limit_onset.wav"
+        # 0.5 s of silence, then a tone 0.9 of full scale (over every ceiling below)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "aevalsrc=if(gte(n\\,24000)\\,0.9*sin(2*PI*1000*(n-24000)/48000)\\,0):s=48000:d=1.5", "-c:a", "pcm_s16le", src)
+        ref = self._pcm(src)
+        self.assertEqual(self._onset(ref), 24001, "the fixture's tone starts at sample 24000 (sin 0 = 0)")
+        for extra in ((), ("--limit-attack", "20"), ("--limit-ceiling", "-6")):
+            with self.subTest(extra=extra):
+                out = OUT / "limit_onset_out.wav"
+                doc = json.loads(script("audio.py", src, "--limit", *extra, "-o", out, "--json").stdout)
+                got = self._pcm(out)
+                self.assertEqual(len(got), len(ref), "the length is kept")
+                self.assertLessEqual(abs(self._onset(got) - self._onset(ref)), 3, "the limited sound starts where the input's does")
+                self.assertIn("latency=1", doc["commands"][0])
+        onsets = {}
+        for level in ("medium", "strong"):
+            out = OUT / f"limit_onset_{level}.wav"
+            script("audio.py", src, "--voice", level, "-o", out)
+            onsets[level] = self._onset(self._pcm(out), level=300)
+        self.assertLessEqual(abs(onsets["strong"] - onsets["medium"]), 3, onsets)
+
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the
         accepted 20..60 produce a file, and 12 (once accepted, then exit 222 inside ffmpeg) is refused first."""
