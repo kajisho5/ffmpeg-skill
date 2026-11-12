@@ -120,7 +120,9 @@
   alpha was scaled with `colorchannelmixer`, which takes RGB only, so FFmpeg composited the main
   picture in RGB and it came back BT.601 under its BT.709 tag (the defect 2.10.2 removed from
   `--image`). The alpha is now scaled in YUV (`lut`). This covers `render.py` video layers with an
-  `opacity` too.
+  `opacity` too. An untagged PiP over a BT.709-tagged main (or the other way round) is labelled BT.709 too:
+  FFmpeg 8.0's overlay converted the tagged picture to the untagged one's "unknown" (BT.601)
+  matrix, so the main picture shifted away from the PiP at any opacity.
 - **Overlays onto a 10-bit HDR or ProRes source keep its 10 bits.** overlay's default format is
   8-bit, `format=auto` picks 8-bit beside an 8-bit layer and `drawbox` is 8-bit only on 6.1, so
   `broll.py`, `redact.py` (blur, pixelate), `graphics.py` (bars, boxes, emoji), `caption.py`'s

@@ -31,7 +31,7 @@ with libvpx-vp9, so its transparency reaches the composite (FFmpeg's own VP9 dec
 import argparse
 import re
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
@@ -508,7 +508,13 @@ def main() -> int:
             # converted to BT.709 YUV with its alpha plane: the 4:4:4 the conversion ends in had none,
             # and the layer covered the picture as an opaque rectangle
             pip = pip.replace("format=yuv444p", "format=yuva444p")
-        if base or pip:
+        # an untagged picture is labelled beside a converted one, and beside a tagged one too: FFmpeg
+        # 8.0's overlay negotiates one colorspace for both inputs, and a BT.709-tagged main under an
+        # untagged PiP was converted to the PiP's "unknown" (BT.601) matrix, away from the PiP too
+        # (C03028 at 80/110/192 came back 88/103/192 on 8.0.1). Two untagged pictures agree as they are.
+        def tagged(m: Dict[str, Any]) -> bool:
+            return ((m.get("video") or {}).get("color_space") or "unknown") not in ("unknown", "unspecified")
+        if base or pip or tagged(meta) != tagged(pip_meta):
             base, pip = base or label_chain(meta, meta), pip or label_chain(pip_meta, meta)
         # overlay mixes samples: a full-range picture is taken to limited range (#410)
         base, pip = base + range_chain(meta, meta), pip + range_chain(pip_meta, meta)
