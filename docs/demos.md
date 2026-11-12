@@ -647,7 +647,7 @@ python3 scripts/loudness.py demos/out/loudness_before.mp4 -I -14 --tp -1 -o demo
 python3 scripts/audio.py demos/out/fixtures/surround.mp4 --downmix -o demos/out/downmix_51_after.mp4
 ```
 
-**Look for:** Six discrete tones folded into two channels at the standard coefficients -- the centre and LFE are still audible.
+**Look for:** Six discrete tones folded into two channels with the ITU-R BS.775 weights -- the centre and surrounds are still audible, the LFE is dropped, and nothing clips.
 
 ### Music bed with ducking
 

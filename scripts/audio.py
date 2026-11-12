@@ -13,7 +13,7 @@ Examples:
   python3 audio.py clip.mp4 --fade-in 0.5 --fade-out 1 --stereo
   python3 audio.py talk.mp4 --music bed.mp3 --duck --duck-threshold -30 --duck-release 250   # ducks earlier and recovers faster
   python3 audio.py band.wav --stereo-widen 0.5 -o wide.wav      # wider stereo image (a real stereo source; mono is refused)
-  python3 audio.py surround.mov --downmix                       # 5.1 -> stereo with proper centre/LFE weights
+  python3 audio.py surround.mov --downmix                       # 5.1 -> stereo, ITU-R BS.775 weights, scaled not to clip
   python3 audio.py clip.mp4 --replace narration.wav             # swap the audio track entirely
   python3 audio.py interview.mp4 -o interview.wav               # extract the audio (no video in the output)
   python3 audio.py multi.mkv --audio-stream 1 --voice -o lav.m4a # pick the second audio track, clean it, write M4A
@@ -29,6 +29,8 @@ from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import warn
 
+# --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
+DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
 VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
 # --voice [light|medium|strong] (1.13). "medium" is the chain --voice has always produced, so a
@@ -191,7 +193,7 @@ def main() -> int:
                        help="widen the stereo image, 0..1 (0 = untouched, 1 = maximum); needs a real stereo source: a mono input is "
                             "refused (duplicating it leaves both channels identical, so there is nothing to widen) and more than two "
                             "channels are refused unless --downmix folds them to stereo first")
-    fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo using standard weights")
+    fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo with the ITU-R BS.775 weights (centre and surrounds -3 dB, LFE dropped), scaled so the fold-down cannot clip")
     fades.add_argument("--replace", help="replace the audio with this file (trimmed/padded to the video)")
     dyn = ap.add_argument_group("dynamics (typed; each flag is one option of ffmpeg's acompressor / alimiter / agate)")
     dyn.add_argument("--compress", action="store_true", help="compressor (acompressor); order: gate -> compressor -> limiter")
@@ -301,7 +303,11 @@ def main() -> int:
 
     fx: List[str] = []
     if args.downmix:
-        fx.append("pan=stereo|FL=0.707*FC+FL+0.5*BL+0.5*SL+0.5*LFE|FR=0.707*FC+FR+0.5*BR+0.5*SR+0.5*LFE")
+        # ITU-R BS.775: centre and surrounds at -3 dB (0.707), LFE dropped. pan's '<' scales each
+        # output so its gains sum to 1 over the channels the input has (1/2.414 on 5.1, 1/3.121 on
+        # 7.1), so in-phase channels at full scale cannot clip; '=' summed 2.7x and clipped a loud
+        # 5.1 while the run said verified.
+        fx.append(DOWNMIX_PAN)
     if args.voice:
         fx.append(VOICE_LEVELS[args.voice])
     elif args.denoise:

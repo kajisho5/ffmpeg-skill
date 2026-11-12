@@ -23,7 +23,7 @@ from _common import STATE, require_tool, add_common, apply_common, default_font_
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
-from _common.color import bt709_label_filter  # noqa: E402
+from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
 from _common.probe import display_size, square_pixels, square_pixels_note  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
@@ -267,10 +267,17 @@ def main() -> int:
     # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
     if meta["video"].get("bt2020_or_hdr"):
         v = meta["video"]
-        tm = (f"zscale=tin={v.get('color_transfer') or 'arib-std-b67'}:pin={v.get('color_primaries') or 'bt2020'}:min={v.get('color_space') or 'bt2020nc'}:rin=tv:t=linear:npl=1000,"
-              "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,")
-        tc = "," + tm.rstrip(",") + tc
-        info("HDR source: frames are tone-mapped to SDR for display")
+        # color.py --to-sdr's own chains at its defaults (hable, a 1000-nit PQ peak), so the sheet
+        # shows what that conversion gives. Through 3.6.0 this tone map linearised at npl=1000 and
+        # a sheet's white came out at about Y 151 of 235; a BT.2020 SDR source was tone-mapped
+        # too, where color.py only converts its gamut.
+        if is_bt2020_sdr(v):
+            tm = bt2020_sdr_to_bt709_chain(meta)
+            info("BT.2020 SDR source: frames are converted to BT.709 for display")
+        else:
+            tm = hdr_to_sdr_chain({"video": dict(v, color_transfer=v.get("color_transfer") or "arib-std-b67")}, "hable")
+            info("HDR source: frames are tone-mapped to SDR for display")
+        tc = "," + tm + tc
     outputs: List[str] = []
     # An untagged SDR source is BT.709 (what players and every encoder line here take it as), but the
     # conversion to the PNG's RGB reads "unknown" as BT.601: C03028 came out B31F28 (#410). Its

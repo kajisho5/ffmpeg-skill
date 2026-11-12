@@ -5784,6 +5784,153 @@ class CaptionTextFidelityTests(unittest.TestCase):
                     self.assertIn("{\\c&H00FFFF&}Top", body)
 
 
+class HdrLevelsAndDepthTests(unittest.TestCase):
+    """3.6.1, three defects that leave a run `verified: true` with a wrong picture.
+
+    * --to-sdr (and look.py's HDR sheet) linearised with zscale npl=--peak, while the tonemap filter
+      reads linear 1.0 as 100 nits: no HDR pixel reached SDR white (PQ 1000 nits and HLG 100 % ->
+      Y 151 of 235) and a higher --peak darkened everything.
+    * overlay --video --opacity below 1 scaled the alpha with colorchannelmixer (RGB only), so the
+      whole main picture went through RGB and came back BT.601 under its BT.709 tag.
+    * every overlay onto a 10-bit HDR main (broll, redact blur/pixelate, graphics layers, overlay
+      --video / --image) ran at overlay's 8-bit default (or 8-bit RGB for --image): the whole
+      picture lost its two low bits before the Main10 encoder.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------ fixtures and readers
+    @staticmethod
+    def _patches(name, trc, codes):
+        """256x64 10-bit BT.2020 clip, four 64 px stripes at the limited-range luma `codes`, grey chroma."""
+        path = OUT / name
+        a, b, c, d = codes
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"color=black:s=256x64:r=10:d=1,format=yuv420p10le,"
+           f"geq=lum='if(lt(X,64),{a},if(lt(X,128),{b},if(lt(X,192),{c},{d})))':cb=512:cr=512",
+           "-c:v", "libx265", "-preset", "ultrafast", "-tag:v", "hvc1",
+           "-x265-params", f"lossless=1:colorprim=bt2020:transfer={trc}:colormatrix=bt2020nc:log-level=error", path)
+        return path
+
+    @staticmethod
+    def _yuv_at(video, t, points, depth=8):
+        """[(Y, Cb, Cr)] at each (x, y) of the frame at `t`, as stored (limited-range codes)."""
+        fmt, n = ("yuv420p10le", 2) if depth > 8 else ("yuv420p", 1)
+        size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream=width,height", "-of", "csv=p=0", str(video)],
+                              stdout=subprocess.PIPE, text=True).stdout.strip().split(",")
+        w, h = int(size[0]), int(size[1])
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", fmt, "-"], stdout=subprocess.PIPE).stdout
+
+        def at(offset):
+            return int.from_bytes(raw[offset * n:offset * n + n], "little")
+        out = []
+        for x, y in points:
+            cw = w // 2
+            out.append((at(y * w + x), at(w * h + (y // 2) * cw + x // 2), at(w * h + w * h // 4 + (y // 2) * cw + x // 2)))
+        return out
+
+    STRIPES = [(32, 32), (96, 32), (160, 32), (224, 32)]
+
+    # ------------------------------------------------------------------ tone map levels
+    def test_to_sdr_takes_the_source_peak_to_sdr_white(self):
+        # PQ 100 / 203 / 1000 / 4000 nits; HLG 50 % / 75 % (BT.2408 reference white) / 100 %
+        pq = self._patches("tm_pq_patches.mp4", "smpte2084", (509, 573, 723, 855))
+        hlg = self._patches("tm_hlg_patches.mp4", "arib-std-b67", (502, 721, 940, 940))
+        self.assertTrue(probe(str(pq))["video"]["hdr"] and probe(str(hlg))["video"]["hdr"], "fixtures are HDR")
+
+        def levels(src, *flags):
+            out = OUT / f"{src.stem}_sdr{'_'.join(flags).replace('-', '')}.mp4"
+            doc = json.loads(script("color.py", src, "--to-sdr", "--fast", "--json", *flags, "-o", out).stdout)
+            self.assertTrue(doc["verified"], doc)
+            return [p[0] for p in self._yuv_at(out, 0.5, self.STRIPES)]
+
+        y = levels(pq)  # --peak 1000
+        self.assertGreaterEqual(y[2], 230, f"a 1000-nit pixel at --peak 1000 is SDR white: {y}")
+        self.assertGreater(y[0], 110, f"100 nits is no longer pushed to the bottom of the range (was Y 73): {y}")
+        y4 = levels(pq, "--peak", "4000")
+        self.assertGreaterEqual(y4[3], 230, f"a 4000-nit pixel at --peak 4000 is SDR white: {y4}")
+        self.assertLess(y4[2], y[2], "a brighter master leaves room above 1000 nits")
+        h = levels(hlg)
+        self.assertGreaterEqual(h[2], 230, f"HLG 100 % is SDR white: {h}")
+        self.assertGreater(h[1], 150, f"HLG reference white is well up the range (was Y 91): {h}")
+        # --peak is a PQ setting: HLG's linear peak is 1000 nits whatever it says
+        self.assertEqual(h, levels(hlg, "--peak", "4000"))
+
+    def test_look_shows_an_hdr_sheet_at_the_to_sdr_levels(self):
+        hlg = self._patches("tm_hlg_look.mp4", "arib-std-b67", (502, 721, 940, 940))
+        png = OUT / "tm_hlg_look.png"
+        script("look.py", hlg, "--at", "0.5", "--width", "256", "--no-timecode", "-o", png)
+        rgb = frame_rgb(png, 0, 160, 32)
+        self.assertGreaterEqual(min(rgb), 240, f"HLG 100 % shows as white on the sheet (was 157): {rgb}")
+
+    # ------------------------------------------------------------------ PiP opacity colour
+    def test_a_pip_with_opacity_leaves_the_main_picture_alone(self):
+        main = OUT / "op_main709.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=0xC03028:s=320x180:r=30:d=1",
+           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+           "-qp", "0", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", main)
+        pip = tiny_clip(OUT / "op_pip.mp4", "color=0x30B050:s=96x54:r=30")
+        src = self._yuv_at(main, 0.5, [(300, 170)])[0]
+        for opacity in ("1", "0.9", "0.5"):
+            with self.subTest(opacity=opacity):
+                out = OUT / f"op_pip_{opacity}.mp4"
+                proc = script("overlay.py", main, "--video", pip, "--position", "top-left", "--scale", "80",
+                              "--opacity", opacity, "--json", "-o", out)
+                self.assertNotIn("colorchannelmixer", " ".join(json.loads(proc.stdout)["commands"]))
+                got = self._yuv_at(out, 0.5, [(300, 170)])[0]
+                self.assertLessEqual(max(abs(a - b) for a, b in zip(got, src)), 1, f"main away from the PiP: {got} vs {src}")
+        # the PiP is blended at the stated alpha, in YUV: half way between its colour and the main's
+        half = self._yuv_at(OUT / "op_pip_0.5.mp4", 0.5, [(60, 40)])[0]
+        full = self._yuv_at(OUT / "op_pip_1.mp4", 0.5, [(60, 40)])[0]
+        for h, f, m in zip(half, full, src):
+            self.assertLessEqual(abs(h - (f + m) / 2), 3, (half, full, src))
+
+    # ------------------------------------------------------------------ 10-bit through an overlay
+    def test_an_overlay_onto_a_10_bit_main_keeps_its_low_bits(self):
+        """A flat 10-bit PQ picture at Y 402 / Cb 602 / Cr 422 (none a multiple of 4): an 8-bit
+        composite turns them into 400 / 603 / 423 (or, through RGB, 399 / 608 / 418)."""
+        flat = OUT / "d10_flat.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=black:s=320x180:r=30:d=1,format=yuv420p10le,geq=lum=402:cb=602:cr=422",
+           "-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=48000", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
+           "-tag:v", "hvc1", "-c:a", "aac", "-shortest", flat)
+        v = probe(str(flat))["video"]
+        self.assertEqual((v["bit_depth"], v["bt2020_or_hdr"]), (10, True))
+        want = self._yuv_at(flat, 0.1, [(300, 170)], depth=10)[0]
+        self.assertEqual(want, (402, 602, 422), "fixture")
+        pip = tiny_clip(OUT / "d10_pip8.mp4", "color=0x30B050:s=96x54:r=30")
+        logo = OUT / "d10_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red@0.8:s=60x30,format=rgba",
+           "-frames:v", "1", logo)
+        # (tool, arguments, a point the layer does not cover)
+        runs = [
+            ("broll.py", ["--insert", pip, "--at", "0.6", "--duration", "0.3"], (300, 170)),
+            ("broll.py", ["--insert", flat, "--at", "0.6", "--duration", "0.3"], (300, 170)),
+            ("redact.py", ["--x", "10", "--y", "10", "--width", "40", "--height", "40"], (300, 170)),
+            ("redact.py", ["--x", "10", "--y", "10", "--width", "40", "--height", "40", "--mode", "pixelate"], (300, 170)),
+            ("graphics.py", ["--template", "progress", "--start", "0", "--end", "1"], (300, 20)),
+            ("graphics.py", ["--template", "lower-third", "--name", "Name", "--start", "0", "--end", "1"], (300, 20)),
+            ("overlay.py", ["--video", pip, "--position", "top-left", "--scale", "80"], (300, 170)),
+            ("overlay.py", ["--video", pip, "--position", "top-left", "--scale", "80", "--opacity", "0.9"], (300, 170)),
+            ("overlay.py", ["--image", logo, "--position", "top-left"], (300, 170)),
+        ]
+        for i, (tool, args, point) in enumerate(runs):
+            with self.subTest(tool=tool, args=" ".join(map(str, args))):
+                out = OUT / f"d10_{i}_{tool[:-3]}.mp4"
+                doc = json.loads(script(tool, flat, *args, "--json", "-o", out).stdout)
+                self.assertTrue(doc["verified"], doc)
+                self.assertEqual(probe(str(out))["video"]["bit_depth"], 10)
+                got = self._yuv_at(out, 0.1, [point], depth=10)[0]
+                self.assertLessEqual(max(abs(a - b) for a, b in zip(got, want)), 1, f"{tool}: {got} vs {want}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

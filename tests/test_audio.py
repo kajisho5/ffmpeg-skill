@@ -5,6 +5,7 @@
     python3 tests/test_all.py            # every group
 """
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -855,6 +856,62 @@ class AudiogramTests(MediaFixtures):
                 self.assertFalse(doc["loudness"]["ok"])
                 self.assertTrue(any(n.startswith("output audio is silent") for n in doc["notes"]))
                 self.assertFalse(any("run loudness.py" in n for n in doc["notes"]))
+
+
+class DownmixLevelTests(unittest.TestCase):
+    """3.6.1: --downmix summed 2.7x per side through pan's '=' (no renormalisation) and mixed the
+    LFE in at 0.5, so a loud 5.1 clipped (flat factor 20+, thousands of clipped samples) while the
+    run said verified, and the weights were not the ITU ones the docs named. The fold-down is now
+    ITU-R BS.775 (centre and surrounds at 0.707, LFE dropped) scaled by pan's '<' so its gains sum
+    to 1. The worst case is every channel in phase at the same level: that must come out at that
+    level, not above it, on 5.1(side), 5.1(back) and 7.1."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+
+    def _surround(self, name, layout, channels, gains=None):
+        """`channels` copies of one 440 Hz sine at -6 dBFS (amplitude 0.5), in phase, scaled by `gains`."""
+        gains = gains or [1.0] * channels
+        path = OUT / name
+        pan = "|".join(f"c{i}={g:g}*c0" for i, g in enumerate(gains))
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"sine=f=440:d=1:sample_rate=48000,volume=4,pan={layout}|{pan}", "-c:a", "pcm_s16le", path)
+        return path
+
+    @staticmethod
+    def _peak_db(path):
+        proc = sh("ffmpeg", "-hide_banner", "-i", str(path), "-af", "astats=measure_perchannel=none:measure_overall=Peak_level",
+                  "-f", "null", "-")
+        return float(re.findall(r"Peak level dB: (-?[0-9.]+|-inf)", proc.stderr)[-1])
+
+    def test_an_in_phase_full_level_surround_does_not_clip(self):
+        for layout, n in (("5.1(side)", 6), ("5.1", 6), ("7.1", 8)):
+            with self.subTest(layout=layout):
+                src = self._surround(f"dm_{layout.replace('(', '_').replace(')', '')}.wav", layout, n)
+                self.assertAlmostEqual(self._peak_db(src), -6.02, delta=0.1, msg="fixture: every channel at -6 dBFS")
+                out = src.with_name(src.stem + "_st.wav")
+                doc = json.loads(script("audio.py", src, "--downmix", "--json", "-o", out).stdout)
+                self.assertTrue(doc["verified"], doc)
+                self.assertEqual(probe(str(out))["audio"]["channels"], 2)
+                # gains normalised to 1: in-phase channels at -6 dBFS fold to -6 dBFS (it was +1.7
+                # on 5.1 and clipped at 0)
+                self.assertAlmostEqual(self._peak_db(out), -6.02, delta=0.3, msg=layout)
+
+    def test_the_lfe_is_dropped_and_the_centre_is_at_minus_3_db_of_the_front(self):
+        # FL, FR, FC, LFE, SL, SR: only the LFE carries the tone, then only FC and FL
+        lfe = self._surround("dm_lfe_only.wav", "5.1(side)", 6, [0, 0, 0, 1, 0, 0])
+        out = OUT / "dm_lfe_only_st.wav"
+        script("audio.py", lfe, "--downmix", "-o", out)
+        self.assertLess(self._peak_db(out), -80, "BS.775 drops the LFE")
+        fc = self._surround("dm_fc_only.wav", "5.1(side)", 6, [0, 0, 1, 0, 0, 0])
+        fl = self._surround("dm_fl_only.wav", "5.1(side)", 6, [1, 0, 0, 0, 0, 0])
+        out_c, out_l = OUT / "dm_fc_only_st.wav", OUT / "dm_fl_only_st.wav"
+        script("audio.py", fc, "--downmix", "-o", out_c)
+        script("audio.py", fl, "--downmix", "-o", out_l)
+        self.assertAlmostEqual(self._peak_db(out_l) - self._peak_db(out_c), 3.01, delta=0.2)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
+- [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
 <!-- contents:end -->
 
 ## Time limits
@@ -190,9 +191,10 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`escape_drawtext()` drops `'` and `%` from burnt-in text** instead of escaping them. Both
   characters have no reliable escape across the FFmpeg versions in CI; a missing apostrophe is a
   known limitation, a broken filter graph is not. Test: `test_drawtext_semicolon_and_quote_render_as_inert_literal_text`.
-- **`grid.py` and `look.py` composite an HDR input into an 8-bit SDR picture without a tone map.** Both
-  produce comparison/inspection artefacts, not deliverables; `grid.py` prints a note when an input is
-  HDR and points to `color.py --to-sdr` for a graded conversion. `join.py` and `broll.py`, whose output
+- **`grid.py` composites an HDR input into an 8-bit SDR picture without a tone map.** It produces
+  a comparison/inspection artefact, not a deliverable; it prints a note when an input is HDR and
+  points to `color.py --to-sdr` for a graded conversion. (`look.py` shows an HDR frame through
+  `--to-sdr`'s own tone map: "After 3.6.0" below.) `join.py` and `broll.py`, whose output
   is a deliverable, keep the HDR (10-bit HEVC) path. Test: `test_grid_composites_cols_rows_with_labels`.
 - **`look.py -o` is used verbatim only for a single `--at` with an image extension**; several frames,
   or `-o` given as a stem, produce `<stem>_<t>s.png` names. Test: `test_hdr_source_stays_hdr_through_reencodes`.
@@ -3320,3 +3322,45 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   a last step turns it red, the same shape as the plugin branch: a missing registry entry must
   not undo a release. The first run was the merge of the PR that added the steps (#445): it listed 3.4.3, a
   version released before they existed. Test: `test_mcp_registry_manifest_tracks_the_package_version`.
+
+## After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth
+
+- **`audio.py --downmix` is quieter than its input, by design.** It folds 5.1/7.1 with the
+  ITU-R BS.775 weights (centre and every surround at 0.707, LFE dropped) and pan's `<` scales
+  each side so its gains sum to 1 over the channels the input has: a front channel alone comes out
+  7.7 dB lower on 5.1, 9.9 dB on 7.1, and in-phase channels at full level cannot clip. Through
+  3.6.0 pan's `=` summed 2.7× per side (3.2× on 7.1) with the LFE at 0.5, so a loud 5.1 clipped
+  (flat factor 20+) while the run said verified. A limiter instead of the scale would change the
+  programme's dynamics, and the loudness is `loudness.py`'s job. `--stereo`/`--mono` on more than
+  two channels already went through swresample, which normalises the same way (measured on 6.1:
+  s16, f32 and AAC sources fold in-phase -6 dBFS channels to -6 dBFS). Code:
+  `audio.DOWNMIX_PAN`. Tests: `DownmixLevelTests`.
+- **`--to-sdr` linearises at 100 nits per unit and gives `tonemap` the source peak; `--peak` is a
+  PQ setting.** FFmpeg's `tonemap` reads linear 1.0 as 100 nits (SDR white) and takes `peak` in
+  those units, so the zscale before it uses `npl=100` and the filter gets `peak=--peak/100`: a PQ
+  pixel at `--peak` nits and HLG at 100 % land on Y 235. Through 3.6.0 the zscale used
+  `npl=--peak`, so a 1000-nit pixel arrived as 1.0 (100 nits to the filter): nothing reached white
+  (PQ 1000 nits and HLG 100 % at Y 151, HLG reference white at 91), and raising `--peak` to a
+  brighter master's darkened everything. zimg decodes HLG for a 1000-nit display, so an HLG
+  picture always peaks at 1000 nits there and `--peak` is not applied to it. `look.py` shows an HDR
+  source through the same chain at `--to-sdr`'s defaults (hable, 1000 nits), and a BT.2020 SDR one
+  through the gamut conversion only, so the sheet shows what the conversion would give. Code:
+  `_common/color.py` (`hdr_to_sdr_chain`). Test: `test_to_sdr_takes_the_source_peak_to_sdr_white`,
+  `test_look_shows_an_hdr_sheet_at_the_to_sdr_levels`.
+- **An overlay onto a picture deeper than 8 bits, on a line that keeps more than 8 bits, runs at
+  10 bits.** overlay's default format is 8-bit `yuv420`, `format=auto` picks an 8-bit one as soon
+  as a layer is 8-bit, and `drawbox` is 8-bit only on 6.1: through 3.6.0 a cutaway, a redaction,
+  a graphics layer or box, an emoji and a PiP took a 10-bit HDR or ProRes picture to 8 bits before
+  the 10-bit encoder, and `overlay --image`'s RGBA logo took it through 8-bit RGB (Y 402 / Cb 602
+  / Cr 422 came out 400 / 603 / 423, through RGB 399 / 608 / 418). `overlay_format()` names
+  `yuv420p10` (`yuv422p10`/`yuv444p10` for those sources) for such a picture, an 8-bit layer is
+  widened to meet it (bit depth only, no matrix), and graphics.py draws its boxes as layers there.
+  Not changed: an 8-bit main, an SDR H.264 line (its output is 8-bit; a 10-bit SDR source is
+  reduced at the encoder as before), the alpha line (its tool picks the format), and the colour of
+  an RGB layer on an HDR line, which is still FFmpeg's own conversion ("Not converted ... an HDR
+  line" above). `overlay --video --opacity` scales the layer's alpha with `lut` in YUV: the RGB-only
+  `colorchannelmixer` it used made FFmpeg composite the whole main picture in RGB, which came back
+  BT.601 under the BT.709 tag (#333's defect, on the video path; C03028 read 188/42/35 at opacity 1
+  and 199/55/32 at 0.999). Code: `_common/decision.py` (`overlay_format`), `broll`, `redact`,
+  `graphics`, `overlay`, `caption`'s emoji. Tests: `test_an_overlay_onto_a_10_bit_main_keeps_its_low_bits`,
+  `test_a_pip_with_opacity_leaves_the_main_picture_alone`.

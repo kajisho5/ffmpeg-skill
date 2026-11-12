@@ -2003,9 +2003,11 @@ iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 `probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`
 tone-maps it from the HLG base layer. When the user wants to keep HDR but
 players mis-render the DV layer, `--strip-dovi` removes it losslessly.
-`--to-sdr` does a real conversion: linearise (zscale, PQ or HLG), tone-map
-(default `hable`, `mobius` keeps more highlight detail; FFmpeg's CPU
-`tonemap` filter has no BT.2390 curve), then BT.709 gamma + matrix. Refuses when probe says the
+`--to-sdr` does a real conversion: linearise (zscale, PQ or HLG, 1.0 = 100 nits),
+tone-map the source peak to SDR white (`--peak` nits for PQ, default 1000; HLG
+always peaks at 1000; default `hable`, `mobius` keeps more highlight detail; FFmpeg's CPU
+`tonemap` filter has no BT.2390 curve), then BT.709 gamma + matrix. `look.py` shows an
+HDR source through the same chain at its defaults. Refuses when probe says the
 input is not HDR unless `--force`. `--lut` applies a 3D .cube with
 tetrahedral interpolation (Log→709 conversions, creative looks); blend with
 `--lut-strength`. Everything else in the skill assumes SDR BT.709, so run this
@@ -2074,8 +2076,11 @@ needs a real stereo source: it scales the side signal (L−R), so a mono track
 duplicated to two channels has nothing to scale. A 1-channel input is refused
 (`kind: input`) — `--stereo` duplicates it but does not widen it — and more than
 two channels are refused unless `--downmix` is given too, in which case the
-widening runs on the stereo fold-down. `--downmix` uses the
-ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
+widening runs on the stereo fold-down. `--downmix` folds 5.1/7.1 to stereo with
+the ITU-R BS.775 weights (centre and surrounds at -3 dB, LFE dropped), scaled so
+each side's gains sum to 1: in-phase channels cannot clip, and a front channel
+alone comes out 7.7 dB lower than it went in (9.9 dB on 7.1; follow with `loudness.py`).
+`--mono` averages a stereo pair,
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
 when the container can hold it (`dropped_non_av_streams` says when it could not).

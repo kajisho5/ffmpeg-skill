@@ -22,7 +22,7 @@ import sys
 from typing import Any, Dict, List
 
 from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
 
@@ -136,7 +136,7 @@ def main() -> int:
         b_sq = (square_pixels(c["meta"]["video"]) + ",") if square_pixels(c["meta"]["video"]) else ""
         parts.append(f"[{i + 1}:v]trim=start={c['from']:.3f}:duration={c['length']:.3f},setpts=PTS-STARTPTS+{c['at']:.3f}/TB,"
                      f"{convert[i + 1]}{b_sq}{geo},setsar=1,fps={fps:g},format={'yuv420p10le' if (meta_a.get('video') or {}).get('bt2020_or_hdr') else 'yuv420p'}[b{i}]")
-        parts.append(f"{cur}[b{i}]overlay=0:0:eof_action=pass:enable='between(t,{c['at']:.3f},{c['at'] + c['length']:.3f})'[v{i}]")
+        parts.append(f"{cur}[b{i}]overlay=0:0{overlay_format(meta_a)}:eof_action=pass:enable='between(t,{c['at']:.3f},{c['at'] + c['length']:.3f})'[v{i}]")
         cur = f"[v{i}]"
     vout = cur
 

@@ -410,7 +410,7 @@ def resolve_emoji_assets(flag: "Optional[str]" = None, project: "Optional[str]" 
 
 
 
-def emoji_filter_chain(plan, base_label, out_label, first_input=1, to_yuv="", base_chain=""):
+def emoji_filter_chain(plan, base_label, out_label, first_input=1, to_yuv="", base_chain="", overlay_opts=""):
     """(chains, inputs) that composite the planned PNGs on top of `base_label`.
 
     `inputs` is a list of argv fragments, each ending in the asset path, to be appended to the
@@ -420,6 +420,8 @@ def emoji_filter_chain(plan, base_label, out_label, first_input=1, to_yuv="", ba
     converted to the BT.709 the output is tagged with instead of by overlay's BT.601 default;
     `base_chain` (label_chain(meta, meta): an untagged source's BT.709 label) goes in front of
     the first overlay, so 7.1+ does not convert the two pictures to one another.
+    `overlay_opts` ends each overlay's options: the caller's overlay_format(meta), so a 10-bit
+    picture is not composited at overlay's 8-bit default.
     """
     overlays = plan.get("overlays") or []
     if not overlays:
@@ -478,6 +480,6 @@ def emoji_filter_chain(plan, base_label, out_label, first_input=1, to_yuv="", ba
         # exactly what shipped first). eof_action=repeat (the default) holds the still for the
         # whole timeline; enable= is what confines it to the cue's window.
         chains.append(f"[{cur}][{label}]overlay=x={x}:y={o['y']}:"
-                      f"enable='between(t,{o['start']:.3f},{o['end']:.3f})'[{nxt}]")
+                      f"enable='between(t,{o['start']:.3f},{o['end']:.3f})'{overlay_opts}[{nxt}]")
         cur = nxt
     return chains, inputs

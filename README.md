@@ -458,7 +458,7 @@ They are the most used tools here, and they are tested on every pull request and
 `color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `clip`, `linear` and `gamma` with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
 
 - It needs `zscale` (libzimg). The plain Homebrew `ffmpeg` lacks it, so use `ffmpeg-full` (keg-only: see [Install](#install) for putting it on `PATH`); `doctor` reports whether it is there.
-- `--peak` (default 1000 nits) should match how bright the source was mastered. A wrong value makes highlights dull or clipped.
+- `--peak` (default 1000 nits) is the PQ source's brightest level, the one that becomes SDR white: set it to how bright the source was mastered (its MaxCLL or mastering peak). Too high dims the picture; too low clips the highlights. HLG always peaks at 1000 nits, so `--peak` does not apply to it.
 - Tone mapping is a judgement, and the result says so (`grade_look` in `unverified`). Compare frames with `look.py`, and try another `--tonemap` if skin or skies look off.
 - An HDR source that only needs to play everywhere may not need converting at all. `--strip-dovi` removes the Dolby Vision layer from an iPhone clip, keeping its HLG picture, with a stream copy.
 
