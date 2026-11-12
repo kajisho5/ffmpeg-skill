@@ -407,6 +407,31 @@ exists. When a decision changes, edit the entry in the same PR.
   before that write. Through 2.2.3 a hand-corrected transcript was replaced on a re-run. Code:
   `_common.refuse_existing_outputs()`. Test:
   `test_caption_sidecars_are_refused_like_the_video_without_overwrite`.
+- **The output check is made again where the file is replaced** (#470). The check above runs
+  before the encode and decides whether an existing target may be replaced (`--overwrite`, this
+  run's own file, `batch.py`'s own delivery); the replace runs after it. The check records each
+  target's identity (size, mtime, inode, device: `owned_identity()`, none when absent), a write of
+  this run records the identity it left, and under the output lock the write already holds, just
+  before the replace, `refuse_changed_output()` compares it again: a different file at the path, or
+  one at a path that was absent, was put there by another process during the run and is refused
+  (`kind: input`, `reason: output_exists`, `details.outputs[].changed_during_run`), the new
+  output's temp removed and nothing replaced -- as `batch.py`'s `deliver()` already did. `run()`
+  compares before staging and before its `os.replace`, `place_output()` before its rename and
+  before the copy's rename, and a file a tool replaces itself goes through `replace_checked()`
+  (export.py's fill and `--normalize`, silence.py's `--timemap`). `--overwrite` still replaces
+  whatever is at the path, changed or not: it is consent to replace that path, not one file
+  (`deliver()` reads it the same way); a path no check recorded is not compared. What remains:
+  `run()` stages only an existing target, so a target absent at the check is opened by ffmpeg
+  itself, and a file created at that name after the lock's comparison and before ffmpeg opens it
+  is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
+  itself); files written with a plain `open()` after their check (EDLs, SRTs, chapter lists) are
+  not compared. Code: `runner.refuse_changed_output()`, `replace_checked()`, `run()`,
+  `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`
+  (`test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced`,
+  `test_a_target_created_after_the_check_is_refused_unless_overwrite`,
+  `test_overwrite_still_replaces_a_target_swapped_during_the_encode`,
+  `test_place_output_refuses_a_target_put_there_after_its_check`,
+  `test_a_side_file_a_tool_replaces_itself_is_rechecked`).
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
@@ -2185,7 +2210,9 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   (`runner.report_committed()`, called where a write lands); `deliver()` compares the final path's
   identity again under the output lock and records the one it leaves. An SRT edited while the same
   item's video was still encoding no longer matches what was written and is refused next pass. A file another process puts there between that check and the
-  write itself is the same window every tool's own `--overwrite` check has. A side file a step
+  write itself is refused there too: the step compares the identity its check recorded under the
+  output lock before it replaces (see "The output check is made again where the file is
+  replaced"). A side file a step
   writes without that check, or one of an item that failed, is not recorded, so the next pass
   refuses it. A plain batch (no `--watch`) has no previous poll and processes what is there.
   Code: `batch.settle_poll()`, `is_own_output()`, `deliver()`, `owned_config()`,

@@ -51,7 +51,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
@@ -219,7 +219,8 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     try:
         run(cmd)
         if fill_tmp:
-            os.replace(fill_tmp, output)
+            # under the fill's lock, and only while it is the file guard_sidecar() decided about
+            replace_checked(fill_tmp, output)
     finally:
         if fill_tmp:
             # the command is recorded with the path the caller asked for, not the temp name
@@ -746,7 +747,8 @@ def main() -> int:
                     die(f"--normalize: loudness.py failed: {why} ({kept_clause()})",
                         code=child_exit_code(child, proc.returncode) if proc.returncode else 1,
                         kind=err.get("kind") or "ffmpeg", output=output, hint=err.get("hint"))
-                os.replace(tmp, output)
+                # the export this run wrote, unless another process replaced it during the pass
+                replace_checked(tmp, output)
                 m = measure_loudness(output)
                 if not m:
                     # the file changed: the measurement before --normalize no longer describes it

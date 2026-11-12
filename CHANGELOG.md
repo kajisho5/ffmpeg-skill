@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A file put at the output path during a run is no longer replaced** (#470). Whether an existing
+  target may be replaced was decided at the output check, before the encode, and the replace
+  after it did not look again: a file another process saved there meanwhile (over a file
+  `batch.py --watch` had delivered, or at a path that was empty) was replaced. `run()`,
+  `place_output()` and the files export.py and silence.py replace themselves (the fill beside a
+  key, `--normalize`, `--timemap`) now compare the target's identity under the output lock right
+  before the replace and refuse a changed or new file (`kind: input`, `reason: output_exists`),
+  removing the new output's temp. `--overwrite` still replaces whatever is at the path.
 
 ## 3.6.3
 

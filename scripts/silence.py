@@ -28,6 +28,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
+from _common.runner import replace_checked
 from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
@@ -261,7 +262,8 @@ def write_time_map(path: str, tm: Dict[str, Any]) -> None:
         mask = os.umask(0)  # mkstemp makes the file 0600; give the map the mode open() would have
         os.umask(mask)
         os.chmod(tmp, 0o666 & ~mask)
-        os.replace(tmp, path)
+        # under the map's lock, and only while it is the file refuse_existing_outputs() decided about
+        replace_checked(tmp, path)
     except BaseException:
         try:
             os.remove(tmp)

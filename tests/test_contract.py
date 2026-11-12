@@ -7908,6 +7908,167 @@ class SideFileGuardTests(unittest.TestCase):
         self.assertIn("./name", err["message"])
 
 
+class OutputChangedDuringRunTests(unittest.TestCase):
+    """#470: whether an existing target may be replaced is decided at the output check, before the
+    encode; the replace comes after it. A file another process puts at the path in between (a
+    different file at a target batch.py owned, or one at a target that did not exist) is refused
+    under the output lock, the new output's temp removed, unless --overwrite consented to replacing
+    whatever is at that path. No ffmpeg runs: the encode is a mock that writes its output and,
+    where the case asks for it, swaps the target as another process would."""
+
+    def setUp(self):
+        from _common import runner
+        self.runner = runner
+        self.work = Path(tempfile.mkdtemp(prefix="ffskill_race_"))
+        _common.STATE.reset()
+        _common.STATE.json = True
+
+    def tearDown(self):
+        _common.STATE.reset()
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def call(self, fn, *args, env=None):
+        """(None, None) when fn ran through; (kind, reason) of the refusal it exited with."""
+        from unittest import mock
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                fn(*args)
+            except SystemExit:
+                doc = json.loads(out.getvalue())
+                return doc["error"]["kind"], doc["error"].get("reason")
+        return None, None
+
+    def encode(self, during=None):
+        """A stand-in for _execute(): ffmpeg writes `new` to its last argument, then `during` runs."""
+        def fake(exec_cmd):
+            Path(exec_cmd[-1]).write_bytes(b"new")
+            if during:
+                during()
+            return subprocess.CompletedProcess(list(exec_cmd), 0, "", "")
+        return fake
+
+    def owned(self, path, name):
+        """batch.py's snapshot naming `path` as the file it delivered there (runner.OWNED_ENV)."""
+        cfg = self.work / name
+        report = self.work / f"{name}.report"
+        report.mkdir()
+        cfg.write_text(json.dumps({"replaceable": {os.path.realpath(path): self.runner.owned_identity(str(path))},
+                                   "report": str(report)}), encoding="utf-8")
+        return {self.runner.OWNED_ENV: str(cfg)}
+
+    def swap(self, path, data=b"theirs"):
+        def go():
+            other = path.with_name(path.name + ".other")
+            other.write_bytes(data)
+            os.replace(other, path)  # a new inode at the path, as another process's save leaves
+        return go
+
+    def temps(self):
+        return sorted(p.name for p in self.work.iterdir() if ".ffskill-" in p.name)
+
+    def cmd(self, out):
+        return ["ffmpeg", "-f", "lavfi", "-i", "nullsrc", str(out)]
+
+    def test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced(self):
+        from unittest import mock
+        out = self.work / "out.mp4"
+        out.write_bytes(b"delivered")
+        env = self.owned(out, "c1.json")
+        # batch.py's own delivery, swapped during the encode: refused, the other file kept
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), ("input", "output_exists"))
+        self.assertEqual(out.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [], "the new output's temp is removed")
+        # the same delivery left alone during the encode is replaced, as before
+        _common.STATE.reset()
+        _common.STATE.json = True
+        out.write_bytes(b"delivered again")
+        env = self.owned(out, "c2.json")
+        with mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+        # this run's own output (a second pass) is rewritten without --overwrite
+        with mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+
+    def test_a_target_created_after_the_check_is_refused_unless_overwrite(self):
+        from unittest import mock
+        out = self.work / "fresh.mp4"
+        real_check = self.runner._check_existing_output
+
+        def check_then_create(cmd):
+            real_check(cmd)
+            if not out.exists():
+                out.write_bytes(b"theirs")  # created by another process once the check passed
+        with mock.patch.object(self.runner, "_check_existing_output", check_then_create), \
+                mock.patch.object(self.runner, "_execute", self.encode()):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), ("input", "output_exists"))
+            self.assertEqual(out.read_bytes(), b"theirs")
+            self.assertEqual(self.temps(), [])
+            # --overwrite consented to replacing whatever is at the path
+            out.unlink()
+            _common.STATE.overwrite = True
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+            self.assertEqual(out.read_bytes(), b"new")
+
+    def test_overwrite_still_replaces_a_target_swapped_during_the_encode(self):
+        """--overwrite is consent to replace what is at the path (as batch.py's deliver() reads
+        it); without it the same swap is refused."""
+        from unittest import mock
+        out = self.work / "ow.mp4"
+        out.write_bytes(b"old")
+        _common.STATE.overwrite = True
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out)), (None, None))
+        self.assertEqual(out.read_bytes(), b"new")
+        _common.STATE.reset()
+        _common.STATE.json = True
+        out.write_bytes(b"delivered")
+        env = self.owned(out, "c3.json")
+        with mock.patch.object(self.runner, "_execute", self.encode(self.swap(out))):
+            self.assertEqual(self.call(self.runner.run, self.cmd(out), env=env), ("input", "output_exists"))
+        self.assertEqual(out.read_bytes(), b"theirs")
+
+    def test_place_output_refuses_a_target_put_there_after_its_check(self):
+        """place_output()'s rename (move=True) and its copy path, as render.py and cut.py use them."""
+        from unittest import mock
+        real_check = self.runner._check_existing_output
+        for move in (True, False):
+            with self.subTest(move=move):
+                dst, src = self.work / f"placed{int(move)}.mp4", self.work / f"src{int(move)}.bin"
+                src.write_bytes(b"new")
+
+                def check_then_create(cmd, dst=dst):
+                    real_check(cmd)
+                    dst.write_bytes(b"theirs")
+                with mock.patch.object(self.runner, "_check_existing_output", check_then_create):
+                    self.assertEqual(self.call(self.runner.place_output, str(src), str(dst), move),
+                                     ("input", "output_exists"))
+                self.assertEqual(dst.read_bytes(), b"theirs")
+                self.assertEqual(self.temps(), [])
+                # unchanged since the check (here: absent), it is placed
+                dst.unlink()
+                self.assertEqual(self.call(self.runner.place_output, str(src), str(dst), move), (None, None))
+                self.assertEqual(dst.read_bytes(), b"new")
+
+    def test_a_side_file_a_tool_replaces_itself_is_rechecked(self):
+        """silence.py --timemap (as export.py's fill and --normalize) replaces through
+        replace_checked(): a map that appeared after refuse_existing_outputs() is refused."""
+        import silence
+        path = self.work / "map.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        path.write_text("theirs", encoding="utf-8")
+        tm = {"kept": [], "removed": []}
+        self.assertEqual(self.call(silence.write_time_map, str(path), tm), ("input", "output_exists"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "theirs")
+        self.assertEqual([p.name for p in self.work.iterdir()], ["map.json"], "the staged map is removed")
+        path.unlink()
+        self.assertEqual(self.call(silence.write_time_map, str(path), tm), (None, None))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), tm)
+
+
 class Issue415Tests(unittest.TestCase):
     """#415: the earlier fixes' mechanisms in places they had not reached. Each test runs the tools
     as a caller does: no --overwrite unless the case is about it (tests/_fixtures.py adds it to
