@@ -588,6 +588,10 @@ def main() -> int:
     apply_common(args)
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
+    # nan and inf are refused by the parser (finite_float); a negative length was taken as the
+    # one-frame minimum and the join succeeded with a transition nobody asked for
+    if args.duration < 0:
+        die(f"--duration must be 0 or more seconds, got {args.duration:g}")
 
     if args.list:
         if args.inputs:

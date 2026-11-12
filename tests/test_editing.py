@@ -1686,6 +1686,13 @@ class EditingTests(MediaFixtures):
                 self.assertEqual(kept - overlap, round(frames_out * 48000 / q),
                                  "the planned sound is the picture's length to the sample")
                 self.assertEqual(len(self._frame_pts(out)), frames_out)
+                m = probe(str(out))
+                self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
+                                 "the written sound lasts as long as the picture, to one AAC frame")
+        r = script("join.py", *clips[:2], "--transition", "fade", "--duration", "-1", "--json",
+                   "-o", d / "neg.mp4", expect_fail=True)
+        self.assertNotEqual(r.returncode, 0, "a negative --duration is refused, not taken as one frame")
+        self.assertIn("--duration must be 0 or more", r.stdout + r.stderr)
 
     def test_join_two_or_more_audio_less_clips(self):
         """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
