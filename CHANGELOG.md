@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.4
+
+_Automated release: version and notes generated from pull requests merged since 3.6.3._
+
 ### Fixed
 
 - **A file put at the output path during a run is no longer replaced where the tool replaces it
@@ -51,6 +57,7 @@
   backport). A tag cut before this job existed (every tag up to v3.6.3) has no `recover` job at its
   commit, so dispatching on it cannot recover that version. Test:
   `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.
+- fix: recheck outputs under the lock, sequence frame grid, release recovery dispatch (#480)
 
 ## 3.6.3
 
