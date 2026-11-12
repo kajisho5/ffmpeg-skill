@@ -1789,6 +1789,43 @@ class EditingTests(MediaFixtures):
                              "stream=nb_read_frames", "-of", "csv=p=0", out).stdout.strip().split(",")[0]
                 self.assertEqual(int(counted), 60, f"clip diagnostics: {diag}")
 
+    def test_join_of_cut_and_cropped_parts_keeps_every_frame(self):
+        """#479: cut a 7.1667 s H.264 + AAC MP4 (215 frames at 30) into three parts, crop each,
+        join them with no transition. A dependent project saw 3 frames lost on FFmpeg 8.0.1 (7.066
+        s for 7.166) while 6.1 kept all 215. Diagnostics print each part as probe() read it."""
+        d = OUT / "join_479"
+        d.mkdir(exist_ok=True)
+        sys.path.insert(0, str(SCRIPTS))
+        from _common import probe
+        src = d / "src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30",
+           "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "7.166667", "-c:v", "libx264", "-preset", "ultrafast",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        parts = []
+        for name, span in (("a", ("--start", "0", "--end", "2.4")), ("b", ("--start", "2.4", "--end", "4.8")),
+                           ("c", ("--start", "4.8"))):
+            cut = d / f"{name}_cut.mp4"
+            script("cut.py", src, *span, "--accurate", "-o", cut)
+            cropped = d / f"{name}.mp4"
+            script("crop.py", cut, "--x", "40", "--y", "0", "--width", "240", "--height", "180", "-o", cropped)
+            parts.append(cropped)
+        def frames(path):
+            out = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries",
+                     "stream=nb_read_frames", "-of", "csv=p=0", path).stdout.strip().split(",")[0]
+            return int(out)
+        diag = []
+        for p in parts:
+            m = probe(str(p))
+            diag.append({"frames": frames(p), "video": {k: m["video"].get(k) for k in (
+                "start_time", "duration", "nb_frames", "fps", "r_frame_rate", "avg_frame_rate")},
+                "audio": {k: (m.get("audio") or {}).get(k) for k in ("start_time", "duration")}})
+        out = d / "joined.mp4"
+        doc = json.loads(script("join.py", *parts, "--transition", "none", "--json", "-o", out).stdout)
+        detail = f"parts: {diag}; clip_frames: {doc.get('clip_frames')}; frame_rate: {doc.get('frame_rate')}"
+        self.assertEqual([p["frames"] for p in diag], [72, 72, 71], detail)
+        self.assertEqual(doc.get("clip_frames"), [72, 72, 71], detail)
+        self.assertEqual(frames(out), 215, detail)
+
     def test_join_sound_overlaps_add_up_to_the_picture(self):
         """A transition whose length is not a whole number of samples: 9 frames at 30000/1001 is
         14414.4 samples. Each acrossfade's overlap was rounded on its own (14414), so the sound
