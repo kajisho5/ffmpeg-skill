@@ -319,7 +319,10 @@ def audit(event: str, details: Dict[str, Any], *, default_path: Optional[str] = 
         rec["plan_sha256"] = plan_sha256
     rec["details"] = details
     try:
-        with open(path, "a", encoding="utf-8") as f:
+        # a default path is a hidden name in someone's output directory: never appended to through a
+        # symlink planted there. A log the caller named (--audit-log) is opened as named.
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | (0 if ctx.audit_log else getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(os.open(path, flags, 0o666), "a", encoding="utf-8") as f:
             f.write(json.dumps(json_safe(rec), ensure_ascii=False, sort_keys=True) + "\n")
     except OSError as exc:
         warn(f"could not append the {event} record to the audit log {path} ({exc}); the run is unaffected",

@@ -3915,6 +3915,32 @@ class ContractTests(unittest.TestCase):
                 err = json.loads(proc.stdout)["error"]
                 self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
         self.assertFalse((work / "out.mp4").exists())
+        # DASH and IMF are told by content, as ffmpeg's own probes tell them: a manifest named .mp4
+        # made every tool follow its BaseURL to another local file (and over HTTP). The case and a
+        # long comment before <MPD do not hide it from ffmpeg, so they do not hide it here.
+        mpd = (f'<MPD profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static" '
+               f'mediaPresentationDuration="PT1S"><Period><AdaptationSet mimeType="video/mp4"><Representation id="1" '
+               f'bandwidth="1000"><BaseURL>{self.src}</BaseURL></Representation></AdaptationSet></Period></MPD>\n')
+        dash = work / "dash.mp4"
+        dash.write_text('<?xml version="1.0"?>\n' + mpd, encoding="utf-8")
+        hidden = work / "dash_hidden.mov"
+        hidden.write_text("<!--" + "x" * 5000 + "-->\n" + mpd.replace("<MPD", "<mpd").replace("</MPD>", "</mpd>"), encoding="utf-8")
+        named_mpd = work / "manifest.mpd"
+        named_mpd.write_text(mpd, encoding="utf-8")
+        imf = work / "cpl.mp4"
+        imf.write_text('<?xml version="1.0"?>\n<CompositionPlaylist xmlns="http://www.smpte-ra.org/schemas/2067-3/2016">'
+                       "<Id>urn:uuid:0</Id><ContentTitle>x</ContentTitle></CompositionPlaylist>\n", encoding="utf-8")
+        self.assertEqual(sh("ffprobe", "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", dash).stdout.strip(),
+                         "dash", "the fixture must be what ffprobe reads as DASH")
+        for path in (dash, hidden, named_mpd, imf):
+            for name, args in (("probe", [path]), ("cut", [path, "--start", "0", "--end", "0.5", "-o", work / "pulled.mp4"])):
+                proc = tool(name, *args, "--json", check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_is_playlist"), (name, path, proc.stderr))
+        self.assertFalse((work / "pulled.mp4").exists())
+        # a real media file is not read past its first NUL byte, and is not refused
+        import importlib
+        self.assertIsNone(importlib.import_module("_common.runner")._manifest_kind(str(self.src)))
         if hasattr(os, "mkfifo"):  # a pipe is refused before anything opens it (an open would block)
             fifo = work / "pipe.mp4"
             if not fifo.exists():
@@ -3926,6 +3952,105 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((err["kind"], err["reason"]), ("input", "output_looks_like_option"))
         self.assertEqual([p.name for p in work.glob("ffmpeg-*.log")], [], "the output reached ffmpeg as -report")
 
+    def test_render_refuses_an_output_that_is_any_file_the_project_names(self):
+        """render.py's last stage is a copy from its work directory, so run()'s own guard never sees
+        the sources: the guard compared the output with the clips and overlay videos only, and
+        with --overwrite a project whose output was its own music bed replaced it."""
+        work = self.out("render_guard"); work.mkdir(exist_ok=True)
+        bed = work / "bed.wav"
+        shutil.copy(self.wav, bed)
+        before = bed.read_bytes()
+        brand = work / "brand.json"
+        brand.write_text('{"name": "x"}', encoding="utf-8")
+        for key, value, output in (("audio", {"music": "bed.wav"}, "bed.wav"),
+                                   ("brand", "brand.json", "brand.json"),
+                                   ("overlays", [{"image": "bed.wav"}], "bed.wav")):
+            proj = work / f"p_{key}.json"
+            proj.write_text(json.dumps({"output": output, "clips": [{"src": str(self.src)}], key: value}), encoding="utf-8")
+            for extra in ([], ["--dry-run"]):
+                proc = tool("render", proj, "--overwrite", "--json", *extra, check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["reason"], "output_is_input", (key, extra, proc.stderr))
+        self.assertEqual(bed.read_bytes(), before)
+        self.assertEqual(brand.read_text(encoding="utf-8"), '{"name": "x"}')
+        # inline caption text is not a path: a cue that happens to read like the output is no refusal
+        import importlib
+        render = importlib.import_module("render")
+        found = render.project_input_files({"captions": {"text": "final.mp4"}, "clips": []}, lambda p: str(work / p))
+        self.assertEqual(found, [])
+
+    def test_a_colour_is_six_hex_digits_or_refused(self):
+        """color_hex() checked the length only: a six-letter name ("yellow", "orange") drew black text
+        reported verified, and a quote or a comma reached the filter graph as kind ffmpeg."""
+        for name, args in (("caption", [self.src, "--text", "hi", "--color", "yellow"]),
+                           ("caption", [self.src, "--text", "hi", "--outline-color", "'],abc"]),
+                           ("graphics", [self.src, "--template", "title", "--title", "HI", "--text-color", "orange"])):
+            proc = tool(name, *args, "-o", self.out("colour.mp4"), "--dry-run", "--json", check=False)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual(err["kind"], "input", (args, proc.stderr))
+            self.assertIn("hex", err["message"], err)
+        import importlib
+        color = importlib.import_module("_common.color")
+        self.assertEqual(color.color_hex("#ffd200"), "FFD200")
+        self.assertEqual(color.color_hex("0xFFD200"), "FFD200")
+
+    def test_a_path_with_a_line_break_never_reaches_a_concat_list(self):
+        """The concat demuxer reads each line as a directive and has no escape for a line break, so
+        a name containing one added `file` entries to the list: loop.py on "a\\nfile <other>"
+        pulled <other>, named nowhere on the command line, into the output."""
+        if os.name == "nt":
+            self.skipTest("Windows file names cannot hold a line break")
+        work = self.out("line_break"); work.mkdir(exist_ok=True)
+        odd = work / "a\nfile b.mp4"
+        shutil.copy(self.src, odd)
+        for name, args in (("loop", [odd, "--times", "2", "-o", work / "looped.mp4"]),
+                           ("join", ["--copy", "--transition", "none", odd, odd, "-o", work / "joined.mp4"])):
+            proc = tool(name, *args, "--json", check=False)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual((err["kind"], err["reason"]), ("input", "media_path_has_line_break"), (name, proc.stderr))
+        self.assertEqual([p.name for p in work.iterdir() if p.suffix == ".mp4" and "\n" not in p.name], [])
+
+    def test_hidden_temp_names_are_never_written_through_a_planted_link(self):
+        """The staging temp, place_output's temp and a lock's default audit log are fixed hidden
+        names in the caller's output directory. A symlink planted at one was followed: an
+        --overwrite run wrote the encode into the link's target and left the output a symlink to
+        it. The temps are now created exclusively, and the default audit log is opened without
+        following a link."""
+        if os.name == "nt":
+            self.skipTest("symlinks need privileges on Windows")
+        import importlib
+        runner = importlib.import_module("_common.runner")
+        emit = importlib.import_module("_common.emit")
+        work = self.out("planted"); work.mkdir(exist_ok=True)
+        victim = work / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        first = work / f".out.ffskill-{os.getpid()}.mp4"
+        if first.is_symlink() or first.exists():
+            first.unlink()
+        first.symlink_to(victim)
+        out = work / "out.mp4"
+        out.write_bytes(b"old")
+        cmd, final, tmp = runner._stage_existing_output(["ffmpeg", "-i", str(self.src), str(out)])
+        self.assertEqual(final, str(out))
+        self.assertNotEqual(tmp, str(first))
+        self.assertTrue(os.path.isfile(tmp) and not os.path.islink(tmp), tmp)
+        self.assertEqual(cmd[-1], tmp)
+        os.remove(tmp)
+        # place_output() reserves its temp through the same function
+        again = runner.reserve_sibling(str(work), "out", ".mp4")
+        self.assertNotEqual(again, str(first))
+        self.assertTrue(os.path.isfile(again) and not os.path.islink(again))
+        os.remove(again)
+        self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+        log = work / ".out.mp4.ffskill-audit.jsonl"
+        if log.is_symlink() or log.exists():
+            log.unlink()
+        log.symlink_to(victim)
+        with unittest.mock.patch.object(emit, "warn"):
+            res = emit.audit("stale_lock_taken_over", {"lock": "x"}, default_path=str(log))
+        self.assertFalse(res["written"], res)
+        self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
         """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
         The skill reads and writes local files only, so such an input or output is refused as
@@ -3934,8 +4059,14 @@ class ContractTests(unittest.TestCase):
         import importlib, socket
         runner = importlib.import_module("_common.runner")
         for url in ("tcp:127.0.0.1:9?x=.mkv", "http://127.0.0.1:9/../../x.mkv", "file:other.mp4", "FILE:x.mp4",
-                    "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA=="):
+                    "rtmp://h/live", "concat:a.ts|b.ts", "data:video/mp4;base64,AA==",
+                    # ffmpeg's url_find_protocol() reads `subfile,<options>:<url>` as the subfile
+                    # protocol: the scheme stops at the comma, so the regex alone missed it
+                    "subfile,,start,0,end,0,,:clip.mp4"):
             self.assertTrue(runner.looks_like_url(url), url)
+        self.assertEqual(runner.url_scheme("subfile,,start,0,end,0,,:clip.mp4"), "subfile")
+        self.assertFalse(runner.looks_like_url("subfile_clip.mp4"))
+        self.assertFalse(runner.looks_like_url("subfile,clip.mp4"))
         for path in ("./clip:1.mp4", "clips/a:b.mp4", "pipe:1", "-", "a.mp4",
                      "/abs/a.mp4", "sine=frequency=440:sample_rate=48000"):
             self.assertFalse(runner.looks_like_url(path), path)

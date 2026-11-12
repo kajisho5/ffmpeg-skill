@@ -464,6 +464,48 @@ def check_overlay(ov: Any, label: str) -> None:
         die(f"{label}: scale sizes an image, logo or video layer; text size is font_size", kind="input")
 
 
+def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
+    """Every file a project names as an input: clip sources, music/replace/effects, the brand,
+    caption files (a --text value that names an existing file), overlay images and videos, the
+    audiogram image, a beat grid's source and the chapters file. Values of the wrong type are left
+    to the stage that reads them."""
+    found: List[str] = []
+
+    def add(value: Any, must_exist: bool = False) -> None:
+        if isinstance(value, str) and value:
+            p = rel(value)
+            if not must_exist or os.path.isfile(p):
+                found.append(p)
+
+    for c in proj.get("clips") or []:
+        if isinstance(c, dict):
+            add(c.get("src"))
+            if isinstance(c.get("snap"), dict):
+                add(c["snap"].get("source"))
+    for key in ("audio", "captions", "audiogram", "snap"):
+        if not isinstance(proj.get(key), dict):
+            continue
+        obj = proj[key]
+        if key == "audio":
+            for k in ("music", "replace", "effects"):
+                add(obj.get(k))
+        elif key == "captions":
+            add(obj.get("srt"))
+            add(obj.get("ass"))
+            add(obj.get("text"), must_exist=True)  # inline cue text is not a path
+        elif key == "audiogram":
+            add(obj.get("image"))
+        else:
+            add(obj.get("source"))
+    add(proj.get("brand"))
+    add(proj.get("chapters"), must_exist=True)
+    for ov in proj.get("overlays") or []:
+        if isinstance(ov, dict):
+            add(ov.get("image"))
+            add(ov.get("video"))
+    return found
+
+
 def require_object(obj: Any, label: str) -> None:
     """Refuse a value that is not an object where the run reads it with .get(): "export": "reels"
     in a render, a string frame, a clip written as a bare path. 2.2.1 died there with a traceback
@@ -1216,8 +1258,10 @@ def main() -> int:
     if not clips:
         die("project.clips is empty")
     output = rel(proj.get("output") or "final.mp4")
-    # the final stage is a copy from the work dir, so run()'s own guard never sees the sources (review 5)
-    refuse_output_is_input(output, *[rel(c.get("src")) for c in clips if c.get("src")])
+    # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
+    # (review 5): every file the project names is passed here, not only the clips, or --overwrite
+    # replaced a music bed or a brand file named as the output
+    refuse_output_is_input(output, *project_input_files(proj, rel))
     if _reaches("overlays", args.stop_after):
         # #326: an overlay video is the caller's file, never an earlier stage's output, so a
         # missing one is refused here, under --dry-run too, not after every stage before it ran

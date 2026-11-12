@@ -775,21 +775,68 @@ _URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
 _URL_SCHEME_POSIX = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
+def _is_subfile_url(value: str) -> bool:
+    """ffmpeg's url_find_protocol() also opens `subfile,<options>:<url>` through the subfile
+    protocol: the scheme stops at the comma, so the regexes above never see it."""
+    return value.startswith("subfile,") and ":" in value[len("subfile,"):]
+
+
 def looks_like_url(value: str) -> bool:
     """True for a value ffmpeg would open through a protocol rather than as a local file."""
+    if _is_subfile_url(value):
+        return True
     scheme = _URL_SCHEME if os.name == "nt" else _URL_SCHEME_POSIX
     return bool(scheme.match(value)) and not value.startswith("pipe:")
 
 
-_PLAYLIST_SUFFIXES = (".m3u8", ".m3u", ".ffconcat")
+def url_scheme(value: str) -> str:
+    """The protocol name ffmpeg would open `value` through (for a looks_like_url() value)."""
+    return "subfile" if _is_subfile_url(value) else value.split(":", 1)[0].lower()
+
+
+_PLAYLIST_SUFFIXES = (".m3u8", ".m3u", ".ffconcat", ".mpd")
 _PLAYLIST_MAGIC = (b"#EXTM3U", b"ffconcat")
+# ffmpeg probes a text format over the whole probe buffer (up to -probesize, 5,000,000 bytes), not
+# over a fixed prefix, and reads that buffer as a C string, so the scan below stops at the first
+# NUL byte: a real media file has one within its first few bytes, a manifest has none.
+_MANIFEST_SCAN_LIMIT = 5_000_000
+
+
+def _manifest_kind(path: str) -> Optional[str]:
+    """"DASH" or "IMF" when ffmpeg's own probe would read `path` as that manifest, whatever its
+    name: dash_probe() looks for `<MPD` and `dash:profile` (case-insensitively), imf_probe() for
+    `<CompositionPlaylist` and `ContentTitle>`. Either one names other files, local or remote, that
+    ffmpeg then opens (a DASH BaseURL is followed over HTTP even under -protocol_whitelist file)."""
+    buf = bytearray()
+    try:
+        with open(path, "rb") as fh:
+            while len(buf) < _MANIFEST_SCAN_LIMIT:
+                chunk = fh.read(65536)
+                if not chunk:
+                    break
+                nul = chunk.find(b"\0")
+                if nul >= 0:
+                    buf += chunk[:nul]
+                    break
+                buf += chunk
+    except OSError:
+        return None
+    text = bytes(buf[:_MANIFEST_SCAN_LIMIT])
+    low = text.lower()
+    if b"<mpd" in low and b"dash:profile" in low:
+        return "DASH"
+    if b"<CompositionPlaylist" in text and b"ContentTitle>" in text:
+        return "IMF"
+    return None
 
 
 def _refuse_playlist(value: str) -> None:
-    """Refuse an input that ffmpeg would read as a playlist (HLS .m3u8, an ffconcat list) rather
-    than as media. A playlist names other files by path, so a media file handed to the skill could
-    pull in any file the user can read. The skill's own concat lists pass `-f concat` and are not
-    checked here."""
+    """Refuse an input that ffmpeg would read as a playlist (HLS .m3u8, a DASH .mpd, an IMF
+    composition playlist, an ffconcat list) rather than as media. A playlist names other files by
+    path or URL, so a media file handed to the skill could pull in any file the user can read, or
+    make ffmpeg fetch a URL. HLS and ffconcat are told by name or by their first bytes; DASH and IMF
+    by name or by the content ffmpeg's own probe looks for, anywhere before the first NUL byte. The
+    skill's own concat lists pass `-f concat` and are not checked here."""
     if os.path.exists(value) and not os.path.isfile(value) and not os.path.isdir(value):
         # a FIFO or a device: ffmpeg would block on it or read whatever it streams
         refuse("input", "media_path_not_a_file",
@@ -801,9 +848,14 @@ def _refuse_playlist(value: str) -> None:
                 head = fh.read(16).lstrip(b"\xef\xbb\xbf \t\r\n")
     except OSError:
         pass
+    kind = None
     if value.lower().endswith(_PLAYLIST_SUFFIXES) or head.startswith(_PLAYLIST_MAGIC):
+        kind = "HLS, DASH or ffconcat"
+    elif os.path.isfile(value):
+        kind = _manifest_kind(value)
+    if kind:
         refuse("input", "media_path_is_playlist",
-               f"{value!r} is a playlist (HLS or ffconcat), which ffmpeg would follow to the files it names; "
+               f"{value!r} is a playlist ({kind}), which ffmpeg would follow to the files or URLs it names; "
                "this skill takes media files only. Pass the media file itself", path=value)
 
 
@@ -836,9 +888,9 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",
-                   f"{value!r} would be opened by ffmpeg as a URL ({value.split(':', 1)[0]}:), not as a local file; "
+                   f"{value!r} would be opened by ffmpeg as a URL ({url_scheme(value)}:), not as a local file; "
                    "this skill reads and writes local files only. Pass a plain path (a local name containing "
-                   "a colon works as ./name)", path=value, scheme=value.split(":", 1)[0].lower())
+                   "a colon works as ./name)", path=value, scheme=url_scheme(value))
 
 
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
@@ -1243,8 +1295,27 @@ def _stage_existing_output(cmd: Sequence[str]) -> Tuple[List[str], Optional[str]
         return list(cmd), None, None
     d, base = os.path.split(output)
     stem, ext = os.path.splitext(base)
-    tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
+    tmp = reserve_sibling(d, stem, ext)
     return list(cmd[:-1]) + [tmp], output, tmp
+
+
+def reserve_sibling(d: str, stem: str, ext: str) -> str:
+    """Create the hidden sibling `.<stem>.ffskill-<pid><ext>` (or `...-<pid>-<n><ext>` when that
+    name is taken) exclusively, and return its path. O_EXCL never opens an existing entry, a
+    symlink included, so a name planted in the output directory beforehand is never written
+    through: ffmpeg -y and copyfile() then write the empty regular file created here. A directory
+    that refuses the create returns the plain name, and the write that follows fails there."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    n = 1
+    while True:
+        path = os.path.join(d, f".{stem}.ffskill-{os.getpid()}" + (f"-{n}" if n > 1 else "") + ext)
+        try:
+            os.close(os.open(path, flags, 0o666))
+            return path
+        except FileExistsError:
+            n += 1
+        except OSError:
+            return path
 
 
 HW_ENV = "FFMPEG_SKILL_HW"
@@ -1846,7 +1917,6 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     _check_existing_output(cmd)
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
-    tmp = os.path.join(d, f".{stem}.ffskill-{os.getpid()}{ext}")
     with _OutputLock(dst):
         if move:
             try:
@@ -1855,6 +1925,7 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
                 return
             except OSError:
                 pass
+        tmp = reserve_sibling(d, stem, ext)
         try:
             shutil.copyfile(src, tmp)
             os.replace(tmp, dst)

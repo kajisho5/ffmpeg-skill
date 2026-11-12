@@ -407,7 +407,25 @@ exists. When a decision changes, edit the entry in the same PR.
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the
-  output directory during a run. Code: `_common._stage_existing_output()`.
+  output directory during a run; it is created exclusively (`O_EXCL`), so an entry already at that
+  name, a planted symlink included, is never written through, and the next free
+  `.<stem>.ffskill-<pid>-<n><ext>` is used instead. A lock's default audit log beside the output
+  is opened without following a symlink; a log named with `--audit-log` is opened as named. Code:
+  `_common._stage_existing_output()`, `runner.reserve_sibling()`, `emit.audit()`. Test:
+  `test_hidden_temp_names_are_never_written_through_a_planted_link`.
+- **A file ffmpeg would read as a playlist is refused whatever it is called.** HLS and ffconcat
+  are told by name or their first bytes; a DASH manifest and an IMF composition playlist by name
+  or by the strings ffmpeg's own probes look for (`<MPD` with `dash:profile`, `<CompositionPlaylist`
+  with `ContentTitle>`), anywhere before the first NUL byte, because ffmpeg probes the whole probe
+  buffer: a manifest saved as `clip.mp4` made every tool follow its BaseURL to another local file
+  or over HTTP, and FFmpeg 6.1's `-protocol_whitelist file` did not stop the HTTP request. A media
+  file has a NUL byte within its first bytes, so the scan stops there. `subfile,<options>:<url>`
+  is refused as a URL like any other protocol prefix. A path with a line break is refused where it
+  would be written into a concat list (`media_path_has_line_break`): the format has no escape for
+  one. Code: `runner._refuse_playlist()`, `runner.looks_like_url()`, `decision.concat_list_line()`.
+  Tests: `test_a_playlist_input_and_an_option_shaped_output_are_refused`,
+  `test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output`,
+  `test_a_path_with_a_line_break_never_reaches_a_concat_list`.
 - **Subtitle/data tracks are kept where the picture's timeline is untouched and dropped where
   it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
   or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,

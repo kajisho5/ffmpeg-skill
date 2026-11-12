@@ -4,7 +4,36 @@
 
 ## Unreleased
 
-(nothing yet)
+### Security
+
+- **A DASH manifest or an IMF composition playlist given as media is refused, whatever it is
+  called.** The playlist guard knew HLS and ffconcat by name and first bytes only, so a DASH
+  manifest saved as `clip.mp4` made every tool follow its `BaseURL`: to another local file, which
+  the output then contained (reported completed and verified), or over HTTP, which FFmpeg 6.1's
+  `-protocol_whitelist file` did not stop. Both are now told the way ffmpeg's own probes tell
+  them, by content, and refused as `media_path_is_playlist`.
+- **`subfile,<options>:<url>` is refused as a URL.** ffmpeg opens it through the subfile protocol;
+  the URL guard stopped reading the scheme at the comma and let it through, so the guards
+  described the named file while ffmpeg read another.
+- **A path with a line break is refused where it would go into a concat list** (`loop.py`,
+  `join.py --copy`, `sequence.py`, multi-part cuts): `media_path_has_line_break`. Each line of a
+  concat list is a directive, so such a name added entries and pulled a file named nowhere on the
+  command line into the output.
+- **The hidden temp files in the output directory are created exclusively.** The staging temp of
+  an `--overwrite` run and `place_output()`'s temp had a fixed name and were opened through
+  whatever was already there, a planted symlink included: the encode was written into the link's
+  target and the output left as a symlink to it. A lock's default audit log is opened without
+  following a symlink.
+- **`render.py` refuses an output that is any file the project names.** The guard compared the
+  output with the clips and overlay videos only, so with `--overwrite` a project whose output was
+  its own music bed, brand file, overlay image, caption file or beat source replaced it.
+
+### Fixed
+
+- **A colour given to `caption.py`, `graphics.py` or a brand must be six hex digits.** The check
+  was on the length only: a six-letter name such as `yellow` or `orange` drew black text and was
+  reported verified, and a quote or comma reached the filter graph and failed as `kind: ffmpeg`.
+  It is now a `kind: input` refusal.
 
 ## 3.6.0
 
