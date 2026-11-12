@@ -76,6 +76,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
 - [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
+- [After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)](#after-363--a-tagged-version-npm-never-got-is-finished-by-dispatch-on-its-tag-448)
 <!-- contents:end -->
 
 ## Time limits
@@ -3467,3 +3468,23 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   as given: its caller chose the tokens. Code: `_common.option_args()`, `mcp/server.build_argv()`,
   render.py's stage commands. Tests: `test_mcp_value_starting_with_a_dash_is_a_value_for_every_tool`,
   `test_dash_leading_text_over_mcp_and_in_a_render_project`.
+
+## After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)
+
+- **`release.yml`'s `recover` job refuses a run whose commit is not the tag's.** It is dispatched
+  with `--ref vX.Y.Z` and checks out `refs/tags/vX.Y.Z`; dispatched on `main` it publishes only
+  while `main`'s tip is still the tagged commit. npm's provenance attestation names the run's
+  commit (`GITHUB_SHA`) as the package's source, so a package built from the tag in a run on
+  another commit would carry an attestation for a commit it was not built from. The cost is that
+  a tag cut before the job existed (every tag up to v3.6.3) has no dispatch trigger at its own
+  commit and cannot be recovered by CI. The job lives in `release.yml`, not a workflow file of its
+  own, so it shares the `release` concurrency group and the workflow filename an npm trusted
+  publisher would name; the publish authenticates as the `release` job's does (`NPM_TOKEN`, with
+  `--provenance`).
+- **A recovered version below one npm has is published as `backport`; the plugin branch takes it
+  only when the branch's tip is older, and the MCP Registry only when it goes out as `latest`.**
+  `latest` is what `npx ffmpeg-skill` installs, so it never moves back; the plugin branch only
+  moves forward and hosts read its tip; the registry's newest entry is the one clients read. A second dispatch stops at "npm already has
+  it", so a plugin branch or registry step that failed during a recovery is finished by hand, as
+  the job's last steps say. Code: `.github/scripts/recover_release.py`. Test:
+  `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.

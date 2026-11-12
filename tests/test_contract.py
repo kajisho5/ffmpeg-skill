@@ -652,6 +652,136 @@ class ContractTests(unittest.TestCase):
         self.assertIn("security-events: write", scorecard)
         self.assertIn("id-token: write", scorecard)
 
+    def test_release_recovery_publishes_only_a_tagged_version_npm_lacks(self):
+        """#448: a version that was tagged but never reached npm had no way back through CI (a
+        re-run sees the tag and skips the publish). release.yml's `recover` job, run by
+        workflow_dispatch with a `version`, publishes it from the tagged commit with provenance,
+        under `latest` only when it is the highest version, and then fills in the plugin branch
+        and the MCP Registry where they are still missing. It refuses a malformed version, a
+        missing tag, a run whose commit is not the tag's (the attestation would name another
+        commit) and a version npm already has."""
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        on = release[release.index("\non:\n"):release.index("\nconcurrency:")]
+        self.assertIn("  push:\n    branches: [main]\n", on)
+        self.assertRegex(on, r"  workflow_dispatch:\n    inputs:\n      version:\n        description: .+\n"
+                             r"        required: true\n        type: string\n")
+        # a dispatch never reaches the auto-bump/tag job, and a push never reaches the recovery
+        jobs = release[release.index("\njobs:\n"):]
+        recover = jobs[jobs.index("\n  recover:\n"):]
+        normal = jobs[:jobs.index("\n  recover:\n")]
+        self.assertIn("\n  release:\n    # A dispatch runs `recover` alone", normal)
+        self.assertIn("    if: github.event_name == 'push'\n", normal)
+        self.assertIn("\n  recover:\n    if: github.event_name == 'workflow_dispatch'\n", recover)
+        perms = re.search(r"\n    permissions:\n((?:      \S.*\n)+)", recover).group(1)
+        self.assertEqual(sorted(line.split("#")[0].strip() for line in perms.splitlines()),
+                         ["contents: write", "id-token: write"])
+
+        def step(name):
+            start = recover.index(f"      - name: {name}\n")
+            nxt = recover.find("\n      - ", start + 1)
+            return recover[start:nxt if nxt != -1 else len(recover)]
+
+        # untrusted text never reaches a run: block through ${{ }}; the input only enters as env
+        runs, inside = [], False
+        for line in recover.splitlines():
+            if re.match(r"^        run: \|$", line):
+                inside = True
+                continue
+            if inside and line.strip() and not line.startswith("          "):
+                inside = False
+            if inside:
+                runs.append(line)
+            elif re.match(r"^        run: \S", line):
+                runs.append(line)
+        self.assertGreater(len(runs), 50)
+        self.assertNotIn("${{", "\n".join(runs))
+        self.assertEqual(recover.count("inputs.version"), 1)
+        gate = step("Refuse a version that is malformed or not tagged")
+        self.assertIn("VERSION: ${{ inputs.version }}", gate)
+        # the version is matched before anything else reads it: X.Y.Z only
+        regex = re.search(r'\[\[ "\$VERSION" =~ (\S+) \]\]', gate).group(1)
+        bash = shutil.which("bash")
+        if bash and platform.system() != "Windows":
+            for value, ok in (("3.6.3", True), ("10.0.0", True), ("v3.6.3", False), ("3.6", False),
+                              ("03.6.3", False), ("3.6.3;id", False), ("3.6.3\nx", False), ("", False),
+                              ("3.6.3-rc.1", False)):
+                proc = subprocess.run([bash, "-c", f'[[ "$1" =~ {regex} ]]', "_", value])
+                self.assertEqual(proc.returncode == 0, ok, repr(value))
+        # a missing tag is refused by name; a GitHub that cannot be asked is not "no tag"
+        self.assertIn('git/ref/tags/$TAG"', gate)
+        self.assertIn('grep -q "HTTP 404"', gate)
+        self.assertIn("there is no tag $TAG", gate)
+        self.assertIn("could not ask GitHub", gate)
+        # it builds from the tag, never main
+        checkout = recover[recover.index("actions/checkout@"):recover.index("      - name: Refuse unless")]
+        self.assertIn("ref: refs/tags/${{ steps.gate.outputs.tag }}", checkout)
+        self.assertNotIn("ref: main", recover)
+        self.assertLess(recover.index("id: gate"), recover.index("actions/checkout@"))
+        state = step("Refuse unless the tag is this run's commit and npm does not have the version")
+        self.assertIn('if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then', state)
+        self.assertIn('if [ "$PKG_VERSION" != "$VERSION" ]; then', state)
+        # npm already having it is a refusal; only E404 means absent; anything else is "could not ask"
+        has = state[state.index('if [ "$NPM_STATE" -eq 0 ]; then'):]
+        self.assertIn("there is nothing to recover\"; exit 1", has[:has.index("fi")])
+        self.assertIn('if ! grep -q "E404"', state)
+        self.assertIn("could not ask npm", state)
+        self.assertNotIn("|| true", state)
+        # the dist-tag is decided from npm's version list and checked before it is used
+        self.assertIn("recover_release.py dist-tag", state)
+        self.assertIn("latest|backport) ;;", state)
+        publish = step("Publish the tagged version to npm")
+        self.assertIn('run: npm publish --provenance --access public --tag "$DIST_TAG"', publish)
+        self.assertIn("DIST_TAG: ${{ steps.state.outputs.dist_tag }}", publish)
+        self.assertLess(recover.index("id: state"), recover.index("name: Publish the tagged version to npm"))
+        self.assertIn('"dist-tags.$DIST_TAG"', step("Verify the recovered version landed under its dist-tag"))
+        # what the failed run skipped, only when still missing, and never moving a branch back
+        plugin = step("Ask whether the plugin branch still lacks this version")
+        self.assertIn('grep -qF "plugin: ffmpeg-skill $VERSION (built from "', plugin)
+        self.assertIn("recover_release.py newer", plugin)
+        self.assertIn('if [ "$REMOTE_STATE" -eq 2 ]; then', plugin)
+        self.assertIn("if: steps.plugin_state.outputs.publish == 'true'",
+                      step("Publish the plugin branch for the recovered version"))
+        registry = step("Ask whether the MCP Registry still lacks the recovered version")
+        self.assertIn("if: steps.state.outputs.dist_tag == 'latest'", registry)
+        self.assertIn("404) echo", registry)
+        self.assertIn("could not ask the MCP Registry", registry)
+        self.assertIn("if: steps.registry_state.outputs.publish == 'true' && steps.cosign.outcome == 'success'",
+                      step("Publish the recovered version to the MCP Registry"))
+        self.assertLess(recover.index("name: Verify the recovered"), recover.index("name: Ask whether the plugin branch"))
+        self.assertEqual(recover.count("continue-on-error: true"), 5)
+        self.assertEqual(recover.count("if: always() && "), 3)
+        # the release job's E404 points at this path instead of a hand publish
+        self.assertIn("gh workflow run release.yml --ref v$VERSION -f version=$VERSION", normal)
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "recover_release", ROOT / ".github" / "scripts" / "recover_release.py")
+        rr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rr)
+        published = ["3.5.0", "3.6.0", "3.6.2", "3.6.3"]
+        self.assertEqual(rr.dist_tag("3.6.4", published), "latest")
+        self.assertEqual(rr.dist_tag("4.0.0", published), "latest")
+        self.assertEqual(rr.dist_tag("3.6.1", published), "backport")
+        self.assertEqual(rr.dist_tag("3.10.0", ["3.9.0"]), "latest", "numeric, not string, order")
+        self.assertEqual(rr.dist_tag("3.6.4", published + ["4.0.0-rc.1"]), "latest", "a pre-release is not stable")
+        self.assertEqual(rr.dist_tag("1.0.1", "1.0.0"), "latest", "npm prints a bare string for one version")
+        with self.assertRaises(ValueError):
+            rr.dist_tag("3.6.3", published)
+        with self.assertRaises(ValueError):
+            rr.dist_tag("v3.6.4", published)
+        self.assertEqual(rr.main(["newer", "3.6.4", "3.6.3"]), 0)
+        self.assertEqual(rr.main(["newer", "3.6.3", "3.6.3"]), 1)
+        self.assertEqual(rr.main(["newer", "3.6.3", "3.10.0"]), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            versions = Path(tmp) / "versions.json"
+            versions.write_text(json.dumps(published), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(ROOT / ".github" / "scripts" / "recover_release.py"),
+                                   "dist-tag", "3.6.1", str(versions)], capture_output=True, text=True)
+            self.assertEqual((proc.returncode, proc.stdout), (0, "backport\n"))
+            proc = subprocess.run([sys.executable, str(ROOT / ".github" / "scripts" / "recover_release.py"),
+                                   "dist-tag", "3.6.3", str(versions)], capture_output=True, text=True)
+            self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+
     def test_workflows_pin_actions_and_grant_writes_per_job(self):
         """Scorecard Pinned-Dependencies and Token-Permissions: every `uses:` names a full
         commit SHA (a tag can be moved under a job that holds a write token or the release

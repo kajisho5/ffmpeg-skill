@@ -15,6 +15,19 @@
   before the replace and refuse a changed or new file (`kind: input`, `reason: output_exists`),
   removing the new output's temp. `--overwrite` still replaces whatever is at the path.
 
+### Changed
+
+- **A version that was tagged but never reached npm can be finished from CI** (#448). A release
+  whose npm publish failed kept its tag, and a re-run skipped the publish because the tag existed;
+  the only way out was a hand publish with no provenance. `release.yml` now takes a
+  `workflow_dispatch` with a `version`; dispatched on the tag
+  (`gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`), its `recover` job checks out the
+  tag, refuses a malformed version, a missing tag, a run on another commit and a version npm
+  already has, and publishes with `--provenance` under `latest` when the version is the highest
+  on npm and `backport` otherwise (`.github/scripts/recover_release.py`). It then publishes the
+  `plugin` branch and the MCP Registry entry where they are still missing for that version. Test:
+  `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.
+
 ## 3.6.3
 
 _Automated release: version and notes generated from pull requests merged since 3.6.2._
