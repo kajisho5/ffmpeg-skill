@@ -8198,6 +8198,56 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(silence.write_time_map, str(path), tm), (None, None))
         self.assertEqual(json.loads(path.read_text(encoding="utf-8")), tm)
 
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_link_created_at_an_absent_target_is_refused(self):
+        """The check is about the path as named, not where it resolves: a symlink another process
+        creates at a target that was absent is refused, the file it points at untouched."""
+        path = self.work / "map.json"
+        elsewhere = self.work / "theirs.json"
+        elsewhere.write_text("theirs", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        os.symlink(elsewhere, path)
+        staged = self.work / ".map.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_exists"))
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(elsewhere.read_text(encoding="utf-8"), "theirs")
+        self.assertFalse(staged.exists(), "the staged file is removed")
+
+    def test_files_committed_together_are_both_kept_back_when_one_is_refused(self):
+        """export.py's fill and key: when either target changed during the run, neither temp is
+        put in place, so a refused fill never leaves a new key beside it."""
+        fill, key = self.work / "a.mov", self.work / "a_key.mov"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(fill), str(key)]), (None, None))
+        key.write_bytes(b"theirs")  # appeared during the encode
+        fill_tmp, key_tmp = self.work / ".a.ffskill-f.mov", self.work / ".a_key.ffskill-k.mov"
+        fill_tmp.write_bytes(b"fill")
+        key_tmp.write_bytes(b"key")
+        self.assertEqual(self.call(self.runner.replace_checked_together, [(str(fill_tmp), str(fill)), (str(key_tmp), str(key))]),
+                         ("input", "output_exists"))
+        self.assertFalse(fill.exists(), "the fill is not committed without its key")
+        self.assertEqual(key.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [])
+        key.unlink()
+        fill_tmp.write_bytes(b"fill")
+        key_tmp.write_bytes(b"key")
+        self.assertEqual(self.call(self.runner.replace_checked_together, [(str(fill_tmp), str(fill)), (str(key_tmp), str(key))]),
+                         (None, None))
+        self.assertEqual((fill.read_bytes(), key.read_bytes()), (b"fill", b"key"))
+
+    def test_a_refused_lock_removes_the_staged_file(self):
+        """replace_checked() removes its temp on every way out short of the replace, a lock held
+        by another live writer included."""
+        from unittest import mock
+        path = self.work / "n.mov"
+        staged = self.work / ".n.ffskill-x.mov"
+        staged.write_bytes(b"ours")
+        def held(self_):
+            self.runner.refuse("input", "output_locked", "held")
+        with mock.patch.object(self.runner._OutputLock, "__enter__", held):
+            self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_locked"))
+        self.assertFalse(staged.exists())
+
 
 class Issue415Tests(unittest.TestCase):
     """#415: the earlier fixes' mechanisms in places they had not reached. Each test runs the tools

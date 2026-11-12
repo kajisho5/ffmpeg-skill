@@ -419,7 +419,13 @@ exists. When a decision changes, edit the entry in the same PR.
   output's temp removed and nothing replaced -- as `batch.py`'s `deliver()` already did. `run()`
   compares before staging and before its `os.replace`, `place_output()` before its rename and
   before the copy's rename, and a file a tool replaces itself goes through `replace_checked()`
-  (export.py's fill and `--normalize`, silence.py's `--timemap`). `--overwrite` still replaces
+  (export.py's fill and `--normalize`, silence.py's `--timemap`). The check is keyed by the path
+  as named (its directory resolved, its last component not), so a symlink created at a target
+  that was absent is a new file there, not a different path with no check. Files that belong
+  together go through `replace_checked_together()`: export.py stages the key as well as the fill
+  and puts both in place only when both targets passed, so a refused fill never leaves a new key
+  beside it. Every temp is removed on any way out short of the replace, a held lock included.
+  `--overwrite` still replaces
   whatever is at the path, changed or not: it is consent to replace that path, not one file
   (`deliver()` reads it the same way); a path no check recorded is not compared. What remains:
   `run()` stages only an existing target, so a target absent at the check is opened by ffmpeg
@@ -432,7 +438,8 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_target_created_after_the_check_is_refused_unless_overwrite`,
   `test_overwrite_still_replaces_a_target_swapped_during_the_encode`,
   `test_place_output_refuses_a_target_put_there_after_its_check`,
-  `test_a_side_file_a_tool_replaces_itself_is_rechecked`).
+  `test_a_side_file_a_tool_replaces_itself_is_rechecked`, `test_a_link_created_at_an_absent_target_is_refused`,
+  `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`).
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the

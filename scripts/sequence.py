@@ -50,10 +50,13 @@ def frame_durations(count: int, rate: Fraction) -> list:
 def concat_list(frames: list, rate: Fraction) -> str:
     """The concat-demuxer list for `frames` (paths) shown one frame each at `rate`."""
     lines = []
+    framerate = f"option framerate {rate.numerator}/{rate.denominator}"
     for f, us in zip(frames, frame_durations(len(frames), rate)):
         lines.append(_concat_list_line(f))
+        lines.append(framerate)
         lines.append(f"duration {us // 1_000_000}.{us % 1_000_000:06d}")
     lines.append(_concat_list_line(frames[-1]))  # concat demuxer: last entry's duration is ignored, so repeat it
+    lines.append(framerate)
     return "\n".join(lines)
 
 

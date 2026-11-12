@@ -51,7 +51,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
@@ -209,24 +209,30 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     # the fill is always written to a hidden sibling and moved into place only after the encode
     # succeeds: run() stages and cleans up only ffmpeg's last output (the key), so a failed encode
     # left a partial new fill (the retry was refused as output_exists) or truncated an existing one
-    fill_tmp = None
+    # the key is staged the same way, and both are committed together: a fill refused at its
+    # replace never leaves a new key beside it (which a retry would then refuse as existing)
+    fill_tmp = key_tmp = None
     if not STATE.dry_run:
         d, base = os.path.split(output)
         stem, ext = os.path.splitext(base)
         fill_tmp = reserve_sibling(d, stem, ext, "fill")  # created exclusively: never through a planted link
+        kd, kbase = os.path.split(key)
+        kstem, kext = os.path.splitext(kbase)
+        key_tmp = reserve_sibling(kd, kstem, kext, "key")
     cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
-    cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key]
+    cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key_tmp or key]
     try:
         run(cmd)
-        if fill_tmp:
-            # under the fill's lock, and only while it is the file guard_sidecar() decided about
-            replace_checked(fill_tmp, output)
+        if fill_tmp and key_tmp:
+            # under both locks, and only while each is the file guard_sidecar() decided about
+            replace_checked_together([(fill_tmp, output), (key_tmp, key)])
     finally:
-        if fill_tmp:
-            # the command is recorded with the path the caller asked for, not the temp name
-            STATE.commands[:] = [c.replace(fill_tmp, output) for c in STATE.commands]
-            if os.path.exists(fill_tmp):
-                os.remove(fill_tmp)
+        for tmp, final in ((fill_tmp, output), (key_tmp, key)):
+            if tmp:
+                # the command is recorded with the path the caller asked for, not the temp name
+                STATE.commands[:] = [c.replace(tmp, final) for c in STATE.commands]
+                if os.path.exists(tmp):
+                    os.remove(tmp)
     remember_written(output, key)
     extra: Dict[str, object] = {"alpha_mode": args.alpha_mode or "straight", "key": {"output": key}}
     # a fill and a key for a switcher carry the picture and the sound; the source's subtitle and

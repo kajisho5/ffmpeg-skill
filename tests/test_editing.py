@@ -1089,6 +1089,29 @@ class EditingTests(MediaFixtures):
         stream = json.loads(counted)["streams"][0]
         self.assertEqual((int(stream["nb_read_frames"]), stream["r_frame_rate"]), (37, "30000/1001"))
 
+    def test_sequence_keeps_every_picture_in_order_at_a_high_rate(self):
+        """Each image is read at the requested rate (`option framerate` per concat entry), not the
+        image demuxer's default 25: at 120 fps two images used to land on one input timestamp, so
+        the fps filter dropped one and repeated a neighbour -- the frame count stayed right."""
+        frames_dir = OUT / "seqframes_order"
+        frames_dir.mkdir(exist_ok=True)
+        n = 40
+        for i in range(n):
+            v = 6 * i
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c=0x{v:02x}{v:02x}{v:02x}:s=32x32", "-frames:v", "1", frames_dir / f"f_{i:03d}.png")
+        for fps in ("120", "29.97"):
+            with self.subTest(fps=fps):
+                out = OUT / f"seq_order_{fps}.mov"
+                script("sequence.py", "--dir", frames_dir, "--pattern", "f_%03d.png", "--start-number", "0",
+                       "--fps", fps, "--codec", "prores", "-o", out, "--overwrite")
+                raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-vf", "format=gray,scale=1:1",
+                                      "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+                got = list(raw)
+                self.assertEqual(len(got), n)
+                wrong = [(i, g, 6 * i) for i, g in enumerate(got) if abs(g - 6 * i) > 2]
+                self.assertEqual(wrong, [], f"frames out of order at {fps} fps (index, got, expected)")
+
     def test_sequence_glob_pattern(self):
         frames_dir = OUT / "seqframes_glob"
         frames_dir.mkdir(exist_ok=True)

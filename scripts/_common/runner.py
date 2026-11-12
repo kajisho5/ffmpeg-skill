@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import argparse
+import contextlib
 import re
 import shutil
 import subprocess
@@ -1229,7 +1230,7 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
             continue
         # what the decision below is about: compared again where the file is replaced
         # (refuse_changed_output), so one put there during the run is not replaced unasked
-        STATE.checked[real] = owned_identity(output) if exists else None
+        STATE.checked[_checked_key(output)] = _checked_state(output) if exists else None
         if not exists or real in STATE.written:
             continue
         size = mtime_ns = None
@@ -1267,6 +1268,20 @@ def _remember_output(cmd: Sequence[str]) -> None:
     report_committed(output)
 
 
+def _checked_key(path: str) -> str:
+    """The place a check is about: `path`'s directory resolved, its last component as named, so a
+    symlink created at an absent target since the check is still that target (#480 review)."""
+    full = os.path.abspath(path)
+    return os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
+
+
+def _checked_state(path: str) -> "Optional[Tuple[Optional[Dict[str, int]], bool]]":
+    """What is at `path` now: (owned_identity, is a symlink), or None when nothing is there."""
+    if not os.path.lexists(path):
+        return None
+    return (owned_identity(path), os.path.islink(path))
+
+
 def _remember_identity(path: str) -> None:
     """Count `path` as this run's own and record the identity this run left it with, which a
     later replace of it compares (refuse_changed_output)."""
@@ -1275,7 +1290,7 @@ def _remember_identity(path: str) -> None:
         STATE.written.add(real)
     except OSError:
         return
-    STATE.checked[real] = owned_identity(real)
+    STATE.checked[_checked_key(path)] = _checked_state(path)
 
 
 def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = None) -> None:
@@ -1292,12 +1307,12 @@ def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = N
     if STATE.overwrite or not path or path == "-" or path.startswith("pipe:") or path.startswith("-"):
         return
     try:
-        real = os.path.realpath(path)
+        key, real = _checked_key(path), os.path.realpath(path)
     except OSError:
         return
-    if real not in STATE.checked:
+    if key not in STATE.checked:
         return
-    expected, now = STATE.checked[real], owned_identity(real)
+    expected, now = STATE.checked[key], _checked_state(path)
     if now == expected:
         return
     if cleanup:
@@ -1325,12 +1340,31 @@ def _remove_quietly(path: Optional[str]) -> None:
 
 
 def replace_checked(tmp: str, final: str) -> None:
-    """os.replace(tmp, final) for a file a tool writes itself (a fill beside its key, a time map,
-    a normalised export): under `final`'s output lock, after refuse_changed_output(), which
-    removes `tmp` when it refuses."""
-    with _OutputLock(final):
-        refuse_changed_output(final, lambda: _remove_quietly(tmp))
-        os.replace(tmp, final)
+    """os.replace(tmp, final) for a file a tool writes itself (a time map, a normalised export):
+    under `final`'s output lock, after refuse_changed_output(), which removes `tmp` when it
+    refuses."""
+    replace_checked_together([(tmp, final)])
+
+
+def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
+    """Replace each (tmp, final) only once every final has passed refuse_changed_output(), all
+    under their output locks: files that belong together (a fill and its key) are committed as a
+    pair or not at all. Every tmp is removed on a refusal, a refused lock or a failed replace
+    (#480 review)."""
+    def cleanup() -> None:
+        for tmp, _final in pairs:
+            _remove_quietly(tmp)
+    try:
+        with contextlib.ExitStack() as stack:
+            for final in sorted({final for _tmp, final in pairs}):
+                stack.enter_context(_OutputLock(final))
+            for _tmp, final in pairs:
+                refuse_changed_output(final, cleanup)
+            for tmp, final in pairs:
+                os.replace(tmp, final)
+    except BaseException:
+        cleanup()
+        raise
 
 
 # set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:

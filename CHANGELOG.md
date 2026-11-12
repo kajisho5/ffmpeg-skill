@@ -6,14 +6,19 @@
 
 ### Fixed
 
-- **A file put at the output path during a run is no longer replaced** (#470). Whether an existing
+- **A file put at the output path during a run is no longer replaced where the tool replaces it
+  after a check** (#470). Whether an existing
   target may be replaced was decided at the output check, before the encode, and the replace
   after it did not look again: a file another process saved there meanwhile (over a file
   `batch.py --watch` had delivered, or at a path that was empty) was replaced. `run()`,
   `place_output()` and the files export.py and silence.py replace themselves (the fill beside a
   key, `--normalize`, `--timemap`) now compare the target's identity under the output lock right
   before the replace and refuse a changed or new file (`kind: input`, `reason: output_exists`),
-  removing the new output's temp. `--overwrite` still replaces whatever is at the path.
+  removing the new output's temp; a fill and its key are committed together or not at all, and a
+  symlink created at an absent target counts as a new file. `--overwrite` still replaces whatever
+  is at the path. Not covered: a target that did not exist, created in the instant between the
+  last comparison and ffmpeg opening it (ffmpeg writes it directly), and side files written with
+  a plain open (subtitles, EDL, chapter lists), which are not compared again.
 
 - **`sequence.py` keeps every frame on its frame grid in a long sequence** (#474). Each image was
   written to the concat list as `duration 0.033333` at 30 fps, 3.3e-7 s short of 1/30, and the
@@ -22,7 +27,11 @@
   Each duration is now the difference of two frame positions at the exact rate, each rounded once
   to the microsecond, so the total stays within half a microsecond of the frame's time. `--fps 29.97`
   and `23.976` are read as 30000/1001 and 24000/1001, as the other tools read them, and the output
-  is tagged at that rate.
+  is tagged at that rate. Each image is also read at that rate (`option framerate` per concat
+  entry), not the image demuxer's default 25: two images could land on one input timestamp (at
+  29.97 frames 3 and 4; at 120 fps a third of them) and the fps filter repeated one and dropped the
+  other, with the frame count still right. Test:
+  `test_sequence_keeps_every_picture_in_order_at_a_high_rate`.
 
 ### Changed
 
@@ -32,8 +41,8 @@
   `workflow_dispatch` with a `version`; dispatched on the tag
   (`gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`), its `recover` job checks out the
   tag, refuses a malformed version, a missing tag, a run on another commit and a version npm
-  already has, and publishes with `--provenance` under `latest` when the version is the highest
-  on npm and `backport` otherwise (`.github/scripts/recover_release.py`). It then publishes the
+  already has, and publishes with `--provenance` under `latest` when the version is above every
+  stable version on npm and `backport` otherwise (`.github/scripts/recover_release.py`). It then publishes the
   `plugin` branch and the MCP Registry entry where they are still missing for that version. Test:
   `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.
 
