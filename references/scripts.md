@@ -732,8 +732,9 @@ word's timing into the pause. `--words talk.json --min-silence 0.2 --sentence-mi
 0.3 --margin 0.1 --sentence-margin-tail 0.3` tightens pauses inside a sentence from 0.2 s and
 after one from 0.3 s, leaving the sentence end more room. The result lists `silence_positions`
 (`sentence_end` or `inside`, one per entry of `silences`) and `sentence` (`min_silence`,
-`margin_tail`, `source`, `word_timings`, `sentence_end_words`, `silences`). A transcript with no
-such punctuation changes nothing and warns `sentence_ends_not_found`. Not with `--speech-aware`,
+`margin_tail`, `source`, `word_timings`, `sentence_end_words`, `silences`). With no such punctuation
+in the transcript no silence is a sentence end: every one uses `--min-silence` and `--margin-tail`,
+and the run warns `sentence_ends_not_found`. Not with `--speech-aware`,
 which takes a sentence boundary from the pause's length instead; without a transcript the flags
 are refused. With `--filler` they turn silence removal on as well (`--filler` alone removes
 only the words), reading the same transcript.

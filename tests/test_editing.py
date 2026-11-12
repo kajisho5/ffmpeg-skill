@@ -2625,6 +2625,16 @@ class EditingTests(MediaFixtures):
         self.assertEqual(none["sentence"]["sentence_end_words"], 0)
         self.assertNotIn("sentence_end", none["silence_positions"])
         self.assertIn("sentence_ends_not_found", [w["code"] for w in none["diagnostics"]["warnings"]])
+        # a silence that runs to the end of the file is measured to the end of the file: the 2 s
+        # after "end." is below a 3 s floor for sentence ends and stays
+        tail_words = self._words_json("sentence_tail.json", words=[("Hello", 0.1, 1.9), ("there", 4.1, 5.9), ("end.", 8.1, 9.9)])
+        open_end = json.loads(script("silence.py", gappy, "--list", "--json", "--words", tail_words,
+                                     "--sentence-min-silence", "3").stdout)
+        self.assertEqual(open_end["silence_positions"], ["inside", "inside"])
+        self.assertTrue(all(e is not None and e < 9 for _s, e in open_end["silences"]), open_end["silences"])
+        shorter = json.loads(script("silence.py", gappy, "--list", "--json", "--words", tail_words,
+                                    "--sentence-min-silence", "1").stdout)
+        self.assertEqual(shorter["silence_positions"], ["inside", "inside", "sentence_end"])
         # without the flags the result carries neither key
         plain = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
         self.assertNotIn("sentence", plain)
@@ -2660,7 +2670,10 @@ class EditingTests(MediaFixtures):
         for argv, needle in ((("--sentence-margin-tail", "0.4"), "word timings"),
                              (("--sentence-min-silence", "0.3", "--speech-aware", "--words", self._words_json()), "--speech-aware"),
                              (("--sentence-min-silence", "nan", "--words", self._words_json()), "--sentence-min-silence"),
-                             (("--sentence-margin-tail", "-1", "--words", self._words_json()), "--sentence-margin-tail")):
+                             (("--sentence-margin-tail", "-1", "--words", self._words_json()), "--sentence-margin-tail"),
+                             # every word without a length: nothing to place against a pause
+                             (("--sentence-margin-tail", "0.4", "--words",
+                               self._words_json("sentence_zero.json", words=[("Done.", 0, 0), ("Next.", 3.0, 3.0)])), "usable")):
             with self.subTest(argv=argv):
                 r = script("silence.py", gappy, *argv, "--list", "--json", expect_fail=True)
                 err = json.loads(r.stdout)["error"]

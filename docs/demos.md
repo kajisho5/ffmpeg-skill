@@ -1,7 +1,7 @@
 # Demo gallery
 
-Every clip on this page but two was generated from nothing: ffmpeg's own synthetic sources make
-the footage. The two exceptions, `reframe_talk` and `filler_en`, use AI-generated footage of
+Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
+the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of
 people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
 repo's scripts on its source. Rebuild the whole page's material with:
 
@@ -608,6 +608,16 @@ python3 scripts/silence.py demos/out/filler_en_talk.mp4 --filler --words demos/f
 ```
 
 **Look for:** "Hey, er, hello there. Well, um, good morning." Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.
+
+### Pauses tightened, more room left after a sentence (AI-generated footage)
+
+![Pauses tightened, more room left after a sentence (AI-generated footage)](demos/pauses_en.gif)
+
+```bash
+python3 scripts/silence.py demos/out/pauses_en_talk.mp4 --words demos/footage/ai_talk_en.words.json --threshold -30 --min-silence 0.2 --sentence-min-silence 0.3 --margin-lead 0.1 --margin-tail 0.15 --sentence-margin-tail 0.3 --preset veryfast -o demos/out/pauses_en_after.mp4
+```
+
+**Look for:** "Hey, er, hello there. Well, um, good morning. Hope you're having a good day." Right is silence.py with --sentence-min-silence and --sentence-margin-tail: the 1.5 s pauses after each sentence shrink to 0.4 s (0.3 s kept after the sentence, 0.1 s before the next), a pause inside a sentence would keep 0.15 s. The source is AI-generated footage, not a real person.
 
 ### Silence removal
 

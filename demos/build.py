@@ -698,6 +698,21 @@ def demo_filler_en(ctx):
     return before, after
 
 
+def demo_pauses_en(ctx):
+    """The same English speech: three sentences with a pause of 1.5 s or more after each. The
+    pauses after a sentence end are told from the others by the punctuation in the word timings
+    (demos/footage/ai_talk_en.words.json), and keep a longer tail than a pause inside a sentence."""
+    before = ctx.path("talk.mp4")
+    ffmpeg("-i", FOOTAGE / "ai_talk_en.mp4", "-t", "10", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", str(before))
+    after = ctx.path("after.mp4")
+    ctx.script("silence.py", before, "--words", FOOTAGE / "ai_talk_en.words.json", "--threshold", "-30",
+               "--min-silence", "0.2", "--sentence-min-silence", "0.3",
+               "--margin-lead", "0.1", "--margin-tail", "0.15", "--sentence-margin-tail", "0.3",
+               "--preset", "veryfast", "-o", after)
+    ctx.note("pauses tightened; %.2f s in, %.2f s out" % (duration(before), duration(after)))
+    return before, after
+
+
 def demo_reframe_pad(ctx):
     before = FIX / "mandel.mp4"
     after = ctx.path("after.mp4")
@@ -1657,6 +1672,9 @@ _ROWS = [
     ("filler_en", AUDIO, "Filler words cut from real speech (AI-generated footage)",
      "\"Hey, er, hello there. Well, um, good morning.\" Right is silence.py --filler: the er and the um are gone and the sentence plays straight through. The source is AI-generated footage, not a real person.",
      demo_filler_en, "video", None, ("BEFORE", "--FILLER")),
+    ("pauses_en", AUDIO, "Pauses tightened, more room left after a sentence (AI-generated footage)",
+     "\"Hey, er, hello there. Well, um, good morning. Hope you're having a good day.\" Right is silence.py with --sentence-min-silence and --sentence-margin-tail: the 1.5 s pauses after each sentence shrink to 0.4 s (0.3 s kept after the sentence, 0.1 s before the next), a pause inside a sentence would keep 0.15 s. The source is AI-generated footage, not a real person.",
+     demo_pauses_en, "video", None, ("BEFORE", "TIGHTENED")),
     ("reframe_pad", PICTURE, "16:9 to 9:16 by padding",
      "Nothing is lost: the wide frame is kept whole and the gap above and below is filled with a blurred copy.",
      demo_reframe_pad, "video", None),
@@ -1886,8 +1904,8 @@ INSPECTION = [
 # --------------------------------------------------------------------------- docs
 DOC_HEADER = """# Demo gallery
 
-Every clip on this page but two was generated from nothing: ffmpeg's own synthetic sources make
-the footage. The two exceptions, `reframe_talk` and `filler_en`, use AI-generated footage of
+Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
+the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of
 people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
 repo's scripts on its source. Rebuild the whole page's material with:
 

@@ -95,8 +95,17 @@ def sentence_words(args) -> "Tuple[list, str]":
     Under --filler the transcript that run read or made is reused; otherwise --words is read, or
     --transcribe runs the local engine. Refuses without one: where a sentence ends is taken from
     the transcript's punctuation, and there is no reading it off a pause."""
+    def usable(words: "list", source: str) -> "Tuple[list, str]":
+        # a word with no length or a time that is not a number cannot be placed against a pause
+        timed = [w for w in words if math.isfinite(w["start"]) and math.isfinite(w["end"]) and w["end"] > w["start"]]
+        if not timed:
+            die(f"no usable word timings in the transcript ({source}): every word's start and end must be "
+                "numbers with the end after the start, or there is nothing to place a sentence end against a pause",
+                kind="input")
+        return timed, source
+
     if getattr(args, "_words", None) is not None:
-        return args._words, args._words_source
+        return usable(args._words, args._words_source)
     if args.words:
         try:
             raw = json.loads(read_text_or_die(args.words, "--words"))
@@ -107,7 +116,7 @@ def sentence_words(args) -> "Tuple[list, str]":
             die(f"no word timings in {args.words}: the sentence flags need "
                 '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside "segments").',
                 kind="input")
-        return words, f"whisper-json:{args.words}"
+        return usable(words, f"whisper-json:{args.words}")
     if args.transcribe:
         asr_run = _asr.transcribe_words_result(args.input, None, model=args.model, engine=args.engine)
         args._asr_notes = list(asr_run.notes)
@@ -115,7 +124,7 @@ def sentence_words(args) -> "Tuple[list, str]":
             die(f"{asr_run.engine or 'the local engine'} ran but produced no word-level timings, so there is "
                 "nothing to tell a sentence end from. Pass a transcript with word timings as --words.", kind="input")
         family = "parakeet" if asr_run.engine in _asr.PARAKEET_ENGINES else "whisper"
-        return asr_run.words, f"{family}:{asr_run.engine}" if asr_run.engine else "whisper"
+        return usable(asr_run.words, f"{family}:{asr_run.engine}" if asr_run.engine else "whisper")
     die("--sentence-min-silence and --sentence-margin-tail need word timings: pass --words transcript.json "
         "(a whisper JSON with word timestamps) or --transcribe. A sentence end is read from the transcript's "
         "punctuation; a pause's length does not say where one is.", kind="input")
@@ -650,9 +659,10 @@ def main() -> int:
     if by_sentence:
         words, words_source = sentence_words(args)
         found = silence_positions(silences, words)
+        # a silence that runs to the end of the file is as long as what is left of the file
         kept_pairs = [(span, pos) for span, pos in zip(silences, found)
-                      if span[1] == float("inf")
-                      or span[1] - span[0] >= (sentence_min if pos == "sentence_end" else args.min_silence)]
+                      if (duration if span[1] == float("inf") else span[1]) - span[0]
+                      >= (sentence_min if pos == "sentence_end" else args.min_silence)]
         silences = [span for span, _ in kept_pairs]
         positions = [pos for _, pos in kept_pairs]
         marked = sum(1 for w in words if ends_sentence(w["word"]))
@@ -661,8 +671,7 @@ def main() -> int:
                          "silences": positions.count("sentence_end")}
         if not marked:
             warn("the transcript has no sentence-final punctuation, so no silence was taken as a sentence end: "
-                 "--sentence-min-silence and --sentence-margin-tail changed nothing, every silence used "
-                 "--min-silence and --margin-tail", "sentence_ends_not_found")
+                 "every silence used --min-silence and --margin-tail", "sentence_ends_not_found")
 
     def margined(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """The stretch of each silence that is removed: its own tail for one after a sentence end."""
