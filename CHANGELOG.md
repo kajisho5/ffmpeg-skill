@@ -13,12 +13,12 @@
 - **Write scopes are granted per job.** No workflow grants a write scope at the top level any
   more; CodeQL, Pages, Dependabot auto-merge and the release each grant theirs to the one job
   that needs it, and checkouts that never push no longer keep the token.
-- **The landing page loads its icon font with Subresource Integrity.** The unpkg script that
+- **The landing page loads its icon stylesheet with Subresource Integrity.** The unpkg script that
   added six stylesheets at run time is replaced by the one stylesheet the page uses, pinned by
   hash.
 - **The input parsers are fuzzed.** `fuzz/` holds atheris targets for the time grammar, the SRT
   reader and the hardened timeline XML reader; ClusterFuzzLite fuzzes them on each pull request
-  that touches Python and for half an hour each week, and the contract suite runs every target on
+  that changes `scripts/**.py`, `fuzz/` or the fuzzing setup, and for half an hour each week, and the contract suite runs every target on
   its seed inputs so a target that stops importing fails CI.
 - `SECURITY.md` links the private advisory form by its full address, which also resolves outside
   GitHub's file view.
