@@ -8,7 +8,8 @@ they do with data, as of the version it ships with.
 - **Your media stays local.** Video, audio, subtitles and project files are read from and written
   to the paths you give. Nothing is uploaded.
 - **No network use by the tools themselves**, and no API key is read. One exception:
-  transcription (`caption.py --transcribe`, `silence.py --filler --transcribe`) runs a speech
+  transcription (`caption.py --transcribe`, `silence.py --transcribe` with `--filler` or a sentence
+  flag) runs a speech
   engine you installed yourself (whisper.cpp, faster-whisper, openai-whisper or parakeet). On its
   first run such an engine may download its model from its own provider, and a Hugging Face
   client uses a token you are logged in with. What those engines and providers do is covered by

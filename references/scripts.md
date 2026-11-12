@@ -1411,8 +1411,8 @@ English `tdt-0.6b-v2`. A Parakeet model in `FFMPEG_SKILL_ASR_MODEL` goes to the 
 only (the Whisper engines keep `base`); one given with `--model` goes to whichever engine runs.
 A non-English `--language` on an English-only Parakeet model is refused; a
 multilingual (v3) model assumes no language, so it gets no English-assumed note. The result's
-`transcription` names the engine, model and routing. `silence.py --filler --transcribe` takes
-the same `--engine` and `--model`.
+`transcription` names the engine, model and routing. `silence.py --transcribe` (with `--filler`
+or a sentence flag) takes the same `--engine` and `--model`.
 Nothing is required: without an engine it prints install hints and the user can supply `--text`
 cues instead. When engines are installed but none transcribed, the refusal names each and why
 instead (`reason: engine_failed`, or `english_only` for a Parakeet engine auto passed over for

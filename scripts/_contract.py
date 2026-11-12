@@ -178,8 +178,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
-                                                                    {"capability": "external:whisper", "when": "--filler --transcribe"},
-                                                                    {"capability": "external:parakeet", "when": "--filler --transcribe (English; either engine family satisfies it)"}] + AUDIO_OUT,
+                                                                    {"capability": "external:whisper", "when": "--transcribe (with --filler or a sentence flag)"},
+                                                                    {"capability": "external:parakeet", "when": "--transcribe (with --filler or a sentence flag; English; either engine family satisfies it)"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "join": dict(role="execution", inputs=["two or more video assets, or two or more audio-only assets"], outputs=["concatenated video artifact", "concatenated audio artifact (audio-only inputs, audio output extension)"],
                  required=FF + ["filter:xfade", "filter:acrossfade"],
@@ -445,9 +445,9 @@ ERROR_REASONS = {
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
     "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or ffmpeg itself reported \"Unknown encoder\" for the encoder the command named (kind ffmpeg; details: {name}; the hint points at doctor)",
-    "asr_engine_missing": "kind missing_tool: --transcribe (caption.py, silence.py --filler) found no local speech-to-text engine; the message lists the install lines; details: {}",
+    "asr_engine_missing": "kind missing_tool: --transcribe (caption.py; silence.py with --filler or a sentence flag) found no local speech-to-text engine; the message lists the install lines; details: {}",
     "encoder_list_unreadable": "--codec av1/prores: the build's encoder list could not be read, so whether it has the encoder is unknown (kind ffmpeg); details: {codec, encoders, error}",
-    "no_speech": "kind input: --transcribe (caption.py, silence.py --filler) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
+    "no_speech": "kind input: --transcribe (caption.py; silence.py with --filler or a sentence flag) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
     "engine_failed": "kind input: --transcribe: an installed speech engine ran and failed (a named --engine, or every engine --engine auto found); details: {engine, detail | engines: [{engine, reason, detail}]}; also top-level reason, engine and detail/engines",
     "english_only": "kind input: --transcribe under --engine auto found only Parakeet engines, which it runs for English speech only, and the language is not English; details: {engine, engines}; also top-level reason, engine and engines",
 }
@@ -667,7 +667,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "hint": {"type": "string", "description": "when nothing sat below --threshold: the track's measured level and the --threshold that would find its pauses"},
                  "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
                  "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, matched_untimed (listed words in the transcript with no usable timing, not removed), matched_too_long (listed words longer than a filler, kept), ...}"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--transcribe (with --filler or a sentence flag) under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
     elif name == "sync":
         extra = {"reference": {"type": "string"}, "second": {"type": "string"}, "offset_seconds": {"type": "number"}, "confidence": {"type": "number"}, "meaning": {"type": "string"}, "drift": {"type": "object"},
                  "sources": {"type": "array", "description": "1.18: [{path, offset_s, confidence, drift_ppm}], one per SOURCE; the only per-source shape once more than one SOURCE is given; with --fix-drift each also carries drift_skipped_reason"},
@@ -2008,7 +2008,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
             # first time it runs; faster-whisper is a library, so its fetch is made from the skill's own
             # process. A caller that sandboxes the network must know that before a first --transcribe.
             "model_downloads": {
-                "when": "first use of a speech engine (--transcribe; silence.py --filler --transcribe runs it under --dry-run too, caption.py --transcribe does not) whose model is not cached yet; media is never uploaded",
+                "when": "first use of a speech engine (--transcribe; silence.py --transcribe, with --filler or a sentence flag, runs it under --dry-run too, caption.py --transcribe does not) whose model is not cached yet; media is never uploaded",
                 "in_process": {"faster-whisper": "Hugging Face (Systran/faster-whisper-<model>)"},
                 "child_process": {"parakeet-mlx": "Hugging Face (mlx-community/parakeet-*)",
                                   "openai-whisper": "OpenAI (its model checkpoint)"},

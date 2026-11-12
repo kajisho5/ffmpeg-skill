@@ -82,14 +82,17 @@ def silence_positions(silences: List[Tuple[float, float]], words: "list",
     of the word after (on demos/footage/ai_talk_en.mp4 three word starts sit 0.45 to 0.5 s before
     the sound does), and a word's midpoint stays on its own side of the pause either way. A
     silence with no word before it is `inside`."""
+    import bisect
     timed = sorted(words, key=lambda w: w["start"] + w["end"])
+    mids = [(w["start"] + w["end"]) / 2 for w in timed]
     out: List[str] = []
     for s, e in silences:
         if e == float("inf"):
             e = max(s, duration) if duration is not None else s
-        ref = (s + e) / 2
-        before = [w for w in timed if (w["start"] + w["end"]) / 2 < ref]
-        out.append("sentence_end" if before and ends_sentence(before[-1]["word"]) else "inside")
+        # the last word whose midpoint is before the silence's: a binary search, not a scan of the
+        # whole transcript per silence (an hour of speech has thousands of each)
+        k = bisect.bisect_left(mids, (s + e) / 2)
+        out.append("sentence_end" if k and ends_sentence(timed[k - 1]["word"]) else "inside")
     return out
 
 
