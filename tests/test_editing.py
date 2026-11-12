@@ -1594,7 +1594,7 @@ class EditingTests(MediaFixtures):
                     sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf",
                        f"trim=start_frame={5 * k}:end_frame={5 * k + 5},setpts=PTS-STARTPTS", "-af",
                        f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "ffv1",
-                       "-c:a", "pcm_s16le", "-fps_mode", "passthrough", clip)
+                       "-c:a", "pcm_s16le", "-r", rate, clip)
                     clips.append(clip)
                 first = self._frame_pts(clips[0])
                 self.assertEqual(len(first), 5, f"the premise: 5 frames a clip (pts {first}, "
