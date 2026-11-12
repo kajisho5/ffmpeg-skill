@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A slow `latest` on npm no longer stops the MCP Registry publish.** The release job waited five
+  minutes for npm's `latest` to read the new version and then failed, which skipped every later
+  step: 3.6.2 was on npm but not on the MCP Registry until the job was re-run. It now waits for
+  npm to have the version (that is what the registry steps need), runs the registry steps, and
+  only then fails the job if `latest` is still behind after ten minutes.
 
 ## 3.6.2
 
