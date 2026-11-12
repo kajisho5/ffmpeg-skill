@@ -730,20 +730,29 @@ def main() -> int:
     # total, so the sound never drifts from the picture by more than one sample.
     frames = [clip_frames(m, clip_length(m, fps), rate_q) for m in metas]
     # the transition is a whole number of frames too, so xfade's offsets (and acrossfade's
-    # overlap) land on frames of the output rate (#468)
-    tframes = max(1, round(d * fps)) if d else 0
+    # overlap) land on frames of the output rate (#468). A transition is at least one frame:
+    # --duration 0 used to build acrossfade=ns=0, which FFmpeg refuses
+    tframes = max(1, round(d * fps)) if args.transition != "none" else 0
     d = tframes / fps
     lens = [f / fps for f in frames]
     place_silent(lens, d)
     for p, nf in zip(args.inputs, frames):
         if d and nf <= tframes * 2 and not STATE.dry_run:
             die(f"{p} is only {nf / fps:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
-    total = 0
-    samples = []
-    for nf in frames:
-        samples.append(round((total + nf) * JOIN_AUDIO_RATE / rate_q) - round(total * JOIN_AUDIO_RATE / rate_q))
-        total += nf
-    tsamples = round(tframes * JOIN_AUDIO_RATE / rate_q)
+    # every sample boundary is a frame position of the OUTPUT rounded once: clip i spans output
+    # frames [start_i, start_i + frames_i) and overlaps the clip before it over [start_i,
+    # start_i + tframes), so its samples and each overlap's are differences of rounded
+    # cumulative positions and their sum telescopes to the output's own length. Rounding each
+    # overlap on its own (14414.4 samples -> 14414 at 30000/1001 and 9 frames) left the sound
+    # 0.4 samples longer per transition.
+    def at(frame: int) -> int:
+        return round(frame * JOIN_AUDIO_RATE / rate_q)
+    starts, start = [], 0
+    for i, nf in enumerate(frames):
+        starts.append(start)
+        start += nf - tframes
+    samples = [at(s0 + nf) - at(s0) for s0, nf in zip(starts, frames)]
+    overlaps = [at(s0 + tframes) - at(s0) for s0 in starts]
 
     cmd = ffmpeg_base()
     extra_inputs: List[str] = []
@@ -844,7 +853,7 @@ def main() -> int:
             aout = f"ax{i}" if i < n - 1 else "aout"
             parts.append(f"[{vprev}][vp{i}]xfade=transition={args.transition}:duration={frame_time(tframes, rate_q)}"
                          f":offset={frame_time(start, rate_q)}[{vout}]")
-            parts.append(f"[{aprev}][ap{i}]acrossfade=ns={tsamples}:c1=tri:c2=tri[{aout}]")
+            parts.append(f"[{aprev}][ap{i}]acrossfade=ns={overlaps[i]}:c1=tri:c2=tri[{aout}]")
             vprev, aprev = vout, aout
 
     # A pending input's stub is unmeasured (0x0, 0 fps, 0 s -- #77 keeps it honest rather than

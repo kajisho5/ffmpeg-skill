@@ -1650,6 +1650,40 @@ class EditingTests(MediaFixtures):
                 self.assertClose(m["audio"]["duration"], m["video"]["duration"], 1024 / 48000,
                                  "acrossfade overlaps the sound by the frames xfade overlaps")
 
+    def test_join_sound_overlaps_add_up_to_the_picture(self):
+        """A transition whose length is not a whole number of samples: 9 frames at 30000/1001 is
+        14414.4 samples. Each acrossfade's overlap was rounded on its own (14414), so the sound
+        kept 0.4 samples more than the picture per transition (five 90-frame clips: 663,064
+        samples for a 414-frame picture of 663,062.4). Every clip's samples and every overlap are
+        now differences of the output's rounded frame positions, so the planned sound is the
+        picture's length to the sample. --duration 0 with a transition is one frame, not
+        acrossfade=ns=0 (which FFmpeg refuses)."""
+        from fractions import Fraction
+        d = OUT / "join_xfade_samples"
+        d.mkdir(exist_ok=True)
+        q = Fraction(30000, 1001)
+        clips = []
+        for k in range(5):
+            clip = d / f"c{k}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "testsrc2=s=64x48:r=30000/1001", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-frames:v", "90",
+               "-t", f"{90 / float(q):.6f}", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", clip)
+            clips.append(clip)
+        for duration, tframes in (("0.3", 9), ("0", 1)):
+            with self.subTest(duration=duration):
+                out = d / f"x_{duration}.mp4"
+                doc = json.loads(script("join.py", *clips, "--transition", "fade", "--duration", duration,
+                                        "--preset", "ultrafast", "--json", "-o", out).stdout)
+                self.assertEqual(doc["transition_frames"], tframes)
+                cmd = doc["commands"][0] if isinstance(doc["commands"][0], str) else " ".join(doc["commands"][0])
+                kept = sum(int(n) for n in re.findall(r"atrim=end_sample=(\d+)", cmd))
+                overlap = sum(int(n) for n in re.findall(r"acrossfade=ns=(\d+)", cmd))
+                self.assertNotIn("acrossfade=ns=0", cmd)
+                frames_out = 5 * 90 - 4 * tframes
+                self.assertEqual(kept - overlap, round(frames_out * 48000 / q),
+                                 "the planned sound is the picture's length to the sample")
+                self.assertEqual(len(self._frame_pts(out)), frames_out)
+
     def test_join_two_or_more_audio_less_clips(self):
         """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py
         builds this itself, not this test's fixtures) -- `idx` must be this ffmpeg input's actual position

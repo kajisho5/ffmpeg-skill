@@ -17,7 +17,9 @@
   millisecond, and xfade starts on the first frame at or after it: 2.566667 s written 2.567
   started the fade a frame late (138 frames where 137 were due). Offsets are now frames of the
   output rate, written rounded down to the microsecond, the transition is a whole number of frames
-  and acrossfade overlaps the same samples.
+  (at least one: `--duration 0` with a transition built `acrossfade=ns=0`, which FFmpeg refuses)
+  and each acrossfade overlaps the samples of those frames, taken from the output's rounded frame
+  positions so the sound never runs a sample longer per transition.
 - **A slow `latest` on npm no longer stops the MCP Registry publish.** The release job waited five
   minutes for npm's `latest` to read the new version and then failed, which skipped every later
   step: 3.6.2 was on npm but not on the MCP Registry until the job was re-run. It now waits for
