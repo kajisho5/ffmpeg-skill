@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, env_hw, stop_children
+from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, stop_children
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 
 HERE = Path(__file__).resolve().parent
@@ -265,16 +265,18 @@ def deliver(src: str, final: Path) -> None:
         except OSError:
             # another filesystem: copy beside the final path and rename, so a copy that fails part
             # way never leaves a truncated file where the caller's was
-            import shutil
-            tmp = final.with_name(f".{final.stem}.ffskill-{os.getpid()}-{threading.get_ident()}{final.suffix}")
+            # created exclusively and written through the descriptor that created it: never through
+            # an entry planted at the name, and two threads delivering side by side get two names
+            tmp = None
             try:
-                shutil.copyfile(src, tmp)
+                tmp = copy_to_sibling(str(src), str(final))
                 os.replace(tmp, final)
             except OSError as exc:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
                 raise ItemError({"step": None, "tool": None, "kind": "output",
                                  "message": f"could not deliver {src} to {final}: {exc}"})
     log(f"  delivered the last written file to {final}")

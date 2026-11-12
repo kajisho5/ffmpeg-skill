@@ -926,8 +926,8 @@ def mux_subtitle_codec(output: str) -> str:
 
 def ass_color(hex_rgb: str, alpha: int = 0) -> str:
     h = hex_rgb.lstrip("#")
-    if len(h) != 6:
-        die(f"colour must be RRGGBB hex, got '{hex_rgb}'")
+    if len(h) != 6 or any(c not in "0123456789abcdefABCDEF" for c in h):
+        die(f"colour must be six hex digits RRGGBB, got '{hex_rgb}'")
     r, g, b = h[0:2], h[2:4], h[4:6]
     return f"&H{alpha:02X}{b}{g}{r}".upper()
 

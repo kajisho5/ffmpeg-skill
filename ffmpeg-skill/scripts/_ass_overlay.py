@@ -54,7 +54,7 @@ def ass_time(sec: float) -> str:
 
 def ass_color(hex_rgb: str, alpha: int = 0) -> str:
     h = str(hex_rgb).lstrip("#")
-    if len(h) != 6:
+    if len(h) != 6 or any(c not in "0123456789abcdefABCDEF" for c in h):
         raise ValueError(f"colour must be RRGGBB hex, got '{hex_rgb}'")
     return f"&H{alpha:02X}{h[4:6]}{h[2:4]}{h[0:2]}".upper()
 

@@ -148,7 +148,15 @@ def concat_list_line(path: str) -> str:
     """One `file '...'` line for the concat demuxer. The demuxer reads backslash as an escape
     inside the quoted form, so a Windows path (C:\\Users\\...\\part000.mp4) must be written
     with forward slashes -- ffmpeg opens either spelling on Windows -- and a single quote in the
-    name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py."""
+    name is closed, escaped and reopened. Shared by cut.py (multi-segment) and sequence.py.
+
+    A line break has no escape in this format: the demuxer reads each line as its own directive,
+    so a name containing one would add `file` entries to the list and pull in files the caller
+    never named. Such a path is refused."""
+    if "\n" in str(path) or "\r" in str(path):
+        refuse("input", "media_path_has_line_break",
+               f"{str(path)!r} contains a line break, which ffmpeg's concat list cannot hold (each line is a "
+               "directive of its own); rename the file", path=str(path))
     # only on Windows: on POSIX the quoted form takes a backslash literally, and it is part of the name (#408)
     escaped = (str(path).replace("\\", "/") if _on_windows() else str(path)).replace("'", "'\\''")
     return f"file '{escaped}'"
