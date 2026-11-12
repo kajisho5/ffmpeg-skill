@@ -22,6 +22,122 @@
   its seed inputs so a target that stops importing fails CI.
 - `SECURITY.md` links the private advisory form by its full address, which also resolves outside
   GitHub's file view.
+- **MCP annotations now match what a call can write.** `probe`, `check` and `cropdetect` were
+  annotated `readOnlyHint: true`, yet `plan` + `overwrite` let them replace any existing file, and
+  every tool said `destructiveHint: false`. Over MCP the server now runs the three read-only tools
+  with `FFMPEG_SKILL_READ_ONLY=1`, which refuses `--plan` structured or in any raw `argv`
+  spelling, and their schemas say so (`kind: input`, `error.reason: read_only_plan_refused`). Every tool
+  that writes is now `destructiveHint: true`. The CLI is unchanged.
+- **A structured value is never read as an option.** MCP arguments and render.py's stage commands
+  pass a value that starts with `-` as one `--flag=value` token, so overlay text `-50%` or a title
+  `--help` works instead of failing with "expected one argument". Positionals that start with `-`
+  follow `--`, so an input named `--plan=x` can no longer set `--plan`.
+
+### Fixed
+
+- **`batch.py` project recipes read the project's side files beside the project.** Each item's
+  copy of the project was written into its work directory with its relative paths unchanged, and
+  `render.py` reads those against the project file's directory, so a project naming
+  `"music": "bed.wav"`, a brand, captions or a chapters file failed every item after its earlier
+  stages had encoded (the dry run said it would complete). The copy now carries them absolute.
+  The same list of path keys is what `render.py` applies to its own project, so
+  `audiogram.image` and `overlays[].font_file` are read against the project file too, not the
+  working directory, and `multicam.py --write-project` writes its clip paths absolute, so the
+  project renders from wherever it is written.
+- **`batch.py --watch` no longer processes a source that is still being written.** A file copied
+  into the watched folder was processed as the fraction already there and reported `ok` (and
+  `verified` for MKV and TS); once the copy finished, every later pass refused that output with
+  `output_exists`, so the truncated file stayed. A source is processed once its size and mtime
+  are unchanged across one poll (first seen: last modified at least one interval ago); until then
+  its row is `skipped: "settling"`. An output an earlier pass of the same watch delivered, and
+  nobody changed since, is replaced when its source changes; any other existing output is still
+  refused without `--overwrite`.
+- **Text symbols are no longer taken for emoji.** `♪ ✓ ★` (not emoji in Unicode's emoji-data)
+  and `♥ ✔ ☺` (emoji only when VS16 follows) were counted as emoji because the whole Misc
+  Symbols, Dingbats and Misc Symbols and Arrows blocks were. A `mode: none` run (auto on macOS, or
+  on Linux with no colour emoji face) then cut SDH music notes and check marks out of the burned
+  captions and said no face could draw them. In those blocks only Emoji_Presentation characters
+  start an emoji on their own now, and a text-default one does with VS16 or a skin tone; the
+  playing cards and mahjong tiles other than 🀄 🃏 are text too. The same rule reaches
+  `graphics.py` and `overlay.py`, where such a title no longer switched to libass or reported
+  `emoji: mono`.
+- **A wrap pass that moves a break keeps the space that stood there.** The orphan, weak-line and
+  rebalance passes guessed whether a space stood at a break from the script on each side, so a
+  moved break in Korean, in Japanese or Chinese written with spaces, next to an emoji, or between
+  Latin and CJK ran two words together (`늦지마세요`, `したよろしく`) while the result said
+  `text_unchanged: true`. The greedy fill now records each break's space and every pass carries
+  it. Korean is wrapped as the spaced script it is: at the spaces between words, never inside one
+  unless the word alone is wider than the line (`broken_inside_word`). Shared by `caption.py`,
+  `graphics.py` and `overlay.py --text`.
+- **`caption.py` styles SRT markup on the routes where it writes its own ASS.** `--animate`,
+  `--karaoke`, an emoji-forced ASS and the tiktok/reels/shorts templates drew `<i>`, `<b>`,
+  `<font color>` and `{\an8}` as text, and counted them as width in the wrap and the size fit.
+  They become the overrides ffmpeg's own SRT route gives them (`<u>` and `<s>` too); the wrap,
+  the fit, the emoji placement and the blank-cue count measure the words only, and a cue split
+  across `--max-lines` keeps its italics and position on every part. Any other tag or `{...}`
+  block stays escaped text, as before; under `--karaoke` a `<font color>` is dropped for the
+  highlight's colours, and `--karaoke-style word` no longer resets the cue's style (`{\r}`) after
+  the active word.
+- **`speedramp.py`: a sped-up segment no longer leaves the rest of the picture late.** `setpts`
+  kept each sped-up frame's unscaled duration, and the concat started the next segment after it:
+  a 2x segment followed by a 1x one showed every later frame two frames (67 ms) after its sound
+  and wrote 92 frames for 90. Each segment's frames now get the source rate's durations back
+  (`fps` after `setpts`, as `reverse` and `freeze` do); `0-4:2` writes 60 frames, `0-4:0.5` 240.
+- **`sync.py --trim-second` no longer stream-copies a video source file.** The copy started at
+  the keyframe before the trim point and showed the frames from it, so the "synced" file started
+  early by up to a GOP (with a 5 s GOP nothing was trimmed at all) and still reported `verified:
+  true`; even a keyframe on the trim point moved the picture by its B-frame delay. A video source
+  is now re-encoded from the frame at the trim point and re-measures at 0; a sound-only source is
+  still copied.
+- **`cut.py`: an upper-case `.MOV`/`.MP4` output is an MPEG-4 output.** The join's container
+  checks compared the suffix case-sensitively, so a `--segments` re-cut of more than 32 ranges
+  (and every `silence.py` render keeping that many) into `IMG_0001_tight.MOV` wrote HEVC tagged
+  `hev1`, which Apple players refuse, with the index at the end, and a copy join into `.MP4` lost
+  `+faststart`. A `.TS` part list is also recognised as MPEG-TS for the copy join's check.
+- **The start timecode moves with the start of the picture.** `cut.py` (copy and re-encode, one
+  range), `fit.py --method trim` and `sync.py --trim-second` wrote the source's start timecode
+  unchanged on a file that starts later (a cut from 1 s stamped 01:00:00:00 on frame 30), and so
+  did a `render.py` clip with an `in`, disagreeing with the render's own `--export-timeline`. They
+  now write the label of the frame the output starts on (drop-frame where the source is; a padded
+  head counts back). A join of several ranges writes no start timecode, and a stream copy out of
+  MXF writes none, both listed under `source_carry.dropped`. `source_carry` compares the
+  timecode's value, not only its presence.
+- **`audio.py --downmix` no longer clips, and uses the weights the docs name.** pan's `=` summed
+  2.7× per side (3.2× on 7.1) and mixed the LFE in at 0.5, so a 5.1 with every channel at
+  -6 dBFS came out hard-clipped (flat factor 20+) while the run said verified, and the weights
+  were not the ITU ones `references/scripts.md` claimed. The fold-down is now ITU-R BS.775
+  (centre and surrounds at -3 dB, LFE dropped), scaled with pan's `<` so each side's gains sum to
+  1: in-phase channels cannot clip, and a front channel alone is 7.7 dB lower (9.9 dB on 7.1).
+- **`color.py --to-sdr` takes the source peak to SDR white; `look.py`'s HDR frames match it.**
+  The linearising zscale used `npl=--peak`, while `tonemap` reads linear 1.0 as 100 nits, so no
+  HDR pixel reached white: PQ at 1000 nits and HLG at 100 % came out at Y 151 of 235, HLG reference
+  white at 91, and raising `--peak` to a brighter master's darkened the picture further. It now
+  linearises at `npl=100` and passes `peak=--peak/100` (HLG: always 1000 nits, the peak zimg
+  decodes it to), so a PQ pixel at `--peak` nits and HLG at 100 % land on Y 235. `look.py` used
+  the same `npl=1000` chain for HDR sheets and tone-mapped a BT.2020 SDR source too; it now uses
+  `--to-sdr`'s chains at their defaults.
+- **`overlay.py --video --opacity` below 1 no longer shifts the colours of the whole frame.** The
+  alpha was scaled with `colorchannelmixer`, which takes RGB only, so FFmpeg composited the main
+  picture in RGB and it came back BT.601 under its BT.709 tag (the defect 2.10.2 removed from
+  `--image`). The alpha is now scaled in YUV (`lut`). This covers `render.py` video layers with an
+  `opacity` too.
+- **Overlays onto a 10-bit HDR or ProRes source keep its 10 bits.** overlay's default format is
+  8-bit, `format=auto` picks 8-bit beside an 8-bit layer and `drawbox` is 8-bit only on 6.1, so
+  `broll.py`, `redact.py` (blur, pixelate), `graphics.py` (bars, boxes, emoji), `caption.py`'s
+  emoji and `overlay.py --video` took the whole picture to 8 bits before the Main10 encoder, and
+  `overlay.py --image` took it through 8-bit RGB, shifting its colours (Y/Cb/Cr 402/602/422 came
+  out 399/608/418). These overlays now run at 10 bits in the source's chroma subsampling
+  (`overlay_format()`), graphics.py draws its boxes as layers there, and a 10-bit PiP stays
+  10-bit.
+- **The sentence flags from 3.6.0 are named wherever transcription is.** `silence.py
+  --transcribe` with `--sentence-min-silence` or `--sentence-margin-tail` runs the speech engine
+  (under `--dry-run` too, and it may download a model on first use), but the contract's
+  capabilities, refusal reasons and model-download statement, `PRIVACY.md`, the plugin README and
+  `README.md` named only `--filler --transcribe`. README's `silence.py` row and SKILL.md's routing
+  table now carry the 3.5.0 and 3.6.0 flags.
+- **`silence.py`'s sentence lookup is a binary search.** Placing the word before each silence
+  scanned the whole transcript once per silence: about 1.2 s for an hour of speech and 11 s for
+  three hours. It is now proportional to the number of silences times the log of the words.
 
 ## 3.6.1
 

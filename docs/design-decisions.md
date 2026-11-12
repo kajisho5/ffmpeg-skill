@@ -416,7 +416,10 @@ exists. When a decision changes, edit the entry in the same PR.
   `batch.py`'s cross-filesystem delivery) writes the descriptor that created the temp
   (`copy_to_sibling()`); ffmpeg opens its temp by name, so a process that may delete entries in
   the output directory could still swap the file between the create and that open, which a
-  sticky shared directory (`/tmp`) and a directory only the caller can write both rule out. A lock's default audit log beside the output
+  sticky shared directory (`/tmp`) and a directory only the caller can write both rule out. A private
+  subdirectory for those temps would not close it either (whoever can rename entries in the output
+  directory can swap the subdirectory for a link, and ffmpeg cannot open relative to a directory
+  descriptor), so this residual case is accepted (#456). A lock's default audit log beside the output
   is opened without following a symlink; a log named with `--audit-log` is opened as named. Code:
   `_common._stage_existing_output()`, `runner.reserve_sibling()`, `emit.audit()`. Test:
   `test_hidden_temp_names_are_never_written_through_a_planted_link`.
