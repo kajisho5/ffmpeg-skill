@@ -8297,6 +8297,26 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(direct.read_text(encoding="utf-8"), "this run's other output")
 
     @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_link_switched_before_an_own_write_elsewhere_is_still_refused(self):
+        """The link is switched first, then this run writes its other output in the link's new
+        directory: that write does not refresh the link's record, which still names a/."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        link = self.work / "dir"
+        os.symlink(a, link)
+        via_link, direct = link / "out.json", b / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(via_link), str(direct)]), (None, None))
+        link.unlink()
+        os.symlink(b, link)
+        direct.write_text("this run's other output", encoding="utf-8")
+        self.runner.remember_written(str(direct))
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(via_link)), ("input", "output_exists"))
+        self.assertEqual(direct.read_text(encoding="utf-8"), "this run's other output")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
     def test_an_own_write_through_another_spelling_of_the_path_is_still_own(self):
         """Checked through a link, written through the resolved name: replacing it again through
         the link is replacing this run's own file."""

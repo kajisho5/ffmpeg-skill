@@ -1296,9 +1296,11 @@ def _record_checked(path: str, state: Any) -> None:
     STATE.checked[os.path.abspath(path)] = entry
     # the same file reached by another spelling of its path (a write through the resolved name
     # after a check through a link) is the same record: a later replace through either matches
+    # -- only a record made in the same directory: one whose link has been switched since keeps
+    # what it saw, so the replace through it is still refused
     for named in [k for k in STATE.checked if k != key]:
         try:
-            if _checked_key(named) == key:
+            if _checked_key(named) == key and STATE.checked[named][0] == entry[0]:
                 STATE.checked[named] = entry
         except OSError:
             pass
