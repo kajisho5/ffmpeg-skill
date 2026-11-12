@@ -3124,6 +3124,15 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   output-option negotiation has nothing to convert. Code: `decision.keeps_source_tags()`,
   `alpha.finish_chain()`, `alpha.tag_args()`. Test:
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
+- **An RGB source's `gbr` colour space is not carried over (#454).** It says the stored samples are
+  RGB, which is the pixel format's to say: the PNG line tags itself `gbr`, and on a YUV line
+  (ProRes 4444, VP9) the label would call YUV samples RGB. So the output of a PNG-in-`.mov` source is
+  tagged like that of an untagged qtrle source of the same pixels, and graded the same. Every probed
+  tag passed back to FFmpeg goes through `_common/color.carried_tag()`, because the output options
+  parse an older table than the one ffprobe prints: `-colorspace` refuses `gbr`, `-color_trc`
+  refuses `bt470m`/`bt470bg` (it says `gamma22`/`gamma28`); setparams takes ffprobe's names. Tests:
+  `test_color_keep_alpha_grades_an_rgb_source_tagged_gbr`,
+  `test_every_probed_colour_tag_is_spelled_the_way_its_destination_takes_it`.
 - **`color.py` never grades the alpha.** The alpha is split off the source, kept as decoded and merged
   back (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth), so
   the written alpha is compared with the source's frame by frame (tolerance 2 of 255), exactly as

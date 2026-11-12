@@ -98,6 +98,17 @@ _Automated release: version and notes generated from pull requests merged since 
   longer claims every ffmpeg command line.
 - fix: a measurement that did not happen is reported as not measured (#490)
 - chore: tests, CI, installer, evals and docs findings from the audit (#489)
+### Fixed
+
+- **A source tagged colour space `gbr` can be graded with `--keep-alpha`** (#454). FFmpeg's PNG
+  encoder tags a PNG-in-`.mov`/`.mkv` stream `gbr`, and the alpha line passed it back as
+  `-colorspace gbr`, a name the option refuses, so every `color.py --lut/--correct --keep-alpha` of
+  such a source failed (`graphics.py` and `overlay.py` share the line). `gbr` is no longer carried
+  over (the PNG line tags itself; a YUV line would be mislabelled by it). The sweep of every probed
+  tag passed back as an option found a second name: `-color_trc` refuses ffprobe's `bt470m` and
+  `bt470bg` (PAL/NTSC-tagged sources), which failed the same alpha line and made `cut.py --smart`
+  fall back to a full re-encode. `_common/color.carried_tag()` now spells every such tag the way
+  its destination takes it.
 
 ## 3.6.6
 
