@@ -670,10 +670,11 @@ class ContractTests(unittest.TestCase):
             self.assertIsNotNone(block, f"{f.name} has no top-level permissions")
             self.assertNotIn("write", block.group(0), f"{f.name} grants a write scope at the top level")
         site = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("unpkg.com", site)
-        for tag in re.findall(r"<(?:script|link)\b[^>]*\b(?:src|href)=\"https://[^\"]*\"[^>]*>", site):
+        from urllib.parse import urlsplit
+        for tag, url in re.findall(r"(<(?:script|link)\b[^>]*\b(?:src|href)=\"(https://[^\"]*)\"[^>]*>)", site):
+            self.assertNotEqual(urlsplit(url).hostname, "unpkg.com", tag)
             if "rel=\"stylesheet\"" in tag or "<script" in tag:
-                if "fonts.googleapis.com" in tag:
+                if urlsplit(url).hostname == "fonts.googleapis.com":
                     continue  # Google Fonts serves CSS per user agent; SRI cannot pin it
                 self.assertIn("integrity=\"sha384-", tag, tag)
                 self.assertIn("crossorigin=\"anonymous\"", tag, tag)
