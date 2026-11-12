@@ -4,12 +4,6 @@
 
 ## Unreleased
 
-(nothing yet)
-
-## 3.5.0
-
-_Automated release: version and notes generated from pull requests merged since 3.4.3._
-
 ### Added
 
 - **`silence.py --sentence-min-silence` and `--sentence-margin-tail`.** With word timings
@@ -20,6 +14,10 @@ _Automated release: version and notes generated from pull requests merged since 
   a guess from the sound; the result lists `silence_positions` and `sentence`, and a transcript
   without punctuation changes nothing and warns `sentence_ends_not_found`. Refused with
   `--speech-aware` and without a transcript. Second part of #449.
+
+## 3.5.0
+
+_Automated release: version and notes generated from pull requests merged since 3.4.3._
 
 ### Added
 
