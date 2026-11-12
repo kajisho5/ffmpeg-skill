@@ -2344,6 +2344,25 @@ class ProbedStreamTests(unittest.TestCase):
         script("crop.py", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
         self.assertEqual(probe(str(out))["subtitle_streams"], 1)
 
+    def test_crop_of_several_tracks_carries_the_subtitle_in_the_output_format(self):
+        """With several audio tracks the streams are mapped explicitly, the subtitle with them:
+        into MP4 it must be converted (mov_text), since FFmpeg 6.1 has no default MP4 subtitle
+        encoder ("Encoder not found" before the -c:s, #484 review)."""
+        srt = DIR / "several.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+        src = DIR / "several.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-f", "lavfi", "-i", "sine=d=2:f=880", "-i", srt,
+           "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt", src)
+        for ext, codec in ((".mp4", "mov_text"), (".mkv", "subrip")):
+            with self.subTest(ext=ext):
+                out = DIR / f"several_crop{ext}"
+                script("crop.py", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
+                codecs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                            "-of", "csv=p=0", out).stdout.split()
+                self.assertEqual(codecs, [codec])
+
     def test_crop_and_stabilize_write_the_picture_they_measured(self):
         out = DIR / "multi_crop.mp4"
         script("crop.py", self.multi, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")

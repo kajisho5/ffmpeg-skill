@@ -2057,8 +2057,11 @@ def default_selection_maps(meta: Optional[Dict[str, Any]], dst: str) -> List[str
         return []
     maps = probed_maps(meta)
     subs = (meta or {}).get("subtitle_stream_details") or []
-    if subs and subtitle_container_holds(subs[0].get("codec") or "", os.path.splitext(dst)[1]):
-        maps += ["-map", "0:s:0"]
+    codec, ext = (subs[0].get("codec") or "") if subs else "", os.path.splitext(dst)[1]
+    if subs and subtitle_container_holds(codec, ext):
+        # with its own -c:s: the default subtitle encoder does not exist for every container
+        # (none for MP4 in FFmpeg 6.1) and is a text encoder that cannot take a bitmap track
+        maps += ["-map", "0:s:0", "-c:s", subtitle_codec_for(codec, ext)]
     return maps
 
 
