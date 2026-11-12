@@ -59,6 +59,8 @@ from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
+from _common.asr import srt_blocks
+from _common.runner import normalize_text
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
@@ -83,8 +85,19 @@ ALIGN = {"bottom": 2, "top": 8, "center": 5, "bottom-left": 1, "bottom-right": 3
 FORCE_STYLE_ALIGN = {"bottom": 2, "top": 6, "center": 10, "bottom-left": 1, "bottom-right": 3, "top-left": 5, "top-right": 7}
 
 TIME_RE = re.compile(
-    r"^\s*(?P<a>[\d:.,@]+)\s*(?:-->|-|–|to)\s*(?P<b>[\d:.,@]+)\s+(?P<text>.+)$"  # @ = the 1.9 @fps suffix
+    r"^\s*(?P<a>[\d:.,@]+)\s*(?P<sep>-->|-|–|to)\s*(?P<b>[\d:.,@]+)\s+(?P<text>.+)$"  # @ = the 1.9 @fps suffix
 )
+
+
+def cue_times_match(line: str) -> "Optional[re.Match[str]]":
+    """TIME_RE's match of a --text line, or None when the line is caption text. The documented
+    separators are "-" and "-->", and with them bare seconds are times ("0-1.5 Hello"). "to" is
+    also an English word: "3 to 5 apples" is text, so with "to" both sides must be clock times
+    (a ':' in each, "0:03 to 0:05 Hello")."""
+    m = TIME_RE.match(line)
+    if m and m.group("sep") == "to" and not (":" in m.group("a") and ":" in m.group("b")):
+        return None
+    return m
 
 
 # an SRT timing line: the times alone, the cue text on the lines after it
@@ -95,9 +108,11 @@ SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[
 def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[float] = None) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
     cursor = 0.0
-    lines = read_text_or_die(path, "--text").lstrip("\ufeff").splitlines(True)
+    # split at "\n" only: splitlines() also breaks a cue at U+2028, U+0085, \v and \f, which
+    # made the rest of the line an auto-timed cue of its own
+    lines = read_text_or_die(path, "--text").split("\n")
     for n, raw in enumerate(lines, 1):
-        if SRT_TIMING_RE.match(raw.rstrip("\r\n")):
+        if SRT_TIMING_RE.match(raw):
             # a cue file puts the text on the line with its times; this line has the times alone, so
             # the file is an SRT. Read as a cue file, its numbers and timing lines would be burned in
             # as captions, auto-timed 3 s apart (#396)
@@ -107,11 +122,10 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
             # TIME_RE has no ';', so the line would be burned as caption text, auto-timed
             die(f"--text: line {n} has a drop-frame timecode (';'), which is not read: write it as "
                 "hh:mm:ss:ff@29.97 or in seconds", kind="input")
-    for raw in lines:
-        line = raw.rstrip("\n")
+    for line in lines:
         if not line.strip():
             continue
-        m = TIME_RE.match(line)
+        m = cue_times_match(line)
         if m:
             try:
                 start, end = parse_time(m.group("a"), fps), parse_time(m.group("b"), fps)
@@ -535,7 +549,7 @@ def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[
 def parse_ass_dialogue(path: str) -> str:
     """The spoken text of an ASS file, for script detection -- style/override blocks stripped."""
     text = []
-    for line in read_text_or_die(path, "--ass").lstrip("\ufeff").splitlines():
+    for line in read_text_or_die(path, "--ass").split("\n"):
         if not line.startswith("Dialogue:"):
             continue
         fields = line.split(",", 9)
@@ -557,7 +571,7 @@ def parse_ass_cues(path: str, stats: Optional[dict] = None) -> List[Tuple[float,
     # the [Events] Format line names the columns; Text is always last (libass reads it the same
     # way), and a file without one gets the standard ten
     names = ["layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text"]
-    for line in read_text_or_die(path, "--ass").lstrip("\ufeff").splitlines():
+    for line in read_text_or_die(path, "--ass").split("\n"):
         if line.startswith("Format:") and "text" in line.lower():
             names = [n.strip().lower() for n in line.partition(":")[2].split(",")]
             continue
@@ -601,7 +615,8 @@ def count_visible_cues(cues, duration) -> Tuple[int, int]:
 def shift_ass_file(src: str, dst: str, offset: float) -> Tuple[int, int]:
     """Copy an ASS file with every Dialogue start/end moved by `offset` seconds; (lines shifted,
     Dialogue lines copied unshifted because their timestamps could not be read)."""
-    text, n, unshifted = shift_ass_text(Path(src).read_text(encoding="utf-8-sig"), offset)
+    # read as the dry run reads it: a file that is not UTF-8 is refused as kind input on both
+    text, n, unshifted = shift_ass_text(read_text_or_die(src, "--ass"), offset)
     Path(dst).write_text(text, encoding="utf-8-sig")
     return n, unshifted
 
@@ -621,7 +636,9 @@ def shift_ass_text(source: str, offset: float) -> Tuple[str, int, int]:
 
     n = unshifted = 0
     out = []
-    for line in source.splitlines():
+    # lines end at "\n" only (libass reads them so); a U+2028 inside a Dialogue's text is text
+    body = normalize_text(source)
+    for line in (body[:-1] if body.endswith("\n") else body).split("\n"):
         if line.startswith("Dialogue:"):
             head, sep, rest = line.partition(":")
             fields = rest.split(",")
@@ -929,12 +946,9 @@ def srt_timings_shared_grammar(path: str) -> bool:
     """True when every timing line of the SRT at `path` reads the same to ffmpeg's SRT demuxer as
     to parse_srt(). ffmpeg refuses `00:01,000` (no hours) and reads `00:00:01,5` as 1.005 s, where
     parse_srt() reads 1.5 s (#414); such a file is handed to ffmpeg as a rewritten copy."""
-    text = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n")
-    # a cue's timing line is its first line with "-->", as parse_srt() reads it (and ffmpeg too);
-    # a later line holding "-->" is dialogue, not a timing this check should judge
-    blocks = [[ln for ln in b.split("\n") if ln.strip()] for b in re.split(r"\n\s*\n", text)]
-    timings = [next((ln for ln in b if "-->" in ln), None) for b in blocks]
-    return all(_SHARED_SRT_TIMING.match(line) for line in timings if line is not None)
+    # the timing lines parse_srt() reads, grouped as it groups them (srt_blocks()): a later line
+    # that only holds "-->" is dialogue, not a timing this check should judge
+    return all(_SHARED_SRT_TIMING.match(times) for times, _body in srt_blocks(read_text_or_die(path, "--srt")))
 
 
 def mux_subtitle_codec(output: str) -> str:
@@ -1461,7 +1475,7 @@ def main() -> int:
     if args.ass and args.offset and os.path.exists(args.ass):
         shifted = os.path.splitext(output)[0] + "_offset.ass"
         if STATE.dry_run:
-            _text, n, unshifted = shift_ass_text(read_text_or_die(args.ass, "--ass").lstrip("\ufeff"), args.offset)
+            _text, n, unshifted = shift_ass_text(read_text_or_die(args.ass, "--ass"), args.offset)
             info(f"[dry-run] would write {shifted} ({n} cues shifted by {args.offset:+g} s)")
         else:
             n, unshifted = shift_ass_file(args.ass, shifted, args.offset)

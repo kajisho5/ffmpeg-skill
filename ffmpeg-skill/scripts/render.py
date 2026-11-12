@@ -75,7 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, read_json, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 from _common.decision import rebase_project_paths
 import subprocess
@@ -182,7 +182,7 @@ def load_template(name: str) -> Dict[str, Any]:
     if not path.is_file():
         die(f"unknown template {name!r}", hint="templates: " + ", ".join(template_names()) + " (or 'all')")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return read_json(path)
     except (OSError, ValueError) as exc:
         die(f"cannot read template {path}: {exc}")
     return {}
@@ -504,7 +504,7 @@ def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
         # the brand's own logo and font_file are read by the overlay and caption stages, resolved
         # against the brand file as load_brand() resolves them; an unreadable brand is left to them
         try:
-            data = json.loads(Path(rel(brand)).read_text(encoding="utf-8"))
+            data = read_json(rel(brand))
         except (OSError, ValueError):
             data = None
         if isinstance(data, dict):
@@ -565,6 +565,14 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: O
             require_object(proj.get(name), name)
         check_keys(proj.get(name), name, name)
     check_keys((proj.get("audio") or {}).get("stems"), "audio.stems", "audio.stems")
+    # the values the run reads with .get() or as a dict key: a list there was a traceback (A13)
+    audio = proj.get("audio")
+    if "audio" in read and isinstance(audio, dict):
+        require_object(audio.get("stems"), "audio.stems")
+    export = proj.get("export")
+    if "export" in read and isinstance(export, dict) and export.get("preset") and not isinstance(export["preset"], str):
+        die(f"export.preset: must be a preset name (a string), got {type(export['preset']).__name__} "
+            f"{export['preset']!r:.60}")
     if isinstance(proj.get("chapters"), list):
         # Every other project error is raised here, before the first ffmpeg call; a chapter typo
         # found inside the last stage costs a whole render and leaves an unchaptered file behind.
@@ -590,6 +598,14 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: O
             # every clip stage starts from rel(c["src"]): without one it was a KeyError traceback
             if not item.get("src"):
                 die(f"clips[{i}]: no src")
+            if item.get("speed") and not timeline:
+                # the clips stage reads float(speed): "fast" or [2] was a traceback there (A13)
+                try:
+                    spd = float(item["speed"])
+                except (TypeError, ValueError):
+                    spd = float("nan")
+                if not (0 < spd < float("inf")):
+                    die(f"clips[{i}]: speed must be a positive number, got {item['speed']!r:.60}")
             if item.get("snap") is not None:
                 # the render reads a clip's snap only on a clip it cuts (in/out), the export never
                 if not timeline and (item.get("in") is not None or item.get("out") is not None):
@@ -984,6 +1000,19 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         _reject_plan(path, digest, "plan_version_unsupported",
                      f"{path}: plan_version {plan.get('plan_version')!r} is not {PLAN_VERSION}",
                      plan_version=plan.get("plan_version"), supported=[PLAN_VERSION])
+    # the fields below are walked as lists of objects or strings: a wrong type was a traceback
+    # with no audit record (A14), and is refused like every other plan error
+    for field, want, item in (("inputs", list, None), ("unbound_inputs", list, None), ("verify", list, dict),
+                              ("commands", list, str), ("cwd", str, None)):
+        value = plan.get(field)
+        if value is None:
+            continue
+        bad = not isinstance(value, want) or (item is not None and not all(isinstance(v, item) for v in value))
+        if bad:
+            shape = {"inputs": "a list", "unbound_inputs": "a list", "verify": "a list of objects",
+                     "commands": "a list of strings", "cwd": "a string"}[field]
+            _reject_plan(path, digest, "plan_field_invalid", f"{path}: {field} must be {shape}, got {type(value).__name__}",
+                         field=field, field_type=type(value).__name__)
     tool = str(plan.get("tool") or "")
     script = HERE / f"{tool}.py"
     if not re.fullmatch(r"[a-z][a-z0-9_]*", tool) or not script.exists() or tool == "render":
@@ -1238,9 +1267,10 @@ def main() -> int:
             if value:
                 die(f"{flag} belongs to --template NAME INPUT; a project.json states it in the project itself")
         try:
-            proj = json.loads(Path(args.project).read_text(encoding="utf-8"))
+            # read_json(): nesting too deep is a ValueError too, refused here, not a RecursionError
+            proj = read_json(args.project)
         except (OSError, ValueError) as exc:
-            die(f"cannot read project: {exc}")
+            die(f"cannot read project: {exc}", kind="input")
         if not isinstance(proj, dict):
             die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
         if "plan_version" in proj:

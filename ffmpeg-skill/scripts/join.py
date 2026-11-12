@@ -44,6 +44,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
+from _common.runner import read_text_or_die
 from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
@@ -280,13 +281,12 @@ def read_list(path: str) -> List[str]:
     """--list FILE: one segment per line, in order, relative to the list file's own folder.
     Blank lines and # comments are ignored, and ffmpeg's concat-demuxer spelling
     (`file 'part 01.wav'`) is accepted, so a list written for `ffmpeg -f concat` works as is."""
-    try:
-        text = open(path, encoding="utf-8").read()
-    except OSError as exc:
-        die(f"cannot read --list {path}: {exc}")
+    # the shared reader: a BOM, CRLF and a file that is not UTF-8 are read or refused as every
+    # other text input is, and a line ends at "\n" only
+    text = read_text_or_die(path, "--list")
     base = os.path.dirname(os.path.abspath(path))
     entries: List[str] = []
-    for line in text.splitlines():
+    for line in text.split("\n"):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
