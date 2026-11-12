@@ -4120,9 +4120,14 @@ class ContractTests(unittest.TestCase):
                 os.unlink(p)
             os.symlink(victim, p)
             return real_open(p, *a, **k)
+        def swap_then_hardlink(p, *a, **k):
+            fd = swap_then_open(p, *a, **k)
+            os.unlink(p)
+            os.link(victim, p)  # the identity check alone would now pass
+            return fd
         try:
             del os.O_NOFOLLOW
-            for opener in (real_open, swap_then_open):
+            for opener in (real_open, swap_then_open, swap_then_hardlink):
                 if not log.is_symlink():
                     if log.exists():
                         log.unlink()

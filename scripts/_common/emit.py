@@ -333,7 +333,10 @@ def audit(event: str, details: Dict[str, Any], *, default_path: Optional[str] = 
             # target -- and nothing is written through it
             try:
                 st, at = os.fstat(fd), os.lstat(path)
-                if stat.S_ISLNK(at.st_mode) or (st.st_dev, st.st_ino) != (at.st_dev, at.st_ino):
+                # st_nlink: a link swapped for a hard link to its target before the lstat would
+                # otherwise pass the identity check; a log this tool created has one name
+                if (stat.S_ISLNK(at.st_mode) or (st.st_dev, st.st_ino) != (at.st_dev, at.st_ino)
+                        or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1):
                     raise OSError(f"{path} was replaced by a link while it was opened")
             except BaseException:
                 os.close(fd)
