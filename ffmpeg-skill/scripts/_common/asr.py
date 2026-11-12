@@ -207,6 +207,9 @@ def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
             # newline so the cue's own text can never fake the format's block boundary.
             t = re.sub(r"\n{2,}", "\n", t).strip("\n")
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
+    # under batch.py: this SRT as written is the run's own (an edit made after it is not)
+    from _common.runner import report_committed
+    report_committed(path)
 
 
 def transcribe_result(video: str, out_srt: str, language: Optional[str], model: Optional[str], audio_stream: int = 0,

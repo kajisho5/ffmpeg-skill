@@ -36,7 +36,7 @@ from typing import List, Optional, Tuple
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
-                     ffmpeg_base, info, layer_base_chain, load_brand, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
+                     ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
@@ -497,8 +497,9 @@ def main(force_route: Optional[str] = None) -> int:
         h = max(3, int(base * 0.008))
         fps = meta['video'].get('fps') or 30
         fc.append(f"{layer_src(primary, 1.0, W, h)}[pb]")
-        if draws_chroma([bg], meta) or alpha_codec:
-            # a layer (overlay composites the alpha too; drawbox leaves it as it was)
+        if draws_chroma([bg], meta) or alpha_codec or overlay_format(meta):
+            # a layer (overlay composites the alpha too; drawbox leaves it as it was, and takes a
+            # 10-bit picture to 8 bits)
             fc.append(f"{layer_src(bg, 0.5, W, h, 0, (H - h) % 2)}[pbg]")
             fc.append(f"[0:v][pbg]overlay=x=0:y={(H - h) // 2 * 2}:{en}:eof_action=pass[v1]")
         else:
@@ -712,8 +713,9 @@ def main(force_route: Optional[str] = None) -> int:
     # converts neither picture to the other's matrix. The text is drawn in BT.709 (drawn_chain).
     # On an alpha line every box is a layer: overlay composites the box's alpha over the picture's,
     # while drawbox paints the colour and leaves the alpha as it was (a box on a transparent canvas
-    # stayed invisible)
-    as_layers = bool(alpha_codec) or any(draws_chroma([b[0]], meta) for b in boxes)
+    # stayed invisible). On a 10-bit picture too: drawbox is 8-bit only on 6.1, so FFmpeg took the
+    # whole picture to 8 bits around it (overlay_format)
+    as_layers = bool(alpha_codec) or bool(overlay_format(meta)) or any(draws_chroma([b[0]], meta) for b in boxes)
     drawboxes = []
     for colour, alpha, geo, x, y, w, h, enable, x_expr in boxes:
         if as_layers:
@@ -743,6 +745,9 @@ def main(force_route: Optional[str] = None) -> int:
         if fc:
             fc = ["[0:v]format=yuva444p[ka0]"] + [c.replace("[0:v]", "[ka0]") for c in fc]
         square = "format=yuva444p" + ("," + square if square else "")
+    elif overlay_format(meta):
+        # a 10-bit picture on a 10-bit line is composited at 10 bits (overlay's default is 8-bit)
+        fc = [c.replace(":eof_action=pass", ":eof_action=pass" + overlay_format(meta)) for c in fc]
     finish = finish_chain(alpha_codec, args.alpha_mode, meta) if alpha_codec else ""
 
     cmd = ffmpeg_base() + (decoder_args_for(meta, args.input) if alpha_codec else []) + ["-i", args.input]
@@ -762,7 +767,7 @@ def main(force_route: Optional[str] = None) -> int:
             last = "vtxt"
         eo, emoji_inputs = emoji_filter_chain({"overlays": emoji_overlays}, last, "vfinal", first_input=1,
                                               to_yuv=rgb_chain_to_bt709(meta),
-                                              base_chain=layer_base_chain(meta))
+                                              base_chain=layer_base_chain(meta), overlay_opts=overlay_format(meta))
         for spec in emoji_inputs:
             cmd += spec
             asset = spec[-1]

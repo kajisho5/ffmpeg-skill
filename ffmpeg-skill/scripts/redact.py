@@ -27,7 +27,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, overlay_format, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note
 from _common.probe import display_size, square_pixels, square_pixels_note
 
@@ -110,7 +110,7 @@ def main() -> int:
             region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
         else:
             region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"
-        fc = f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}[out]"
+        fc = f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}{overlay_format(meta)}[out]"
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", fc, "-map", "[out]"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]

@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.6.1`) | any release |
+| `skill.version` | the npm / package.json version (`3.6.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.6.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.6.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -446,7 +446,7 @@ source is refused (`color.py --to-sdr` first). `filter:boxblur` stays required
 on `redact`, because `--mode blur` is the default.
 
 `external:whisper` is **optional** for two tools since 1.17: `caption.py`
-(`--transcribe`) and `silence.py` (`--filler --transcribe`). Neither requires
+(`--transcribe`) and `silence.py` (`--transcribe` with `--filler`, or since 3.6 with a sentence flag). Neither requires
 it — both take a transcript the caller already has (`--srt`/`--words`), and
 both refuse with the same install lines when asked to make one with no
 engine present. Whisper is never a dependency of this skill.
@@ -637,6 +637,14 @@ The mapping is stated in `invocation.structured.argument_mapping`: positionals i
 arrays repeated, `output` → `-o`, `loudness.lufs` → `-I`. `--json` is appended for every
 tool except `probe` (JSON by default) and `look`.
 
+A value is always a value. One that starts with `-` is passed as a single `--long-flag=value`
+token (`{"text": "-50%"}` → `--text=-50%`, `{"lufs": -16}` → `--lufs=-16`), because argparse
+reads a separate token that starts with `-` as the next option. When any positional starts with
+`-`, every positional follows `--` after all the options, so `{"inputs": ["--plan=x"]}` names a
+file called `--plan=x` instead of setting `--plan`. `render.py` builds its stage commands the
+same way (`_common.option_args`), so an overlay or a title that starts with `-` works in a
+project too.
+
 The MCP server also accepts `{"argv": [...]}` for CLI compatibility. That path is
 marked `canonical: false`: it is still bound to the named script and never reaches a
 shell, but an agent ecosystem should use the structured form. No tool, CLI or MCP,
@@ -723,7 +731,7 @@ Per-tool keys added after 2.2.2, all additive:
 | `silent` | `waveform.py` (every run) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
 | `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it), on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it, and when an encode ran on VideoToolbox because the build has no `libx264`/`libx265`: `{requested, source: flag\|env\|auto, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export, and for `source: "auto"`, where nobody asked: `notes` names the missing CPU encoder and the one that ran, and `--no-hw` is not offered as a remedy since there is no CPU encoder to go back to; a job VideoToolbox refuses there is a plain `kind: ffmpeg` failure, not retried), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
 | `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the language the engine was told -- the one named (`--language`, `--filler-lang`), else the one auto's detector named -- and, when nothing was named, the language the engine decoded where it reports one (whisper.cpp's word-timing JSON, faster-whisper, openai-whisper's word-timing JSON), else `null`; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine), ending `, no Parakeet engine transcribed it` when auto chose Parakeet and a Whisper engine made the transcript after every Parakeet engine failed |
-| `notes` | `silence.py --filler --transcribe` (new for `silence.py`; `caption.py` already had it) | present when `--engine auto` ran the English-only Parakeet model on English *assumed* (no language given or detectable, and no Whisper engine installed or none that succeeded): the transcript is wrong if the speech is not English. `caption.py --transcribe` puts the same line in its `notes` |
+| `notes` | `silence.py --transcribe` with `--filler` or a sentence flag (new for `silence.py`; `caption.py` already had it) | present when `--engine auto` ran the English-only Parakeet model on English *assumed* (no language given or detectable, and no Whisper engine installed or none that succeeded): the transcript is wrong if the speech is not English. `caption.py --transcribe` puts the same line in its `notes` |
 | `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost` (the copy wrote no video or no audio: an MPEG-TS copy whose window holds no video keyframe, #367), `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. Since 3.0.0 `precision` is the least exact segment's, equal to `least_exact_precision`, and `keyframe_snapped` equals `start_snapped` (2.x: `precision` was the whole run's, `packet` only when nothing re-encoded, and `keyframe_snapped` was `precision == "packet"`, a stream copy end to end; see "What 3.0 changed"). `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start (or its start could not be measured: an unknown start is never claimed exact), `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |
 | `edit_list`, `stored_preroll_seconds`, `av_start_skew_seconds`, `notes` | `cut.py` (every run) | `edit_list`: `true` only for a single-segment `.mp4`/`.m4v`/`.mov` stream copy, which by default since 3.0.0 keeps the MP4 edit list the copy writes (`--no-edit-list` restores 2.x's `-avoid_negative_ts make_zero`): the keyframe's pre-roll is stored but hidden, so the picture starts at `--start`. `stored_preroll_seconds`: with `edit_list`, the seconds decoded from the keyframe the copy's seek lands on (measured with the seek ffmpeg makes) up to the first presented frame; `null` otherwise. With an edit list a copy is judged by its video's length (a `notes` line says so when the container is longer), and one that starts where asked but ends past `--tolerance` re-encodes (`tolerance`) without a `lossless_alternative`. `av_start_skew_seconds`: the output's audio start minus its video start (`null` when either is missing or under `--dry-run`); on a stream copy, when it is more than max(2 frames, 0.1 s) away from the source's own audio/video offset where the copy's picture starts (the keyframe it began from; `--start` with an edit list), a `notes` line names `--accurate`, and the edit list for a single `.mp4`/`.mov` copy whose start snapped under `--no-edit-list`. A re-encode carries no such note. The skew is reported, never repaired. `notes`: what the run did that a caller should know, in plain sentences (`[]` when nothing) |
 | `video.start_time`, `audio.start_time` | `probe.py` (and every `probe` block a tool returns) | where each stream starts, in seconds on the file's own clock (ffprobe's stream `start_time`; `null` when unknown). A video stream that starts after its audio, or the reverse, is how a lossless cut's A/V skew shows; `cut.py` reads them for `av_start_skew_seconds` |
@@ -817,7 +825,7 @@ Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
 | `ass_shifted`, `ass_unshifted`, `ass_malformed` | `caption.py --ass` (inside `caption`) | with `--offset`: the Dialogue lines moved, and those whose timestamps could not be read (copied as they were); every run: Dialogue lines that could not be read (too few fields, an unreadable start/end) and are not counted as cues. A count above 0 is a warning |
 | `matched_untimed`, `matched_too_long` | `silence.py --filler` (inside `filler`) | listed words that were not cut: no usable timing in the transcript (also a `filler_words_untimed` warning), or longer than a filler (`FILLER_MAX_WORD`, a held vowel) |
 
-`caption.py --transcribe` and `silence.py --filler --transcribe`: when a local speech engine ran
+`caption.py --transcribe` and `silence.py --transcribe` (with `--filler` or a sentence flag): when a local speech engine ran
 and produced no cue (for `--filler`: a Whisper transcript with no text at all; text without word
 timings is a build without them, refused as such), the refusal is `"<engine> found no speech in
 <input>"` with `kind: input`, `reason: "no_speech"` and `engine` in the failure document (the
@@ -926,8 +934,13 @@ says it is kept without the step that was stopped, and the document carries it a
 besides the picture and the sound with the file it wrote, and says so in `source_carry:
 {kept: [...], dropped: [...]}`. The items are `subtitles`, `chapters`, `cover_art`,
 `audio_channels` (a surround source only: more than two), `creation_time`, `audio_language` and
-`timecode`. The key is present only when the source had at least one of them, so a result for a
-plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
+`timecode`. A timecode is compared by its value: it is kept when the written start timecode
+labels the frame the output starts on, which is the source's own label or, where the tool moved
+the picture's start (`cut` from a later frame, `fit --method trim`, `sync --trim-second`, a
+`render.py` clip with an `in`), the label of the source frame the output now starts on. A join of
+several ranges (`cut --segments`, `--remove` leaving two or more) writes no start timecode, since
+no single start labels the frames after the first join. The key is present only when the source
+had at least one of them, so a result for a plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
 or more inputs have a picture or sound (which one's items the output should carry is the tool's
 choice). An item bound to a stream the output does not have at all is not compared (a sound-only
 extract has no subtitle track to lose). It is a report, not a check: `verified` does not depend on
@@ -977,7 +990,8 @@ failed row's `error: {step, tool, kind, message, code, reason, details, hint, ex
 failing step's own document, and `cache_miss` when a cache entry was not served because its output
 changed or could not be checked; an interrupted batch has a row for every input
 (`interrupted: true`, or `skipped: "interrupted"` when it had not started) and `total` counts them
-all. `verify.py`'s steps keep the tool's `kind`, `reason`, `message` and `exit_code`, and the steps
+all; under `--watch` a source that has not settled since the previous poll is `skipped: "settling"`
+(`ok: false`, not cached) and processed on a later pass. `verify.py`'s steps keep the tool's `kind`, `reason`, `message` and `exit_code`, and the steps
 that do not apply are listed under each file's `skipped` with a reason.
 
 **Audit log.** Events a later reader must be able to reconstruct are appended as JSON lines,
@@ -1039,6 +1053,20 @@ itself -- it appends `--json` for every tool but `look` and `probe` -- rather th
 caller chooses. 1.10.0-1.26 listed them unless `FFMPEG_SKILL_MCP_LEAN=1`; 2.0 leaves them out for
 good (see "What 2.0 changed"). A client that still sends either is not refused: the server maps
 it like any other key.
+
+### Annotations: read-only means it writes no file
+
+Each `tools/list` entry carries MCP `annotations` (`_contract.mcp_annotations`). `readOnlyHint` is
+true for the three tools that write no artifact: `probe`, `check` and `cropdetect`. On the CLI
+they still take `--plan FILE` and `--overwrite` like every tool. Over MCP the two property names
+stay in their `inputSchema` (3.x removes no property) with descriptions that say they are refused
+or have no effect (`_contract.MCP_READ_ONLY_REFUSED`), and the server runs these three tools
+with `FFMPEG_SKILL_READ_ONLY=1`. With that variable set, `--plan` is refused after argparse,
+however a raw `argv` spells it (`kind: input`, `error.reason: read_only_plan_refused`), and no
+file is written. Every other tool is annotated `destructiveHint: true`: none edits its input,
+but with `overwrite` it replaces an existing file at its output or plan path, which MCP does not
+count as an additive update. The hints are hints: a client must not treat them as a security
+boundary.
 
 ### Default `tools/list` surface: core 12, opt-in for all 42
 

@@ -463,6 +463,20 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Optional[float]:
+    """The constant rate cfr_args() forces on the output (its -r), or None when it forces none and
+    the output keeps the source's rate -- what a start timecode is counted at
+    (timeline.output_timecode_args)."""
+    args = cfr_args(meta, fps)
+    return float(args[-1]) if args else None
+
+
+# how far before a cut an input seek lands, so a start inside the B-frame reorder delay before a
+# keyframe still decodes from the keyframe BEFORE it; the margin is dropped on the output side
+# (cut.py, sync.py --trim-second)
+SEEK_MARGIN = 1.0
+
+
 # ------------------------------------------------------- VideoToolbox (--hw)
 #
 # CRF -> VideoToolbox -q:v (1-100, higher = better): at each CRF the highest -q:v whose SSIM matched
@@ -864,6 +878,26 @@ def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva
     return "," + rgb_to_bt709_filter(pix_fmt)
 
 
+def overlay_format(meta: Optional[Dict[str, Any]]) -> str:
+    """":format=..." for an `overlay` whose main picture is the one `meta` probes, or "".
+
+    overlay's default format is `yuv420`, which is 8-bit, and `format=auto` picks an 8-bit one as
+    soon as the layer is 8-bit, so through 3.6.0 a cutaway, a redaction, a graphics layer or a PiP
+    over a 10-bit HDR or ProRes source took the whole picture to 8 bits (and `overlay --image`'s
+    RGBA logo took it through 8-bit RGB) before the 10-bit encoder. On a line that keeps more than
+    8 bits (HDR/BT.2020, --codec prores) and a main picture deeper than 8 bits the overlay runs at
+    10 bits in the main's own chroma subsampling, and an 8-bit layer is widened to meet it (bit
+    depth only, no matrix). An alpha line keeps the format its tool chose."""
+    v = (meta or {}).get("video") or {}
+    if STATE.alpha_line is not None or (v.get("bit_depth") or 8) <= 8:
+        return ""
+    if not (v.get("bt2020_or_hdr") or keeps_source_tags()):
+        return ""
+    pix = v.get("pix_fmt") or ""
+    sub = "444" if "444" in pix else "422" if "422" in pix else "420"
+    return f":format=yuv{sub}p10"
+
+
 def draws_chroma(colours: Sequence[Any], line_meta: Optional[Dict[str, Any]]) -> bool:
     """True when one of `colours` has chroma (is_neutral_color) and the line video_args(line_meta)
     tags the output BT.709 -- when a drawn colour needs drawn_chain() at all."""
@@ -1010,6 +1044,52 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     # a font must not read as "the caller chose a font" (which would switch font-by-script off).
     brand["_stated"] = data
     return brand
+
+
+# Every key of a render.py project that names a file. render.py reads each one relative to the
+# project file (its rel()); a copy of the project written anywhere else -- batch.py's per-item
+# project in its work directory, multicam.py --write-project -- has to carry them absolute, or
+# render looks for "bed.wav" beside the copy. A path is (section, key): section None is the
+# project's top level, "x[]" each entry of the list x. tests/test_contract.py checks that every
+# rel() in render.py reads one of these.
+PROJECT_PATH_KEYS = (
+    (None, "output"), (None, "brand"), (None, "chapters"),
+    ("clips[]", "src"), ("clips[].snap", "source"), ("snap", "source"),
+    ("audio", "music"), ("audio", "replace"), ("audio", "effects"),
+    ("captions", "text"), ("captions", "srt"), ("captions", "ass"),
+    ("overlays[]", "image"), ("overlays[]", "video"), ("overlays[]", "font_file"),
+    ("audiogram", "image"),
+)
+
+
+def rebase_project_paths(proj: Dict[str, Any], base: "os.PathLike[str] | str") -> Dict[str, Any]:
+    """A copy of a render.py project whose relative file paths (PROJECT_PATH_KEYS) are joined onto
+    `base`, the directory they were written relative to; absolute paths, URLs, non-strings, inline
+    chapter lists and keys the project does not have are left as they are."""
+    import copy
+    out = copy.deepcopy(proj)
+    base = Path(base)
+
+    def fix(obj: Any, key: str) -> None:
+        value = obj.get(key) if isinstance(obj, dict) else None
+        # a URL is left for the tool to refuse by what it is (waveform.py: no network access)
+        if isinstance(value, str) and value and not os.path.isabs(value) and "://" not in value:
+            obj[key] = str(base / value)
+
+    def nodes(section: "Optional[str]") -> List[Any]:
+        found: List[Any] = [out]
+        for part in (section.split(".") if section else []):
+            name, many = (part[:-2], True) if part.endswith("[]") else (part, False)
+            nxt: List[Any] = []
+            for node in found:
+                value = node.get(name) if isinstance(node, dict) else None
+                nxt.extend(value if many and isinstance(value, list) else [] if many else [value])
+            found = nxt
+        return found
+    for section, key in PROJECT_PATH_KEYS:
+        for node in nodes(section):
+            fix(node, key)
+    return out
 
 
 def brand_states_font(brand: Dict[str, Any]) -> bool:

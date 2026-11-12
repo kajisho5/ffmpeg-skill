@@ -31,11 +31,11 @@ with libvpx-vp9, so its transparency reaches the composite (FFmpeg's own VP9 dec
 import argparse
 import re
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
-from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            has_alpha_plane, report as alpha_report, source_alpha, tag_args, video_line)
@@ -428,7 +428,9 @@ def main() -> int:
             if end is not None and end > args.fade:
                 chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
-        ov = f"overlay={x}:{y}:format=auto"
+        # a 10-bit main on a 10-bit line is composited at 10 bits in YUV: format=auto with an RGBA
+        # still took the whole picture through 8-bit RGB (overlay_format)
+        ov = f"overlay={x}:{y}" + (overlay_format(meta) or ":format=auto")
         if enable:
             ov += f":enable='{enable}'"
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
@@ -480,13 +482,18 @@ def main() -> int:
         elif args.scale:
             chain.append(f"scale={args.scale}:-2")
         # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
-        chain.append("format=yuva444p" if alpha_codec else "format=yuva420p")
+        # a 10-bit layer over a main overlay_format() composites at 10 bits stays 10-bit
+        deep = bool(overlay_format(meta)) and (pip_meta["video"].get("bit_depth") or 8) > 8
+        chain.append("format=yuva444p" if alpha_codec else "format=yuva420p10le" if deep else "format=yuva420p")
         if args.chromakey:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
         if args.opacity < 1:
-            chain.append(f"colorchannelmixer=aa={args.opacity:g}")
+            # the alpha is scaled in YUV: colorchannelmixer takes RGB only, so FFmpeg converted the
+            # layer to RGB and overlay=format=auto then composited the whole main picture in RGB,
+            # which came back BT.601 under the BT.709 tag (#333's defect, on this path)
+            chain.append(f"lut=y=val:u=val:v=val:a=val*{args.opacity:g}")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
-        ov = f"overlay={x}:{y}:format=auto"
+        ov = f"overlay={x}:{y}" + (overlay_format(meta) or ":format=auto")
         if enable:
             ov += f":enable='{enable}'"
         # a VP9 layer stored with an alpha layer is decoded with libvpx-vp9: FFmpeg's own decoder
@@ -501,7 +508,13 @@ def main() -> int:
             # converted to BT.709 YUV with its alpha plane: the 4:4:4 the conversion ends in had none,
             # and the layer covered the picture as an opaque rectangle
             pip = pip.replace("format=yuv444p", "format=yuva444p")
-        if base or pip:
+        # an untagged picture is labelled beside a converted one, and beside a tagged one too: FFmpeg
+        # 8.0's overlay negotiates one colorspace for both inputs, and a BT.709-tagged main under an
+        # untagged PiP was converted to the PiP's "unknown" (BT.601) matrix, away from the PiP too
+        # (C03028 at 80/110/192 came back 88/103/192 on 8.0.1). Two untagged pictures agree as they are.
+        def tagged(m: Dict[str, Any]) -> bool:
+            return ((m.get("video") or {}).get("color_space") or "unknown") not in ("unknown", "unspecified")
+        if base or pip or tagged(meta) != tagged(pip_meta):
             base, pip = base or label_chain(meta, meta), pip or label_chain(pip_meta, meta)
         # overlay mixes samples: a full-range picture is taken to limited range (#410)
         base, pip = base + range_chain(meta, meta), pip + range_chain(pip_meta, meta)

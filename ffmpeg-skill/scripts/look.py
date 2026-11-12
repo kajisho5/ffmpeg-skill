@@ -23,7 +23,7 @@ from _common import STATE, require_tool, add_common, apply_common, default_font_
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
-from _common.color import bt709_label_filter  # noqa: E402
+from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
 from _common.probe import display_size, square_pixels, square_pixels_note  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
@@ -177,6 +177,23 @@ def measure_ink(png_path: str, *, box=None, margin_frac: float = 0.03, threshold
     }
 
 
+def display_conversion(meta: dict, what: str = "source") -> str:
+    """The filter that shows `meta`'s frames on an SDR BT.709 display, or "" for a picture that is
+    already one. HDR is tone-mapped so the agent judges representative colours, not raw HLG/PQ."""
+    v = meta.get("video") or {}
+    if not v.get("bt2020_or_hdr"):
+        return ""
+    # color.py --to-sdr's own chains at its defaults (hable, a 1000-nit PQ peak), so the sheet
+    # shows what that conversion gives. Through 3.6.0 this tone map linearised at npl=1000 and
+    # a sheet's white came out at about Y 151 of 235; a BT.2020 SDR source was tone-mapped
+    # too, where color.py only converts its gamut.
+    if is_bt2020_sdr(v):
+        info(f"BT.2020 SDR {what}: frames are converted to BT.709 for display")
+        return bt2020_sdr_to_bt709_chain(meta)
+    info(f"HDR {what}: frames are tone-mapped to SDR for display")
+    return hdr_to_sdr_chain({"video": dict(v, color_transfer=v.get("color_transfer") or "arib-std-b67")}, "hable")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -264,13 +281,10 @@ def main() -> int:
         boxes, guides = guide_boxes(list(dict.fromkeys(names)))
         safe_filter += "," + ",".join(boxes)
     tc = safe_filter + tc
-    # HDR sources: tone-map for the PNG so the agent judges representative colours, not raw HLG/PQ
-    if meta["video"].get("bt2020_or_hdr"):
-        v = meta["video"]
-        tm = (f"zscale=tin={v.get('color_transfer') or 'arib-std-b67'}:pin={v.get('color_primaries') or 'bt2020'}:min={v.get('color_space') or 'bt2020nc'}:rin=tv:t=linear:npl=1000,"
-              "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,")
-        tc = "," + tm.rstrip(",") + tc
-        info("HDR source: frames are tone-mapped to SDR for display")
+    marks = tc   # the boxes and the stamp, without the display conversion (each --compare input has its own)
+    tm = display_conversion(meta)
+    if tm:
+        tc = "," + tm + tc
     outputs: List[str] = []
     # An untagged SDR source is BT.709 (what players and every encoder line here take it as), but the
     # conversion to the PNG's RGB reads "unknown" as BT.601: C03028 came out B31F28 (#410). Its
@@ -293,6 +307,9 @@ def main() -> int:
             cw, ch = display_size(cmeta.get("video") or {})
             if cw and ch and cw / ch < 4 / 3 + 0.01:
                 die(f"--guides 4:3 draws the 4:3 centre cut of a wider frame; the --compare clip is {cw}x{ch}")
+        # the second picture is converted for display by its own tags: through 3.6.1 the first
+        # input's tone map ran on both, so an SDR clip beside a PQ one was read as PQ
+        tm2 = display_conversion(cmeta, "--compare clip")
         lab2 = bt709_label_filter(cmeta)
         lab2 = lab2 + "," if lab2 else ""
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
@@ -310,15 +327,17 @@ def main() -> int:
             # the tone map and the --safe / --guides boxes go on each picture as scaled, before the
             # pad: drawn after it, a picture letterboxed in the box got guides from the padded
             # height (a 2:1 clip beside a 16:9 one); the timecode stamp is drawn on the box
-            pre = tc.replace("," + timecode_filter(font_prefix), "")
+            pre = marks.replace("," + timecode_filter(font_prefix), "")
             # each picture keeps its own aspect inside a half-width box as tall as the taller of the
             # two (letterboxed, not stretched): through 3.1.3 scale2ref forced the first to the
             # second's size, so a 4:3 beside a 16:9 came out squashed (#411)
             box_h = max(_half_height(half, display_size(meta["video"])),
                         _half_height(half, display_size(cmeta.get("video"))))
-            fit = (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{pre},"
-                   f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
-            fc = (f"[0:v]{lab}{sq}{fit}[a];[1:v]{lab2}{csq}{fit}[b];"
+            def fit(conv):
+                conv = "," + conv if conv else ""
+                return (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{conv}{pre},"
+                        f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
+            fc = (f"[0:v]{lab}{sq}{fit(tm)}[a];[1:v]{lab2}{csq}{fit(tm2)}[b];"
                   f"[a][b]hstack=inputs=2[out]")
             cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]

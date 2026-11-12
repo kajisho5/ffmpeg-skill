@@ -344,3 +344,58 @@ def validate_color(value: str, flag: str = "--color") -> str:
     if not _COLOR_TOKEN_RE.match(value):
         die(f"{flag} must be a plain colour (a name, 0xRRGGBB[AA], or #RRGGBB[AA], optionally @alpha), got '{value}'")
     return value
+
+
+# The tonemap filter reads linear light in units of 100 nits (1.0 = SDR white; its default peak,
+# 10, is 1000 nits), so the linearising zscale uses npl=100. Through 3.6.0 it used npl=--peak:
+# a 1000-nit pixel came out as 1.0, which tonemap took as 100 nits, so nothing reached SDR white
+# (PQ 1000 nits and HLG 100 % -> Y 151 of 235, HLG reference white 91) and raising --peak to a
+# brighter master's darkened the picture further. zimg's HLG decode assumes a 1000-nit display,
+# so an HLG picture always peaks at 1000 nits there, whatever --peak says.
+TONEMAP_REFERENCE_NITS = 100.0
+HLG_PEAK_NITS = 1000.0
+
+
+def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float = 1000.0, desat: float = 0.0) -> str:
+    """PQ / HLG / Dolby Vision to BT.709 SDR: linearise at 100 nits per unit, tone-map the source
+    peak (`peak` nits for PQ, 1000 for HLG) to SDR white, re-encode as BT.709 limited range."""
+    v = meta["video"]
+    trc = v.get("color_transfer") or "smpte2084"
+    prim = v.get("color_primaries") or "bt2020"
+    space = v.get("color_space") or "bt2020nc"
+    source_peak = HLG_PEAK_NITS if trc == "arib-std-b67" else peak
+    # zscale needs explicit input tags when the file lacks them
+    chain: List[str] = [
+        f"zscale=tin={trc}:pin={prim}:min={space}:rin={v.get('color_range') or 'tv'}:t=linear"
+        f":npl={TONEMAP_REFERENCE_NITS:g}",
+        "format=gbrpf32le",
+        "zscale=p=bt709",
+        f"tonemap=tonemap={tonemap}:desat={desat:g}:peak={source_peak / TONEMAP_REFERENCE_NITS:g}",
+        "zscale=t=bt709:m=bt709:r=tv",
+        "format=yuv420p",
+    ]
+    return ",".join(chain)
+
+
+def bt2020_sdr_to_bt709_chain(meta: dict) -> str:
+    """Gamut conversion only, for BT.2020 primaries on an SDR transfer (probe: `bt2020_or_hdr`
+    true, `hdr_signal` false). Such a file is already display-referred SDR: linearising it with
+    its own transfer, mapping the primaries to BT.709 and re-applying the BT.709 transfer keeps
+    white at white and grey at grey. The tone map the HDR chain adds would treat 100 % SDR white
+    as a fraction of a 1000-nit peak and darken the picture (white Y 235 -> 151, grey 126 -> 90)."""
+    v = meta["video"]
+    trc = v.get("color_transfer") or "bt709"
+    space = v.get("color_space") or "bt2020nc"
+    return ",".join([
+        f"zscale=tin={trc}:pin=bt2020:min={space}:rin={v.get('color_range') or 'tv'}:t=linear",
+        "format=gbrpf32le",
+        "zscale=p=bt709",
+        "zscale=t=bt709:m=bt709:r=tv",
+        "format=yuv420p",
+    ])
+
+
+def is_bt2020_sdr(v: dict) -> bool:
+    """BT.2020 primaries on a non-HDR transfer and no Dolby Vision: gamut-only --to-sdr."""
+    return bool(v.get("bt2020_or_hdr")) and not v.get("hdr_signal") and not v.get("dolby_vision") \
+        and v.get("color_transfer") not in ("smpte2084", "arib-std-b67")

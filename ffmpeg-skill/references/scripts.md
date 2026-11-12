@@ -1376,7 +1376,18 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   row has `written: false` (`output` keeps its path string), a note says so, and `ok` follows the steps' exit codes.
   Final names that differ only in case are a
   collision (they are one file on macOS and Windows).
-- `--watch` composes: each pass is parallel, passes are sequential.
+- `--watch` composes: each pass is parallel, passes are sequential. A pass processes a
+  source only once it has settled: the same size and mtime as at the previous poll, or, the
+  first time it is seen, last modified at least one interval ago. Until then its row is
+  `"skipped": "settling"` (`ok: false`, not cached), so a file still being copied, downloaded
+  or recorded into the folder is not delivered as a fraction of itself; a writer that pauses
+  longer than the interval can still be read early, and the pass after it changes again
+  processes it again. An output an earlier pass of the same watch delivered, unchanged since,
+  is that pass's own and is replaced without `--overwrite`; one someone else replaced or edited,
+  or one an earlier run left, is still refused (`output_exists`).
+- A `project` recipe's relative paths (`clips[].src`, `audio.music`, `brand`, `captions.srt`,
+  `overlays[].image`, `chapters`, ...) are read against the project file's directory, as
+  `render.py` reads them: each item's copy of the project carries them absolute.
 
 ### caption.py --transcribe — optional local speech-to-text
 If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` (whisper.cpp),
@@ -1400,8 +1411,8 @@ English `tdt-0.6b-v2`. A Parakeet model in `FFMPEG_SKILL_ASR_MODEL` goes to the 
 only (the Whisper engines keep `base`); one given with `--model` goes to whichever engine runs.
 A non-English `--language` on an English-only Parakeet model is refused; a
 multilingual (v3) model assumes no language, so it gets no English-assumed note. The result's
-`transcription` names the engine, model and routing. `silence.py --filler --transcribe` takes
-the same `--engine` and `--model`.
+`transcription` names the engine, model and routing. `silence.py --transcribe` (with `--filler`
+or a sentence flag) takes the same `--engine` and `--model`.
 Nothing is required: without an engine it prints install hints and the user can supply `--text`
 cues instead. When engines are installed but none transcribed, the refusal names each and why
 instead (`reason: engine_failed`, or `english_only` for a Parakeet engine auto passed over for
@@ -1705,7 +1716,11 @@ Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` 
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
 energy` (default) follows the speech loudness in the audio, `even` splits the
-cue equally (word timing is derived, not transcribed). The ASS is kept next to the
+cue equally (word timing is derived, not transcribed). SRT markup in the cues is styled the
+way ffmpeg's own SRT route styles it: `<i>` `<b>` `<u>` `<s>` and `<font color>` become
+ASS overrides and a `{\anN}` keeps its position, measured as no width; any other tag or `{...}`
+stays text (escaped), and under `--karaoke` `<font color>` is dropped for the highlight's
+colours. The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
 Emoji (1.15): `--emoji-assets DIR` is a directory of PNGs named by code point
 (`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji/Noto
@@ -1715,7 +1730,9 @@ with an invisible placeholder reserving the emoji's box and each PNG is
 composited on top (`--emoji-scale` sizes the box, `--emoji-max` caps the count).
 Without one the run still succeeds and says `emoji: {"mode": "mono"}` plus a
 warning; `--emoji none` strips them; `--emoji color` insists on a colour-capable
-libass and refuses otherwise. Nothing is ever downloaded. What this machine can
+libass and refuses otherwise. An emoji is what Unicode draws as one by default: a text
+symbol such as `♪ ✓ ★` is never one, and `♥ ✔ ☺` only with VS16 (`♥️`) or a skin tone
+after them; the font draws the rest. Nothing is ever downloaded. What this machine can
 do: `doctor --json` → `.fonts.emoji`. Details: `references/gotchas.md#emoji`.
 
 Readable by default (1.12, rebalanced in 1.15): every cue is wrapped to the safe area — the
@@ -1724,9 +1741,10 @@ frame width minus the two side margins below, 90 % of it without a `--platform` 
 full em per character, Latin per character from a table read off DejaVu Sans (so
 an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
 Arabic/Hebrew 0.6, Devanagari 0.7, and a combining mark nothing at all —
-breaking between characters for CJK (a katakana word stays whole) and at spaces
-otherwise, but never between a character and the combining marks that belong
-to it (Devanagari matras, Arabic and Hebrew points). Thai (1.16.1) is never
+breaking between characters for Chinese and Japanese (a katakana word stays whole) and at
+spaces otherwise (Korean included: it is written with spaces between words, and a space
+that stood at a break is kept when a later pass moves the break), but never between a
+character and the combining marks that belong to it (Devanagari matras, Arabic and Hebrew points). Thai (1.16.1) is never
 broken inside a run: it writes no space inside a phrase and the wrapper has no
 dictionary, so the break goes where you put a space or a `|`, and a run with
 none stays long on its own line — `caption.py` counts such lines as `overlong`
@@ -1898,7 +1916,10 @@ Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
 video with the source file's audio aligned (video stream copied); the output
 keeps the reference's full length -- a shorter or head-trimmed source file is
 padded with silence, never allowed to cut the picture.
-`--trim-second` writes the source file shifted to the reference timeline.
+`--trim-second` writes the source file shifted to the reference timeline. A video source file is
+re-encoded from the frame at the trim point (a stream copy would start at the keyframe before it);
+a sound-only one is stream-copied (to the packet: within an AAC frame). Its start timecode moves
+with the trim or the padded head.
 `--fix-drift` measures the offset again near the end of the overlap, reports
 the clock difference in ppm, and resamples the source file so a 60-minute
 take stays in sync (typical consumer devices drift 20-500 ppm = up to 1.8 s/h).
@@ -1982,9 +2003,11 @@ iPhone "HDR" video is Dolby Vision profile 8.4 on an HLG base layer:
 `probe.py` reports `hdr_format: Dolby Vision profile 8` and `--to-sdr`
 tone-maps it from the HLG base layer. When the user wants to keep HDR but
 players mis-render the DV layer, `--strip-dovi` removes it losslessly.
-`--to-sdr` does a real conversion: linearise (zscale, PQ or HLG), tone-map
-(default `hable`, `mobius` keeps more highlight detail; FFmpeg's CPU
-`tonemap` filter has no BT.2390 curve), then BT.709 gamma + matrix. Refuses when probe says the
+`--to-sdr` does a real conversion: linearise (zscale, PQ or HLG, 1.0 = 100 nits),
+tone-map the source peak to SDR white (`--peak` nits for PQ, default 1000; HLG
+always peaks at 1000; default `hable`, `mobius` keeps more highlight detail; FFmpeg's CPU
+`tonemap` filter has no BT.2390 curve), then BT.709 gamma + matrix. `look.py` shows an
+HDR source through the same chain at its defaults. Refuses when probe says the
 input is not HDR unless `--force`. `--lut` applies a 3D .cube with
 tetrahedral interpolation (Log→709 conversions, creative looks); blend with
 `--lut-strength`. Everything else in the skill assumes SDR BT.709, so run this
@@ -2053,8 +2076,11 @@ needs a real stereo source: it scales the side signal (L−R), so a mono track
 duplicated to two channels has nothing to scale. A 1-channel input is refused
 (`kind: input`) — `--stereo` duplicates it but does not widen it — and more than
 two channels are refused unless `--downmix` is given too, in which case the
-widening runs on the stereo fold-down. `--downmix` uses the
-ITU centre/LFE weights for 5.1/7.1 → stereo. `--mono` averages a stereo pair,
+widening runs on the stereo fold-down. `--downmix` folds 5.1/7.1 to stereo with
+the ITU-R BS.775 weights (centre and surrounds at -3 dB, LFE dropped), scaled so
+each side's gains sum to 1: in-phase channels cannot clip, and a front channel
+alone comes out 7.7 dB lower than it went in (9.9 dB on 7.1; follow with `loudness.py`).
+`--mono` averages a stereo pair,
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
 when the container can hold it (`dropped_non_av_streams` says when it could not).

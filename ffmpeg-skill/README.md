@@ -10,6 +10,6 @@ README, the changelog and the tests are in the repository: https://github.com/ka
 
 Needs FFmpeg 6.1 or later and Python 3.10 or later. The tools themselves open no network
 connection and read no API key. The one exception is transcription (`caption.py --transcribe`,
-`silence.py --filler --transcribe`), which runs a speech engine you installed yourself
+`silence.py --transcribe` with `--filler` or a sentence flag), which runs a speech engine you installed yourself
 (whisper.cpp, faster-whisper, openai-whisper or parakeet): on its first run such an engine may
 download its model, and a Hugging Face client uses a token you are logged in with.

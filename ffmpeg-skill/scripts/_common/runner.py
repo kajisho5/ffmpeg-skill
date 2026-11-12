@@ -332,7 +332,7 @@ class Context:
     __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
-                 "source_timecode", "smpte_hint", "delivered")
+                 "source_timecode", "smpte_hint", "delivered", "expected_timecode")
 
     def __init__(self) -> None:
         self.reset()
@@ -343,6 +343,7 @@ class Context:
         self.first_input = None   # (path, audio track count) of the first input probed: emit() reports tracks the output left out
         self.video_inputs = set()  # real paths of the inputs probed that have a picture: with two or more, which one the output shows is the tool's choice (sync --trim-second, a join)
         self.source_timecode = None  # (start timecode, duration) of the first input probed that carries one (time_arg's SMPTE hint)
+        self.expected_timecode = None  # the start timecode a tool that moved the picture's start wrote (timeline.output_timecode_args; "" for none): source_carry compares it
         self.smpte_hint = None    # what die() says when an hh:mm:ss:ff flag read past the end looks like a source timecode (#411)
         self.delivered: List[str] = []  # deliverables written before a later step (export --normalize, render's chapters/check): a stop then keeps them (#415)
         self.audio_inputs = set()  # real paths of the inputs probed that have sound: with two or more, whose tracks an output should keep is the tool's choice (grid --audio-from, a mix)
@@ -481,6 +482,14 @@ def apply_common(args: "argparse.Namespace") -> None:
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
+    if STATE.plan and os.environ.get("FFMPEG_SKILL_READ_ONLY", "") not in ("", "0"):
+        # mcp/server.py runs the tools it annotates readOnlyHint (probe, check, cropdetect) with
+        # this set: a plan is the one file they could write, so it is refused here, after argparse,
+        # whatever spelling of --plan a raw argv used. Refused before the exit hook can write it.
+        plan_path, STATE.plan = STATE.plan, None
+        refuse("input", "read_only_plan_refused",
+               f"--plan {plan_path!r}: this tool runs read-only here (FFMPEG_SKILL_READ_ONLY) and writes no file; "
+               "run it from the command line to write a plan", plan=plan_path)
     if STATE.plan:
         # the plan is a file this run writes itself: the side-file guards apply (#408), so it
         # never replaces an input, the output or an existing file without --overwrite
@@ -1229,7 +1238,13 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
         if output not in existing:
             existing.append(output)
             facts.append({"path": output, "resolved": real, "size": size, "mtime_ns": mtime_ns})
+    # a file batch.py delivered on an earlier --watch pass, still exactly as it left it, is that
+    # run's own: replaced without --overwrite, per path (anything else existing is still refused)
+    if existing and not STATE.overwrite:
+        keep = [i for i, p in enumerate(existing) if not owned_replaceable(p)]
+        existing, facts = [existing[i] for i in keep], [facts[i] for i in keep]
     if not existing or STATE.overwrite:
+        report_owned_targets(paths)
         return
     hint = "pass --overwrite, or choose another -o path"
     if len(existing) == 1:
@@ -1248,6 +1263,111 @@ def _remember_output(cmd: Sequence[str]) -> None:
         STATE.written.add(os.path.realpath(output))
     except OSError:
         pass
+    report_committed(output)
+
+
+# set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:
+# owned_identity()}, "report": directory}. "replaceable" is every file that batch process
+# delivered (a --watch loop's earlier passes) as it left it; a step replaces one of those without
+# --overwrite while it is still that file, and nothing else. Each process that passes the output
+# check writes <report>/<pid>.json: {"targets": the paths it was allowed to write, "committed":
+# {real path: owned_identity()} taken when each of them was written (report_committed), so batch
+# learns the side files (an .srt beside the video) it delivered as they were when written, not as
+# they are when the item ends -- an edit made while a later step ran is not adopted.
+OWNED_ENV = "_FFMPEG_SKILL_OWNED"
+_OWNED_CACHE: Dict[str, Dict[str, Any]] = {}
+_OWNED_TARGETS: Dict[str, List[str]] = {}
+_OWNED_COMMITTED: Dict[str, Dict[str, Dict[str, int]]] = {}
+
+
+def owned_identity(path: str) -> "Optional[Dict[str, int]]":
+    """{size, mtime_ns, ino, dev} of a regular file: what tells the file batch.py delivered from
+    one put at the same path since (a replacement with the same size and mtime is a new inode).
+    None when the path is not a regular file."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if not os.path.isfile(path):
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "ino": st.st_ino, "dev": st.st_dev}
+
+
+def _owned_config(config: Optional[str] = None) -> Dict[str, Any]:
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    if not config:
+        return {}
+    if config not in _OWNED_CACHE:
+        try:
+            with open(config, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            doc = {}
+        _OWNED_CACHE[config] = doc if isinstance(doc, dict) else {}
+    return _OWNED_CACHE[config]
+
+
+def owned_replaceable(path: str, config: Optional[str] = None) -> bool:
+    """Whether `path` is a file the batch.py process running this step delivered, still with the
+    identity it had then (checked now, at the output check, not when the step was planned)."""
+    replaceable = _owned_config(config).get("replaceable")
+    if not isinstance(replaceable, dict):
+        return False
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return False
+    expected = replaceable.get(real)
+    return isinstance(expected, dict) and owned_identity(real) == expected
+
+
+def report_owned_targets(paths: Sequence[Optional[str]], config: Optional[str] = None) -> None:
+    """Under batch.py: record paths this process passed the output check for, in the report
+    directory its config names. Nothing outside batch.py; a report that cannot be written only
+    means the next pass refuses that file as someone else's."""
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    report = _owned_config(config).get("report")
+    if not isinstance(report, str) or not report:
+        return
+    targets = _OWNED_TARGETS.setdefault(config, [])
+    for p in paths:
+        if p:
+            try:
+                real = os.path.realpath(p)
+            except OSError:
+                continue
+            if real not in targets:
+                targets.append(real)
+    _write_owned_report(config, report)
+
+
+def _write_owned_report(config: str, report: str) -> None:
+    doc = {"targets": _OWNED_TARGETS.get(config, []), "committed": _OWNED_COMMITTED.get(config, {})}
+    try:
+        with open(os.path.join(report, f"{os.getpid()}.json"), "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+    except OSError:
+        pass
+
+
+def report_committed(path: Optional[str], config: Optional[str] = None) -> None:
+    """Under batch.py: record the identity `path` has right now, just after this process wrote it,
+    if it passed this process's output check. What batch later lets a step replace is that file
+    as it was written; one edited afterwards no longer matches and is refused."""
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    report = _owned_config(config).get("report")
+    if not path or not isinstance(report, str) or not report:
+        return
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return
+    if real not in _OWNED_TARGETS.get(config, []):
+        return
+    ident = owned_identity(real)
+    if ident:
+        _OWNED_COMMITTED.setdefault(config, {})[real] = ident
+        _write_owned_report(config, report)
 
 
 def remember_written(*paths: Optional[str]) -> None:
@@ -1260,6 +1380,7 @@ def remember_written(*paths: Optional[str]) -> None:
                 STATE.written.add(os.path.realpath(path))
             except OSError:
                 pass
+            report_committed(path)
 
 
 def _timed_out(cmd: Sequence[str], seconds: float) -> "None":
@@ -1649,13 +1770,14 @@ def child_limit(per_call: Optional[float] = None) -> Optional[float]:
     return (limit * 4 + 60) if limit else None
 
 
-def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subprocess.CompletedProcess:
+def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
+             env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
     """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
     child is killed and a CompletedProcess is returned whose stdout is this skill's own failure
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
-    exactly as they would from the child itself."""
+    exactly as they would from the child itself. `env` replaces the inherited environment."""
     limit = child_limit(per_call)
-    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     try:
         out, err = child.communicate(timeout=limit)
@@ -1672,6 +1794,20 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subpro
                "commands": []}
         partial = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
         return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), partial + f"\nerror: {msg}\n")
+
+
+def option_args(flag: str, value: Any) -> List[str]:
+    """One option and its value for a sibling tool's argparse, as [flag, value] -- or as the single
+    token `flag=value` when the value starts with '-'. argparse reads a separate token that starts
+    with '-' (and is not a negative number) as the next option, so overlay text "-50%" was refused
+    as "expected one argument" and a value like "--plan=x" became an option of its own. The joined
+    form is read as the value whatever it holds. `flag` must be a long option: `-o=x` is not."""
+    text = str(value)
+    if text.startswith("-"):
+        if not flag.startswith("--"):
+            raise ValueError(f"option_args: {flag!r} is not a long option")
+        return [f"{flag}={text}"]
+    return [flag, text]
 
 
 def child_args() -> List[str]:
@@ -1749,7 +1885,7 @@ def subtitle_container_holds(codec: str, out_ext: str) -> bool:
     return True
 
 
-def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
+def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
     there are none). A source whose subtitle codec cannot be copied into the target container
@@ -1761,8 +1897,13 @@ def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     The retry is recorded with the first attempt's error (`diagnostics.fallbacks`,
     `non_av_streams_dropped`): the caller's `dropped_non_av_streams` says that streams went, the
     record says why, which is the only way to tell a container that cannot hold them from a first
-    attempt that failed for another reason and happened to succeed the second time."""
-    first = run(cmd + ["-map", "0:s?", "-map", "0:d?", "-c:s", "copy", "-c:d", "copy", output], check=False)
+    attempt that failed for another reason and happened to succeed the second time.
+
+    `relabel_timecode`: the command writes its own start timecode (timeline.output_timecode_args),
+    so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
+    the new one; the MOV/MP4 muxer builds the track again from the label."""
+    skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
+    first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + ["-c:s", "copy", "-c:d", "copy", output], check=False)
     if first.returncode == 0:
         return False
     if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):

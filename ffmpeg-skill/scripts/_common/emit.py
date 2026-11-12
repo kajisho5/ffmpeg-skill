@@ -209,6 +209,14 @@ def source_carry(output: Optional[str], ctx: "Context", extra: Dict[str, Any]) -
             continue
         if item in ("audio_channels", "audio_language") and not out["has_audio"]:
             continue
+        if item == "timecode":
+            # the value, not only its presence: a cut from 1 s that wrote the source's 01:00:00:00
+            # on frame 30 kept a timecode that lies. A tool that moved the picture's start names
+            # the label it wrote (STATE.expected_timecode, "" for none); any other keeps the source's
+            want = getattr(STATE, "expected_timecode", None)
+            want = src.get("timecode_value") if want is None else want
+            (kept if want and out.get("timecode_value") == want else dropped).append(item)
+            continue
         (kept if out.get(item, 0) >= src[item] else dropped).append(item)
     if not kept and not dropped:
         return None

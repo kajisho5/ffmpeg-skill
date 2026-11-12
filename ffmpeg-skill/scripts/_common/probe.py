@@ -412,6 +412,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "creation_time": 1 if any(k.lower() == "creation_time" for k in (fmt.get("tags") or {})) else 0,
         "audio_language": 1 if lang and lang.lower() != "und" else 0,
         "timecode": 1 if out["timecode"].get("value") else 0,
+        "timecode_value": out["timecode"].get("value"),
         "audio_channels": (_to_int(audio.get("channels")) or 0) if audio else 0,
         "has_video": bool(video), "has_audio": bool(audio),
     }
@@ -1281,7 +1282,7 @@ def signatures_match(sigs: list, ext: str) -> bool:
                     return False
             else:
                 codec = str(a.get("codec_name") or "")
-                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext in TS_EXTS):
+                if not (codec.startswith("pcm_") or codec in IN_BAND_CONFIG or ext.lower() in TS_EXTS):
                     return False
     return True
 
