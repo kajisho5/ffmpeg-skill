@@ -4,7 +4,18 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`silence.py --sentence-min-silence` and `--sentence-margin-tail`.** With word timings
+  (`--words` or `--transcribe`), a silence that follows a sentence end gets its own floor and its
+  own tail, and every other silence keeps `--min-silence` and `--margin-tail`: pauses inside a
+  sentence can be tightened from 0.2 s while a sentence end is cut only from 0.3 s and keeps more
+  room. A sentence end is the transcript's own punctuation on the word before the silence, never
+  a guess from the sound; the result lists `silence_positions` and `sentence`, and with a
+  transcript that has no such punctuation every silence uses `--min-silence` and `--margin-tail`
+  and the run warns `sentence_ends_not_found`. With `--filler` the flags turn silence removal on
+  as well. Refused with
+  `--speech-aware` and without a transcript. Second part of #449.
 
 ## 3.5.0
 

@@ -1105,6 +1105,8 @@
    "plan",
    "preset",
    "quality",
+   "sentence_margin_tail",
+   "sentence_min_silence",
    "speech_aware",
    "threshold",
    "timemap",

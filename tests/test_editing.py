@@ -2577,6 +2577,116 @@ class EditingTests(MediaFixtures):
         self.assertTrue(any(abs(x - (e - 0.1)) <= frame for x in starts), (e, starts))
         self.assertTrue(any(abs(x - (s + 0.25)) <= frame for x in [k[1] for k in even["keep"]]), (s, even["keep"]))
 
+    def test_a_silence_after_a_sentence_end_has_its_own_floor_and_tail(self):
+        """#449: a pause inside a sentence and one after it could not be given different limits.
+        The transcript's punctuation on the word before a silence says which it is."""
+        import silence
+        self.assertTrue(all(silence.ends_sentence(w) for w in ("there.", "ok?", "\u3067\u3059\u3002", 'done."', "\u306d\uff01\u300d")))
+        self.assertFalse(any(silence.ends_sentence(w) for w in ("there", "well,", "", "\u3067\u3059\u3001")))
+        # the word before a silence is the last one that starts before its midpoint
+        self.assertEqual(silence.silence_positions(
+            [(2.0, 4.0), (6.0, 8.0), (10.0, float("inf"))],
+            [{"word": "one", "start": 0.1, "end": 2.3}, {"word": "two.", "start": 4.1, "end": 6.4},
+             {"word": "three!", "start": 8.2, "end": 9.9}], 12.0), ["inside", "sentence_end", "sentence_end"])
+        # the last word's timing reaches into the silence that runs to the end of the file
+        self.assertEqual(silence.silence_positions(
+            [(2.0, float("inf"))], [{"word": "Done.", "start": 1.5, "end": 3.0}], 10.0), ["sentence_end"])
+        self.assertEqual(silence.silence_positions([(0.0, 1.0)], [{"word": "late.", "start": 1.2, "end": 2}]), ["inside"])
+        # an engine stretches a word into the pause beside it: the next word's start (2.6, before
+        # the pause's midpoint) must not make it the word before the pause, nor the previous
+        # word's late end (3.6) stop it being that word
+        self.assertEqual(silence.silence_positions(
+            [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 1.9}, {"word": "two", "start": 2.6, "end": 5.0}]), ["sentence_end"])
+        self.assertEqual(silence.silence_positions(
+            [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 3.6}, {"word": "two", "start": 4.1, "end": 5.0}]), ["sentence_end"])
+        # its own clip, so the layout does not depend on which test made OUT/gappy.mp4 first:
+        # sound 0-2, 4-6, 8-10; silent 2-4, 6-8, 10-12
+        gappy = OUT / "sentence_gappy.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "aevalsrc='0.5*sin(2*PI*440*t)*lt(mod(t\\,4)\\,2)':s=48000", "-t", "12", gappy)
+        words = self._words_json("sentence_words.json", words=[("Hello", 0.1, 1.9), ("there.", 4.1, 5.9), ("end", 8.1, 9.9)])
+        common = ("silence.py", gappy, "--list", "--json", "--words", words, "--margin", "0.1")
+        data = json.loads(script(*common, "--sentence-margin-tail", "0.5").stdout)
+        self.assertEqual(data["silence_positions"], ["inside", "sentence_end", "inside"])
+        self.assertEqual(data["sentence"]["silences"], 1)
+        self.assertEqual(data["sentence"]["sentence_end_words"], 1)
+        self.assertEqual(data["sentence"]["margin_tail"], 0.5)
+        frame = 1 / 30
+        ends = [k[1] for k in data["keep"]]
+        s_inside, s_sentence = data["silences"][0][0], data["silences"][1][0]
+        self.assertTrue(any(abs(x - (s_inside + 0.1)) <= frame for x in ends), (s_inside, ends))
+        self.assertTrue(any(abs(x - (s_sentence + 0.5)) <= frame for x in ends), (s_sentence, ends))
+        # its own floor: a 2 s pause after a sentence end stays when the floor for those is 3 s
+        floor = json.loads(script(*common, "--sentence-min-silence", "3").stdout)
+        self.assertEqual(floor["silence_positions"], ["inside", "inside"])
+        self.assertEqual(len(floor["silences"]), 2)
+        self.assertEqual(floor["sentence"]["silences"], 0)
+        self.assertEqual(floor["sentence"]["sentence_end_words"], 1)
+        # and the other way: only the sentence-end pause is short enough to cut
+        only = json.loads(script(*common, "--min-silence", "3", "--sentence-min-silence", "1").stdout)
+        self.assertEqual(only["silence_positions"][0], "sentence_end")
+        # a transcript without punctuation: nothing is told apart, and the run says so
+        bare = self._words_json("sentence_bare.json", words=[("Hello", 0.1, 1.9), ("there", 4.1, 5.9)])
+        proc = script("silence.py", gappy, "--list", "--json", "--words", bare, "--sentence-margin-tail", "0.5")
+        none = json.loads(proc.stdout)
+        self.assertEqual(none["sentence"]["sentence_end_words"], 0)
+        self.assertNotIn("sentence_end", none["silence_positions"])
+        self.assertIn("sentence_ends_not_found", [w["code"] for w in none["diagnostics"]["warnings"]])
+        # a silence that runs to the end of the file is measured to the end of the file: the 2 s
+        # after "end." is below a 3 s floor for sentence ends and stays
+        tail_words = self._words_json("sentence_tail.json", words=[("Hello", 0.1, 1.9), ("there", 4.1, 5.9), ("end.", 8.1, 9.9)])
+        open_end = json.loads(script("silence.py", gappy, "--list", "--json", "--words", tail_words,
+                                     "--sentence-min-silence", "3").stdout)
+        self.assertEqual(open_end["silence_positions"], ["inside", "inside"])
+        self.assertTrue(all(e is not None and e < 9 for _s, e in open_end["silences"]), open_end["silences"])
+        shorter = json.loads(script("silence.py", gappy, "--list", "--json", "--words", tail_words,
+                                    "--sentence-min-silence", "1").stdout)
+        self.assertEqual(shorter["silence_positions"], ["inside", "inside", "sentence_end"])
+        # without the flags the result carries neither key
+        plain = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
+        self.assertNotIn("sentence", plain)
+        self.assertNotIn("silence_positions", plain)
+
+    def test_sentence_flags_on_recorded_speech(self):
+        """The one speech clip in the repository, with the word timings a speech engine wrote for
+        it: three sentences, two hesitations, and word starts that sit up to 0.5 s before the
+        sound ("Well," is timed at 3.54 s; the pause before it ends at 3.99 s). Each pause after
+        a sentence is told from the one inside "hello" and the silence before the first word, and
+        no cut lands near sound."""
+        clip = SCRIPTS.parent / "demos" / "footage" / "ai_talk_en.mp4"
+        words = SCRIPTS.parent / "demos" / "footage" / "ai_talk_en.words.json"
+        data = json.loads(script("silence.py", clip, "--list", "--json", "--words", words, "--threshold", "-30",
+                                 "--min-silence", "0.2", "--sentence-min-silence", "0.3",
+                                 "--margin", "0.1", "--sentence-margin-tail", "0.3").stdout)
+        self.assertEqual(data["sentence"]["sentence_end_words"], 3)  # there. morning. day.
+        self.assertEqual(data["silence_positions"].count("sentence_end"), 3)
+        for (s, e), pos in zip(data["silences"], data["silence_positions"]):
+            with self.subTest(silence=(s, e)):
+                # the three long pauses follow the three sentences; anything earlier or shorter is inside one
+                self.assertEqual(pos, "sentence_end" if (e is None or e - s > 1.0) else "inside")
+        self.assertEqual(data["cut_warnings"], [])
+        self.assertTrue(data["cut_points"])
+        # each sentence end keeps its 0.3 s tail: the range before a sentence-end pause ends 0.3 s into it
+        ends = [k[1] for k in data["keep"]]
+        for (s, e), pos in zip(data["silences"], data["silence_positions"]):
+            if pos == "sentence_end":
+                self.assertTrue(any(abs(x - (s + 0.3)) <= 1 / 24 + 0.01 for x in ends), (s, ends))
+
+    def test_the_sentence_flags_refuse_what_they_cannot_answer(self):
+        gappy = self._gappy()
+        for argv, needle in ((("--sentence-margin-tail", "0.4"), "word timings"),
+                             (("--sentence-min-silence", "0.3", "--speech-aware", "--words", self._words_json()), "--speech-aware"),
+                             (("--sentence-min-silence", "nan", "--words", self._words_json()), "--sentence-min-silence"),
+                             (("--sentence-margin-tail", "-1", "--words", self._words_json()), "--sentence-margin-tail"),
+                             # every word without a length: nothing to place against a pause
+                             (("--sentence-margin-tail", "0.4", "--words",
+                               self._words_json("sentence_zero.json", words=[("Done.", 0, 0), ("Next.", 3.0, 3.0)])), "usable")):
+            with self.subTest(argv=argv):
+                r = script("silence.py", gappy, *argv, "--list", "--json", expect_fail=True)
+                err = json.loads(r.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(needle, err["message"])
+
     def test_margin_lead_and_tail_must_be_finite_and_non_negative(self):
         for flag in ("--margin-lead", "--margin-tail"):
             for bad in ("nan", "inf", "-0.1"):
