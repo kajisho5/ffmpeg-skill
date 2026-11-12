@@ -1689,6 +1689,9 @@ class EditingTests(MediaFixtures):
         # a clip whose duration holds every frame is left as it is, and --fps still decides
         full = {"nb_frames": 5, "duration": 5 / 30, "fps": 30.0, "r_frame_rate": "30/1", "avg_frame_rate": "30/1"}
         self.assertIs(join.with_whole_picture({"video": full}, Fraction(30))["video"], full)
+        # ... also at another output rate: 5/30 s is 4 frames at 24, but the clip is checked at its
+        # own declared 30 fps, so a complete clip is not stretched to 5/24 s under --fps 24
+        self.assertIs(join.with_whole_picture({"video": full}, Fraction(24))["video"], full)
         self.assertEqual(join.output_rate(25.0, full, True), Fraction(25))
 
     def test_join_sound_overlaps_add_up_to_the_picture(self):

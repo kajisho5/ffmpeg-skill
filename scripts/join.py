@@ -155,9 +155,17 @@ def with_whole_picture(meta: Dict[str, Any], q: Fraction) -> Dict[str, Any]:
     last one (short_last_frame), so the clip-length rule does not read the sound as running a
     frame past the picture and hold the clip longer (#475). Other clips are returned as they are."""
     v = meta.get("video") or {}
-    if not short_last_frame(v, q):
+    # each clip at its OWN declared rate: at the join's rate a complete 30 fps clip of 5 frames
+    # (5/30 s) also equals 4 frames at --fps 24 and would be stretched to 5/24 s
+    try:
+        own = Fraction(str(v.get("r_frame_rate") or ""))
+    except (ValueError, ZeroDivisionError):
+        own = q
+    if not 0 < own <= 240:
+        own = q
+    if not short_last_frame(v, own):
         return meta
-    return dict(meta, video=dict(v, duration=float(v["nb_frames"] / q)))
+    return dict(meta, video=dict(v, duration=float(v["nb_frames"] / own)))
 
 
 def clip_frames(meta: Dict[str, Any], length: float, q: Fraction) -> int:
