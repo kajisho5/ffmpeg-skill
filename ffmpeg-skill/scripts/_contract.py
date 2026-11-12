@@ -770,6 +770,9 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "join":
         extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"},
                  "expected_duration": {"type": ["number", "null"], "description": "clip lengths minus the transitions; null under --dry-run while an input is pending (its length is unknown)"},
+                 "frame_rate": {"type": "string", "description": "video mode only: the join's frame rate as an exact fraction (\"30000/1001\"), the rate every clip length and xfade offset is counted in"},
+                 "clip_frames": {"type": "array", "items": {"type": "integer"}, "description": "video mode only: per clip, the whole frames of frame_rate it holds in the join (its picture's, or the frames that cover a sound running more than a frame past it); its sound is cut to the samples those frames last. A pending --dry-run input counts 0"},
+                 "transition_frames": {"type": "integer", "description": "video mode only: the frames each xfade/acrossfade overlaps (--duration rounded to whole frames, at least 1; 0 for --transition none)"},
                  "sample_rate": {"type": "integer", "description": "audio mode only"}, "channels": {"type": "integer", "description": "audio mode only"},
                  "video": {"type": "boolean", "description": "false in audio mode: the output has no video stream"},
                  "skipped": {"type": "array", "description": "inputs --on-missing skip left out: [{index, path, reason}] ([] when none were)"},

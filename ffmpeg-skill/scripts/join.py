@@ -36,9 +36,11 @@ audio stream is never silent.
 """
 import argparse
 import json
+import math
 import os
 import tempfile
 import sys
+from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
@@ -46,6 +48,7 @@ from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, pla
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
 from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.timeline import exact_rate
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -110,6 +113,81 @@ def clip_length(meta: Dict[str, Any], fps: float) -> float:
     duration (audio priming, a longer track) is only the fallback when a stream length is unknown
     (a pending input). Shared with reverse.py as av_clip_length."""
     return av_clip_length(meta, fps)
+
+
+# the video join's sound rate (every clip is resampled to it before the trims)
+JOIN_AUDIO_RATE = 48000
+
+
+def output_rate(fps: float, first: Dict[str, Any], asked: bool) -> Fraction:
+    """The join's frame rate as an exact fraction: the first clip's own r_frame_rate/avg_frame_rate
+    when `fps` is that clip's (30000/1001, not 29.97), else the NTSC fraction or the plain one
+    `fps` names (timeline.exact_rate). Every clip length, offset and sound length is counted in
+    frames of this rate, so the graph's fps filter runs at the same fraction."""
+    if not asked:
+        for key in ("r_frame_rate", "avg_frame_rate"):
+            try:
+                q = Fraction(str(first.get(key) or ""))
+            except (ValueError, ZeroDivisionError):
+                continue
+            # the declared rate also wins when the average was taken over a length that leaves out
+            # the last frame's duration (#475: 5 frames in 0.1333 s read 37.5 fps, and the whole
+            # join ran at 75/2)
+            if 0 < q <= 240 and (abs(float(q) - fps) < 1e-3 or short_last_frame(first, q)):
+                return q
+    return exact_rate(fps)
+
+
+def short_last_frame(video: Optional[Dict[str, Any]], q: Fraction) -> bool:
+    """Whether a picture's duration is its frame count less one frame at rate `q`: a container
+    that stores no duration for the last frame (MOV written with -fps_mode passthrough, seen on
+    FFmpeg 7.1) reads 5 frames as 0.1333 s at 30 fps (#475)."""
+    v = video or {}
+    nb, dur = v.get("nb_frames"), v.get("duration")
+    if not nb or nb < 2 or not dur or q <= 0:
+        return False
+    step = float(1 / q)
+    return abs(dur - (nb - 1) * step) < 0.25 * step and abs(dur - nb * step) > 0.25 * step
+
+
+def with_whole_picture(meta: Dict[str, Any], q: Fraction) -> Dict[str, Any]:
+    """`meta` with its picture counted as every frame it holds when its duration leaves out the
+    last one (short_last_frame), so the clip-length rule does not read the sound as running a
+    frame past the picture and hold the clip longer (#475). Other clips are returned as they are."""
+    v = meta.get("video") or {}
+    # each clip at its OWN declared rate: at the join's rate a complete 30 fps clip of 5 frames
+    # (5/30 s) also equals 4 frames at --fps 24 and would be stretched to 5/24 s
+    try:
+        own = Fraction(str(v.get("r_frame_rate") or ""))
+    except (ValueError, ZeroDivisionError):
+        own = q
+    if not 0 < own <= 240:
+        own = q
+    if not short_last_frame(v, own):
+        return meta
+    return dict(meta, video=dict(v, duration=float(v["nb_frames"] / own)))
+
+
+def clip_frames(meta: Dict[str, Any], length: float, q: Fraction) -> int:
+    """How many frames of rate `q` a clip of `length` seconds (clip_length) holds in the join: its
+    picture's frames, or, when the clip lasts as long as its sound, enough frames to cover that
+    sound (narration is never cut; a hundredth of a frame is rounding, not sound). A pending
+    dry-run stub's 0 s stays 0; a measured clip holds at least one frame (#455: a length in
+    milliseconds rounded up started every next clip late, and the errors added up)."""
+    exact = length * q.numerator / q.denominator
+    vlen = (meta.get("video") or {}).get("duration") or 0.0
+    frames = math.ceil(exact - 0.01) if vlen and length > vlen else round(exact)
+    return frames if meta.get("dry_run") else max(1, frames)
+
+
+def frame_time(frames: int, q: Fraction) -> str:
+    """The time of frame `frames` at rate `q` in seconds, rounded down to the microsecond: never
+    after that frame's own timestamp, so a filter that starts on the first frame at or after it
+    (xfade's offset) starts on that frame and not the next (#468: 2.566667 written 2.567 started
+    the transition a frame late). Trailing zeros are dropped (0.5, not 0.500000)."""
+    us = (frames * q.denominator * 1_000_000) // q.numerator
+    text = f"{us // 1_000_000}.{us % 1_000_000:06d}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def find_duplicates(paths: List[str]) -> List[Dict[str, Any]]:
@@ -543,6 +621,10 @@ def main() -> int:
     apply_common(args)
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
+    # nan and inf are refused by the parser (finite_float); a negative length was taken as the
+    # one-frame minimum and the join succeeded with a transition nobody asked for
+    if args.duration < 0:
+        die(f"--duration must be 0 or more seconds, got {args.duration:g}")
 
     if args.list:
         if args.inputs:
@@ -666,6 +748,9 @@ def main() -> int:
         w, h = fw, fh
     fps = args.fps or first.get("fps") or 30.0
     fps = round(fps) if abs(fps - round(fps)) < 0.02 else fps
+    # the exact rate every length below is counted in (30000/1001, not 29.97)
+    rate_q = output_rate(fps, first, bool(args.fps))
+    fps = float(rate_q)
     w, h = w - (w % 2), h - (h % 2)
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     durs = [m.get("duration") or 0.0 for m in metas]
@@ -675,11 +760,37 @@ def main() -> int:
     # its picture and its sound together. The plain cut used to take the raw streams, and a sound
     # past the picture (a music bed padded to the container, even a 20 ms AAC tail) left a hole in
     # the video there.
-    lens = [clip_length(m, fps) for m in metas]
+    # Each length is a whole number of frames of the output rate, and each sound length the
+    # samples those frames last (#455): a length in milliseconds rounded 5 frames at 30 fps
+    # (0.166667 s) up to 0.167 s, the concat filter started the next clip after it, and 60 such
+    # clips left one-frame holes from about 8 s on. Sample counts come from the running frame
+    # total, so the sound never drifts from the picture by more than one sample.
+    lmetas = [with_whole_picture(m, rate_q) for m in metas]
+    frames = [clip_frames(m, clip_length(m, fps), rate_q) for m in lmetas]
+    # the transition is a whole number of frames too, so xfade's offsets (and acrossfade's
+    # overlap) land on frames of the output rate (#468). A transition is at least one frame:
+    # --duration 0 used to build acrossfade=ns=0, which FFmpeg refuses
+    tframes = max(1, round(d * fps)) if args.transition != "none" else 0
+    d = tframes / fps
+    lens = [f / fps for f in frames]
     place_silent(lens, d)
-    for p, dur in zip(args.inputs, lens):
-        if d and dur <= d * 2 and not STATE.dry_run:
-            die(f"{p} is only {dur:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
+    for p, nf in zip(args.inputs, frames):
+        if d and nf <= tframes * 2 and not STATE.dry_run:
+            die(f"{p} is only {nf / fps:.2f}s, too short for a {d:.2f}s transition; shorten --duration")
+    # every sample boundary is a frame position of the OUTPUT rounded once: clip i spans output
+    # frames [start_i, start_i + frames_i) and overlaps the clip before it over [start_i,
+    # start_i + tframes), so its samples and each overlap's are differences of rounded
+    # cumulative positions and their sum telescopes to the output's own length. Rounding each
+    # overlap on its own (14414.4 samples -> 14414 at 30000/1001 and 9 frames) left the sound
+    # 0.4 samples longer per transition.
+    def at(frame: int) -> int:
+        return round(frame * JOIN_AUDIO_RATE / rate_q)
+    starts, start = [], 0
+    for i, nf in enumerate(frames):
+        starts.append(start)
+        start += nf - tframes
+    samples = [at(s0 + nf) - at(s0) for s0, nf in zip(starts, frames)]
+    overlaps = [at(s0 + tframes) - at(s0) for s0 in starts]
 
     cmd = ffmpeg_base()
     extra_inputs: List[str] = []
@@ -745,7 +856,10 @@ def main() -> int:
     if len(set(chans)) > 1:
         info(f"channel counts differ ({', '.join(str(c) for c in chans)}); every clip becomes {layout}")
     for i in range(n):
-        parts.append(f"[{i}:v]{convert[i]}{geo(i)},setsar=1,setpts=PTS-STARTPTS,fps={fps:g},format={pixfmt},settb=AVTB[v{i}]")
+        # the fps filter's time base is one frame (1/rate), so every timestamp downstream is a
+        # frame number and an offset in seconds is rounded to a whole frame, never a microsecond
+        # off it on any FFmpeg (AVTB left xfade to compare microseconds)
+        parts.append(f"[{i}:v]{convert[i]}{geo(i)},setsar=1,setpts=PTS-STARTPTS,fps={rate_q.numerator}/{rate_q.denominator},format={pixfmt}[v{i}]")
         # the sound is shifted by the picture's start, not to its own (#409): #338 started each
         # clip's picture at 0, and a per-stream PTS-STARTPTS then moved a sound that starts 0.3 s
         # after its picture 0.3 s early. Sound before the first frame is dropped and a late sound
@@ -755,23 +869,29 @@ def main() -> int:
 
     # pad the shorter stream to the clip's length: the audio with silence, the picture by holding
     # its last frame, then cut both there -- each clip boundary is then the same for both chains
+    # -- by frame and by sample, never by rounded seconds (#455)
     for i in range(n):
-        vlen = (metas[i].get("video") or {}).get("duration") or lens[i]
-        hold = f"tpad=stop_mode=clone:stop_duration={lens[i] - vlen:.3f}," if lens[i] > vlen else ""
-        parts.append(f"[v{i}]{hold}trim=duration={lens[i]:.3f}[vp{i}]")
-        parts.append(f"[a{i}]apad=whole_dur={lens[i]:.3f},atrim=duration={lens[i]:.3f}[ap{i}]")
+        vlen = (lmetas[i].get("video") or {}).get("duration") or lens[i]
+        have = round(vlen * fps)
+        # one frame more than the gap is held, and the trim cuts at the clip's last frame
+        hold = f"tpad=stop_mode=clone:stop={frames[i] - have + 1}," if frames[i] > have else ""
+        parts.append(f"[v{i}]{hold}trim=end_frame={frames[i]}[vp{i}]")
+        parts.append(f"[a{i}]apad=whole_len={samples[i]},atrim=end_sample={samples[i]}[ap{i}]")
     if args.transition == "none":
         chain = "".join(f"[vp{i}][ap{i}]" for i in range(n))
         parts.append(f"{chain}concat=n={n}:v=1:a=1[vout][aout]")
     else:
         vprev, aprev = "vp0", "ap0"
-        offset = 0.0
+        start = 0
         for i in range(1, n):
-            offset += lens[i - 1] - d
+            # clip i starts on frame `start` of the output; xfade starts on the first frame at or
+            # after its offset, so the offset is that frame's time rounded down (#468)
+            start += frames[i - 1] - tframes
             vout = f"vx{i}" if i < n - 1 else "vout"
             aout = f"ax{i}" if i < n - 1 else "aout"
-            parts.append(f"[{vprev}][vp{i}]xfade=transition={args.transition}:duration={d:g}:offset={offset:.3f}[{vout}]")
-            parts.append(f"[{aprev}][ap{i}]acrossfade=d={d:g}:c1=tri:c2=tri[{aout}]")
+            parts.append(f"[{vprev}][vp{i}]xfade=transition={args.transition}:duration={frame_time(tframes, rate_q)}"
+                         f":offset={frame_time(start, rate_q)}[{vout}]")
+            parts.append(f"[{aprev}][ap{i}]acrossfade=ns={overlaps[i]}:c1=tri:c2=tri[{aout}]")
             vprev, aprev = vout, aout
 
     # A pending input's stub is unmeasured (0x0, 0 fps, 0 s -- #77 keeps it honest rather than
@@ -784,7 +904,7 @@ def main() -> int:
                            "by its measured length")
     elif not d and any(m.get("dry_run") for m in metas):
         # the plain cut trims/holds every clip to clip_length too (2.4.1), so a pending clip's
-        # planned trim=duration=0.000 is the stub's placeholder, not the cut
+        # planned trim=end_frame=0 is the stub's placeholder, not the cut
         STATE_NOTES.append("the planned trim lengths count each pending input as 0 s long: a real run trims "
                            "or holds it to its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
@@ -818,6 +938,7 @@ def main() -> int:
     info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
     overlap = overlap_report(lens, expected)
     emit(output, mode="video", **overlap, **reported(), clips=n, transition=args.transition, expected_duration=expected,
+         frame_rate=f"{rate_q.numerator}/{rate_q.denominator}", clip_frames=frames, transition_frames=tframes,
          verification=verification, expect_streams={"video": 1, "audio": 1}, stream_reference=metas,
          audio_substituted=substituted,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
