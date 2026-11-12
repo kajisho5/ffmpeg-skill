@@ -43,7 +43,7 @@ def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
     start inside the file, the last chapter running to the file's end."""
     text = read_text_or_die(path, "--chapters")
     entries: List[Dict[str, Any]] = []
-    for n, raw in enumerate(text.splitlines(), start=1):
+    for n, raw in enumerate(text.split("\n"), start=1):  # not splitlines(): a title may hold U+2028
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

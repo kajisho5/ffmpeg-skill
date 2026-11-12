@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw,
+from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 from _common.decision import rebase_project_paths
@@ -235,6 +235,39 @@ def intermediate_ext(src: Path) -> str:
     return src.suffix.lstrip(".") if src.suffix.lower() in (".wav", ".mp3", ".m4a", ".flac") else "mp4"
 
 
+# the recipe keys the run reads as a string: a path, a glob, a file-name part
+RECIPE_STRINGS = ("glob", "project", "output_dir", "suffix", "ext")
+
+
+def check_recipe_types(recipe: Dict[str, Any]) -> None:
+    """Refuse a recipe value of the wrong JSON type before anything runs (A18): a number where a
+    path or glob goes, an absolute glob (pathlib refuses it), a step that is not a list. Each was
+    a traceback, or a failure of every item naming the step's first character."""
+    for key in RECIPE_STRINGS:
+        value = recipe.get(key)
+        if value is not None and not isinstance(value, str):
+            die(f'recipe "{key}" must be a string, got {type(value).__name__} {value!r:.60}', kind="input")
+    glob = recipe.get("glob")
+    if glob and (os.path.isabs(glob) or glob.startswith(("/", "\\"))):
+        die(f'recipe "glob" {glob!r} is an absolute path: it matches names inside the batch folder, e.g. "*.mp4" '
+            'or "sub/*.mov"', kind="input")
+    key = recipe.get("clip_key")
+    try:
+        index = int(key) if key is not None and not isinstance(key, (bool, float)) else (0 if key is None else -1)
+    except (TypeError, ValueError):
+        index = -1
+    if index < 0:
+        die(f'recipe "clip_key" must be a clip index (0, 1, ...), got {key!r:.60}', kind="input")
+    steps = recipe.get("steps")
+    if steps is not None and not isinstance(steps, list):
+        die(f'recipe "steps" must be a list of steps, each ["script.py", args...], got {type(steps).__name__}',
+            kind="input")
+    for i, st in enumerate(steps or []):
+        if not isinstance(st, list) or not st:
+            die(f'recipe step {i} must be a list ["script.py", args...], got {type(st).__name__} {st!r:.60}',
+                kind="input")
+
+
 def step_writes(step: Any) -> bool:
     """Whether a recipe step writes a file: it names {out} (check.py and probe.py do not)."""
     return isinstance(step, list) and any("{out}" in str(a) for a in step[1:])
@@ -382,14 +415,14 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         return max(1.0, deadline - time.monotonic())
     if recipe.get("project"):
         try:
-            proj = json.loads(Path(str(recipe["project"])).read_text(encoding="utf-8"))
+            proj = read_json(str(recipe["project"]))  # too deep is a ValueError too (A20)
         except (OSError, ValueError) as e:
             raise ItemError({"step": None, "tool": "render.py", "kind": "input", "reason": "recipe_project_unreadable",
                              "message": f"recipe.project: {recipe['project']} could not be read as JSON: {e}"})
         if not isinstance(proj, dict):
             raise ItemError({"step": None, "tool": "render.py", "kind": "input", "reason": "recipe_project_unreadable",
                              "message": f"recipe.project: {recipe['project']} is not a JSON object"})
-        idx = int(recipe.get("clip_key", 0))
+        idx = int(recipe.get("clip_key") or 0)  # null is clip 0, as check_recipe_types() reads it
         proj.setdefault("clips", [{}])
         while len(proj["clips"]) <= idx:
             proj["clips"].append({})
@@ -539,11 +572,12 @@ def main() -> int:
     if not folder.is_dir():
         die(f"not a folder: {folder}")
     try:
-        recipe = json.loads(Path(args.recipe).read_text(encoding="utf-8"))
+        recipe = read_json(args.recipe)  # too deep is a ValueError too (A20)
     except (OSError, ValueError) as exc:
-        die(f"cannot read recipe: {exc}")
+        die(f"cannot read recipe: {exc}", kind="input")
     if not isinstance(recipe, dict):
-        die("cannot read recipe: not a JSON object")
+        die("cannot read recipe: not a JSON object", kind="input")
+    check_recipe_types(recipe)
     if recipe.get("project") and not os.path.isabs(recipe["project"]):
         recipe["project"] = str((Path(args.recipe).resolve().parent / recipe["project"]))
     # a recipe error is the same for every item: refuse it once, before any item runs, rather than

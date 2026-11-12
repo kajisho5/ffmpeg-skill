@@ -9,7 +9,7 @@ why it is its own file.
 """
 from __future__ import annotations
 
-import json
+import math
 import os
 import re
 import unicodedata
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from _common.decision import _unspaced_script, fmt_srt_time, parse_time
 from _common.emit import die, info, warn
-from _common.runner import read_text_or_die
+from _common.runner import parse_json, read_json, read_text_or_die
 
 # The engines this skill knows how to drive, and how to install each -- one string, so every
 # tool that needs a transcript refuses in the same words. The two Parakeet engines are
@@ -85,26 +85,60 @@ class Transcription:
                 f"facts={self.facts!r}, notes={self.notes!r})")
 
 
+# A line that starts a cue even with no blank line before it: a clock time, "-->", a clock time,
+# then nothing or whitespace (ffmpeg's position fields, X1:.. Y1:..). ffmpeg's SRT demuxer starts
+# an event at every such line; the first line of a block holding "-->" is a timing line whatever
+# its shape.
+_SRT_CUE_START = re.compile(r"^\s*\d+:\d+[\d:.,]*\s*-->\s*\d+:\d+[\d:.,]*(\s|$)")
+
+
+def srt_blocks(text: str) -> List[Tuple[str, List[str]]]:
+    """(timing line, text lines) of every cue in SRT text whose line ends are already `\\n`.
+
+    A blank (or whitespace-only) line ends a cue, and the first line holding "-->" in a run of
+    lines is its timing line; the lines before it (the index) are not text. Inside a run, a later
+    line shaped like a timing line (_SRT_CUE_START) starts the next cue, and a bare number just
+    before it is that cue's index, so an SRT written without blank lines between cues reads as
+    ffmpeg reads it rather than as one cue. A later line that merely contains "-->" is text."""
+    out: List[Tuple[str, List[str]]] = []
+    for run in re.split(r"\n\s*\n", text):
+        lines = [ln for ln in run.split("\n") if ln.strip()]
+        first = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if first is None:
+            continue
+        timing, body = lines[first], []
+        for ln in lines[first + 1:]:
+            if _SRT_CUE_START.match(ln):
+                if body and body[-1].strip().isdigit():
+                    body.pop()
+                out.append((timing, body))
+                timing, body = ln, []
+            else:
+                body.append(ln)
+        out.append((timing, body))
+    return out
+
+
+def srt_timing_times(line: str) -> Tuple[str, str]:
+    """The start and end tokens of an SRT timing line: what is before the first "-->", and the
+    first word after it. ffmpeg reads the two times and ignores the rest (position fields
+    `X1:.. X2:.. Y1:.. Y2:..`, or a stray second "-->")."""
+    a, _sep, b = line.partition("-->")
+    words = b.split()
+    return a.strip(), words[0] if words else ""
+
+
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
-    block: List[str] = []
-    content = read_text_or_die(path, "--srt").lstrip("\ufeff").replace("\r\n", "\n") + "\n\n"
-    for line in content.split("\n"):
-        if line.strip():
-            block.append(line)
-            continue
-        if block:
-            times = next((b for b in block if "-->" in b), None)
-            if times:
-                a, b = times.split("-->")
-                text = "\n".join(block[block.index(times) + 1:]).strip()
-                try:
-                    cues.append((parse_time(a), parse_time(b), text))
-                except ValueError as e:  # includes MissingFpsError: SRT timings are hh:mm:ss,ms, never frames
-                    die(f"{path}: cannot read the timing line {times.strip()!r}: {e}")
-            block = []
+    for times, body in srt_blocks(read_text_or_die(path, "--srt")):
+        a, b = srt_timing_times(times)
+        text = "\n".join(body).strip()
+        try:
+            cues.append((parse_time(a), parse_time(b), text))
+        except ValueError as e:  # includes MissingFpsError: SRT timings are hh:mm:ss,ms, never frames
+            die(f"{path}: cannot read the timing line {times.strip()!r}: {e}", kind="input")
     if not cues:
-        die(f"no cues found in {path}")
+        die(f"no cues found in {path}", kind="input")
     return cues
 
 
@@ -204,8 +238,9 @@ def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
             # line with two adjacent pipes ("a||b") becomes "a\n\nb" -- and writing that blank line
             # raw would split one cue into two malformed half-blocks (the second missing its own
             # index/timecode). Collapse any run of blank lines within the cue text to a single
-            # newline so the cue's own text can never fake the format's block boundary.
-            t = re.sub(r"\n{2,}", "\n", t).strip("\n")
+            # newline so the cue's own text can never fake the format's block boundary. A line of
+            # only spaces or tabs is blank to every SRT reader too, so it goes the same way.
+            t = "\n".join(ln for ln in t.split("\n") if ln.strip())
             fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
     # under batch.py: this SRT as written is the run's own (an edit made after it is not)
     from _common.runner import report_committed
@@ -476,20 +511,24 @@ def whisper_word_timings(srt_path: Optional[str]) -> List[Tuple[float, float, st
         if not os.path.exists(cand):
             continue
         try:
-            data = json.loads(Path(cand).read_text(encoding="utf-8"))
+            data = read_json(cand)
         except (OSError, ValueError):
             continue
+        # the shape is not checked first: a segment that is a string or a list, or "segments" that
+        # is a number, is simply no words, as _dicts() reads every engine's JSON
         raw = []
         if isinstance(data, dict):
-            raw = list(data.get("words") or [])
-            for seg in data.get("segments") or []:
-                raw.extend((seg or {}).get("words") or [])
+            raw = _dicts(data.get("words"))
+            for seg in _dicts(data.get("segments")):
+                raw.extend(_dicts(seg.get("words")))
         words = []
         for w in raw:
             try:
                 text = str(w.get("word") or w.get("text") or "").strip()
-                if text:
-                    words.append((float(w["start"]), float(w["end"]), text))
+                start, end = float(w["start"]), float(w["end"])
+                # NaN / Infinity are valid to json.loads and place no word anywhere
+                if text and math.isfinite(start) and math.isfinite(end):
+                    words.append((start, end, text))
             except (AttributeError, KeyError, TypeError, ValueError):
                 continue
         if words:
@@ -519,12 +558,12 @@ def _words_from_whisper_cpp_json(path: str) -> "List[Dict[str, Any]]":
     boundaries). A token that is part of a character (U+FFFD) is still glued.
     """
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_json(path)
     except (OSError, ValueError):
         return []
     out: "List[Dict[str, Any]]" = []
-    for seg in (doc.get("transcription") or []):
-        for tok in (seg.get("tokens") or []):
+    for seg in _dicts(doc.get("transcription")) if isinstance(doc, dict) else []:
+        for tok in _dicts(seg.get("tokens")):
             text = str(tok.get("text") or "")
             if not text.strip() or text.strip().startswith("[_"):
                 continue
@@ -552,7 +591,7 @@ def _whisper_json_language(path: str) -> Optional[str]:
     """The language a Whisper engine's JSON says it decoded: whisper.cpp's `result.language`, or
     openai-whisper's top-level `language`. None when the file has neither."""
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8")) or {}
+        doc = read_json(path) or {}
         lang = str(((doc.get("result") or {}).get("language")) or doc.get("language") or "").strip().lower()
     except (OSError, ValueError, AttributeError):
         return None
@@ -568,12 +607,12 @@ def _heard_language(heard: list) -> Optional[str]:
 def _words_from_openai_whisper_json(path: str) -> "List[Dict[str, Any]]":
     """openai-whisper --word_timestamps True --output_format json: segments[].words[]."""
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_json(path)
     except (OSError, ValueError):
         return []
     out: "List[Dict[str, Any]]" = []
-    for seg in (doc.get("segments") or []):
-        for w in (seg.get("words") or []):
+    for seg in _dicts(doc.get("segments")) if isinstance(doc, dict) else []:
+        for w in _dicts(seg.get("words")):
             try:
                 out.append({"word": str(w.get("word") or w.get("text") or "").strip(),
                             "start": float(w["start"]), "end": float(w["end"])})
@@ -592,7 +631,7 @@ def _words_from_parakeet_mlx_json(path: str) -> "List[Dict[str, Any]]":
     after it starts a word too (" m" "is" "ter" " " "Q" "u" "il" "ter" -> "mister", "Quilter").
     """
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_json(path)
     except (OSError, ValueError):
         return []
     out: "List[Dict[str, Any]]" = []
@@ -619,7 +658,7 @@ def _words_from_parakeet_mlx_json(path: str) -> "List[Dict[str, Any]]":
 def _cues_from_parakeet_mlx_json(path: str) -> List[Tuple[float, float, str]]:
     """parakeet-mlx's own sentence segmentation, as cues."""
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_json(path)
     except (OSError, ValueError):
         return []
     cues: List[Tuple[float, float, str]] = []
@@ -642,7 +681,7 @@ def _dicts(value: Any) -> "List[Dict[str, Any]]":
 def _words_from_parakeet_cpp_json(text: str) -> "List[Dict[str, Any]]":
     """parakeet-cli transcribe --json: {"words": [{"w", "start", "end", "conf"}]}, times in seconds."""
     try:
-        doc = json.loads(text)
+        doc = parse_json(text)
     except ValueError:
         return []
     out: "List[Dict[str, Any]]" = []
@@ -978,7 +1017,7 @@ def _heard_nothing(text: str, key: str) -> bool:
     Anything else that yields no words -- not JSON, the wrong shape, entries that do not parse --
     is output that could not be read, not a finding that nobody spoke."""
     try:
-        doc = json.loads(text)
+        doc = parse_json(text)
     except ValueError:
         return False
     return isinstance(doc, dict) and doc.get(key) == []
@@ -990,7 +1029,7 @@ def _whisper_heard_nothing(path: str, key: str) -> bool:
     no speech (#414). A document with text and no word timings is a build without them, not
     silence, and stays the "no word-level timings" refusal."""
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = read_json(path)
     except (OSError, ValueError):
         return False
     if not isinstance(doc, dict) or not isinstance(doc.get(key), list):

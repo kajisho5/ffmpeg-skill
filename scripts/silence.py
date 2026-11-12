@@ -28,7 +28,8 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common.runner import replace_checked
+from _common.asr import _dicts
+from _common.runner import parse_json, replace_checked
 from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
@@ -115,7 +116,7 @@ def sentence_words(args) -> "Tuple[list, str]":
         return usable(args._words, args._words_source)
     if args.words:
         try:
-            raw = json.loads(read_text_or_die(args.words, "--words"))
+            raw = parse_json(read_text_or_die(args.words, "--words"))
         except ValueError as exc:
             die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
         words, _had_segments, _untimed = _words_from_transcript(raw)
@@ -348,7 +349,7 @@ def resolve_filler(args, meta):
     untimed: list = []  # transcript words without a usable timing (a --words file can carry them)
     if args.words:
         try:
-            raw = json.loads(read_text_or_die(args.words, "--words"))
+            raw = parse_json(read_text_or_die(args.words, "--words"))
         except ValueError as exc:
             die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
         source = f"whisper-json:{args.words}"
@@ -484,11 +485,13 @@ def _words_from_transcript(data):
     listed word it could not cut instead of dropping it unseen."""
     raw, had_segments = [], False
     if isinstance(data, dict):
-        raw = list(data.get("words") or [])
-        segments = data.get("segments") or []
+        # a "words" or "segments" that is not a list, and a segment that is not an object, carry no
+        # words: the file is then refused for having none, not by a traceback
+        raw = _dicts(data.get("words"))
+        segments = _dicts(data.get("segments"))
         had_segments = bool(segments)
         for seg in segments:
-            raw.extend((seg or {}).get("words") or [])
+            raw.extend(_dicts(seg.get("words")))
     elif isinstance(data, list):
         raw = list(data)
     out, untimed = [], []

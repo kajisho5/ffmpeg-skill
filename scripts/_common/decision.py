@@ -6,7 +6,6 @@ and encoder-selection rules testable on their own.
 """
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
@@ -17,6 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.emit import die, record_fallback, refuse, warn
+from _common.runner import read_json
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
 
@@ -1025,13 +1025,29 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     if not path:
         return brand
     if not os.path.exists(path):
-        die(f"brand file not found: {path}")
+        die(f"brand file not found: {path}", kind="input")
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except ValueError as exc:
-        die(f"brand file is not valid JSON: {exc}")
+        data = read_json(path)
+    except OSError as exc:
+        die(f"brand file {path} cannot be read: {exc.strerror or exc}", kind="input")
+    except ValueError as exc:  # malformed, not UTF-8, or nested too deep (read_json)
+        die(f"brand file is not valid JSON: {exc}", kind="input")
+    if not isinstance(data, dict):
+        die(f"brand file {path} must be a JSON object {{...}}, got {type(data).__name__}", kind="input")
+    # the shapes the readers below and brand_caption_style() walk: a block that is not an object,
+    # and a path that is not a string, were a traceback there
+    for key, value in (*data.items(), ("styles.caption", (data.get("styles") or {}).get("caption")
+                                       if isinstance(data.get("styles"), dict) else None)):
+        if value is None:
+            continue
+        if (isinstance(BRAND_DEFAULTS.get(key), dict) or key == "styles.caption") and not isinstance(value, dict):
+            die(f'brand file {path}: "{key}" must be an object {{...}}, got {type(value).__name__}', kind="input")
+        if key in ("logo", "font_file", "font") and not isinstance(value, str):
+            die(f'brand file {path}: "{key}" must be a string, got {type(value).__name__}', kind="input")
     base = Path(path).resolve().parent
     for k, v in data.items():
+        if v is None and isinstance(brand.get(k), dict):
+            continue  # a null block keeps its defaults: readers walk it as an object (#483 review)
         if isinstance(v, dict) and isinstance(brand.get(k), dict):
             brand[k].update(v)
         else:
