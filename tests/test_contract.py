@@ -8872,5 +8872,148 @@ class McpArgumentSafetyTests(unittest.TestCase):
             _common.option_args("-o", "-x.mp4")
 
 
+DEEP_JSON = "[" * 5000 + "]" * 5000   # past json's own recursion limit
+SRT_ONE = "1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+
+
+class TextAndJsonReaderTests(unittest.TestCase):
+    """One corpus for the caller-file readers (#457, #465: A12-A20, A66, A73, A262, A268-A270).
+    Each case is odd input that a reader once crashed on or misread; each must now give the cue
+    list a reader of the format gives, or a kind-input refusal, never a traceback. Every case
+    fails on the readers as they were before this change."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.work = Path(cls._tmp.name)
+        cls.clip = cls.work / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=2",
+               "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def write(self, name, body):
+        path = self.work / name
+        if isinstance(body, bytes):
+            path.write_bytes(body)
+        else:
+            path.write_text(body if isinstance(body, str) else json.dumps(body), encoding="utf-8", newline="")
+        return path
+
+    # (case, file body, the cues parse_srt() reads -- what ffmpeg's SRT demuxer reads)
+    SRT_CASES = [
+        ("no_blank_lines", "1\n00:00:01,000 --> 00:00:02,000\nHello\n2\n00:00:03,000 --> 00:00:04,000\nWorld\n",
+         [(1.0, 2.0, "Hello"), (3.0, 4.0, "World")]),
+        ("cr_cr_lf", b"1\r\r\n00:00:01,000 --> 00:00:02,000\r\r\nHello\r\r\n\r\r\n2\r\r\n00:00:03,000 --> 00:00:04,000\r\r\nWorld\r\r\n",
+         [(1.0, 2.0, "Hello"), (3.0, 4.0, "World")]),
+        ("position_fields", "1\n00:00:01,000 --> 00:00:02,000 X1:100 X2:300 Y1:20 Y2:60\nHello\n", [(1.0, 2.0, "Hello")]),
+        ("two_arrows", "1\n00:00:01,000 --> 00:00:02,000 --> 00:00:03,000\nHello\n", [(1.0, 2.0, "Hello")]),
+    ]
+
+    def test_srt_corpus_reads_the_cues_ffmpeg_reads(self):
+        from _common import asr
+        for case, body, want in self.SRT_CASES:
+            with self.subTest(case):
+                self.assertEqual(asr.parse_srt(str(self.write(f"{case}.srt", body))), want)
+
+    def test_a_cue_line_of_spaces_does_not_split_the_srt_it_is_written_to(self):
+        from _common import asr
+        out = self.work / "spaces.srt"
+        asr.write_srt([(1.0, 2.0, "a\n \nb"), (3.0, 4.0, "c\n\t\n\nd")], str(out))
+        self.assertEqual(asr.parse_srt(str(out)), [(1.0, 2.0, "a\nb"), (3.0, 4.0, "c\nd")])
+
+    def test_text_readers_drop_the_bom_and_split_at_newline_only(self):
+        from _common.runner import read_text_or_die
+        import caption
+        with self.subTest("bom"):
+            self.assertEqual(read_text_or_die(str(self.write("bom.txt", "\ufeffum\r\nuh\r")), "--x"), "um\nuh\n")
+        with self.subTest("u2028"):
+            cues = caption.parse_text_cues(str(self.write("u2028.txt", "0-1 one\u2028two\n1-2 three\x85four\n")), 3.0, 0.0)
+            self.assertEqual(cues, [(0.0, 1.0, "one\u2028two"), (1.0, 2.0, "three\x85four")])
+        with self.subTest("n_to_m"):
+            # "N to M" with bare numbers is caption text; a clock time on both sides is still a cue,
+            # and the documented "0-1 Hello" form keeps reading bare seconds
+            cues = caption.parse_text_cues(str(self.write("to.txt", "3 to 5 apples\n0:06 to 0:08 pears\n9-10 plums\n")), 1.0, 0.0)
+            self.assertEqual(cues, [(0.0, 1.0, "3 to 5 apples"), (6.0, 8.0, "pears"), (9.0, 10.0, "plums")])
+
+    def test_word_timing_json_of_the_wrong_shape_is_no_word_timings(self):
+        from _common import asr
+        for case, doc in (("segments_are_strings", {"segments": ["x", "y"]}), ("segment_is_a_list", {"segments": [[1]]}),
+                          ("segments_is_a_number", {"segments": 5}), ("deep", DEEP_JSON)):
+            with self.subTest(case):
+                srt = self.write(f"wt_{case}.srt", SRT_ONE)
+                self.write(f"wt_{case}.json", doc)
+                self.assertEqual(asr.whisper_word_timings(str(srt)), [])
+
+    def test_shifting_a_non_utf8_ass_is_refused_not_a_traceback(self):
+        import caption
+        src = self.write("latin1.ass", b"Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,caf\xe9\n")
+        with self.assertRaises(SystemExit):
+            caption.shift_ass_file(str(src), str(self.work / "latin1_offset.ass"), 1.0)
+
+    def refused_as_input(self, label, *argv, files=()):
+        for name, body in files:
+            self.write(name, body)
+        proc = sh(sys.executable, *argv, "--json", check=False, cwd=self.work)
+        self.assertNotIn("Traceback", proc.stderr, label)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"), (label, doc.get("error")))
+        return doc
+
+    def test_json_files_of_the_wrong_depth_or_type_are_refused_as_input(self):
+        clip = str(self.clip)
+        render, batch, caption, silence = (str(SCRIPTS / f"{n}.py") for n in ("render", "batch", "caption", "silence"))
+        (self.work / "media").mkdir(exist_ok=True)
+        shutil.copy(self.clip, self.work / "media" / "a.mp4")
+        cases = [
+            ("project_deep", [render, "p.json", "--dry-run"], [("p.json", DEEP_JSON)]),
+            ("project_speed_string", [render, "p.json", "-o", "o.mp4", "--dry-run"],
+             [("p.json", {"clips": [{"src": clip, "speed": "fast"}]})]),
+            ("project_speed_list", [render, "p.json", "-o", "o.mp4", "--dry-run"], [("p.json", {"clips": [{"src": clip, "speed": [2]}]})]),
+            ("project_stems_list", [render, "p.json", "-o", "o.mp4", "--dry-run"],
+             [("p.json", {"clips": [{"src": clip}], "audio": {"stems": [1]}})]),
+            ("project_export_preset_list", [render, "p.json", "-o", "o.mp4", "--dry-run"],
+             [("p.json", {"clips": [{"src": clip}], "export": {"preset": ["reels"]}})]),
+            ("plan_verify_strings", [render, "plan.json", "--dry-run"],
+             [("plan.json", {"plan_version": 1, "tool": "probe", "inputs": [], "argv": [], "verify": ["check"]})]),
+            ("plan_commands_number", [render, "plan.json", "--dry-run"],
+             [("plan.json", {"plan_version": 1, "tool": "probe", "inputs": [], "argv": [], "commands": 5})]),
+            ("recipe_deep", [batch, "media", "--recipe", "r.json", "--dry-run"], [("r.json", DEEP_JSON)]),
+            ("recipe_glob_number", [batch, "media", "--recipe", "r.json", "--dry-run"], [("r.json", {"glob": 5, "steps": [["probe.py", "{in}"]]})]),
+            ("recipe_glob_absolute", [batch, "media", "--recipe", "r.json", "--dry-run"],
+             [("r.json", {"glob": "/abs/*.mp4", "steps": [["probe.py", "{in}"]]})]),
+            ("recipe_output_dir_number", [batch, "media", "--recipe", "r.json", "--dry-run"],
+             [("r.json", {"output_dir": 5, "steps": [["probe.py", "{in}"]]})]),
+            ("recipe_bare_string_step", [batch, "media", "--recipe", "r.json", "--dry-run"], [("r.json", {"steps": ["probe.py"]})]),
+            ("brand_deep", [caption, clip, "--text", "t.txt", "--brand", "b.json", "--dry-run"], [("t.txt", "0-1 Hi\n"), ("b.json", DEEP_JSON)]),
+            ("brand_list", [caption, clip, "--text", "t.txt", "--brand", "b.json", "--dry-run"], [("t.txt", "0-1 Hi\n"), ("b.json", [1])]),
+            ("brand_caption_string", [caption, clip, "--text", "t.txt", "--brand", "b.json", "--dry-run"],
+             [("t.txt", "0-1 Hi\n"), ("b.json", {"styles": {"caption": "big"}})]),
+            ("words_segments_strings", [silence, clip, "--filler", "--words", "w.json", "--dry-run"], [("w.json", {"segments": ["x"]})]),
+            ("words_deep", [silence, clip, "--filler", "--words", "w.json", "--dry-run"], [("w.json", DEEP_JSON)]),
+            # a sibling the sweep found: cut.py --snap-source reads a scenes.py document
+            ("snap_source_deep", [str(SCRIPTS / "cut.py"), clip, "--start", "0.2", "--end", "1", "--snap", "beats",
+                                  "--snap-source", "s.json", "-o", "o.mp4", "--dry-run"], [("s.json", DEEP_JSON)]),
+            ("snap_source_beat_grid_string", [str(SCRIPTS / "cut.py"), clip, "--start", "0.2", "--end", "1", "--snap", "beats",
+                                              "--snap-source", "s.json", "-o", "o.mp4", "--dry-run"], [("s.json", {"beat_grid": "x"})]),
+            # and join.py --list, which read its file with its own open() and no decode guard
+            ("join_list_not_utf8", [str(SCRIPTS / "join.py"), "--list", "l.txt", "-o", "oj.mp4", "--dry-run"],
+             [("l.txt", b"caf\xe9.mp4\n")]),
+        ]
+        for label, argv, files in cases:
+            with self.subTest(label):
+                self.refused_as_input(label, *argv, files=files)
+
+    def test_a_bom_file_reads_as_its_text(self):
+        """A16: a UTF-8 BOM is not part of the first line (a chapter time, a word list's first entry)."""
+        self.write("chapters.txt", "\ufeff0:00 Intro\n0:01 Next\n")
+        proc = sh(sys.executable, SCRIPTS / "metadata.py", self.clip, "--chapters", "chapters.txt", "--dry-run", "--json",
+                  check=False, cwd=self.work)
+        self.assertEqual(json.loads(proc.stdout)["status"], "completed", proc.stdout[-500:])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

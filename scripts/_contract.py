@@ -443,6 +443,8 @@ ERROR_REASONS = {
     "plan_unknown_tool": "render.py PLAN: the plan names no tool render.py can run; details: {plan, plan_sha256, checked_at, tool, audit_log}",
     "plan_cwd_missing": "render.py PLAN: the directory the plan was made in is gone; details: {plan, plan_sha256, checked_at, cwd, audit_log}",
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
+    "plan_field_invalid": "render.py PLAN: inputs, unbound_inputs, verify (objects), commands (strings) or cwd has the wrong JSON type; "
+                          "details: {plan, plan_sha256, checked_at, field, field_type, audit_log}",
     "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or ffmpeg itself reported \"Unknown encoder\" for the encoder the command named (kind ffmpeg; details: {name}; the hint points at doctor)",
     "asr_engine_missing": "kind missing_tool: --transcribe (caption.py; silence.py with --filler or a sentence flag) found no local speech-to-text engine; the message lists the install lines; details: {}",

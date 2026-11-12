@@ -126,7 +126,7 @@ def pack_report(args) -> int:
     text = read_text_or_die(args.pack, "--pack")
     rows: List[List[str]] = []
     header: List[str] = []
-    for line in text.splitlines():
+    for line in text.split("\n"):
         line = line.strip()
         if not line.startswith("|"):
             continue
@@ -233,7 +233,9 @@ def main() -> int:
             if meta and meta.get("video"):
                 sheets[which], why = sheet_b64(path)
                 section("contact_sheet", which, why, f"{which} contact sheet")
-    commands = read_text_or_die(args.commands, "--commands").splitlines() if args.commands else []
+    # one per line, split at "\n" only (a command may hold U+2028 or \f; splitlines() split it)
+    command_text = read_text_or_die(args.commands, "--commands") if args.commands else ""
+    commands = command_text.removesuffix("\n").split("\n") if command_text else []
     notes = read_text_or_die(args.notes, "--notes") if args.notes else ""
     title = args.title or f"Delivery report — {Path(args.after).name}"
 

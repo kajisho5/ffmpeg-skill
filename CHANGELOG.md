@@ -4,7 +4,29 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Caller text and JSON files are read one way, and odd input is read as ffmpeg reads it or
+  refused as `kind: input`** (#457, #465: A262, A269, A73, A19, A268, A16, A15, A270, A66, A12,
+  A20, A14, A13, A18, A17). Text files go through one reader that drops a UTF-8 BOM and ends every
+  line at `\n` (`\r\r\n` is one line end): `metadata.py --chapters`, `silence.py
+  --filler-words` and `--words` and `join.py --list` no longer keep the BOM in their first entry
+  (join's `--list` is also refused as input, not a traceback, when it is not UTF-8). SRT cues are
+  grouped by timing line: an SRT with no blank lines between cues, `\r\r\n` line ends, position
+  fields (`X1:.. Y1:..`) or a second `-->` reads as ffmpeg's SRT demuxer reads it, and a cue line of
+  only spaces no longer splits the SRT `write_srt()` writes. `caption.py --text` splits a line at
+  `\n` only (not U+2028 or U+0085), and reads `3 to 5 apples` as text: with `to` both sides must be
+  clock times (`0:03 to 0:05`); `0-1 Hello` still reads bare seconds. JSON files a caller names
+  (render projects and plans, batch recipes and their project, brand files, `--words`, `cut.py
+  --snap-source`) nested too
+  deep, or of the wrong type where the run reads them (`clips[].speed`, `audio.stems`,
+  `export.preset`; a plan's `inputs`, `unbound_inputs`, `verify`, `commands`, `cwd`; a recipe's `glob`, `project`,
+  `output_dir`, `suffix`, `ext`, `clip_key`, an absolute glob or a step that is not a list; a brand
+  that is not an object or whose `caption`/`styles.caption` is not one), are refused as
+  `kind: input`; a plan gets the new `error.reason` `plan_field_invalid`. A whisper word-timing
+  JSON of the wrong shape (a segment that is a string or a list) is no word timings, as its
+  docstring says, and `silence.py --words` then refuses it for having none. `caption.py --ass`
+  with `--offset` refuses a file that is not UTF-8 on the real run as the dry run does.
 
 ## 3.6.4
 

@@ -58,7 +58,7 @@ import tempfile
 import zlib
 from typing import List, Tuple
 
-from _common.runner import fail_if_classified
+from _common.runner import JsonTooDeep, fail_if_classified, read_json
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
@@ -1199,11 +1199,15 @@ def _grid_from_source(path: str, min_confidence: float) -> "dict":
     """The beat grid of `path`: a scenes.py --json document if that is what it is, otherwise a
     media file to measure. Reading a document is how a caller avoids a second decode."""
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            doc = json.load(fh)
+        doc = read_json(path)   # a media file is not UTF-8 or not JSON: a ValueError, then measured
+    except JsonTooDeep as exc:
+        die(f"--snap-source {path}: {exc}", kind="input")
     except (OSError, ValueError):
         doc = None
     if isinstance(doc, dict) and doc.get("beat_grid"):
+        if not isinstance(doc["beat_grid"], dict) or not isinstance(doc.get("beats") or [], list):
+            die(f"--snap-source {path}: beat_grid must be an object and beats a list "
+                "(regenerate it with `scenes.py MUSIC --beats --json`)", kind="input")
         grid = dict(doc["beat_grid"])
         grid["beats"] = doc.get("beats") or []
         # A scenes.py document carries the supported subset since 1.17; one written by an older

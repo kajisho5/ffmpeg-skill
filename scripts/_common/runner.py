@@ -2487,15 +2487,27 @@ def _read_ff_list(flag: str, pattern: str) -> set:
     return names
 
 
+_LINE_END = re.compile(r"\r*\n|\r")
+
+
+def normalize_text(text: str) -> str:
+    """A caller's text as every reader here takes it: a leading UTF-8 BOM dropped, and every line
+    ending `\\n`. `\\r\\r\\n` is one line end, as ffmpeg's text demuxers read it (a CRLF file passed
+    through a second CRLF conversion); a lone `\\r` (classic Mac) is one too. Only these: a line is
+    never split at U+2028, U+0085, \\v or \\f, which str.splitlines() also splits at."""
+    return _LINE_END.sub("\n", text.lstrip("\ufeff"))
+
+
 def read_text_or_die(path: str, flag: str) -> str:
     """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
-    with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback."""
+    with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback. The text
+    comes back through normalize_text(): no BOM, `\\n` line ends."""
     if os.path.isdir(path):
         # checked first: Windows raises PermissionError, not IsADirectoryError, for a directory
         die(f"{flag}: {path} is a directory, not a text file")
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return fh.read()
+        with open(path, "r", encoding="utf-8", newline="") as fh:
+            return normalize_text(fh.read())
     except FileNotFoundError:
         die(f"{flag}: {path} does not exist")
     except IsADirectoryError:
@@ -2505,6 +2517,44 @@ def read_text_or_die(path: str, flag: str) -> str:
     except OSError as e:
         die(f"{flag}: cannot read {path}: {e.strerror}")
     return ""  # unreachable
+
+
+# Deeper than any project, recipe, brand, plan or transcript this skill reads (those are four or
+# five levels); a file nested past it is refused before code that walks it recursively
+# (copy.deepcopy, json.dumps) can raise RecursionError.
+JSON_MAX_DEPTH = 64
+
+
+class JsonTooDeep(ValueError):
+    """parse_json()'s refusal of a document nested past JSON_MAX_DEPTH: a ValueError, so callers
+    that catch ValueError refuse it as malformed JSON; one that falls back on a non-JSON file (a
+    media file) can tell this apart, since the file was JSON."""
+
+
+def parse_json(text: str) -> Any:
+    """json.loads for a caller's file: a BOM is dropped, and every way the text can fail to be a
+    document this skill can walk raises ValueError -- malformed JSON (json's own ValueError),
+    nesting too deep for the parser (RecursionError) or deeper than JSON_MAX_DEPTH. Callers that
+    already catch ValueError therefore refuse all three as they refuse malformed JSON."""
+    try:
+        data = json.loads(text.lstrip("\ufeff"))
+    except RecursionError:
+        raise JsonTooDeep(f"nested more than {JSON_MAX_DEPTH} levels deep") from None
+    stack = [(data, 1)]
+    while stack:
+        value, depth = stack.pop()
+        if isinstance(value, (dict, list)):
+            if depth > JSON_MAX_DEPTH:
+                raise JsonTooDeep(f"nested more than {JSON_MAX_DEPTH} levels deep")
+            stack.extend((v, depth + 1) for v in (value.values() if isinstance(value, dict) else value))
+    return data
+
+
+def read_json(path: "os.PathLike[str] | str") -> Any:
+    """parse_json() of a UTF-8 file. Raises OSError for a file that cannot be read and ValueError
+    (UnicodeDecodeError is one) for anything else, so `except (OSError, ValueError)` covers it."""
+    with open(path, "r", encoding="utf-8") as fh:
+        return parse_json(fh.read())
 
 
 # Deferred to the foot of the module on purpose. runner is the first module the package loads and
