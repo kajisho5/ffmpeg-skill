@@ -1773,7 +1773,7 @@ def subtitle_container_holds(codec: str, out_ext: str) -> bool:
     return True
 
 
-def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
+def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
     there are none). A source whose subtitle codec cannot be copied into the target container
@@ -1785,8 +1785,13 @@ def run_keeping_subtitles(cmd: List[str], output: str) -> bool:
     The retry is recorded with the first attempt's error (`diagnostics.fallbacks`,
     `non_av_streams_dropped`): the caller's `dropped_non_av_streams` says that streams went, the
     record says why, which is the only way to tell a container that cannot hold them from a first
-    attempt that failed for another reason and happened to succeed the second time."""
-    first = run(cmd + ["-map", "0:s?", "-map", "0:d?", "-c:s", "copy", "-c:d", "copy", output], check=False)
+    attempt that failed for another reason and happened to succeed the second time.
+
+    `relabel_timecode`: the command writes its own start timecode (timeline.output_timecode_args),
+    so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
+    the new one; the MOV/MP4 muxer builds the track again from the label."""
+    skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
+    first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + ["-c:s", "copy", "-c:d", "copy", output], check=False)
     if first.returncode == 0:
         return False
     if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):

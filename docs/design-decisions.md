@@ -3162,9 +3162,15 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   its first frame, so after the first join every label would name the wrong source frame, and a
   conform by timecode would land there. A stream copy out of MXF writes none either: its demuxer
   lands a seek on another keyframe than `cut.seek_keyframe` reads. `source_carry` then lists the
-  timecode as dropped (an MXF, which always writes one, reads 00:00:00:00). Code:
-  `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Test:
-  `test_a_tool_that_moves_the_start_moves_the_start_timecode`.
+  timecode as dropped (an MXF, which always writes one, reads 00:00:00:00). The label is read at
+  the source's rate and written at the rate the output is delivered at (`fit --fps`, a VFR source
+  conformed): 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and a fit that changes the rate writes
+  it even without a trim, leaving the source's tmcd track behind. A start before a picture that
+  starts after the file's origin is that picture's first frame; only a padded head counts back.
+  Code: `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Tests:
+  `test_a_tool_that_moves_the_start_moves_the_start_timecode`,
+  `test_the_start_timecode_is_counted_at_the_rate_fit_delivers`,
+  `test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame`.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
   `test_source_carry_says_what_the_output_lost_from_its_source`.
 

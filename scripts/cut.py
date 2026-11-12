@@ -62,7 +62,7 @@ from _common.runner import fail_if_classified
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import TS_EXTS, signatures_match, stream_signature
-from _common.decision import frame_rate, grid_at_or_after, stream_starts
+from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, MissingFpsError, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
@@ -362,7 +362,9 @@ def first_frame_from(src: str, meta: dict, start: float, reencode: bool, edit_li
     the one at 0.96 s), so no label would be known to be right."""
     v0, rate = stream_starts(meta)[0], frame_rate(meta)
     if reencode:
-        return grid_at_or_after(start, v0, rate) - v0
+        # a start before the picture's first frame (a video that starts after the file's origin)
+        # begins on that first frame, not on a grid frame before it
+        return grid_at_or_after(max(start, v0), v0, rate) - v0
     if "mxf" in str(meta.get("format") or "").split(","):
         return None
     key = seek_keyframe(src, start)
@@ -913,7 +915,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         cmd = (ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur if copy_t is None else copy_t:.6f}"]
                + copy_args(meta, dst) + ([] if edit_list else ["-avoid_negative_ts", "make_zero"]) + [dst])
     if not audio_only and (meta.get("timecode") or {}).get("value"):
-        cmd[-1:-1] = output_timecode_args(meta, first_frame_from(src, meta, start, reencode, edit_list and copy_t is None))
+        cmd[-1:-1] = output_timecode_args(meta, first_frame_from(src, meta, start, reencode, edit_list and copy_t is None),
+                                          delivered_rate(meta) if reencode else None)
     proc = run(cmd, check=False)
     if proc.returncode != 0:
         if not reencode:
@@ -979,9 +982,6 @@ JOIN_CHUNK = 32
 # plays as a click: measured on a 440 Hz tone, the step at the join was 14x the tone's own largest
 # sample-to-sample change. A 20 ms fade is too short to hear as a dip and long enough to remove it.
 DECLICK_S = 0.02
-# how far before a segment the fallback seeks, so a start inside the B-frame reorder delay before a
-# keyframe still decodes from the keyframe BEFORE it
-SEEK_MARGIN = 1.0
 # codecs whose configuration travels in the packets, so a part with no extradata is not missing any
 _PARTS: dict = {}
 

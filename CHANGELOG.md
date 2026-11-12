@@ -103,7 +103,12 @@
   now write the label of the frame the output starts on (drop-frame where the source is; a padded
   head counts back). A join of several ranges writes no start timecode, and a stream copy out of
   MXF writes none, both listed under `source_carry.dropped`. `source_carry` compares the
-  timecode's value, not only its presence.
+  timecode's value, not only its presence. The label is counted at the rate the output is
+  delivered at (`fit.py --fps 50` on a 25 fps source starting 01:00:00:12 writes 01:00:00:24, and
+  a `render.py` clip reaching `frame.fps` the same), a cut that starts before a picture which
+  starts after the file's origin is stamped with that picture's first frame, and `sync.py
+  --trim-second` seeks a second early and drops the margin on the output side, as `cut.py` does,
+  so a B-frame HEVC camera does not lose the frames before a keyframe.
 - **`audio.py --downmix` no longer clips, and uses the weights the docs name.** pan's `=` summed
   2.7× per side (3.2× on 7.1) and mixed the LFE in at 0.5, so a 5.1 with every channel at
   -6 dBFS came out hard-clipped (flat factor 20+) while the run said verified, and the weights

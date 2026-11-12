@@ -39,8 +39,8 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import frame_rate, grid_at_or_after, stream_starts
-from _common.timeline import output_timecode_args
+from _common.decision import delivered_rate, frame_rate, grid_at_or_after, stream_starts
+from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
@@ -138,6 +138,7 @@ def main() -> int:
     pre_input: List[str] = []
     post: List[str] = []
     factor = 1.0
+    tc_first = None  # seconds from the source's first frame to the output's, when a trim moves it
 
     # ---- rotate / flip
     if args.rotate == 90:
@@ -179,10 +180,11 @@ def main() -> int:
                 start = (src_dur - target) / 2 if args.from_center else 0.0
                 pre_input += ["-ss", f"{start:.3f}"]
                 post += ["-t", f"{target:.3f}"]
-                # the output starts on the first frame at or after the seek: its start timecode
-                # is that frame's, not the source's first frame's
+                # the output starts on the first frame at or after the seek (a seek before a
+                # picture that starts after the file's origin: on its first frame): its start
+                # timecode is that frame's, not the source's first frame's
                 v0, rate = stream_starts(meta)[0], frame_rate(meta)
-                post += output_timecode_args(meta, grid_at_or_after(round(start, 3), v0, rate) - v0)
+                tc_first = grid_at_or_after(max(round(start, 3), v0), v0, rate) - v0
             else:
                 info(f"source ({src_dur:.2f}s) is already shorter than {target:.2f}s; trim does nothing")
 
@@ -219,6 +221,15 @@ def main() -> int:
         vf.append(f"fps={args.fps:g}")
     elif meta["video"].get("variable_frame_rate_suspected"):
         info("source looks variable-frame-rate; conforming to constant fps automatically")
+    # the start timecode is counted at the rate the output is delivered at: a --fps that changes
+    # the rate relabels it (01:00:00:12 at 25 fps is 01:00:00:24 at 50) even with no trim, which
+    # is also how a render.py clip cut at its own rate reaches the project's frame.fps
+    out_rate = args.fps or delivered_rate(meta)
+    src_fps = meta["video"].get("fps")
+    rate_changed = bool(out_rate and src_fps and exact_rate(float(out_rate)) != exact_rate(float(src_fps)))
+    relabel = tc_first is not None or rate_changed
+    if relabel:
+        post += output_timecode_args(meta, tc_first or 0.0, out_rate)
 
     output = args.output or default_output(args.input, "fit")
     cmd = ffmpeg_base() + pre_input + ["-i", args.input]
@@ -246,7 +257,7 @@ def main() -> int:
         run(cmd + [output])
         dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
     else:
-        dropped_streams = run_keeping_subtitles(cmd, output)
+        dropped_streams = run_keeping_subtitles(cmd, output, relabel_timecode=relabel)
 
     result = probe(output, role="output")
     msg = f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})"

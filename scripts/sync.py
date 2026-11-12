@@ -35,7 +35,7 @@ from typing import Dict, List
 from _common.runner import fail_if_classified
 from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
-from _common.decision import frame_rate, grid_at_or_after, stream_starts
+from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 
 SR = 8000  # decode sample rate
@@ -402,10 +402,20 @@ def main() -> int:
                     cmd = ffmpeg_base() + ["-ss", f"{head_trim:.4f}", "-i", args.second] + (video_args(probe(args.reference) if args.replace_audio else probe(args.second), args.crf) if has_video else []) + audio_codec_for(output) + [output]
                     run(cmd)
             else:
+                # Seek SEEK_MARGIN early and drop the margin on the output side, as cut.py's
+                # re-encode does: an input seek straight to head_trim can land (the MP4 demuxer
+                # seeks over raw decode times) on a keyframe whose picture comes after it, and a
+                # B-frame HEVC file lost the frames before it. The output-side -ss decodes and
+                # drops the margin from both streams alike; it counts on the output's clock, which
+                # a drift fix runs faster by drift_ratio (setpts and asetrate alike).
                 cmd = ffmpeg_base()
+                out_seek: List[str] = []
                 if head_trim > 0:
-                    cmd += ["-ss", f"{head_trim:.4f}"]
-                cmd += ["-i", args.second]
+                    m = min(SEEK_MARGIN, head_trim)
+                    cmd += ["-ss", f"{head_trim - m:.6f}"]
+                    if m > 0:
+                        out_seek = ["-ss", f"{m / (drift_ratio if drift_af else 1.0):.6f}"]
+                cmd += ["-i", args.second] + out_seek
                 af_parts = on_clock + drift_af
                 if delay_ms > 0:
                     af_parts.append(f"adelay={delay_ms}:all=1")
@@ -421,7 +431,10 @@ def main() -> int:
                     # the output's first frame is the second file's frame at head_trim, or (padded)
                     # one `offset` before its first: its start timecode moves with it
                     v0, rate = stream_starts(second_meta)[0], frame_rate(second_meta)
-                    first = grid_at_or_after(round(head_trim, 4), v0, rate) - v0 if head_trim > 0 else -offset if delay_ms > 0 else 0.0
+                    # (a trim before a picture that starts after the file's origin starts on its
+                    # first frame; only the padded head counts back before it)
+                    first = (grid_at_or_after(max(round(head_trim, 4), v0), v0, rate) - v0 if head_trim > 0
+                             else -offset if delay_ms > 0 else 0.0)
                     cmd += output_timecode_args(second_meta, first)
                 if af_parts:
                     cmd += ["-af", ",".join(af_parts)]

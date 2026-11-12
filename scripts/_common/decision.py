@@ -463,6 +463,20 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Optional[float]:
+    """The constant rate cfr_args() forces on the output (its -r), or None when it forces none and
+    the output keeps the source's rate -- what a start timecode is counted at
+    (timeline.output_timecode_args)."""
+    args = cfr_args(meta, fps)
+    return float(args[-1]) if args else None
+
+
+# how far before a cut an input seek lands, so a start inside the B-frame reorder delay before a
+# keyframe still decodes from the keyframe BEFORE it; the margin is dropped on the output side
+# (cut.py, sync.py --trim-second)
+SEEK_MARGIN = 1.0
+
+
 # ------------------------------------------------------- VideoToolbox (--hw)
 #
 # CRF -> VideoToolbox -q:v (1-100, higher = better): at each CRF the highest -q:v whose SSIM matched

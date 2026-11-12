@@ -153,7 +153,7 @@ def _tc_label(frames: int, rate: Fraction, drop: bool) -> str:
     return _tc(frames, nominal)[:-3] + ";" + _tc(frames, nominal)[-2:]
 
 
-def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float]) -> List[str]:
+def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float], rate: Optional[float] = None) -> List[str]:
     """The arguments that give an output the start timecode of the source frame it starts on:
     `first_frame` seconds after the source picture's first frame (negative: a head the tool
     added), or None to write no start timecode at all (a join, whose later frames no single start
@@ -163,7 +163,11 @@ def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float]) -> 
     Both the stream and the container tag are set (Matroska keeps a stale stream tag otherwise;
     MXF reads the container's). Nothing for a source without a start timecode. The label also
     goes on STATE.expected_timecode, which source_carry compares the written file with: an
-    MXF, which always writes one, reads 00:00:00:00 when none is wanted and is listed as dropped."""
+    MXF, which always writes one, reads 00:00:00:00 when none is wanted and is listed as dropped.
+    `rate` is the frame rate the output is delivered at when the tool changes it (fit --fps, a
+    VFR source conformed to a constant rate), None for the source's own: the source's label is
+    read at the source's rate and the output's is counted at the output's, so 01:00:00:12 at 25
+    fps (0.48 s past the hour) is 01:00:00:24 at 50."""
     from _common.runner import STATE
     tc = (meta or {}).get("timecode") or {}
     fps = ((meta or {}).get("video") or {}).get("fps")
@@ -171,12 +175,16 @@ def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float]) -> 
         return []
     label = ""
     if first_frame is not None:
-        rate = exact_rate(float(fps))
-        drop = _drop_frame(tc.get("drop_frame"), rate)
-        nominal = int(round(float(rate)))
+        src_rate = exact_rate(float(fps))
+        out_rate = exact_rate(float(rate)) if rate else src_rate
+        drop = _drop_frame(tc.get("drop_frame"), out_rate)
+        nominal = int(round(float(out_rate)))
         day = (nominal * 600 - (nominal // 15) * 9) * 144 if drop else nominal * 86400
-        frames = start_tc_frames(tc, rate) + int(round(Fraction(first_frame).limit_denominator(1000000) * rate))
-        label = _tc_label(frames % day, rate, drop)
+        base = start_tc_frames(tc, src_rate)
+        if out_rate != src_rate:
+            base = int(round(Fraction(base) * out_rate / src_rate))
+        frames = base + int(round(Fraction(first_frame).limit_denominator(1000000) * out_rate))
+        label = _tc_label(frames % day, out_rate, drop)
     STATE.expected_timecode = label
     return ["-metadata:s:v:0", f"timecode={label}", "-metadata", f"timecode={label}"]
 

@@ -1224,6 +1224,53 @@ class SourceCarryTests(MediaFixtures):
         script("sync.py", ref, cam, "--trim-second", "-o", OUT / "tc_sync.mov", "--overwrite")
         self.assertEqual(written(OUT / "tc_sync.mov"), ["10:00:01:00"])
 
+    def _timecode_written(self, path):
+        tags = sh("ffprobe", "-v", "error", "-show_entries", "stream_tags=timecode:format_tags=timecode",
+                  "-of", "csv=p=0", path).stdout.split()
+        return sorted(set(tags))
+
+    def test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame(self):
+        """A source whose video starts after the file's origin (0.5 s here): a re-encoded cut from
+        0.2 s and a fit trim from 0 both start on the picture's first frame, but the grid lookup
+        counted back from it to a frame before the picture and stamped 00:59:59:21 and
+        00:59:59:15. The start is clamped to the picture's first frame before the lookup."""
+        base, late = OUT / "tc_late_base.mov", OUT / "tc_late.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=3",
+           "-f", "lavfi", "-i", "sine=d=3", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", base)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-itsoffset", "0.5", "-i", base,
+           "-map", "1:v", "-map", "0:a", "-c", "copy", "-timecode", "01:00:00:00", late)
+        self.assertAlmostEqual(probe(str(late))["video"]["start_time"], 0.5, places=3)
+        for tool, args, name in (("cut.py", ["--start", "0.2", "--end", "2", "--accurate"], "tc_late_cut.mov"),
+                                 ("fit.py", ["--duration", "2", "--method", "trim"], "tc_late_fit.mov")):
+            script(tool, late, *args, "--preset", "ultrafast", "-o", OUT / name, "--overwrite")
+            self.assertEqual(self._timecode_written(OUT / name), ["01:00:00:00"], f"{tool} {args}")
+
+    def test_the_start_timecode_is_counted_at_the_rate_fit_delivers(self):
+        """fit --fps 50 on a 25 fps source counted its start timecode at 25: a trim from 0.28 s
+        (frame 7) of a source starting 01:00:00:12 was stamped 01:00:00:19, which at 50 fps names
+        0.38 s, not 0.76 s; and a rate change alone kept 01:00:00:12 (the source's tmcd track was
+        copied), which render.py's clip-then-fit --fps also wrote. The label is now read at the
+        source's rate and written at the delivered one; a --fps that keeps the rate changes
+        nothing."""
+        from _common.timeline import output_timecode_args
+        meta = {"timecode": {"value": "01:00:00:12"}, "video": {"fps": 25.0}}
+        self.assertEqual(output_timecode_args(meta, 0.28), output_timecode_args(meta, 0.28, 25))
+        self.assertEqual(output_timecode_args(meta, 0.28, 50)[1], "timecode=01:00:00:38")
+        src = OUT / "tc25.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-timecode", "01:00:00:12", src)
+        for args, name, want in ((["--fps", "50"], "tc25_fps50.mov", "01:00:00:24"),
+                                 (["--duration", "1.5", "--method", "trim", "--from-center", "--fps", "50"],
+                                  "tc25_trim_fps50.mov", "01:00:00:38"),
+                                 (["--duration", "1.5", "--method", "trim", "--from-center"], "tc25_trim.mov", "01:00:00:19"),
+                                 (["--fps", "25"], "tc25_fps25.mov", "01:00:00:12")):
+            doc = json.loads(script("fit.py", src, *args, "--preset", "ultrafast", "-o", OUT / name,
+                                    "--overwrite", "--json").stdout)
+            self.assertEqual(self._timecode_written(OUT / name), [want], args)
+            self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), f"{args}: {doc.get('source_carry')}")
+
 
 class GeometryAuditDeliveryTests(unittest.TestCase):
     """Issue #411 (audit H): a delivery preset sizes a non-square-pixel master in square pixels."""
