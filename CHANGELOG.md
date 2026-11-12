@@ -43,6 +43,50 @@
   reported verified, and a quote or comma reached the filter graph and failed as `kind: ffmpeg`.
   It is now a `kind: input` refusal.
 
+## 3.6.1
+
+_Automated release: version and notes generated from pull requests merged since 3.6.0._
+
+### Security
+
+- **A DASH manifest or an IMF composition playlist given as media is refused, whatever it is
+  called.** The playlist guard knew HLS and ffconcat by name and first bytes only, so a DASH
+  manifest saved as `clip.mp4` (with a `dash:profile` or the 3GPP `PSS:profile:DASH1`) made every
+  tool follow its `BaseURL`: to another local file, which
+  the output then contained (reported completed and verified), or over HTTP, which FFmpeg 6.1's
+  `-protocol_whitelist file` did not stop. Both are now told the way ffmpeg's own probes tell
+  them, by content, and refused as `media_path_is_playlist`.
+- **`subfile,<options>:<url>` is refused as a URL.** ffmpeg opens it through the subfile protocol;
+  the URL guard stopped reading the scheme at the comma and let it through, so the guards
+  described the named file while ffmpeg read another.
+- **A path with a line break is refused where it would go into a concat list** (`loop.py`,
+  `join.py --copy`, `sequence.py`, multi-part cuts): `media_path_has_line_break`. Each line of a
+  concat list is a directive, so such a name added entries and pulled a file named nowhere on the
+  command line into the output.
+- **The hidden temp files in the output directory are created exclusively.** The staging temp of
+  an `--overwrite` run, `place_output()`'s temp, `export.py`'s key/fill temp and `batch.py`'s
+  cross-filesystem delivery temp had fixed names and were opened through
+  whatever was already there, a planted symlink included: the encode was written into the link's
+  target and the output left as a symlink to it. A copy the tool makes itself is written
+  through the descriptor that created the temp, never by reopening its name, and a directory that
+  refuses the exclusive create fails the run (`output_dir_not_writable`) instead of handing ffmpeg
+  a name nobody reserved. A lock's default audit log is opened without following a symlink.
+- **`render.py` refuses an output that is any file the project names.** The guard compared the
+  output with the clips and overlay videos only, so with `--overwrite` a project whose output was
+  its own music bed, brand file (or the brand's logo or font), overlay image or font, caption
+  file, beat source, or the project file itself replaced it. A `--stop-after` preview, which
+  never writes the output, is not refused. `audiogram.image` and an overlay's `font_file` are now passed
+  to their stages resolved against the project file, as every other project path is, instead of
+  against the caller's working directory.
+
+### Fixed
+
+- **A colour given to `caption.py`, `graphics.py` or a brand must be six hex digits.** The check
+  was on the length only: a six-letter name such as `yellow` or `orange` drew black text and was
+  reported verified, and a quote or comma reached the filter graph and failed as `kind: ffmpeg`.
+  It is now a `kind: input` refusal.
+- fix(security): refuse DASH/IMF manifests and subfile URLs, refuse line breaks in concat paths, never write temps through a planted link (#456)
+
 ## 3.6.0
 
 _Automated release: version and notes generated from pull requests merged since 3.5.0._
