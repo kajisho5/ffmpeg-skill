@@ -75,14 +75,17 @@ def ends_sentence(word: str) -> bool:
 
 def silence_positions(silences: List[Tuple[float, float]], words: "list") -> List[str]:
     """Per silence, `sentence_end` when the word spoken before it ends a sentence, else `inside`.
-    The word before a silence is the last one that starts before the silence's midpoint (its
-    start, for a silence that runs to the end of the file): an engine's word end often reaches
-    into the pause, its start rarely does. A silence with no word before it is `inside`."""
-    timed = sorted(words, key=lambda w: w["start"])
+    The word before a silence is the last one whose own midpoint lies before the silence's
+    midpoint (before its start, for a silence that runs to the end of the file). An engine
+    stretches a word's timing into the pause beside it, the end of the word before or the start
+    of the word after (on demos/footage/ai_talk_en.mp4 three word starts sit 0.45 to 0.5 s before
+    the sound does), and a word's midpoint stays on its own side of the pause either way. A
+    silence with no word before it is `inside`."""
+    timed = sorted(words, key=lambda w: w["start"] + w["end"])
     out: List[str] = []
     for s, e in silences:
         ref = s if e == float("inf") else (s + e) / 2
-        before = [w for w in timed if w["start"] < ref]
+        before = [w for w in timed if (w["start"] + w["end"]) / 2 < ref]
         out.append("sentence_end" if before and ends_sentence(before[-1]["word"]) else "inside")
     return out
 

@@ -726,8 +726,9 @@ breaths inside a sentence and cuts only at sentence-boundary pauses. A `--thresh
 `--sentence-min-silence S` and `--sentence-margin-tail S` give a silence that follows a sentence
 end its own floor and its own tail; every other silence keeps `--min-silence` and `--margin-tail`.
 A sentence end is a transcript word whose text ends in `. ! ? 。 ！ ？ …` (also `।` and `؟`), read
-from the transcript and never from the sound; the word before a silence is the last one that
-starts before the silence's midpoint. `--words talk.json --min-silence 0.2 --sentence-min-silence
+from the transcript and never from the sound; the word before a silence is the last one
+whose own midpoint lies before the silence's midpoint, which holds when the engine stretched a
+word's timing into the pause. `--words talk.json --min-silence 0.2 --sentence-min-silence
 0.3 --margin 0.1 --sentence-margin-tail 0.3` tightens pauses inside a sentence from 0.2 s and
 after one from 0.3 s, leaving the sentence end more room. The result lists `silence_positions`
 (`sentence_end` or `inside`, one per entry of `silences`) and `sentence` (`min_silence`,

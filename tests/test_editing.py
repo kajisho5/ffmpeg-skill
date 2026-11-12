@@ -2589,6 +2589,13 @@ class EditingTests(MediaFixtures):
             [{"word": "one", "start": 0.1, "end": 2.3}, {"word": "two.", "start": 4.1, "end": 6.4},
              {"word": "three!", "start": 8.2, "end": 9.9}]), ["inside", "sentence_end", "sentence_end"])
         self.assertEqual(silence.silence_positions([(0.0, 1.0)], [{"word": "late.", "start": 1.2, "end": 2}]), ["inside"])
+        # an engine stretches a word into the pause beside it: the next word's start (2.6, before
+        # the pause's midpoint) must not make it the word before the pause, nor the previous
+        # word's late end (3.6) stop it being that word
+        self.assertEqual(silence.silence_positions(
+            [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 1.9}, {"word": "two", "start": 2.6, "end": 5.0}]), ["sentence_end"])
+        self.assertEqual(silence.silence_positions(
+            [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 3.6}, {"word": "two", "start": 4.1, "end": 5.0}]), ["sentence_end"])
         gappy = self._gappy()  # sound 0-2, 4-6, 8-10; silent 2-4, 6-8, 10-12
         words = self._words_json("sentence_words.json", words=[("Hello", 0.1, 1.9), ("there.", 4.1, 5.9), ("end", 8.1, 9.9)])
         common = ("silence.py", gappy, "--list", "--json", "--words", words, "--margin", "0.1")
@@ -2622,6 +2629,31 @@ class EditingTests(MediaFixtures):
         plain = json.loads(script("silence.py", gappy, "--list", "--json").stdout)
         self.assertNotIn("sentence", plain)
         self.assertNotIn("silence_positions", plain)
+
+    def test_sentence_flags_on_recorded_speech(self):
+        """The one speech clip in the repository, with the word timings a speech engine wrote for
+        it: three sentences, two hesitations, and word starts that sit up to 0.5 s before the
+        sound ("Well," is timed at 3.54 s; the pause before it ends at 3.99 s). Each pause after
+        a sentence is told from the one inside "hello" and the silence before the first word, and
+        no cut lands near sound."""
+        clip = SCRIPTS.parent / "demos" / "footage" / "ai_talk_en.mp4"
+        words = SCRIPTS.parent / "demos" / "footage" / "ai_talk_en.words.json"
+        data = json.loads(script("silence.py", clip, "--list", "--json", "--words", words, "--threshold", "-30",
+                                 "--min-silence", "0.2", "--sentence-min-silence", "0.3",
+                                 "--margin", "0.1", "--sentence-margin-tail", "0.3").stdout)
+        self.assertEqual(data["sentence"]["sentence_end_words"], 3)  # there. morning. day.
+        self.assertEqual(data["silence_positions"].count("sentence_end"), 3)
+        for (s, e), pos in zip(data["silences"], data["silence_positions"]):
+            with self.subTest(silence=(s, e)):
+                # the three long pauses follow the three sentences; anything earlier or shorter is inside one
+                self.assertEqual(pos, "sentence_end" if (e is None or e - s > 1.0) else "inside")
+        self.assertEqual(data["cut_warnings"], [])
+        self.assertTrue(data["cut_points"])
+        # each sentence end keeps its 0.3 s tail: the range before a sentence-end pause ends 0.3 s into it
+        ends = [k[1] for k in data["keep"]]
+        for (s, e), pos in zip(data["silences"], data["silence_positions"]):
+            if pos == "sentence_end":
+                self.assertTrue(any(abs(x - (s + 0.3)) <= 1 / 24 + 0.01 for x in ends), (s, ends))
 
     def test_the_sentence_flags_refuse_what_they_cannot_answer(self):
         gappy = self._gappy()
