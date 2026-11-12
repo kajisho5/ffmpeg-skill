@@ -6,6 +6,17 @@
 
 ### Added
 
+- **`silence.py --sentence-min-silence` and `--sentence-margin-tail`.** With word timings
+  (`--words` or `--transcribe`), a silence that follows a sentence end gets its own floor and its
+  own tail, and every other silence keeps `--min-silence` and `--margin-tail`: pauses inside a
+  sentence can be tightened from 0.2 s while a sentence end is cut only from 0.3 s and keeps more
+  room. A sentence end is the transcript's own punctuation on the word before the silence, never
+  a guess from the sound; the result lists `silence_positions` and `sentence`, and a transcript
+  without punctuation changes nothing and warns `sentence_ends_not_found`. Refused with
+  `--speech-aware` and without a transcript. Second part of #449.
+
+### Added
+
 - **`silence.py --margin-lead` and `--margin-tail`.** `--margin` kept the same amount of each
   silence on both sides. The two flags name the sides: `--margin-tail` is kept after speech ends,
   `--margin-lead` before it starts again, and each defaults to `--margin`. A last syllable that

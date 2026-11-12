@@ -697,7 +697,8 @@ each shorter clip's last frame (with silence) out to the longest.
 
 ### silence.py — remove dead air / jump cuts
 ```
-silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list] [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
+silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list]
+           [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
@@ -720,6 +721,21 @@ is mostly breath wants more tail than the next word wants lead (`--margin-lead 0
 0.4`). `--speech-aware` keeps the short
 breaths inside a sentence and cuts only at sentence-boundary pauses. A `--threshold` set too high
 (-25, say) counts a weak word ending as silence: the result then warns.
+
+**Pauses inside a sentence and after one.** With word timings (`--words FILE` or `--transcribe`),
+`--sentence-min-silence S` and `--sentence-margin-tail S` give a silence that follows a sentence
+end its own floor and its own tail; every other silence keeps `--min-silence` and `--margin-tail`.
+A sentence end is a transcript word whose text ends in `. ! ? 。 ！ ？ …` (also `।` and `؟`), read
+from the transcript and never from the sound; the word before a silence is the last one that
+starts before the silence's midpoint. `--words talk.json --min-silence 0.2 --sentence-min-silence
+0.3 --margin 0.1 --sentence-margin-tail 0.3` tightens pauses inside a sentence from 0.2 s and
+after one from 0.3 s, leaving the sentence end more room. The result lists `silence_positions`
+(`sentence_end` or `inside`, one per entry of `silences`) and `sentence` (`min_silence`,
+`margin_tail`, `source`, `word_timings`, `sentence_end_words`, `silences`). A transcript with no
+such punctuation changes nothing and warns `sentence_ends_not_found`. Not with `--speech-aware`,
+which takes a sentence boundary from the pause's length instead; without a transcript the flags
+are refused. With `--filler` they turn silence removal on as well (`--filler` alone removes
+only the words), reading the same transcript.
 
 **Cut levels (2.22).** Every run measures the RMS level 50 ms either side of each cut on the
 source (`cut_points`: `source_time`, `output_time`, `edge` out/in, `rms_dbfs` of the loudest

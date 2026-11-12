@@ -10,6 +10,8 @@ Examples:
   python3 silence.py talk.mp4                                 # -35 dB, gaps >= 0.6 s, 0.2 s margin
   python3 silence.py talk.mp4 --threshold -40 --min-silence 1 --margin 0.25
   python3 silence.py talk.mp4 --margin-lead 0.1 --margin-tail 0.4   # less before a word, more after one
+  python3 silence.py talk.mp4 --words talk.json --min-silence 0.2 --sentence-min-silence 0.3 --sentence-margin-tail 0.3
+                                                              # pauses inside a sentence from 0.2 s, after one from 0.3 s with a longer tail
   python3 silence.py talk.mp4 --list                          # print the silences and the resulting cut list, no output
   python3 silence.py talk.mp4 --edl keep.txt                  # also save the kept ranges (START-END per line, cut.py --segments format)
 """
@@ -59,6 +61,61 @@ CUT_LEVEL_RATE = 8000
 CUT_LEVEL_CHANNELS = 2  # measured one by one; a surround source is folded to two first
 DIGITAL_SILENCE_DB = -90.0  # 2.20: at or below this a span is digital silence (16-bit dither sits near -96)
 BREATH_FLOOR = 0.12  # shortest gap silencedetect is asked for under --speech-aware
+# a transcript word that ends in one of these (after any closing quote or bracket) ends a sentence
+SENTENCE_END = ".!?\u3002\uff01\uff1f\u2026\u0964\u061f"
+SENTENCE_CLOSERS = "\"'\u201d\u2019\u300d\u300f\uff09)]\u3011 "
+
+
+def ends_sentence(word: str) -> bool:
+    """Whether a transcript word carries sentence-final punctuation: read off the text the speech
+    engine wrote, never guessed from the sound."""
+    text = str(word or "").rstrip(SENTENCE_CLOSERS)
+    return bool(text) and text[-1] in SENTENCE_END
+
+
+def silence_positions(silences: List[Tuple[float, float]], words: "list") -> List[str]:
+    """Per silence, `sentence_end` when the word spoken before it ends a sentence, else `inside`.
+    The word before a silence is the last one that starts before the silence's midpoint (its
+    start, for a silence that runs to the end of the file): an engine's word end often reaches
+    into the pause, its start rarely does. A silence with no word before it is `inside`."""
+    timed = sorted(words, key=lambda w: w["start"])
+    out: List[str] = []
+    for s, e in silences:
+        ref = s if e == float("inf") else (s + e) / 2
+        before = [w for w in timed if w["start"] < ref]
+        out.append("sentence_end" if before and ends_sentence(before[-1]["word"]) else "inside")
+    return out
+
+
+def sentence_words(args) -> "Tuple[list, str]":
+    """(word timings, where they came from) for --sentence-min-silence / --sentence-margin-tail.
+    Under --filler the transcript that run read or made is reused; otherwise --words is read, or
+    --transcribe runs the local engine. Refuses without one: where a sentence ends is taken from
+    the transcript's punctuation, and there is no reading it off a pause."""
+    if getattr(args, "_words", None) is not None:
+        return args._words, args._words_source
+    if args.words:
+        try:
+            raw = json.loads(read_text_or_die(args.words, "--words"))
+        except ValueError as exc:
+            die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
+        words, _had_segments, _untimed = _words_from_transcript(raw)
+        if not words:
+            die(f"no word timings in {args.words}: the sentence flags need "
+                '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside "segments").',
+                kind="input")
+        return words, f"whisper-json:{args.words}"
+    if args.transcribe:
+        asr_run = _asr.transcribe_words_result(args.input, None, model=args.model, engine=args.engine)
+        args._asr_notes = list(asr_run.notes)
+        if not asr_run.words:
+            die(f"{asr_run.engine or 'the local engine'} ran but produced no word-level timings, so there is "
+                "nothing to tell a sentence end from. Pass a transcript with word timings as --words.", kind="input")
+        family = "parakeet" if asr_run.engine in _asr.PARAKEET_ENGINES else "whisper"
+        return asr_run.words, f"{family}:{asr_run.engine}" if asr_run.engine else "whisper"
+    die("--sentence-min-silence and --sentence-margin-tail need word timings: pass --words transcript.json "
+        "(a whisper JSON with word timestamps) or --transcribe. A sentence end is read from the transcript's "
+        "punctuation; a pause's length does not say where one is.", kind="input")
 
 
 def speech_aware_silences(path: str, threshold: float, min_silence: float) -> "Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]":
@@ -312,6 +369,7 @@ def resolve_filler(args, meta):
                 "faster-whisper word_timestamps=True / openai-whisper --word_timestamps True) and "
                 "pass the result with --words.", kind="input")
 
+    args._words, args._words_source = words, source  # the sentence flags read the same transcript
     lang = args.filler_lang
     reported_lang = lang
     if lang == "auto":
@@ -466,6 +524,13 @@ def main() -> int:
                     help="seconds of silence to keep after speech ends, when it should differ from --margin "
                          "(default: --margin); a speaker whose last syllable trails off needs more here than "
                          "before the next word")
+    ap.add_argument("--sentence-min-silence", type=float, default=None, metavar="SECONDS",
+                    help="for a silence after a word that ends a sentence, remove it only when it is at least this "
+                         "long, instead of --min-silence. Needs --words or --transcribe: a sentence end is the "
+                         "transcript's punctuation")
+    ap.add_argument("--sentence-margin-tail", type=float, default=None, metavar="SECONDS",
+                    help="for a silence after a word that ends a sentence, keep this much after the speech instead "
+                         "of --margin-tail. Needs --words or --transcribe")
     ap.add_argument("--min-keep", type=float, default=0.2, help="drop kept pieces shorter than this (default 0.2)")
     ap.add_argument("--speech-aware", action="store_true",
                     help="keep breaths shorter than --min-silence when they sit inside a sentence "
@@ -496,7 +561,7 @@ def main() -> int:
     fil.add_argument("--filler-pad", type=float, default=FILLER_PAD,
                      help=f"seconds trimmed either side of a filler word (default {FILLER_PAD})")
     fil.add_argument("--words", metavar="FILE",
-                     help="a whisper JSON with word-level timings, for --filler")
+                     help="a whisper JSON with word-level timings, for --filler and the sentence flags")
     fil.add_argument("--transcribe", action="store_true",
                      help="produce the word timings with a local speech engine, Parakeet or whisper (never required; the same "
                           "bridge caption.py uses)")
@@ -543,6 +608,19 @@ def main() -> int:
     # unless one is named
     tail = args.margin if args.margin_tail is None else args.margin_tail
     lead = args.margin if args.margin_lead is None else args.margin_lead
+    by_sentence = args.sentence_min_silence is not None or args.sentence_margin_tail is not None
+    for flag, value in (("--sentence-min-silence", args.sentence_min_silence),
+                        ("--sentence-margin-tail", args.sentence_margin_tail)):
+        if value is not None and (not math.isfinite(value) or value < 0):
+            die(f"{flag} must be a finite number of seconds, 0 or more (got {value:g})", kind="input")
+    if by_sentence and args.speech_aware:
+        die("--speech-aware and the sentence flags answer the same question two ways: --speech-aware takes a "
+            "pause of --min-silence or longer as a sentence boundary, --sentence-min-silence and "
+            "--sentence-margin-tail take the transcript's punctuation. Pass one of them.", kind="input")
+    if by_sentence and not (args.words or args.transcribe):
+        sentence_words(args)  # refuses: no transcript to read a sentence end from
+    sentence_min = args.min_silence if args.sentence_min_silence is None else args.sentence_min_silence
+    sentence_tail = tail if args.sentence_margin_tail is None else args.sentence_margin_tail
     if args.filler_pad < 0:
         die("--filler-pad cannot be negative: a negative pad turns each word's span inside out "
             "(end before start) and the span is then silently dropped, so nothing is removed",
@@ -558,16 +636,44 @@ def main() -> int:
     breaths: List[Tuple[float, float]] = []
     if args.speech_aware:
         silences, breaths = speech_aware_silences(args.input, args.threshold, args.min_silence)
-    elif args.filler:
+    elif args.filler and not by_sentence:
         silences = []  # --filler alone: remove only the filler-word spans, not generic dead air
     else:
-        silences = detect(args.input, args.threshold, args.min_silence)
+        # with the sentence flags each kind of pause has its own floor: measure at the shorter one
+        silences = detect(args.input, args.threshold, min(args.min_silence, sentence_min) if by_sentence else args.min_silence)
     filler_info, filler_ranges = resolve_filler(args, meta) if args.filler else (None, [])
+    positions: List[str] = []
+    sentence_info: Optional[Dict[str, Any]] = None
+    if by_sentence:
+        words, words_source = sentence_words(args)
+        found = silence_positions(silences, words)
+        kept_pairs = [(span, pos) for span, pos in zip(silences, found)
+                      if span[1] == float("inf")
+                      or span[1] - span[0] >= (sentence_min if pos == "sentence_end" else args.min_silence)]
+        silences = [span for span, _ in kept_pairs]
+        positions = [pos for _, pos in kept_pairs]
+        marked = sum(1 for w in words if ends_sentence(w["word"]))
+        sentence_info = {"min_silence": sentence_min, "margin_tail": sentence_tail, "source": words_source,
+                         "word_timings": len(words), "sentence_end_words": marked,
+                         "silences": positions.count("sentence_end")}
+        if not marked:
+            warn("the transcript has no sentence-final punctuation, so no silence was taken as a sentence end: "
+                 "--sentence-min-silence and --sentence-margin-tail changed nothing, every silence used "
+                 "--min-silence and --margin-tail", "sentence_ends_not_found")
+
+    def margined(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """The stretch of each silence that is removed: its own tail for one after a sentence end."""
+        if not by_sentence:
+            return inside_margin(spans, duration, tail, lead)
+        out: List[Tuple[float, float]] = []
+        for span, pos in zip(spans, positions):
+            out += inside_margin([span], duration, sentence_tail if pos == "sentence_end" else tail, lead)
+        return out
     # One sorted, merged removal list through the graph the tool already has: filler removal IS
     # time-range removal, so it reuses keep_ranges() and the same select chain.
     # --margin is kept around the silences only (inside_margin), not around filler spans, whose
     # own trim is --filler-pad (#414); the merged list then goes through with no further margin.
-    removals = merge_spans(inside_margin(silences, duration, tail, lead) + list(filler_ranges))
+    removals = merge_spans(margined(silences) + list(filler_ranges))
     keeps = keep_ranges(removals, duration, 0.0, args.min_keep)
     # what the render holds (on a picture, each bound on its nearest frame): the report, the EDL
     # and the time map all describe these, so a re-cut or a sum of `keep` is the rendered edit
@@ -582,7 +688,7 @@ def main() -> int:
     # the silences alone; everything removed is `removed_seconds_total`.
     silence_only = removed
     if args.filler:
-        silence_keeps = keep_ranges(merge_spans(inside_margin(silences, duration, tail, lead)), duration, 0.0, args.min_keep)
+        silence_keeps = keep_ranges(merge_spans(margined(silences)), duration, 0.0, args.min_keep)
         silence_only = max(0.0, duration - sum(e - s for s, e in rendered_ranges(silence_keeps, meta, duration, video_out)))
     kinds = silence_kinds(args.input, silences, duration, args.threshold)
     summary = {
@@ -592,11 +698,15 @@ def main() -> int:
         "kept_duration": round(kept, 3),
         "removed_seconds": round(silence_only, 3),
     }
-    if silences or not args.filler or args.speech_aware:
+    if silences or not args.filler or args.speech_aware or by_sentence:
         # the seconds of each silence this run kept: `tail` from where the silence starts (after
         # the speech before it), `lead` up to where it ends (before the speech after it). Absent
         # under --filler alone, which detects no silences and so applies neither.
         summary["margins"] = {"lead": lead, "tail": tail}
+    if sentence_info is not None:
+        # which of `silences` follow a sentence end, and the floor and tail those were given
+        summary["silence_positions"] = positions
+        summary["sentence"] = sentence_info
     if kinds:
         summary.update(kinds)
     if args.speech_aware:
@@ -628,7 +738,7 @@ def main() -> int:
         die(f"{len(keeps)} keep ranges is above --max-cuts {args.max_cuts}: the filter graph grows "
             "with every range and a graph this size is slow and fragile. Raise --max-cuts if you "
             "mean it, or use --min-silence/--filler-pad to merge the short ones.", kind="input")
-    filler_only = args.filler and not args.speech_aware
+    filler_only = args.filler and not args.speech_aware and not by_sentence
     if filler_only:
         info(f"--filler only (no --speech-aware): skipping generic silence detection, "
              f"keeping {len(keeps)} range(s): {kept:.2f}s of {duration:.2f}s (removing {removed:.2f}s, filler only)")
