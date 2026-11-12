@@ -423,8 +423,13 @@ exists. When a decision changes, edit the entry in the same PR.
   as named (its directory resolved, its last component not), so a symlink created at a target
   that was absent is a new file there, not a different path with no check. Files that belong
   together go through `replace_checked_together()`: export.py stages the key as well as the fill
-  and puts both in place only when both targets passed, so a refused fill never leaves a new key
-  beside it. Every temp is removed on any way out short of the replace, a held lock included.
+  (its placeholder counted as this run's own, so run()'s check does not refuse it) and puts both
+  in place only when both targets passed, moving an earlier file aside and putting it back if the
+  second replace fails, so a refused or failed pair never leaves a new file beside an old one. The
+  check also records the directory the path resolved to, and is found by the name as well as the
+  resolved place: a directory link switched during the run is refused, not looked up as a place
+  never checked. A process that ignores the lock file can still write the target between the last
+  comparison and the replace. Every temp is removed on any way out short of the replace, a held lock included.
   `--overwrite` still replaces
   whatever is at the path, changed or not: it is consent to replace that path, not one file
   (`deliver()` reads it the same way); a path no check recorded is not compared. What remains:
@@ -439,7 +444,10 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_overwrite_still_replaces_a_target_swapped_during_the_encode`,
   `test_place_output_refuses_a_target_put_there_after_its_check`,
   `test_a_side_file_a_tool_replaces_itself_is_rechecked`, `test_a_link_created_at_an_absent_target_is_refused`,
-  `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`).
+  `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,
+  `test_a_pair_whose_second_replace_fails_leaves_what_was_there`,
+  `test_a_directory_link_switched_during_the_run_is_refused`; `test_export_key_fill_without_overwrite_writes_both`
+  in `tests/test_delivery.py`).
 - **An existing output is written through a hidden sibling temp file and replaced only on
   success**, so a failed run never costs the caller the file that was there (FFmpeg 5.x truncates
   the output before a filter error). The temp name `.<stem>.ffskill-<pid><ext>` is expected in the

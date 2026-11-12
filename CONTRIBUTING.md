@@ -114,7 +114,9 @@ would have caught the original bug isn't done yet.
   dispatching `release.yml` on the tag: `gh workflow run release.yml --ref vX.Y.Z -f version=X.Y.Z`.
   Its `recover` job refuses a version npm already has, a missing tag and a run on any other commit,
   publishes with provenance (`latest` only when the version is above every stable one on npm, else `backport`), and
-  then fills in the plugin branch and the MCP Registry where they are still missing. Do not
+  then publishes the plugin branch only when its tip is an older version and the MCP Registry
+  entry only for a `latest` version: a backport fills in neither. A tag from before the job
+  existed (up to v3.6.3) cannot be recovered this way. Do not
   publish by hand: a local publish has no provenance and, without `--tag`, moves `latest`. README's "Releasing" and
   the job's comments say why it is built this way.
 

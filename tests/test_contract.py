@@ -8235,6 +8235,47 @@ class OutputChangedDuringRunTests(unittest.TestCase):
                          (None, None))
         self.assertEqual((fill.read_bytes(), key.read_bytes()), (b"fill", b"key"))
 
+    def test_a_pair_whose_second_replace_fails_leaves_what_was_there(self):
+        """The first file of a pair is put back when the second replace fails: a fill never ends
+        up beside an old or missing key."""
+        from unittest import mock
+        fill, key = self.work / "b.mov", self.work / "b_key.mov"
+        fill.write_bytes(b"old fill")
+        key.write_bytes(b"old key")
+        _common.STATE.overwrite = True
+        fill_tmp, key_tmp = self.work / ".b.ffskill-f.mov", self.work / ".b_key.ffskill-k.mov"
+        fill_tmp.write_bytes(b"new fill")
+        key_tmp.write_bytes(b"new key")
+        real_replace = os.replace
+        def failing(src, dst):
+            if str(src) == str(key_tmp):
+                raise OSError("disk full")
+            return real_replace(src, dst)
+        with mock.patch.object(self.runner.os, "replace", failing):
+            with self.assertRaises(OSError):
+                self.runner.replace_checked_together([(str(fill_tmp), str(fill)), (str(key_tmp), str(key))])
+        self.assertEqual((fill.read_bytes(), key.read_bytes()), (b"old fill", b"old key"))
+        self.assertEqual(self.temps(), [], "temps and the kept copies are removed")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_a_directory_link_switched_during_the_run_is_refused(self):
+        """A path whose directory link points elsewhere at the replace is not the file its check
+        decided about, whatever is in the new directory."""
+        a, b = self.work / "a", self.work / "b"
+        a.mkdir()
+        b.mkdir()
+        (b / "out.json").write_text("theirs", encoding="utf-8")
+        link = self.work / "dir"
+        os.symlink(a, link)
+        path = link / "out.json"
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(path)]), (None, None))
+        link.unlink()
+        os.symlink(b, link)
+        staged = b / ".out.ffskill-x.json"
+        staged.write_text("ours", encoding="utf-8")
+        self.assertEqual(self.call(self.runner.replace_checked, str(staged), str(path)), ("input", "output_exists"))
+        self.assertEqual((b / "out.json").read_text(encoding="utf-8"), "theirs")
+
     def test_a_refused_lock_removes_the_staged_file(self):
         """replace_checked() removes its temp on every way out short of the replace, a lock held
         by another live writer included."""

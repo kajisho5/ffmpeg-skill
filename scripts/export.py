@@ -219,6 +219,8 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
         kd, kbase = os.path.split(key)
         kstem, kext = os.path.splitext(kbase)
         key_tmp = reserve_sibling(kd, kstem, kext, "key")
+        # this run's own placeholder: run()'s output check must not refuse it as someone's file
+        STATE.written.add(os.path.realpath(key_tmp))
     cmd += (p["audio"] if has_audio else ["-an"]) + [fill_tmp or output]
     cmd += ["-map", "[key]"] + p["video"] + tc_args + cfr_args(meta) + ["-an", key_tmp or key]
     try:

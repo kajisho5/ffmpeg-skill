@@ -448,6 +448,22 @@ class DeliveryTests(MediaFixtures):
                       "-o", OUT / "keyfill_rv_mb.mov", expect_fail=True)
         self.assertIn("key-fill", json.loads(proc.stdout)["error"]["message"])
 
+    def test_export_key_fill_without_overwrite_writes_both(self):
+        """The plain call, no --overwrite (the script() helper always adds it, which hid this): the
+        key is staged in a placeholder this run created, which its own output check must not
+        refuse as someone's file."""
+        src = OUT / "keyfill_plain_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x90:d=1,format=yuva420p", "-c:v", "qtrle", "-pix_fmt", "argb", src)
+        fill, key = OUT / "keyfill_plain.mov", OUT / "keyfill_plain_key.mov"
+        for f in (fill, key):
+            if f.exists():
+                f.unlink()
+        proc = sh(sys.executable, SCRIPTS / "export.py", src, "--preset", "key-fill", "--json", "-o", fill)
+        self.assertEqual(json.loads(proc.stdout)["status"], "completed", proc.stdout)
+        self.assertTrue(fill.exists() and key.exists())
+        self.assertEqual([p.name for p in OUT.iterdir() if p.name.startswith(".keyfill_plain")], [])
+
     def test_export_key_fill_failure_removes_only_a_fill_it_created(self):
         """#430 review: run() cleans up ffmpeg's last output (the key) after a failed encode, not the
         fill before it, so a partial fill was left and the retry refused it as output_exists. A

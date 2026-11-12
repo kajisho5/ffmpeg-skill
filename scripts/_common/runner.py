@@ -1230,7 +1230,7 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
             continue
         # what the decision below is about: compared again where the file is replaced
         # (refuse_changed_output), so one put there during the run is not replaced unasked
-        STATE.checked[_checked_key(output)] = _checked_state(output) if exists else None
+        _record_checked(output, _checked_state(output) if exists else None)
         if not exists or real in STATE.written:
             continue
         size = mtime_ns = None
@@ -1275,11 +1275,24 @@ def _checked_key(path: str) -> str:
     return os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
 
 
+def _parent(path: str) -> str:
+    return os.path.realpath(os.path.dirname(os.path.abspath(path)))
+
+
 def _checked_state(path: str) -> "Optional[Tuple[Optional[Dict[str, int]], bool]]":
     """What is at `path` now: (owned_identity, is a symlink), or None when nothing is there."""
     if not os.path.lexists(path):
         return None
     return (owned_identity(path), os.path.islink(path))
+
+
+def _record_checked(path: str, state: Any) -> None:
+    """Record what a check (or this run's own write) found at `path`, with the directory the path
+    resolved to then, under the resolved place and under the path as named: a directory symlink
+    switched since is then found by the name and refused, not looked up as a place never checked."""
+    entry = (_parent(path), state)
+    STATE.checked[_checked_key(path)] = entry
+    STATE.checked[os.path.abspath(path)] = entry
 
 
 def _remember_identity(path: str) -> None:
@@ -1290,7 +1303,7 @@ def _remember_identity(path: str) -> None:
         STATE.written.add(real)
     except OSError:
         return
-    STATE.checked[_checked_key(path)] = _checked_state(path)
+    _record_checked(path, _checked_state(path))
 
 
 def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = None) -> None:
@@ -1307,17 +1320,21 @@ def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = N
     if STATE.overwrite or not path or path == "-" or path.startswith("pipe:") or path.startswith("-"):
         return
     try:
-        key, real = _checked_key(path), os.path.realpath(path)
+        key, named, real = _checked_key(path), os.path.abspath(path), os.path.realpath(path)
+        recorded = STATE.checked.get(key) or STATE.checked.get(named)
+        if recorded is None:
+            return
+        (parent_then, expected), parent_now, now = recorded, _parent(path), _checked_state(path)
     except OSError:
         return
-    if key not in STATE.checked:
-        return
-    expected, now = STATE.checked[key], _checked_state(path)
-    if now == expected:
+    if now == expected and parent_now == parent_then:
         return
     if cleanup:
         cleanup()
-    if expected is None:
+    if parent_now != parent_then:
+        why = (f"is now in another directory ({parent_now!r}, checked in {parent_then!r}): a directory "
+               "link on its path was changed during the run")
+    elif expected is None:
         why = "did not exist when the run checked it and another process created it during the run"
     elif now is None:
         why = "was removed or replaced by something that is not a regular file during the run"
@@ -1348,20 +1365,47 @@ def replace_checked(tmp: str, final: str) -> None:
 
 def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
     """Replace each (tmp, final) only once every final has passed refuse_changed_output(), all
-    under their output locks: files that belong together (a fill and its key) are committed as a
-    pair or not at all. Every tmp is removed on a refusal, a refused lock or a failed replace
-    (#480 review)."""
+    under their output locks: files that belong together (a fill and its key). A file already at a
+    final is moved aside first and put back if a later replace fails, so a failed pair leaves
+    what was there. Every tmp is removed on a refusal, a refused lock or a failed replace (#480
+    review)."""
     def cleanup() -> None:
         for tmp, _final in pairs:
             _remove_quietly(tmp)
+    aside: List[Tuple[str, Optional[str]]] = []  # (final, where its earlier file went, or None)
     try:
         with contextlib.ExitStack() as stack:
             for final in sorted({final for _tmp, final in pairs}):
                 stack.enter_context(_OutputLock(final))
             for _tmp, final in pairs:
                 refuse_changed_output(final, cleanup)
-            for tmp, final in pairs:
-                os.replace(tmp, final)
+            try:
+                for tmp, final in pairs:
+                    kept = None
+                    if len(pairs) > 1 and os.path.lexists(final):
+                        d, base = os.path.split(final)
+                        stem, ext = os.path.splitext(base)
+                        kept = reserve_sibling(d, stem, ext, "keep")
+                        os.replace(final, kept)
+                    try:
+                        os.replace(tmp, final)
+                    except BaseException:
+                        if kept:
+                            os.replace(kept, final)
+                        raise
+                    aside.append((final, kept))  # replaced: undone below if a later one fails
+            except BaseException:
+                for final, kept in reversed(aside):
+                    if kept:
+                        try:
+                            os.replace(kept, final)
+                        except OSError:
+                            pass
+                    elif os.path.exists(final):
+                        _remove_quietly(final)
+                raise
+            for _final, kept in aside:
+                _remove_quietly(kept)
     except BaseException:
         cleanup()
         raise
