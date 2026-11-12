@@ -5913,6 +5913,226 @@ class BatchSourcePathTests(unittest.TestCase):
             _common.STATE.reset()
         return code, json.loads(out.getvalue())
 
+    @staticmethod
+    def child_step(argv, owned, sidecars=(), before_check=None, also=()):
+        """A step as every tool runs its output guard (runner.refuse_existing_outputs): each
+        existing file it would write -- the -o output, `sidecars` (suffixes beside it) and `also`
+        (paths) -- is
+        refused without --overwrite unless it is a file batch delivered and nobody changed
+        (runner.owned_replaceable), and the paths that pass are reported back. Copies {in}."""
+        from _common import runner
+        src, out = argv[1], argv[argv.index("-o") + 1]
+        targets = [out] + [os.path.splitext(out)[0] + sfx for sfx in sidecars] + [str(p) for p in also]
+        if before_check:
+            before_check(out)
+        cfg = str(owned) if owned else ""
+        taken = [p for p in targets if os.path.isfile(p) and "--overwrite" not in argv
+                 and not runner.owned_replaceable(p, cfg)]
+        if taken:
+            return False, {"status": "failed", "error": {"kind": "input", "reason": "output_exists",
+                                                         "message": f"refusing to overwrite existing outputs {taken!r}"}}
+        runner.report_owned_targets(targets, cfg)
+        shutil.copyfile(src, out)
+        for p in targets[1:]:
+            Path(p).write_text("1\n00:00:00,000 --> 00:00:01,000\n" + Path(src).name + "\n", encoding="utf-8")
+        return True, {"status": "completed", "verified": True}
+
+    def watch(self, folder, recipe, polls, run_step, *extra):
+        """batch --watch 5 with `polls` run one per sleep (None: nothing happens), then stopped.
+        A source that changed is processed on the poll after the change (it settles first)."""
+        it = iter(polls)
+
+        def sleep(_seconds):
+            action = next(it, "stop")
+            if action == "stop":
+                raise KeyboardInterrupt
+            if action:
+                action()
+        return self.run_batch(folder, recipe, "--watch", "5", *extra, sleep=sleep, run_step=run_step)
+
+    @staticmethod
+    def settled_source(path, data):
+        """Write a source and date it an hour back, so the next poll processes it."""
+        path.write_bytes(data)
+        old = time.time() - 3600
+        os.utime(path, (old, old))
+
+    def test_batch_watch_rechecks_its_own_output_where_it_replaces_it(self):
+        """Ownership was a Boolean taken before the item's steps ran: a file another process put
+        at the final path while they ran was then replaced (deliver(replace=True)). Now deliver()
+        compares the identity this process left the file with -- size, mtime and inode -- under
+        the output lock: here the other file has the same size and mtime, only a new inode."""
+        folder = self.work / "in"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        self.settled_source(src, b"A" * 100)
+        recipe = folder / "batch.json"
+        # the last step writes nothing, so batch delivers step 0's file itself (deliver())
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_w",
+                                      "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"],
+                                                ["probe.py", "{in}"]]}), encoding="utf-8")
+        final = folder / "out" / "a_w.mp4"
+
+        def swap_same_size_and_mtime():
+            st = final.stat()
+            other = final.with_name("other.tmp")
+            other.write_bytes(b"Z" * st.st_size)
+            os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns))
+            os.replace(other, final)
+        passes = []
+
+        def run_step(argv, per_call=None, owned=None):
+            self.assertNotIn("--overwrite", argv)
+            if argv[0] == "probe.py":
+                passes.append(1)
+                if len(passes) == 2:
+                    swap_same_size_and_mtime()   # while the item's steps run
+                return True, {"status": "completed", "verified": True}
+            return self.child_step(argv, owned)
+        code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        self.assertEqual(len(passes), 2, doc)
+        row = doc["results"][0]
+        self.assertEqual((code, row["error"]["reason"]), (1, "output_exists"), doc)
+        self.assertEqual(final.read_bytes(), b"Z" * 100, "another process's file was replaced")
+
+    def test_batch_watch_delivers_over_its_own_unchanged_output(self):
+        """The control for the test above: nobody touched the delivered file, so the next pass
+        replaces it without --overwrite."""
+        folder = self.work / "in"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        self.settled_source(src, b"A" * 100)
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_w",
+                                      "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"],
+                                                ["probe.py", "{in}"]]}), encoding="utf-8")
+        final = folder / "out" / "a_w.mp4"
+
+        def run_step(argv, per_call=None, owned=None):
+            self.assertNotIn("--overwrite", argv)
+            if argv[0] == "probe.py":
+                return True, {"status": "completed", "verified": True}
+            return self.child_step(argv, owned)
+        code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        self.assertTrue(doc["results"][0]["ok"], doc)
+        self.assertEqual(final.read_bytes(), b"B" * 100)
+
+    def test_batch_watch_step_refuses_its_own_output_replaced_before_its_check(self):
+        """The last step writes the final path itself: a file put there after the pass began is
+        refused at the step's own check (output_exists), not replaced under a global --overwrite."""
+        folder = self.work / "in"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        self.settled_source(src, b"A" * 100)
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_w",
+                                      "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"]]}), encoding="utf-8")
+        final = folder / "out" / "a_w.mp4"
+        seen = []
+
+        def run_step(argv, per_call=None, owned=None):
+            seen.append("--overwrite" in argv)
+            before = (lambda out: Path(out).write_bytes(b"theirs")) if len(seen) == 2 else None
+            return self.child_step(argv, owned, before_check=before)
+        code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        self.assertEqual(seen, [False, False])
+        self.assertEqual((code, doc["results"][0]["error"]["reason"]), (1, "output_exists"), doc)
+        self.assertEqual(final.read_bytes(), b"theirs")
+
+    def test_batch_watch_replaces_its_own_side_files_but_not_an_edited_one(self):
+        """The last step was given a global --overwrite when the video was this run's own, which
+        let caption.py --text replace the .srt beside it after the user corrected it. Every file a
+        step wrote is recorded with its identity, and a step replaces an existing one only while
+        it is that file. Untouched, video and sidecar are both replaced; an edited sidecar is
+        refused (output_exists) and kept, and the video is left as it was."""
+        folder = self.work / "in"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        self.settled_source(src, b"A" * 100)
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_c",
+                                      "steps": [["caption.py", "{in}", "--text", "t.txt", "-o", "{out}"]]}), encoding="utf-8")
+        final, srt = folder / "out" / "a_c.mp4", folder / "out" / "a_c.srt"
+
+        def run_step(argv, per_call=None, owned=None):
+            self.assertNotIn("--overwrite", argv)
+            return self.child_step(argv, owned, sidecars=(".srt",))
+        snapshots = []
+
+        def snap():
+            snapshots.append(final.read_bytes())
+        code, doc = self.watch(folder, recipe, [
+            lambda: self.settled_source(src, b"B" * 100),      # pass 2: the source changed (settling)
+            None,                                              # pass 3: both replaced
+            lambda: (snap(), srt.write_text("hand-corrected\n", encoding="utf-8"),
+                     self.settled_source(src, b"C" * 100)),   # pass 4: the sidecar was edited
+            None,                                              # pass 5: refused
+        ], run_step)
+        self.assertEqual(snapshots, [b"B" * 100], doc)
+        self.assertEqual((code, doc["results"][0]["error"]["reason"]), (1, "output_exists"), doc)
+        self.assertEqual(srt.read_text(encoding="utf-8"), "hand-corrected\n")
+        self.assertEqual(final.read_bytes(), b"B" * 100)
+
+    def test_batch_item_never_replaces_a_side_file_another_item_delivered(self):
+        """The permission is per item: two items whose step names one side file (a fixed
+        --write-srt) do not share it -- the second is refused as before, and the first's file is
+        kept."""
+        folder = self.work / "in"
+        folder.mkdir()
+        for name in ("a.mp4", "b.mp4"):
+            self.settled_source(folder / name, name.encode() * 50)
+        shared = self.work / "subs.srt"
+        recipe = folder / "batch.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_c",
+                                      "steps": [["caption.py", "{in}", "--text", "t.txt", "--write-srt", str(shared),
+                                                 "-o", "{out}"]]}), encoding="utf-8")
+
+        def run_step(argv, per_call=None, owned=None):
+            return self.child_step(argv, owned, also=(shared,))
+        code, doc = self.run_batch(folder, recipe, run_step=run_step)
+        rows = {Path(r["file"]).name: r for r in doc["results"]}
+        self.assertTrue(rows["a.mp4"]["ok"], doc)
+        self.assertEqual((code, rows["b.mp4"]["error"]["reason"]), (1, "output_exists"))
+        self.assertIn("a.mp4", shared.read_text(encoding="utf-8"))
+
+    def test_a_step_replaces_only_the_files_batch_delivered_unchanged(self):
+        """runner.refuse_existing_outputs() under runner.OWNED_ENV: a listed file with its
+        recorded identity passes and is reported; an unlisted one, or a listed one changed since,
+        is refused as it is without --overwrite."""
+        from unittest import mock
+        from _common import runner
+        ours, theirs = self.work / "ours.mp4", self.work / "theirs.srt"
+        ours.write_bytes(b"o")
+        theirs.write_bytes(b"t")
+        report = self.work / "report"
+        report.mkdir()
+
+        def config(name, replaceable):
+            cfg = self.work / name
+            cfg.write_text(json.dumps({"replaceable": replaceable, "report": str(report)}), encoding="utf-8")
+            return str(cfg)
+
+        def check(cfg, paths):
+            with mock.patch.dict(os.environ, {runner.OWNED_ENV: cfg}), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    runner.refuse_existing_outputs([str(p) for p in paths])
+                except SystemExit:
+                    return "refused"
+            return "passed"
+        _common.STATE.reset()
+        try:
+            ident = runner.owned_identity(str(ours))
+            cfg = config("c1.json", {os.path.realpath(ours): ident})
+            self.assertEqual(check(cfg, [ours]), "passed")
+            self.assertEqual(json.loads((report / f"{os.getpid()}.json").read_text()), [os.path.realpath(ours)])
+            self.assertEqual(check(cfg, [ours, theirs]), "refused")
+            ours.write_bytes(b"edited")
+            self.assertEqual(check(config("c2.json", {os.path.realpath(ours): ident}), [ours]), "refused")
+            self.assertEqual(check("", [ours]), "refused")
+        finally:
+            _common.STATE.reset()
+
     def test_every_render_project_path_is_rebased_by_one_list(self):
         """render.py reads a project's files against the project file's directory with rel();
         batch.py's per-item copy lives in a work directory, so it must carry them absolute, and
@@ -5967,7 +6187,7 @@ class BatchSourcePathTests(unittest.TestCase):
         recipe.write_text(json.dumps({"project": "proj/project.json", "clip_key": 0}), encoding="utf-8")
         seen = []
 
-        def run_step(argv, per_call=None):
+        def run_step(argv, per_call=None, owned=None):
             seen.append(json.loads(Path(argv[1]).read_text(encoding="utf-8")))
             return True, {"status": "completed", "verified": True}
         code, doc = self.run_batch(folder, recipe, "--force", run_step=run_step)
@@ -5997,15 +6217,9 @@ class BatchSourcePathTests(unittest.TestCase):
         final = folder / "out" / "a_w.mp4"
         calls = []
 
-        def run_step(argv, per_call=None):
-            # the child's own output guard, as every tool applies it
-            src, out = argv[1], argv[argv.index("-o") + 1]
-            calls.append((Path(src).name, "--overwrite" in argv))
-            if os.path.exists(out) and "--overwrite" not in argv:
-                return False, {"status": "failed", "error": {"kind": "input", "reason": "output_exists",
-                                                             "message": f"refusing to overwrite existing output {out!r}"}}
-            shutil.copyfile(src, out)
-            return True, {"status": "completed", "verified": True}
+        def run_step(argv, per_call=None, owned=None):
+            calls.append((Path(argv[1]).name, "--overwrite" in argv))
+            return self.child_step(argv, owned)
 
         def grow():
             with open(growing, "ab") as fh:
@@ -6031,7 +6245,8 @@ class BatchSourcePathTests(unittest.TestCase):
         # pass 1 delivered only b; a's output appeared at pass 3 with the whole file and was
         # replaced at pass 5 with the edited one
         self.assertEqual(sizes, [None, None, 200, 200, 300, 14, 14], calls)
-        self.assertEqual(calls, [("b.mp4", False), ("a.mp4", False), ("a.mp4", True), ("a.mp4", False)])
+        # never a global --overwrite: the step itself replaced the one file it was allowed to
+        self.assertEqual(calls, [("b.mp4", False), ("a.mp4", False), ("a.mp4", False), ("a.mp4", False)])
         rows = {Path(r["file"]).name: r for r in doc["results"]}
         self.assertEqual((code, rows["a.mp4"]["error"]["reason"]), (1, "output_exists"))
         self.assertTrue(rows["b.mp4"]["cached"])
@@ -6047,7 +6262,7 @@ class BatchSourcePathTests(unittest.TestCase):
         recipe.write_text(json.dumps({"glob": "*.mp4", "steps": [["fit.py", "{in}", "--height", "64", "-o", "{out}"]]}),
                           encoding="utf-8")
 
-        def run_step(argv, per_call=None):
+        def run_step(argv, per_call=None, owned=None):
             raise AssertionError("a settling source was processed")
 
         def sleep(_seconds):

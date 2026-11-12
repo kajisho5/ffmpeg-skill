@@ -1238,7 +1238,13 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
         if output not in existing:
             existing.append(output)
             facts.append({"path": output, "resolved": real, "size": size, "mtime_ns": mtime_ns})
+    # a file batch.py delivered on an earlier --watch pass, still exactly as it left it, is that
+    # run's own: replaced without --overwrite, per path (anything else existing is still refused)
+    if existing and not STATE.overwrite:
+        keep = [i for i, p in enumerate(existing) if not owned_replaceable(p)]
+        existing, facts = [existing[i] for i in keep], [facts[i] for i in keep]
     if not existing or STATE.overwrite:
+        report_owned_targets(paths)
         return
     hint = "pass --overwrite, or choose another -o path"
     if len(existing) == 1:
@@ -1255,6 +1261,82 @@ def _remember_output(cmd: Sequence[str]) -> None:
         return
     try:
         STATE.written.add(os.path.realpath(output))
+    except OSError:
+        pass
+
+
+# set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:
+# owned_identity()}, "report": directory}. "replaceable" is every file that batch process
+# delivered (a --watch loop's earlier passes) as it left it; a step replaces one of those without
+# --overwrite while it is still that file, and nothing else. Each process that passes the output
+# check writes the paths it was allowed to write to <report>/<pid>.json, so batch learns the side
+# files (an .srt beside the video) it delivered, not only the final path.
+OWNED_ENV = "_FFMPEG_SKILL_OWNED"
+_OWNED_CACHE: Dict[str, Dict[str, Any]] = {}
+_OWNED_TARGETS: Dict[str, List[str]] = {}
+
+
+def owned_identity(path: str) -> "Optional[Dict[str, int]]":
+    """{size, mtime_ns, ino, dev} of a regular file: what tells the file batch.py delivered from
+    one put at the same path since (a replacement with the same size and mtime is a new inode).
+    None when the path is not a regular file."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if not os.path.isfile(path):
+        return None
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "ino": st.st_ino, "dev": st.st_dev}
+
+
+def _owned_config(config: Optional[str] = None) -> Dict[str, Any]:
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    if not config:
+        return {}
+    if config not in _OWNED_CACHE:
+        try:
+            with open(config, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            doc = {}
+        _OWNED_CACHE[config] = doc if isinstance(doc, dict) else {}
+    return _OWNED_CACHE[config]
+
+
+def owned_replaceable(path: str, config: Optional[str] = None) -> bool:
+    """Whether `path` is a file the batch.py process running this step delivered, still with the
+    identity it had then (checked now, at the output check, not when the step was planned)."""
+    replaceable = _owned_config(config).get("replaceable")
+    if not isinstance(replaceable, dict):
+        return False
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return False
+    expected = replaceable.get(real)
+    return isinstance(expected, dict) and owned_identity(real) == expected
+
+
+def report_owned_targets(paths: Sequence[Optional[str]], config: Optional[str] = None) -> None:
+    """Under batch.py: record paths this process passed the output check for, in the report
+    directory its config names. Nothing outside batch.py; a report that cannot be written only
+    means the next pass refuses that file as someone else's."""
+    config = config if config is not None else os.environ.get(OWNED_ENV, "")
+    report = _owned_config(config).get("report")
+    if not isinstance(report, str) or not report:
+        return
+    targets = _OWNED_TARGETS.setdefault(config, [])
+    for p in paths:
+        if p:
+            try:
+                real = os.path.realpath(p)
+            except OSError:
+                continue
+            if real not in targets:
+                targets.append(real)
+    try:
+        with open(os.path.join(report, f"{os.getpid()}.json"), "w", encoding="utf-8") as fh:
+            json.dump(targets, fh)
     except OSError:
         pass
 

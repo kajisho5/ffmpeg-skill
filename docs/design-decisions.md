@@ -2154,12 +2154,30 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   one interval ago; until then its row is `skipped: "settling"` (`ok: false`, not cached), and a
   watch stopped there fails with that row, since the file was not processed. One poll interval is
   the whole rule: a writer that pauses longer than the interval is read early, and the pass after
-  its next write processes the file again. An output an earlier pass of the same watch delivered,
-  with the size and mtime it had then, is this run's own file under the overwrite rule above and
-  is replaced without `--overwrite`; one replaced or edited since, or left by an earlier run, is
-  refused as before. A plain batch (no `--watch`) has no previous poll and processes what is
-  there. Code: `batch.settle_poll()`, `is_own_output()`. Tests:
+  its next write processes the file again. A file an earlier pass of the same watch delivered --
+  the final output and every side file a step wrote, such as caption.py's `.srt` beside the
+  video -- still with the size, mtime and inode it had then, is this run's own file under the
+  overwrite rule above and is replaced without `--overwrite`; one replaced or edited since, or
+  left by an earlier run, is refused as before (`output_exists`); so is one another item of the
+  same run delivered (two items naming one fixed side file). The permission is per item and per
+  path, and is checked where the write happens, not when the item starts: batch.py never hands a step a
+  global `--overwrite` for it (that let `caption.py --text` replace a hand-corrected sidecar
+  because the video was batch's own), it gives each step a snapshot of the files it delivered
+  (`runner.OWNED_ENV`, internal to batch.py), and the step's own output check
+  (`refuse_existing_outputs()`) passes an existing target only while it is still that file and
+  reports back each path it was allowed to write; `deliver()` compares the final path's identity
+  again under the output lock. A file another process puts there between that check and the
+  write itself is the same window every tool's own `--overwrite` check has. A side file a step
+  writes without that check, or one of an item that failed, is not recorded, so the next pass
+  refuses it. A plain batch (no `--watch`) has no previous poll and processes what is there.
+  Code: `batch.settle_poll()`, `is_own_output()`, `deliver()`, `owned_config()`,
+  `runner.owned_replaceable()`. Tests:
   `test_batch_watch_waits_for_a_source_to_settle_and_replaces_only_its_own_output`,
+  `test_batch_watch_rechecks_its_own_output_where_it_replaces_it`,
+  `test_batch_watch_step_refuses_its_own_output_replaced_before_its_check`,
+  `test_batch_watch_replaces_its_own_side_files_but_not_an_edited_one`,
+  `test_batch_item_never_replaces_a_side_file_another_item_delivered`,
+  `test_a_step_replaces_only_the_files_batch_delivered_unchanged`,
   `test_batch_watch_reports_a_source_still_settling_when_it_stops`.
 - **`verify.py` keeps each tool's own failure.** Steps run with `--json`; a failed step keeps the
   tool's `kind`, `reason`, `message`, `details` and `exit_code` (`step_timeout`,

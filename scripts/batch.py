@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import HW_FORCED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, stop_children
+from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw,
+                            owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
 from _common.decision import rebase_project_paths
 
@@ -118,11 +119,16 @@ def gpu_key() -> str:
 JOBS_CAP = 8   # beyond this, concurrent encodes contend for the same cores and memory
 
 _LOG = threading.local()
-# final path -> output_identity() of every output this process delivered (a --watch loop's earlier
-# passes): an existing final path that is still exactly that file is this run's own, not someone
-# else's, so a later pass replaces it (design-decisions: "A path this same run wrote ... is never
-# someone else's file"). A file edited since, or one an earlier run left, is still refused.
-_OWN_OUTPUTS: Dict[str, Dict[str, int]] = {}
+# source -> {real path -> owned_identity()} of every file this process delivered for that item (a
+# --watch loop's earlier passes): its final output and every side file its steps were allowed to
+# write (an .srt beside the video). An existing path that is still exactly that file is the item's
+# own, not someone else's, so a later pass of the SAME item replaces it (design-decisions: "A path
+# this same run wrote ... is never someone else's file"); the permission is per item and per path,
+# and is checked again where the write happens -- by deliver() under the output lock, by a step at
+# its own output check (runner.OWNED_ENV). A file edited or replaced since, one an earlier run
+# left, or one another item delivered (two items naming one side file) is still refused.
+_OWN_OUTPUTS: Dict[str, Dict[str, Dict[str, int]]] = {}
+_OWN_LOCK = threading.Lock()
 # set by batch.py's signal handler: a --jobs worker between two steps must not start the next one
 _STOP = threading.Event()
 
@@ -161,13 +167,15 @@ def step_error(index: Optional[int], tool: Optional[str], doc: Any) -> Dict[str,
     return out
 
 
-def run_step(argv: List[str], per_call: "Optional[float]" = None) -> "tuple[bool, Optional[dict]]":
+def run_step(argv: List[str], per_call: "Optional[float]" = None,
+             owned: "Optional[Path]" = None) -> "tuple[bool, Optional[dict]]":
     """Returns (ok, doc): doc is the step's own --json result document; a failed step that
     printed none that parses gets one in the failure shape (error.reason step_output_unparsed,
     the last stderr line as the message), so its row still says why. {in}/{out} are already resolved by the caller before argv reaches here, so forcing
     --json on every step (harmless: no step reads another step's stdout, only its output path)
     costs nothing and lets a caller like process() read back tool-specific fields, e.g. cut.py's
-    `reencoded`, without adding a bespoke flag per field it might someday want."""
+    `reencoded`, without adding a bespoke flag per field it might someday want. `owned`: the
+    owned_config() file the step reads under runner.OWNED_ENV."""
     script = argv[0]
     if script not in ALLOWED_STEP_SCRIPTS:
         # main() refuses such a recipe before any item runs; this stays as the last line of defence
@@ -179,7 +187,8 @@ def run_step(argv: List[str], per_call: "Optional[float]" = None) -> "tuple[bool
                        "error": {"kind": "interrupted", "message": f"interrupted before {script} started"}}
     cmd = [str(HERE / script)] + argv[1:] + child_args() + (["--json"] if "--json" not in argv[1:] else [])
     log("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
-    proc = run_tool(cmd, per_call=per_call)
+    env = dict(os.environ, **{OWNED_ENV: str(owned)}) if owned else None
+    proc = run_tool(cmd, per_call=per_call, env=env)
     try:
         doc = json.loads(proc.stdout)
     except ValueError:
@@ -246,15 +255,66 @@ def row_output(src: Path, recipe: Dict[str, Any], outdir: Path) -> Dict[str, Any
     return fields
 
 
-def is_own_output(final: Path) -> bool:
-    """Whether `final` is still the file this process delivered there (_OWN_OUTPUTS)."""
-    expected = _OWN_OUTPUTS.get(str(final))
-    return expected is not None and output_identity(str(final)) == expected
+def own_expected(src: Path, path: "Path | str") -> "Optional[Dict[str, int]]":
+    """The identity this process left `path` with, if it delivered a file there for `src`."""
+    with _OWN_LOCK:
+        return _OWN_OUTPUTS.get(str(src), {}).get(os.path.realpath(str(path)))
 
 
-def deliver(src: str, final: Path, replace: bool = False) -> None:
+def is_own_output(src: Path, final: Path) -> bool:
+    """Whether `final` is still the file this process delivered there for `src` (_OWN_OUTPUTS)."""
+    expected = own_expected(src, final)
+    return expected is not None and owned_identity(str(final)) == expected
+
+
+def record_own(src: Path, paths: "List[str]", work: Path) -> None:
+    """Remember the files this item delivered, as they are now: the item's next pass may replace
+    each one while it is still that file. Paths in the item's work directory go with it and are
+    skipped. Replaces what an earlier pass of the item recorded."""
+    base = os.path.realpath(str(work))
+    mine: Dict[str, Dict[str, int]] = {}
+    for p in paths:
+        real = os.path.realpath(p)
+        if real == base or real.startswith(base + os.sep):
+            continue
+        ident = owned_identity(real)
+        if ident:
+            mine[real] = ident
+    with _OWN_LOCK:
+        _OWN_OUTPUTS[str(src)] = mine
+
+
+def owned_config(src: Path, work: Path, i: int) -> Path:
+    """The file a step reads under runner.OWNED_ENV: a snapshot of what this process delivered for
+    `src`, taken right before the step starts (one file per step, since a step reads it once), and
+    the directory where each of its processes reports the paths it passed the output check for."""
+    report = work / "owned-report"
+    report.mkdir(exist_ok=True)
+    with _OWN_LOCK:
+        replaceable = dict(_OWN_OUTPUTS.get(str(src), {}))
+    cfg = work / f"owned{i}.json"
+    cfg.write_text(json.dumps({"replaceable": replaceable, "report": str(report)}), encoding="utf-8")
+    return cfg
+
+
+def owned_reports(work: Path) -> List[str]:
+    """Every path the item's steps reported writing (owned_config's report directory)."""
+    found: List[str] = []
+    for f in sorted((work / "owned-report").glob("*.json")) if (work / "owned-report").is_dir() else []:
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(doc, list):
+            found.extend(p for p in doc if isinstance(p, str))
+    return found
+
+
+def deliver(src: str, final: Path, expected: "Optional[Dict[str, int]]" = None) -> None:
     """Move an item's last written intermediate to its final path, under the output guard every
-    tool applies: an existing file is replaced only with --overwrite. A dry run writes nothing."""
+    tool applies: an existing file is replaced only with --overwrite, or when it is still exactly
+    `expected` -- the file this process delivered there on an earlier pass -- checked under the
+    output lock, so a file another process put there since is refused. A dry run writes nothing."""
     if STATE.dry_run:
         # the refusal the real run would meet, as a step writing {out} plans it (#428 review)
         if final.exists() and not STATE.overwrite:
@@ -269,7 +329,7 @@ def deliver(src: str, final: Path, replace: bool = False) -> None:
     # under the output lock every tool's write holds, so the existence check and the move are one
     # step for another run delivering or writing the same path
     with _OutputLock(str(final), on_locked=locked):
-        if final.exists() and not (STATE.overwrite or replace):
+        if final.exists() and not STATE.overwrite and not (expected is not None and owned_identity(str(final)) == expected):
             raise ItemError({"step": None, "tool": None, "kind": "input", "reason": "output_exists",
                              "message": f"refusing to overwrite existing output {str(final)!r}: pass --overwrite to replace it"})
         try:
@@ -298,9 +358,15 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             deadline: "Optional[float]" = None) -> Dict[str, Any]:
     final = final_path(src, recipe, outdir)
     t0 = time.time()
-    own = not STATE.dry_run and is_own_output(final)
-    if own:
-        log(f"  {final.name} is this run's own earlier output, unchanged since: it is replaced")
+    # replacing this run's own earlier output is decided per path and at the write, never here:
+    # each step gets a snapshot of what this process delivered (runner.OWNED_ENV) and checks every
+    # existing file it would write against it; deliver() checks the final path under its lock
+    track = not STATE.dry_run and not STATE.overwrite
+
+    delivered: List[str] = []
+
+    def owned(i: int) -> "Optional[Path]":
+        return owned_config(src, work, i) if track else None
 
     def budget() -> "Optional[float]":
         """What is left of the BATCH's time limit -- not a fresh one per item. A --timeout is a
@@ -329,7 +395,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         proj["output"] = str(final.resolve())
         pj = work / "project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
-        ok, _doc = run_step(["render.py", str(pj)] + (["--overwrite"] if own else []), budget())
+        ok, _doc = run_step(["render.py", str(pj)], budget(), owned=owned(0))
         step_docs = [("render", _doc)]
         failure = None if ok else step_error(0, "render.py", _doc)
         cut_reencoded: List[bool] = []
@@ -353,9 +419,9 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             # what this one read, and when it is the last, the last file written is delivered (#415)
             writes = step_writes(step)
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
-            if own and last and writes and "--overwrite" not in argv:
-                argv.append("--overwrite")
-            step_ok, doc = run_step(argv, budget())
+            if last and writes and track and is_own_output(src, final):
+                log(f"  {final.name} is this run's own earlier output, unchanged since: it may be replaced")
+            step_ok, doc = run_step(argv, budget(), owned=owned(i))
             step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut (or its
             # --segments join) re-encoded, for the reasons in its `reencode_reason` (distinct per
@@ -374,9 +440,14 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             # the last step wrote nothing: the item's deliverable is the last file a step wrote,
             # which is in this item's work directory and would be removed with it (#415)
             try:
-                deliver(cur, final, replace=own)
+                deliver(cur, final, expected=own_expected(src, final))
+                delivered.append(str(final))
             except ItemError as exc:
                 ok, failure = False, exc.error
+    if ok and track:
+        # what this item delivered, as it left it: every path its steps passed the output check
+        # for (side files included) and the final path deliver() moved into place
+        record_own(src, owned_reports(work) + delivered, work)
     result: Dict[str, Any] = {"file": str(src), **row_output(src, recipe, outdir), "ok": ok, "seconds": round(time.time() - t0, 1)}
     if failure:
         result["error"] = failure
@@ -455,7 +526,8 @@ def main() -> int:
     apply_common(args)
 
     started = time.time()
-    _OWN_OUTPUTS.clear()
+    with _OWN_LOCK:
+        _OWN_OUTPUTS.clear()
     folder = Path(args.folder).resolve()  # relative 'bdir' used to become bdir/bdir/out once joined with the default outdir
     if not folder.is_dir():
         die(f"not a folder: {folder}")
@@ -665,8 +737,6 @@ def main() -> int:
                     del cache[stale]
                 # the output as this run left it: a later hit is served only while it is unchanged
                 cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] and r.get("written", True) else None)
-                if cache[key]["output_identity"]:
-                    _OWN_OUTPUTS[r["output"]] = cache[key]["output_identity"]
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
                 # then silently treats as "no cache" (a ValueError -> {}), discarding every prior

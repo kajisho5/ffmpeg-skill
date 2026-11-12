@@ -49,9 +49,12 @@
   `verified` for MKV and TS); once the copy finished, every later pass refused that output with
   `output_exists`, so the truncated file stayed. A source is processed once its size and mtime
   are unchanged across one poll (first seen: last modified at least one interval ago); until then
-  its row is `skipped: "settling"`. An output an earlier pass of the same watch delivered, and
-  nobody changed since, is replaced when its source changes; any other existing output is still
-  refused without `--overwrite`.
+  its row is `skipped: "settling"`. A file an earlier pass of the same watch delivered (the
+  output and any side file a step wrote, such as an `.srt`), and nobody changed since, is
+  replaced when its source changes. Each file is checked on its own, by the output check of the
+  step that writes it (batch passes no `--overwrite`) or under the output lock when batch moves
+  the output into place, so an edited sidecar, or an output another process put there meanwhile,
+  is still refused without `--overwrite`.
 - **Text symbols are no longer taken for emoji.** `♪ ✓ ★` (not emoji in Unicode's emoji-data)
   and `♥ ✔ ☺` (emoji only when VS16 follows) were counted as emoji because the whole Misc
   Symbols, Dingbats and Misc Symbols and Arrows blocks were. A `mode: none` run (auto on macOS, or
