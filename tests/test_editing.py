@@ -2599,7 +2599,11 @@ class EditingTests(MediaFixtures):
             [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 1.9}, {"word": "two", "start": 2.6, "end": 5.0}]), ["sentence_end"])
         self.assertEqual(silence.silence_positions(
             [(2.0, 4.0)], [{"word": "one.", "start": 0.1, "end": 3.6}, {"word": "two", "start": 4.1, "end": 5.0}]), ["sentence_end"])
-        gappy = self._gappy()  # sound 0-2, 4-6, 8-10; silent 2-4, 6-8, 10-12
+        # its own clip, so the layout does not depend on which test made OUT/gappy.mp4 first:
+        # sound 0-2, 4-6, 8-10; silent 2-4, 6-8, 10-12
+        gappy = OUT / "sentence_gappy.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "aevalsrc='0.5*sin(2*PI*440*t)*lt(mod(t\\,4)\\,2)':s=48000", "-t", "12", gappy)
         words = self._words_json("sentence_words.json", words=[("Hello", 0.1, 1.9), ("there.", 4.1, 5.9), ("end", 8.1, 9.9)])
         common = ("silence.py", gappy, "--list", "--json", "--words", words, "--margin", "0.1")
         data = json.loads(script(*common, "--sentence-margin-tail", "0.5").stdout)
