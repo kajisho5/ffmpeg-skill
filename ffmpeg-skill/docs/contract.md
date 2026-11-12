@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.4.3`) | any release |
+| `skill.version` | the npm / package.json version (`3.5.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.4.3", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.5.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -752,6 +752,7 @@ silence a tool reported as fine while another measurement disagreed):
 | `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0). A length that cannot be read fails the step with `reason: not_measured` |
 | `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame (at least 0.03 s): a levels pass changes no timing. A length that cannot be read fails the step with `reason: not_measured` |
 | `inputs_duration`, `transition_shortening`; step `duration`'s `inputs_total` | `join.py` | the clips' own total and how much the transitions took out of it. `expected_duration` is derived from the transition the join applied, so it cannot show that on its own |
+| `margins` | `silence.py` | `{lead, tail}`: the seconds of each silence kept before speech starts (`--margin-lead`) and after it ends (`--margin-tail`); both equal `--margin` unless one is named. Absent under `--filler` without `--speech-aware`, which removes no silences |
 | `silence_kinds`, `silence_breakdown` | `silence.py` | per detected silence, `digital` (at or below -90 dBFS) or `below_threshold` (quiet sound under `--threshold`), and the count and seconds of each with the level that defines it |
 
 Keys added after 2.21, all additive (#367 follow-up, and a report of a filename with a space that
