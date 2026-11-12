@@ -1577,7 +1577,8 @@ class EditingTests(MediaFixtures):
         for rate in ("30", "30000/1001"):
             with self.subTest(rate=rate):
                 q, tag = Fraction(rate), rate.replace("/", "_")
-                src = d / f"src_{tag}.mkv"
+                # NUT keeps the source's frame times exact (Matroska rounds them to the millisecond)
+                src = d / f"src_{tag}.nut"
                 sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
                    f"nullsrc=s=64x48:r={rate},geq=lum='mod(N*23+X*2,256)':cb=128:cr=128", "-f", "lavfi", "-i",
                    "sine=f=440:r=48000", "-frames:v", "300", "-t", "11", "-c:v", "ffv1", "-c:a", "pcm_s16le", src)
@@ -1593,9 +1594,11 @@ class EditingTests(MediaFixtures):
                     sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf",
                        f"trim=start_frame={5 * k}:end_frame={5 * k + 5},setpts=PTS-STARTPTS", "-af",
                        f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "ffv1",
-                       "-c:a", "pcm_s16le", clip)
+                       "-c:a", "pcm_s16le", "-fps_mode", "passthrough", clip)
                     clips.append(clip)
-                self.assertEqual(len(self._frame_pts(clips[0])), 5, "the premise: 5 frames a clip")
+                first = self._frame_pts(clips[0])
+                self.assertEqual(len(first), 5, f"the premise: 5 frames a clip (pts {first}, "
+                                 f"{ {k: v for k, v in probe(str(clips[0])).items() if k in ('video', 'audio', 'duration')} })")
                 out = d / f"joined_{tag}.mp4"
                 doc = json.loads(script("join.py", *clips, "--transition", "none", "--preset", "ultrafast", "--json",
                                         "-o", out).stdout)
