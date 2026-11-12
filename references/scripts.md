@@ -697,7 +697,7 @@ each shorter clip's last frame (with silence) out to the longest.
 
 ### silence.py — remove dead air / jump cuts
 ```
-silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--min-keep 0.2] [--list] [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
+silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list] [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
@@ -713,7 +713,11 @@ to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 
 **Breaths and weak word endings.** `--margin` is the padding kept on each side of every cut
 (default 0.2 s since 2.22, 0.15 s before; 0.3 s for a speaker who trails off). It is kept around
-silences only: a filler word's cut is the word plus `--filler-pad` (since 3.1.6). `--speech-aware` keeps the short
+silences only: a filler word's cut is the word plus `--filler-pad` (since 3.1.6). `--margin-tail`
+is what is kept after speech ends and `--margin-lead` what is kept before it starts again; each
+defaults to `--margin`, and the result's `margins` gives the two values used. A last syllable that
+is mostly breath wants more tail than the next word wants lead (`--margin-lead 0.1 --margin-tail
+0.4`). `--speech-aware` keeps the short
 breaths inside a sentence and cuts only at sentence-boundary pauses. A `--threshold` set too high
 (-25, say) counts a weak word ending as silence: the result then warns.
 

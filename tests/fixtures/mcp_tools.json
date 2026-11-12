@@ -1093,6 +1093,8 @@
    "json_brief",
    "list",
    "margin",
+   "margin_lead",
+   "margin_tail",
    "max_cuts",
    "min_keep",
    "min_silence",
