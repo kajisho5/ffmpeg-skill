@@ -30,8 +30,9 @@
   a name nobody reserved. A lock's default audit log is opened without following a symlink.
 - **`render.py` refuses an output that is any file the project names.** The guard compared the
   output with the clips and overlay videos only, so with `--overwrite` a project whose output was
-  its own music bed, brand file, overlay image or font, caption file, beat source, or the
-  project file itself replaced it. `audiogram.image` and an overlay's `font_file` are now passed
+  its own music bed, brand file (or the brand's logo or font), overlay image or font, caption
+  file, beat source, or the project file itself replaced it. A `--stop-after` preview, which
+  never writes the output, is not refused. `audiogram.image` and an overlay's `font_file` are now passed
   to their stages resolved against the project file, as every other project path is, instead of
   against the caller's working directory.
 

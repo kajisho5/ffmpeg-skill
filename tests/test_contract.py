@@ -4014,6 +4014,23 @@ class ContractTests(unittest.TestCase):
         proc = tool("render", selfout, "--overwrite", "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input", proc.stderr)
         self.assertEqual(selfout.read_text(encoding="utf-8"), text)
+        # the brand's own font file, resolved against the brand file, is an input too
+        font = work / "brandfont.ttf"
+        font.write_bytes(b"not really a font")
+        (work / "brand2.json").write_text('{"font_file": "brandfont.ttf"}', encoding="utf-8")
+        bp = work / "p_brandfont.json"
+        bp.write_text(json.dumps({"output": "brandfont.ttf", "clips": [{"src": str(self.src)}], "brand": "brand2.json"}),
+                      encoding="utf-8")
+        proc = tool("render", bp, "--overwrite", "--dry-run", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input", proc.stderr)
+        self.assertEqual(font.read_bytes(), b"not really a font")
+        # a --stop-after preview never writes `output`, so naming an input there is no refusal
+        pv = work / "p_preview.json"
+        pv.write_text(json.dumps({"output": "bed.wav", "clips": [{"src": str(self.src)}], "audio": {"music": "bed.wav"}}),
+                      encoding="utf-8")
+        proc = tool("render", pv, "--stop-after", "clips", "--overwrite", "--dry-run", "--json", check=False)
+        self.assertNotEqual((json.loads(proc.stdout).get("error") or {}).get("reason"), "output_is_input", proc.stderr)
+        self.assertEqual(bed.read_bytes(), before)
 
     def test_a_colour_is_six_hex_digits_or_refused(self):
         """color_hex() checked the length only: a six-letter name ("yellow", "orange") drew black text

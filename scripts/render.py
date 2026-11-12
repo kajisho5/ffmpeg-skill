@@ -498,6 +498,20 @@ def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
         else:
             add(obj.get("source"))
     add(proj.get("brand"))
+    brand = proj.get("brand")
+    if isinstance(brand, str) and brand:
+        # the brand's own logo and font_file are read by the overlay and caption stages, resolved
+        # against the brand file as load_brand() resolves them; an unreadable brand is left to them
+        try:
+            data = json.loads(Path(rel(brand)).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            base = Path(rel(brand)).resolve().parent
+            for k in ("logo", "font_file"):
+                v = data.get(k)
+                if isinstance(v, str) and v and "://" not in v:
+                    found.append(v if os.path.isabs(v) else str(base / v))
     add(proj.get("chapters"), must_exist=True)
     overlays = proj.get("overlays")
     for ov in (overlays if isinstance(overlays, list) else []):  # any other type is the overlay stage's to refuse
@@ -1263,7 +1277,10 @@ def main() -> int:
     # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
     # (review 5): every file the project names is passed here, not only the clips, or --overwrite
     # replaced a music bed or a brand file named as the output
-    refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel))
+    if not args.stop_after or args.stop_after == "export":
+        # only a run that ends in the final copy writes `output`; a --stop-after preview writes
+        # its stage file inside the work directory and leaves `output` alone
+        refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel))
     if _reaches("overlays", args.stop_after):
         # #326: an overlay video is the caller's file, never an earlier stage's output, so a
         # missing one is refused here, under --dry-run too, not after every stage before it ran
