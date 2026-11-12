@@ -136,6 +136,52 @@ def stream_spans(path):
     return out
 
 
+# Two pictures and two sound tracks in which FFmpeg's default stream selection does not pick the
+# ones probe() describes (A110, A118, A128, A258): Matroska with no default disposition, so the
+# larger picture and the track with more channels win. Each stream is told apart by its content.
+MULTI_PROBED = {"size": (160, 120), "hz": 440, "lufs": -32.2}  # v:0 testsrc2, a:0 a quiet 440 Hz sine
+MULTI_OTHER = {"size": (320, 240), "hz": 660, "lufs": -21.6}   # v:1 solid red, a:1 a louder 660 Hz sine
+
+
+def make_multistream(path, *, subtitle=False, mono_first=True, seconds=4):
+    """v:0 testsrc2 160x120 and v:1 red 320x240; a:0 440 Hz at about -32 LUFS and a:1 660 Hz at
+    about -22 LUFS, a:0 mono and a:1 stereo (mono_first) or the reverse; optionally a text
+    subtitle track. No stream carries the default disposition."""
+    layouts = ("mono", "stereo") if mono_first else ("stereo", "mono")
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-f", "lavfi", "-i", f"testsrc2=s=160x120:r=25:d={seconds}",
+           "-f", "lavfi", "-i", f"color=c=red:s=320x240:r=25:d={seconds}",
+           "-f", "lavfi", "-i", f"sine=f=440:d={seconds}:sample_rate=48000,volume=0.3,aformat=channel_layouts={layouts[0]}",
+           "-f", "lavfi", "-i", f"sine=f=660:d={seconds}:sample_rate=48000,aformat=channel_layouts={layouts[1]}"]
+    maps = ["-map", "0", "-map", "1", "-map", "2", "-map", "3"]
+    if subtitle:
+        srt = Path(str(path) + ".srt")
+        srt.write_text("1\n00:00:00,500 --> 00:00:02,000\nhello\n", encoding="utf-8")
+        cmd += ["-i", str(srt)]
+        maps += ["-map", "4"]
+    disp = [x for n in ("v:0", "v:1", "a:0", "a:1") + (("s:0",) if subtitle else ()) for x in (f"-disposition:{n}", "0")]
+    sh(*cmd, *maps, "-c:v", "libx264", "-preset", "veryfast", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "aac",
+       *(["-c:s", "srt"] if subtitle else []), *disp, path)
+    return path
+
+
+def tone_db(path, hz, stream="a:0"):
+    """Mean level (dBFS) of `path`'s `stream` in a 40 Hz band around `hz`: which source track it is."""
+    proc = sh("ffmpeg", "-nostdin", "-i", path, "-map", f"0:{stream}", "-af", f"bandpass=f={hz}:w=40,volumedetect",
+              "-f", "null", "-")
+    return float(re.search(r"mean_volume:\s*(-?[0-9.]+) dB", proc.stderr).group(1))
+
+
+def written_track(path):
+    """'a:0' or 'a:1' of make_multistream(): which source track `path`'s first audio stream holds."""
+    return "a:0" if tone_db(path, MULTI_PROBED["hz"]) > tone_db(path, MULTI_OTHER["hz"]) else "a:1"
+
+
+def integrated_lufs(path, stream="a:0"):
+    proc = sh("ffmpeg", "-nostdin", "-i", path, "-map", f"0:{stream}", "-af", "ebur128", "-f", "null", "-")
+    return float(re.findall(r"I:\s+(-?[0-9.]+) LUFS", proc.stderr)[-1])
+
+
 def png_size(path) -> tuple:
     with open(path, "rb") as fh:
         head = fh.read(24)

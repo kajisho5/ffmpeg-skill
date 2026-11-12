@@ -25,7 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import OUT, SCRIPTS, script, sh  # noqa: E402
+from _fixtures import MULTI_PROBED, OUT, SCRIPTS, make_multistream, script, sh, written_track  # noqa: E402
 from _common import decision, ffmpeg_encoders, probe  # noqa: E402
 probe_mod = sys.modules["_common.probe"]  # the module (the package re-exports probe() under its name)
 
@@ -2279,6 +2279,105 @@ class VfrGuardTests(unittest.TestCase):
         proc = script("cut.py", self.drop, "--vfr-copy", "--dry-run", "-o", DIR / "never_vfr_copy.mp4", expect_fail=True)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("--vfr-copy", proc.stderr)
+
+class ProbedStreamTests(unittest.TestCase):
+    """A258 and its siblings: a tool that measured v:0 / a:0 (keyframes, start skew, the crop
+    rectangle against the frame size) let FFmpeg's default selection choose what it wrote, which
+    is the largest picture and the track with the most channels."""
+
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.multi = make_multistream(DIR / "multi_streams.mkv")
+        cls.multi_subs = make_multistream(DIR / "multi_streams_subs.mkv", subtitle=True)
+
+    def assertProbedStreams(self, out):
+        m = probe(str(out))
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), MULTI_PROBED["size"])
+        self.assertEqual(m["stream_counts"], {"video": 1, "audio": 1})
+        self.assertEqual(written_track(out), "a:0")
+
+    def test_a_cut_writes_the_picture_and_sound_it_probed(self):
+        # Matroska in, MP4 out: a Matroska output's copy of this x264 source lands past the
+        # tolerance and re-encodes, and the stream copy is the path under test first
+        for name, extra, copied in (("copy", [], True), ("accurate", ["--accurate"], False),
+                                    ("segments", ["--segments", "0-1,2-3"], None),
+                                    ("segments_accurate", ["--segments", "0-1,2-3", "--accurate"], False)):
+            with self.subTest(name):
+                out = DIR / f"multi_cut_{name}.mp4"
+                span = [] if "--segments" in extra else ["--start", "1", "--end", "3"]
+                d = cut_json(str(self.multi), *span, *extra, "-o", str(out), "--overwrite")
+                self.assertEqual(d["status"], "completed")
+                if copied is not None:
+                    self.assertEqual(d["reencoded"], not copied, d.get("reencode_reason"))
+                self.assertProbedStreams(out)
+        out = DIR / "multi_cut.wav"
+        cut_json(str(self.multi), "--start", "1", "--end", "3", "-o", str(out), "--overwrite")
+        self.assertEqual(written_track(out), "a:0")
+
+    def test_a_copy_of_several_streams_keeps_the_subtitle_track_the_container_holds(self):
+        """With explicit maps the default selection's subtitle stream goes too, so a copy of a
+        source with several tracks maps the first one where the container takes it as it is
+        (mov_text into MP4) and reports it dropped where it does not (SubRip into MP4)."""
+        mp4 = DIR / "multi_streams_subs.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.multi_subs, "-map", "0", "-c", "copy", "-c:s", "mov_text", mp4)
+        for src, holds in ((mp4, True), (self.multi_subs, False)):
+            with self.subTest(source=src.suffix):
+                out = DIR / f"multi_cut_subs{src.suffix}.mp4"
+                d = cut_json(str(src), "--start", "1", "--end", "3", "-o", str(out), "--overwrite")
+                self.assertFalse(d["reencoded"], d.get("reencode_reason"))
+                self.assertProbedStreams(out)
+                self.assertEqual(probe(str(out))["subtitle_streams"], int(holds))
+                self.assertEqual(d["dropped_non_av_streams"], not holds)
+
+    def test_crop_keeps_the_subtitle_of_a_one_picture_one_sound_file(self):
+        """Explicit -map turns ffmpeg's default selection off, subtitles included: crop of an MKV
+        with one picture, one sound and a text subtitle dropped the subtitle (#484 review). With
+        one of each the default selection is kept, as before."""
+        srt = DIR / "one_each.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+        src = DIR / "one_each.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt", src)
+        out = DIR / "one_each_crop.mkv"
+        script("crop.py", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
+        self.assertEqual(probe(str(out))["subtitle_streams"], 1)
+
+    def test_crop_of_several_tracks_carries_the_subtitle_in_the_output_format(self):
+        """With several audio tracks the streams are mapped explicitly, the subtitle with them:
+        into MP4 it must be converted (mov_text), since FFmpeg 6.1 has no default MP4 subtitle
+        encoder ("Encoder not found" before the -c:s, #484 review)."""
+        srt = DIR / "several.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+        src = DIR / "several.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-f", "lavfi", "-i", "sine=d=2:f=880", "-i", srt,
+           "-map", "0", "-map", "1", "-map", "2", "-map", "3",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "srt", src)
+        for ext, codec in ((".mp4", "mov_text"), (".mkv", "subrip")):
+            with self.subTest(ext=ext):
+                out = DIR / f"several_crop{ext}"
+                script("crop.py", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
+                codecs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                            "-of", "csv=p=0", out).stdout.split()
+                self.assertEqual(codecs, [codec])
+
+    def test_crop_and_stabilize_write_the_picture_they_measured(self):
+        out = DIR / "multi_crop.mp4"
+        script("crop.py", self.multi, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
+        self.assertEqual(written_track(out), "a:0")
+        # the probed picture is testsrc2, not the red one: its first frame is not uniformly red
+        # (read through -i: a path inside movie= needs filtergraph escaping, a drive colon on Windows)
+        yuv = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1", "-vf",
+                              "scale=1:1:flags=area,format=yuv444p", "-f", "rawvideo", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        self.assertLess(yuv[2], 200, "the frame's average V is the red picture's")
+        if "vidstabdetect" in sh("ffmpeg", "-hide_banner", "-filters").stdout:
+            out = DIR / "multi_stab.mp4"
+            script("stabilize.py", self.multi, "-o", out, "--overwrite")
+            self.assertProbedStreams(out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,6 +5,7 @@
     python3 tests/test_all.py            # every group
 """
 import json
+import math
 import re
 import shlex
 import shutil
@@ -15,7 +16,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, script, sh  # noqa: E402
+from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, integrated_lufs,  # noqa: E402
+                       make_multistream, script, sh, written_track)
 from _common import probe  # noqa: E402
 
 
@@ -464,6 +466,46 @@ class AudioTests(MediaFixtures):
             self.assertEqual(doc["error"]["kind"], "input", strength)
             self.assertIn("20..60", doc["error"]["message"])
             self.assertNotIn("$ ", proc.stderr, "refused before ffmpeg ran")
+
+    # ------------------------------------------- the track measured is the track written
+    def test_loudness_measures_the_track_it_normalises(self):
+        """A110: pass 1 had no -map, so FFmpeg measured the track with the most channels (a:1,
+        about -22 LUFS) while pass 2 normalised a:0 (-32 LUFS) with that gain: a -16 target came
+        out more than 10 LU short and the run reported the other track's input loudness. Both passes now read a:0."""
+        src = make_multistream(OUT / "multi_loud.mkv")
+        for ext in (".mkv", ".wav"):
+            with self.subTest(output=ext):
+                out = OUT / f"multi_loud_norm{ext}"
+                d = json.loads(script("loudness.py", src, "-I", "-16", "-o", out, "--json").stdout)
+                self.assertClose(float(d["measured"]["input_i"]), MULTI_PROBED["lufs"], 1.0)
+                self.assertEqual(written_track(out), "a:0")
+                self.assertClose(integrated_lufs(out), -16.0, 1.0)
+
+    def test_audio_mono_folds_the_track_audio_stream_picks(self):
+        """A128: --mono read the channel count of a:0, not of the --audio-stream track: a stereo
+        track 1 beside a mono track 0 came out stereo, and a mono track 1 beside a stereo track 0
+        went through the stereo pan and lost 6 dB."""
+        for mono_first in (True, False):
+            with self.subTest(mono_first=mono_first):
+                src = make_multistream(OUT / f"multi_mono_{int(mono_first)}.mkv", mono_first=mono_first)
+                out = OUT / f"multi_mono_{int(mono_first)}_out.mkv"
+                script("audio.py", src, "--audio-stream", "1", "--mono", "-o", out)
+                self.assertEqual(probe(str(out))["audio"]["channels"], 1)
+                self.assertEqual(written_track(out), "a:1")
+                if not mono_first:  # a mono track stays at its own level
+                    self.assertClose(integrated_lufs(out), integrated_lufs(src, "a:1"), 0.5)
+
+    def test_shared_measurements_read_the_track_probe_describes(self):
+        """The measuring helpers silence, sync, scenes, multicam, join and cut call took FFmpeg's
+        default track (the one with the most channels) while those tools write a:0."""
+        import _common
+        src = make_multistream(OUT / "multi_measure.mkv")
+        first, second = (_common.measured_level_dbfs(str(src), seconds=None, audio_stream=n) for n in (0, 1))
+        self.assertGreater(second["peak_dbfs"] - first["peak_dbfs"], 5.0, "the fixture's tracks differ in level")
+        self.assertEqual(_common.measured_level_dbfs(str(src), seconds=None), first)
+        # a:0 is the sine source's 1/8 amplitude at volume 0.3
+        samples = _common.decode_pcm_mono(str(src), 8000, seconds=1.0)
+        self.assertClose(20 * math.log10(max(abs(x) for x in samples)), first["peak_dbfs"], 1.0)
 
 
 class AudiogramTests(MediaFixtures):
