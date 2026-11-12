@@ -19,24 +19,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Read-only at the top; the one write the analysis needs is granted to its job (Scorecard
+# Token-Permissions).
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload the SARIF to code scanning
     strategy:
       fail-fast: false
       matrix:
         language: [python, javascript]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
 
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: "/language:${{ matrix.language }}"

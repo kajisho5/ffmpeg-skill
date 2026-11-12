@@ -74,6 +74,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
+- [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
+- [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
 <!-- contents:end -->
 
 ## Time limits
@@ -190,9 +192,10 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`escape_drawtext()` drops `'` and `%` from burnt-in text** instead of escaping them. Both
   characters have no reliable escape across the FFmpeg versions in CI; a missing apostrophe is a
   known limitation, a broken filter graph is not. Test: `test_drawtext_semicolon_and_quote_render_as_inert_literal_text`.
-- **`grid.py` and `look.py` composite an HDR input into an 8-bit SDR picture without a tone map.** Both
-  produce comparison/inspection artefacts, not deliverables; `grid.py` prints a note when an input is
-  HDR and points to `color.py --to-sdr` for a graded conversion. `join.py` and `broll.py`, whose output
+- **`grid.py` composites an HDR input into an 8-bit SDR picture without a tone map.** It produces
+  a comparison/inspection artefact, not a deliverable; it prints a note when an input is HDR and
+  points to `color.py --to-sdr` for a graded conversion. (`look.py` shows an HDR frame through
+  `--to-sdr`'s own tone map: "After 3.6.0" below.) `join.py` and `broll.py`, whose output
   is a deliverable, keep the HDR (10-bit HEVC) path. Test: `test_grid_composites_cols_rows_with_labels`.
 - **`look.py -o` is used verbatim only for a single `--at` with an image extension**; several frames,
   or `-o` given as a stem, produce `<stem>_<t>s.png` names. Test: `test_hdr_source_stays_hdr_through_reencodes`.
@@ -413,7 +416,10 @@ exists. When a decision changes, edit the entry in the same PR.
   `batch.py`'s cross-filesystem delivery) writes the descriptor that created the temp
   (`copy_to_sibling()`); ffmpeg opens its temp by name, so a process that may delete entries in
   the output directory could still swap the file between the create and that open, which a
-  sticky shared directory (`/tmp`) and a directory only the caller can write both rule out. A lock's default audit log beside the output
+  sticky shared directory (`/tmp`) and a directory only the caller can write both rule out. A private
+  subdirectory for those temps would not close it either (whoever can rename entries in the output
+  directory can swap the subdirectory for a link, and ffmpeg cannot open relative to a directory
+  descriptor), so this residual case is accepted (#456). A lock's default audit log beside the output
   is opened without following a symlink; a log named with `--audit-log` is opened as named. Code:
   `_common._stage_existing_output()`, `runner.reserve_sibling()`, `emit.audit()`. Test:
   `test_hidden_temp_names_are_never_written_through_a_planted_link`.
@@ -743,6 +749,16 @@ Each item is recorded here so it is not re-proposed from scratch.
   1.14.0, so the demos, the golden frames and every existing test do not move (the filter
   string itself did change: the label moved from `text=` into `textfile=…:expansion=none`) —
   and the new route carries no risk for the 95 % of jobs that never needed it.
+- **SRT markup on `caption.py`'s own ASS route is the set ffmpeg's SRT reader styles, minus
+  free override blocks.** `<i> <b> <u> <s>`, `<font color>` and a `{\anN}` become the overrides
+  ffmpeg writes for them, so `--animate`/`--karaoke` draw what the plain `--srt` route draws. Any
+  other `{\...}` block stays escaped text there, although ffmpeg's SRT route would apply it: cue
+  text (an SRT, `--text`, a transcript) must not be able to `\pos`, `\t` or `\fscx` itself, which
+  1.15 decided and this keeps. An unknown `<tag>` stays text too (ffmpeg removes it), so a
+  caption that says `press <Enter>` is not shortened. Under `--karaoke`, `<font color>` is
+  dropped: the highlight is the primary colour, and the cue's colour would replace it. Tests:
+  `test_srt_markup_becomes_ass_overrides_not_text`,
+  `test_caption_ass_dialogue_text_cannot_forge_override_blocks`.
 
 
 ## 1.16.0 — long-form delivery
@@ -2129,6 +2145,43 @@ under it; the rest of the silent paths are converted onto the same infrastructur
   warning. Code: `batch.cached_output_changed()`, `recipe_key()`. Tests:
   `test_batch_serves_a_cached_output_only_while_it_is_unchanged_and_records_a_reset_cache`,
   `test_batch_recipe_key_records_an_unreadable_project`.
+- **`batch.py --watch` processes a source only once it has settled, and replaces only its own
+  earlier output.** A pass took every file that existed, so a file still being copied into the
+  folder was delivered as the fraction already written (`ok`, and `verified` for an MKV or TS,
+  whose checks compare with the input as read), and once the copy finished every later pass met
+  that output as someone else's and refused it (`output_exists`). A source is processed once it
+  has the same size and mtime as at the previous poll, or, first seen, was last modified at least
+  one interval ago; until then its row is `skipped: "settling"` (`ok: false`, not cached), and a
+  watch stopped there fails with that row, since the file was not processed. One poll interval is
+  the whole rule: a writer that pauses longer than the interval is read early, and the pass after
+  its next write processes the file again. A file an earlier pass of the same watch delivered --
+  the final output and every side file a step wrote, such as caption.py's `.srt` beside the
+  video -- still with the size, mtime and inode it had then, is this run's own file under the
+  overwrite rule above and is replaced without `--overwrite`; one replaced or edited since, or
+  left by an earlier run, is refused as before (`output_exists`); so is one another item of the
+  same run delivered (two items naming one fixed side file). The permission is per item and per
+  path, and is checked where the write happens, not when the item starts: batch.py never hands a step a
+  global `--overwrite` for it (that let `caption.py --text` replace a hand-corrected sidecar
+  because the video was batch's own), it gives each step a snapshot of the files it delivered
+  (`runner.OWNED_ENV`, internal to batch.py), and the step's own output check
+  (`refuse_existing_outputs()`) passes an existing target only while it is still that file and
+  reports back each path it was allowed to write, with the identity each had when it was written
+  (`runner.report_committed()`, called where a write lands); `deliver()` compares the final path's
+  identity again under the output lock and records the one it leaves. An SRT edited while the same
+  item's video was still encoding no longer matches what was written and is refused next pass. A file another process puts there between that check and the
+  write itself is the same window every tool's own `--overwrite` check has. A side file a step
+  writes without that check, or one of an item that failed, is not recorded, so the next pass
+  refuses it. A plain batch (no `--watch`) has no previous poll and processes what is there.
+  Code: `batch.settle_poll()`, `is_own_output()`, `deliver()`, `owned_config()`,
+  `runner.owned_replaceable()`. Tests:
+  `test_batch_watch_waits_for_a_source_to_settle_and_replaces_only_its_own_output`,
+  `test_batch_watch_rechecks_its_own_output_where_it_replaces_it`,
+  `test_batch_watch_step_refuses_its_own_output_replaced_before_its_check`,
+  `test_batch_watch_replaces_its_own_side_files_but_not_an_edited_one`,
+  `test_batch_watch_does_not_adopt_a_side_file_edited_while_the_step_ran`,
+  `test_batch_item_never_replaces_a_side_file_another_item_delivered`,
+  `test_a_step_replaces_only_the_files_batch_delivered_unchanged`,
+  `test_batch_watch_reports_a_source_still_settling_when_it_stops`.
 - **`verify.py` keeps each tool's own failure.** Steps run with `--json`; a failed step keeps the
   tool's `kind`, `reason`, `message`, `details` and `exit_code` (`step_timeout`,
   `step_output_unparsed` where the tool printed none), and the probe of an unreadable file keeps
@@ -3119,6 +3172,26 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   output does not have (a sound-only extract has no subtitle track or timecode to lose).
 - **A chapter list kept but not retimed counts as kept.** The comparison is a count; whether the
   chapters still point at the right moments is a later, per-tool measurement.
+- **A start timecode is compared by its value, and moves with the start of the picture.** FFmpeg
+  copies the video stream's `timecode` tag and the MOV/MP4 muxer rebuilds a tmcd track from it, so
+  a cut from 1 s was stamped with the source's 01:00:00:00 on frame 30 and listed as kept. A tool
+  that starts the output on a later frame writes that frame's label (drop-frame where the source
+  is): a single-range `cut` (its first frame at or after `--start` for a re-encode or an
+  edit-listed copy, the keyframe for a copy that shows its pre-roll), `fit --method trim`,
+  `sync --trim-second` (a padded head counts back before the source's start) and so a
+  `render.py` clip with an `in`. A join of several ranges writes none: a timecode counts on from
+  its first frame, so after the first join every label would name the wrong source frame, and a
+  conform by timecode would land there. A stream copy out of MXF writes none either: its demuxer
+  lands a seek on another keyframe than `cut.seek_keyframe` reads. `source_carry` then lists the
+  timecode as dropped (an MXF, which always writes one, reads 00:00:00:00). The label is read at
+  the source's rate and written at the rate the output is delivered at (`fit --fps`, a VFR source
+  conformed): 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and a fit that changes the rate writes
+  it even without a trim, leaving the source's tmcd track behind. A start before a picture that
+  starts after the file's origin is that picture's first frame; only a padded head counts back.
+  Code: `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Tests:
+  `test_a_tool_that_moves_the_start_moves_the_start_timecode`,
+  `test_the_start_timecode_is_counted_at_the_rate_fit_delivers`,
+  `test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame`.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
   `test_source_carry_says_what_the_output_lost_from_its_source`.
 
@@ -3280,3 +3353,74 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   a last step turns it red, the same shape as the plugin branch: a missing registry entry must
   not undo a release. The first run was the merge of the PR that added the steps (#445): it listed 3.4.3, a
   version released before they existed. Test: `test_mcp_registry_manifest_tracks_the_package_version`.
+
+## After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth
+
+- **`audio.py --downmix` is quieter than its input, by design.** It folds 5.1/7.1 with the
+  ITU-R BS.775 weights (centre and every surround at 0.707, LFE dropped) and pan's `<` scales
+  each side so its gains sum to 1 over the channels the input has: a front channel alone comes out
+  7.7 dB lower on 5.1, 9.9 dB on 7.1, and in-phase channels at full level cannot clip. Through
+  3.6.0 pan's `=` summed 2.7× per side (3.2× on 7.1) with the LFE at 0.5, so a loud 5.1 clipped
+  (flat factor 20+) while the run said verified. A limiter instead of the scale would change the
+  programme's dynamics, and the loudness is `loudness.py`'s job. `--stereo`/`--mono` on more than
+  two channels already went through swresample, which normalises the same way (measured on 6.1:
+  s16, f32 and AAC sources fold in-phase -6 dBFS channels to -6 dBFS). Code:
+  `audio.DOWNMIX_PAN`. Tests: `DownmixLevelTests`.
+- **`--to-sdr` linearises at 100 nits per unit and gives `tonemap` the source peak; `--peak` is a
+  PQ setting.** FFmpeg's `tonemap` reads linear 1.0 as 100 nits (SDR white) and takes `peak` in
+  those units, so the zscale before it uses `npl=100` and the filter gets `peak=--peak/100`: a PQ
+  pixel at `--peak` nits and HLG at 100 % land on Y 235. Through 3.6.0 the zscale used
+  `npl=--peak`, so a 1000-nit pixel arrived as 1.0 (100 nits to the filter): nothing reached white
+  (PQ 1000 nits and HLG 100 % at Y 151, HLG reference white at 91), and raising `--peak` to a
+  brighter master's darkened everything. zimg decodes HLG for a 1000-nit display, so an HLG
+  picture always peaks at 1000 nits there and `--peak` is not applied to it. `look.py` shows an HDR
+  source through the same chain at `--to-sdr`'s defaults (hable, 1000 nits), and a BT.2020 SDR one
+  through the gamut conversion only, so the sheet shows what the conversion would give; with
+  `--compare`, each picture by its own tags (a BT.709 SDR one gets none). Code:
+  `_common/color.py` (`hdr_to_sdr_chain`), `look.display_conversion`. Test:
+  `test_to_sdr_takes_the_source_peak_to_sdr_white`,
+  `test_look_shows_an_hdr_sheet_at_the_to_sdr_levels`,
+  `test_look_compare_converts_each_input_by_its_own_tags`.
+- **An overlay onto a picture deeper than 8 bits, on a line that keeps more than 8 bits, runs at
+  10 bits.** overlay's default format is 8-bit `yuv420`, `format=auto` picks an 8-bit one as soon
+  as a layer is 8-bit, and `drawbox` is 8-bit only on 6.1: through 3.6.0 a cutaway, a redaction,
+  a graphics layer or box, an emoji and a PiP took a 10-bit HDR or ProRes picture to 8 bits before
+  the 10-bit encoder, and `overlay --image`'s RGBA logo took it through 8-bit RGB (Y 402 / Cb 602
+  / Cr 422 came out 400 / 603 / 423, through RGB 399 / 608 / 418). `overlay_format()` names
+  `yuv420p10` (`yuv422p10`/`yuv444p10` for those sources) for such a picture, an 8-bit layer is
+  widened to meet it (bit depth only, no matrix), and graphics.py draws its boxes as layers there.
+  Not changed: an 8-bit main, an SDR H.264 line (its output is 8-bit; a 10-bit SDR source is
+  reduced at the encoder as before), the alpha line (its tool picks the format), and the colour of
+  an RGB layer on an HDR line, which is still FFmpeg's own conversion ("Not converted ... an HDR
+  line" above). `overlay --video --opacity` scales the layer's alpha with `lut` in YUV: the RGB-only
+  `colorchannelmixer` it used made FFmpeg composite the whole main picture in RGB, which came back
+  BT.601 under the BT.709 tag (#333's defect, on the video path; C03028 read 188/42/35 at opacity 1
+  and 199/55/32 at 0.999). Code: `_common/decision.py` (`overlay_format`), `broll`, `redact`,
+  `graphics`, `overlay`, `caption`'s emoji. Tests: `test_an_overlay_onto_a_10_bit_main_keeps_its_low_bits`,
+  `test_a_pip_with_opacity_leaves_the_main_picture_alone`.
+
+## After 3.6.0 — MCP annotations and argument values (audit A9, A10)
+
+- **Over MCP, `probe`, `check` and `cropdetect` refuse `plan`; the property stays listed.** They
+  are annotated `readOnlyHint`, and a client may run a read-only tool without asking; `--plan FILE`
+  was the one file they could still write, and with `--overwrite` it replaced any existing file.
+  The CLI keeps both flags (every tool gets `--plan`, above). The MCP schema keeps both names,
+  because the 3.x promise removes no `inputSchema` property (`mcp_tools.json` pins it), and says in
+  their descriptions that `plan` is refused and `overwrite` has no effect
+  (`_contract.MCP_READ_ONLY_REFUSED`). The server runs these three with
+  `FFMPEG_SKILL_READ_ONLY=1`, which refuses `--plan` after argparse (`read_only_plan_refused`),
+  so a raw `argv` cannot write one under any spelling either. Every other tool is
+  `destructiveHint: true`: its `overwrite` replaces an existing file, which MCP does not count as
+  additive. Code: `_contract.mcp_annotations()`, `_common.apply_common()`. Tests:
+  `test_mcp_annotations_match_what_the_schema_lets_a_call_write`,
+  `test_mcp_read_only_tools_write_no_plan_in_any_spelling`.
+- **A value that starts with `-` is passed as `--flag=value`; others keep `--flag value`.**
+  argparse reads a separate token that starts with `-` as an option, so `{"text": "-50%"}` was
+  refused and an overlay in a project could not start with a minus. Only those values change
+  form, so a call without one records the same argv as before (a plan's `argv`, a `--cache` key);
+  a render stage with a negative number (`loudness.lufs`, `audio.gain`) gets a new cache key once.
+  Positionals that start with `-` follow `--`, after every option. The joined form needs a long
+  flag, so `output` and `loudness.lufs` use `--output` / `--lufs` there. A raw `argv` is passed
+  as given: its caller chose the tokens. Code: `_common.option_args()`, `mcp/server.build_argv()`,
+  render.py's stage commands. Tests: `test_mcp_value_starting_with_a_dash_is_a_value_for_every_tool`,
+  `test_dash_leading_text_over_mcp_and_in_a_render_project`.

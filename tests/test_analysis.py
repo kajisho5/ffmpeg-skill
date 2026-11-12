@@ -230,21 +230,62 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
         self.assertTrue(_is_faststart(out), "sync.py --replace-audio must write +faststart")
 
-    def test_sync_trim_second_stream_copy_writes_faststart_mp4(self):
-        """Same shape as #275/#277, the other stream-copy spot in sync.py: --trim-second's
-        head-trim path (`-c copy`) when the second file has video and started earlier."""
-        early_video = OUT / "early_video.mp4"
-        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-           "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=1.5",
-           "-f", "lavfi", "-i", "aevalsrc=0:s=48000:d=1.5",
-           "-i", self.src, "-filter_complex",
-           "[0:v][2:v]concat=n=2:v=1:a=0[v];[1:a][2:a]concat=n=2:v=0:a=1[a]",
-           "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
-           str(early_video))
+    def test_sync_trim_second_of_a_video_lands_on_the_reference_and_is_faststart(self):
+        """--trim-second stream-copied a second camera that started earlier: the copy began at the
+        keyframe before the trim point and -avoid_negative_ts make_zero showed the frames from it,
+        so a 1 s GOP came out 0.2 s early (a 5 s GOP: nothing trimmed) and was reported as synced.
+        A picture is re-encoded from the frame itself; the written file re-measures at 0, and the
+        MP4 is still faststart (#275/#277)."""
+        ref = make_tones_take(OUT / "sync_trim_ref.mp4", start=1.2, dur=6)
+        take = make_tones_take(OUT / "sync_trim_take_tmp.mp4", start=0.0, dur=7.2)
+        early_video = OUT / "sync_trim_take_g30.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", take, "-c:v", "libx264", "-preset", "veryfast",
+           "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-c:a", "copy", early_video)
         out = OUT / "sync_trim_second_faststart.mp4"
-        script("sync.py", self.src, early_video, "--trim-second", "-o", out)
-        self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
-        self.assertTrue(_is_faststart(out), "sync.py --trim-second's stream-copy branch must write +faststart")
+        data = json.loads(script("sync.py", ref, early_video, "--trim-second", "-o", out, "--json").stdout)
+        self.assertAlmostEqual(data["offset_seconds"], -1.2, delta=0.01, msg=data)
+        self.assertEqual(probe(str(out))["video"]["codec"], "h264")
+        self.assertTrue(_is_faststart(out), "sync.py --trim-second must write +faststart")
+        again = json.loads(script("sync.py", ref, out, "--json").stdout)
+        self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
+        self.assertLess(abs(probe(str(out))["duration"] - 6.0), 0.05, "1.2 s of head trimmed off 7.2 s")
+
+    def test_sync_trim_second_seeks_early_and_drops_the_margin_on_the_output_side(self):
+        """--trim-second re-encoded the picture from an input -ss straight to the trim point. The
+        MP4 demuxer seeks over raw decode times, so on a B-frame HEVC camera a seek just before a
+        keyframe (its dts 0.1 s before its pts) can land on that keyframe and lose the frames
+        before it (cut.py's --accurate did, -ss 9.9 began at 10.0). It now seeks SEEK_MARGIN
+        early and drops the margin on the output side, as cut.py does: every frame from the trim
+        point is there, the sound still lands on the reference, and the start timecode is the
+        first kept frame's."""
+        from _common.decision import SEEK_MARGIN
+        ref = make_tones_take(OUT / "sync_seek_ref.mp4", start=3.92, dur=3)
+        take = make_tones_take(OUT / "sync_seek_take_tmp.mp4", start=0.0, dur=7)
+        cam = OUT / "sync_seek_cam.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=7",
+           "-i", take, "-map", "0:v", "-map", "1:a", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "bframes=4:b-pyramid=1:keyint=60:min-keyint=60:scenecut=0:log-level=error",
+           "-tag:v", "hvc1", "-c:a", "copy", "-timecode", "10:00:00:00", cam)
+        out = OUT / "sync_seek_synced.mov"
+        data = json.loads(script("sync.py", ref, cam, "--trim-second", "-o", out, "--overwrite", "--json").stdout)
+        head = -data["offset_seconds"]
+        self.assertAlmostEqual(head, 3.92, delta=0.01, msg=data)
+        cmd = shlex.split(data["commands"][-1])
+        i = cmd.index("-i")
+        self.assertEqual(cmd[i - 2:i], ["-ss", f"{head - SEEK_MARGIN:.6f}"], cmd)
+        self.assertEqual(cmd[i + 2:i + 4], ["-ss", f"{SEEK_MARGIN:.6f}"], "the margin is dropped on the output side")
+        frames = sh("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                    "stream=nb_read_frames", "-of", "csv=p=0", out).stdout.strip()
+        # frames 118 (3.933 s) .. 209 (6.967 s): every frame from the trim point to the end.
+        # FFmpeg 8's ffprobe prints the stream's section twice in csv ("92\n\n92"): the first
+        # value is the stream's
+        self.assertEqual(int(frames.split()[0]), 210 - 118, frames)
+        got = probe(str(out))
+        self.assertLess(abs((got["video"]["start_time"] or 0.0) - (got["audio"]["start_time"] or 0.0)), 0.03, got)
+        again = json.loads(script("sync.py", ref, out, "--json").stdout)
+        self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
+        tc = sh("ffprobe", "-v", "error", "-show_entries", "stream_tags=timecode", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(sorted(set(tc)), ["10:00:03:28"])
 
     def test_sync_negative_offset_trim_second(self):
         early = OUT / "early.wav"

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately using GitHub's [Report a vulnerability](../../security/advisories/new)
+Please report security issues privately using GitHub's [Report a vulnerability](https://github.com/kajisho5/ffmpeg-skill/security/advisories/new)
 flow (Security tab → Advisories → "Report a vulnerability") rather than a public issue or PR.
 That opens a private advisory only maintainers can see until a fix is ready.
 

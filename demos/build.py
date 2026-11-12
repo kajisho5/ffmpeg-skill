@@ -1699,7 +1699,7 @@ _ROWS = [
      "Two showwavespic plots: the quiet input on the left, the same programme brought up to broadcast level on the right without clipping.",
      demo_loudness, "wave", None),
     ("downmix_51", AUDIO, "5.1 to stereo downmix",
-     "Six discrete tones folded into two channels at the standard coefficients -- the centre and LFE are still audible.",
+     "Six discrete tones folded into two channels with the ITU-R BS.775 weights -- the centre and surrounds are still audible, the LFE is dropped, and nothing clips.",
      demo_downmix_51, "wave", None),
     ("bgm_ducking", AUDIO, "Music bed with ducking",
      "The bed drops by 12 dB whenever the speech-like track is active and comes back up in the pauses.",

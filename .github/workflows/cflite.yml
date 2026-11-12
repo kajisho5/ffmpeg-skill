@@ -1,0 +1,42 @@
+# ClusterFuzzLite: build the fuzz/ targets and fuzz them for a few minutes on each pull request
+# that touches Python, and longer once a week (Scorecard Fuzzing). Each target documents what it
+# accepts as a refusal; anything else is a crash and fails the job.
+# https://google.github.io/clusterfuzzlite/running-clusterfuzzlite/github-actions/
+name: ClusterFuzzLite
+on:
+  pull_request:
+    paths:
+      - "scripts/**.py"
+      - "fuzz/**"
+      - ".clusterfuzzlite/**"
+      - ".github/workflows/cflite.yml"
+  schedule:
+    - cron: '17 3 * * 2'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: ${{ github.event_name == 'schedule' && 1800 || 300 }}
+          mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
+          sanitizer: address
+          output-sarif: false

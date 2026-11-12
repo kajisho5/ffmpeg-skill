@@ -5590,6 +5590,413 @@ class UserReportTests(unittest.TestCase):
                 self.assertIn("odd_dimensions_scaled_even", codes, doc)
 
 
+class CaptionTextFidelityTests(unittest.TestCase):
+    """The words a viewer reads are the words handed in: no text symbol taken for an emoji and cut
+    out, no space lost when a wrap pass moves a break, no SRT tag drawn as text. Each test iterates
+    the class, not the one reported input."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        self.caption = importlib.import_module("caption")
+
+    # ------------------------------------------------------------ text symbols are not emoji
+    def test_text_symbols_are_drawn_by_the_font_not_counted_as_emoji(self):
+        """♪ ✓ ★ are not emoji in Unicode's emoji-data, and ♥ ✔ ☺ are emoji only with VS16:
+        counting the whole Misc Symbols/Dingbats block made SDH music notes "emoji", and an
+        `--emoji none` run (auto on macOS, or on Linux without a colour face) cut them out."""
+        from _common import char_script, emoji_clusters, emoji_codepoint_name, has_emoji
+
+        def names(text):
+            return [emoji_codepoint_name(cl) for _i, cl in emoji_clusters(text)]
+
+        # never emoji: not in emoji-data at all, or text-default with nothing asking for the picture
+        for text in ("♪", "♫", "✓", "★", "☆", "→", "♥", "✔",
+                     "☺", "❤", "☀", "⬆", "\U0001F0A1", "♥︎"):
+            with self.subTest(text=text):
+                self.assertEqual(names(text), [])
+                self.assertEqual(names("a %s b" % text), [])
+                self.assertNotEqual(char_script(text[0]), "emoji")
+        self.assertFalse(has_emoji("♪ La la la ♪ / Done ✓ / ★★★"))
+        # emoji: presentation by default, or asked for with VS16 / a skin tone / inside a ZWJ sequence
+        for text, want in (("✅", ["2705"]), ("✨", ["2728"]), ("⭐", ["2b50"]),
+                           ("⚡", ["26a1"]), ("\U0001F004", ["1f004"]),
+                           ("❤️", ["2764-fe0f"]), ("♥️", ["2665-fe0f"]),
+                           ("✔️", ["2714-fe0f"]), ("☝\U0001F3FD", ["261d-1f3fd"]),
+                           ("\U0001F3C3‍♀️", ["1f3c3-200d-2640-fe0f"]),
+                           ("\U0001F469‍❤️‍\U0001F468", ["1f469-200d-2764-fe0f-200d-1f468"]),
+                           ("⛹️‍♂️", ["26f9-fe0f-200d-2642-fe0f"])):
+            with self.subTest(text=text):
+                self.assertEqual(names(text), want)
+
+    def test_emoji_none_keeps_the_text_symbols_in_the_drawn_text(self):
+        """The reported run: mode none (no face draws emoji here) on an SDH cue. The emoji goes,
+        the music notes and the check mark stay, and only the emoji is counted."""
+        caption = self.caption
+        support = {"mode": "none", "libass_color": False, "libass_glyph": False, "detail": "no face",
+                   "assets": None, "color_font": None, "color_font_file": None, "fix": ""}
+        args = argparse.Namespace(emoji="auto", emoji_assets=None, fonts_dir=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=None), \
+                unittest.mock.patch.object(caption, "warn", lambda *a, **k: None), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(caption.plan_emoji([(0.0, 2.0, "♪ La la la ♪"),
+                                                 (2.0, 4.0, "Done ✓")], args, 640, 360),
+                             ([(0.0, 2.0, "♪ La la la ♪"), (2.0, 4.0, "Done ✓")], None))
+            cues, plan = caption.plan_emoji([(0.0, 2.0, "♪ Party \U0001F389 ★")], args, 640, 360)
+        self.assertEqual(cues[0][2], "♪ Party ★")
+        self.assertEqual((plan["count"], plan["clusters"]), (1, ["1f389"]))
+
+    # ------------------------------------------------------------ a moved break keeps its space
+    @staticmethod
+    def _round_trips(original, lines):
+        """Do `lines` read back as `original`, each break either a space that stood there or a
+        break between two characters written together? Spaces are compared, not stripped."""
+        norm = re.sub(r"\s+", " ", original.strip())
+        pos = 0
+        for k, line in enumerate(lines):
+            if k and norm.startswith(" ", pos) and not norm.startswith(line, pos):
+                pos += 1
+            if not norm.startswith(line, pos):
+                return False
+            pos += len(line)
+        return pos == len(norm)
+
+    def test_wrap_keeps_every_space_through_every_pass_in_every_script(self):
+        """The greedy fill knows whether a space stood at each break; the orphan, weak-line and
+        rebalance passes used to guess it from the script, so a moved break in Korean (spaced, but
+        counted as unspaced) or in Japanese/Chinese written with spaces ran two words together:
+        `늦지마세요`, `したよろしく`, `谢谢大家` -- and the result still said text_unchanged."""
+        C = self.caption
+        corpus = [
+            "오늘 회의는 오후 세시에 시작합니다 "
+            "늦지 마세요 감사합니다",
+            "그럼 내일 다시 이야기해요 네",
+            "はい そうです それでは また あした "
+            "よろしく おねがいします",
+            "我 爱 你 我们 明天 见 好的 谢谢 大家",
+            "Hello 世界 good 你好 morning 早上好 everyone 大家",
+            "A third line the tool times for me",
+            "Done ✓ now \U0001F389 party \U0001F44D yes ok fine",
+        ]
+        for text in corpus:
+            for mode in ("phrase", "measured"):
+                for max_em in [x / 2 for x in range(6, 50)]:
+                    with self.subTest(text=text[:10], mode=mode, max_em=max_em):
+                        lines = C.wrap_text(text, max_em, mode=mode)
+                        self.assertTrue(self._round_trips(text, lines), lines)
+                        wrapped, _greedy, measured = C.wrap_variants(text, max_em, mode=mode)
+                        self.assertTrue(self._round_trips(text, wrapped), wrapped)
+                        self.assertTrue(self._round_trips(text, measured), measured)
+
+    def test_korean_breaks_only_between_words(self):
+        """Korean is written with spaces: a break goes at one, never inside a word (eojeol), unless
+        the word alone is wider than the line (the slice escape hatch, counted as such)."""
+        C = self.caption
+        text = ("오늘 회의는 오후 세시에 시작합니다 "
+                "늦지 마세요 감사합니다")
+        words = text.split(" ")
+        for mode in ("phrase", "measured"):
+            for max_em in (5.0, 6.075, 9.0, 12.0, 19.2):
+                with self.subTest(mode=mode, max_em=max_em):
+                    lines = C.wrap_text(text, max_em, mode=mode, lang="ko")
+                    self.assertEqual(" ".join(lines).split(" "), words, lines)
+        stats = C.layout_cues([(0.0, 4.0, text)], max_em=19.2, max_lines=2, min_duration=0, offset=0,
+                              lang="ko")[1]
+        self.assertNotIn("broken_inside_word", stats)
+
+    # ------------------------------------------------------------ SRT markup is markup on every route
+    def test_srt_markup_becomes_ass_overrides_not_text(self):
+        """What ffmpeg's SRT reader writes for the same cue (`ffmpeg -i tags.srt -f ass -`), with
+        the one difference kept on purpose: other `{\\...}` blocks stay escaped text."""
+        from _ass_overlay import ass_escape_markup, strip_srt_markup
+        cases = {
+            "<i>Hello there</i>": "{\\i1}Hello there{\\i0}",
+            "<B>bold</B> <u>u</u> <s>s</s>": "{\\b1}bold{\\b0} {\\u1}u{\\u0} {\\s1}s{\\s0}",
+            '{\\an8}<font color="#ffff00">Top</font>': "{\\an8}{\\c&H00FFFF&}Top{\\c}",
+            "<font color=red>r</font>": "{\\c&H0000FF&}r{\\c}",
+            "I <3 you {curly} {\\pos(1,1)}p": "I <3 you \\{curly\\} \\{\\pos(1,1)\\}p",
+            "<i>a\nb</i>": "{\\i1}a\\Nb{\\i0}",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(ass_escape_markup(src), want)
+        self.assertEqual(ass_escape_markup('<font color="#ffff00">k</font>', colour=False), "k")
+        self.assertEqual(strip_srt_markup('{\\an8}<font color="#ff0000">Top</font> <b>bold</b>'), "Top bold")
+
+    def test_layout_measures_the_words_and_keeps_the_tags_with_them(self):
+        """The tags take no width (a tagged cue wraps where the plain one does), a break never
+        lands inside `<font color=...>`, and a cue split in two keeps its italics and its {\\anN}
+        on both halves."""
+        C = self.caption
+        plain = "Hello there my good friend how are you today"
+        for src in ("<i>%s</i>" % plain, '{\\an8}<font color="#ffff00">%s</font>' % plain,
+                    "<b>Hello</b> there my <i>good friend</i> how are you <u>today</u>"):
+            for max_em in (6.075, 9.0, 12.96):
+                with self.subTest(src=src[:14], max_em=max_em):
+                    want = C.layout_cues([(0.0, 4.0, plain)], max_em=max_em, max_lines=9,
+                                         min_duration=0, offset=0)[0]
+                    got = C.layout_cues([(0.0, 4.0, src)], max_em=max_em, max_lines=9,
+                                        min_duration=0, offset=0)[0]
+                    self.assertEqual([C.strip_srt_markup(t) for _s, _e, t in got],
+                                     [t for _s, _e, t in want])
+                    self.assertEqual(C.strip_srt_markup(got[0][2]).count("\n"), want[0][2].count("\n"))
+                    for line in got[0][2].split("\n"):
+                        self.assertEqual(line.count("<"), line.count(">"), line)
+        split = C.layout_cues([(0.0, 4.0, "{\\an8}<i>%s</i>" % plain)], max_em=8.0, max_lines=1,
+                              min_duration=0, offset=0)[0]
+        self.assertGreater(len(split), 1)
+        for _s, _e, text in split:
+            self.assertTrue(text.startswith("{\\an8}<i>") and text.endswith("</i>"), text)
+
+    def test_markup_around_whitespace_only_keeps_its_place(self):
+        """A tag pair that encloses no visible character has nothing to anchor to: it stays where
+        the source has it, around the whitespace. Through 3.6.1 the closing tag went after A and
+        the opening one before B, so `A<font color=red> </font>B` coloured B. Tags that enclose a
+        character are anchored as before."""
+        from _ass_overlay import ass_escape_markup, reinsert_srt_markup
+        cases = [
+            ("A<font color=red> </font>B", ["A B"], ["A<font color=red> </font>B"]),
+            ("A<i> </i>B", ["A B"], ["A<i> </i>B"]),
+            ("A<i><b> </b></i>B", ["A B"], ["A<i><b> </b></i>B"]),
+            ('A<font color=blue><font color=red> </font>B</font>', ["A B"],
+             ['A<font color=blue><font color=red> </font>B</font>']),
+            ("A<i></i>B", ["AB"], ["A<i></i>B"]),
+            # the whitespace became the break: the pair goes to the start of the next line, whole
+            ("A<font color=red> </font>B", ["A", "B"], ["A", "<font color=red></font>B"]),
+            # unchanged: each tag anchored to the character it encloses
+            ("<i>A</i> <b>B</b>", ["A B"], ["<i>A</i> <b>B</b>"]),
+            ("<i>A</i> <b>B</b>", ["A", "B"], ["<i>A</i>", "<b>B</b>"]),
+            ("A <font color=red>B</font>", ["A B"], ["A <font color=red>B</font>"]),
+        ]
+        for marked, lines, want in cases:
+            with self.subTest(marked=marked, lines=lines):
+                self.assertEqual(reinsert_srt_markup(marked, lines), want)
+        # the drawn result: B keeps the default colour (the reset comes before it)
+        drawn = ass_escape_markup(reinsert_srt_markup("A<font color=red> </font>B", ["A B"])[0])
+        self.assertTrue(drawn.endswith("{\\c}B"), drawn)
+
+    def test_a_split_cue_takes_its_alignment_from_any_piece(self):
+        """A cue's {\\anN} places the whole cue: a piece cut before the tag is placed by it too.
+        Through 3.6.1 an {\\an8} first met in the second piece was given to that piece only."""
+        from _ass_overlay import carry_srt_markup, srt_alignment
+        for chunks in (["one two", "three {\\an8}four"], ["{\\an8}one", "two"], ["<i>one", "two</i>{\\an7}", "six"]):
+            with self.subTest(chunks=chunks):
+                want = srt_alignment("".join(chunks))
+                out = carry_srt_markup(chunks)
+                self.assertEqual([srt_alignment(p) for p in out], [want] * len(chunks), out)
+        self.assertEqual(carry_srt_markup(["one", "two"]), ["one", "two"])
+        C = self.caption
+        plain = "Hello there my good friend how are you today"
+        split = C.layout_cues([(0.0, 4.0, "%s {\\an8}" % plain)], max_em=8.0, max_lines=1,
+                              min_duration=0, offset=0)[0]
+        self.assertGreater(len(split), 1)
+        for _s, _e, text in split:
+            self.assertEqual(C.srt_alignment(text), 8, text)
+
+    def test_the_generated_ass_route_draws_no_srt_tag(self):
+        """The reported run, on the routes where caption.py writes its own ASS: --animate fade,
+        --karaoke (sweep and word) with --animate pop (the tiktok/reels/shorts templates' pair).
+        No Dialogue carries `<i>`, `<font` or an escaped `\\{\\an8\\}`, the italic and the
+        position are real overrides, and the result still says the text is unchanged."""
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        src = tiny_clip(OUT / "markup_src.mp4", "testsrc2=size=320x180:rate=25", seconds=2, audio=True)
+        srt = OUT / "markup.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n<i>Hello there</i>\n\n"
+                       "2\n00:00:01,000 --> 00:00:02,000\n{\\an8}<font color=\"#ffff00\">Top</font> <b>bold</b>\n\n",
+                       encoding="utf-8")
+        routes = {"fade": ["--animate", "fade"],
+                  "sweep": ["--karaoke", "--karaoke-timing", "even", "--animate", "pop"],
+                  "word": ["--karaoke", "--karaoke-style", "word", "--karaoke-timing", "even"]}
+        for name, extra in routes.items():
+            with self.subTest(route=name):
+                ass = OUT / ("markup_%s.ass" % name)
+                doc = json.loads(script("caption.py", src, "--srt", srt, *extra, "--write-ass", ass,
+                                        "--preset", "ultrafast", "-o", OUT / ("markup_%s.mp4" % name),
+                                        "--overwrite", "--json").stdout)
+                self.assertTrue(doc["caption"]["text_unchanged"], doc["caption"])
+                dialogue = [l for l in ass.read_text(encoding="utf-8-sig").splitlines()
+                            if l.startswith("Dialogue:")]
+                body = "\n".join(dialogue)
+                for literal in ("<i>", "</i>", "<b>", "<font", "\\{\\an8\\}"):
+                    self.assertNotIn(literal, body)
+                self.assertIn("{\\i1}", body)
+                self.assertIn("{\\an8}", body)
+                self.assertIn("Hello", body)
+                if name == "fade":
+                    self.assertIn("{\\c&H00FFFF&}Top", body)
+
+
+class HdrLevelsAndDepthTests(unittest.TestCase):
+    """3.6.1, three defects that leave a run `verified: true` with a wrong picture.
+
+    * --to-sdr (and look.py's HDR sheet) linearised with zscale npl=--peak, while the tonemap filter
+      reads linear 1.0 as 100 nits: no HDR pixel reached SDR white (PQ 1000 nits and HLG 100 % ->
+      Y 151 of 235) and a higher --peak darkened everything.
+    * overlay --video --opacity below 1 scaled the alpha with colorchannelmixer (RGB only), so the
+      whole main picture went through RGB and came back BT.601 under its BT.709 tag.
+    * every overlay onto a 10-bit HDR main (broll, redact blur/pixelate, graphics layers, overlay
+      --video / --image) ran at overlay's 8-bit default (or 8-bit RGB for --image): the whole
+      picture lost its two low bits before the Main10 encoder.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------ fixtures and readers
+    @staticmethod
+    def _patches(name, trc, codes):
+        """256x64 10-bit BT.2020 clip, four 64 px stripes at the limited-range luma `codes`, grey chroma."""
+        path = OUT / name
+        a, b, c, d = codes
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"color=black:s=256x64:r=10:d=1,format=yuv420p10le,"
+           f"geq=lum='if(lt(X,64),{a},if(lt(X,128),{b},if(lt(X,192),{c},{d})))':cb=512:cr=512",
+           "-c:v", "libx265", "-preset", "ultrafast", "-tag:v", "hvc1",
+           "-x265-params", f"lossless=1:colorprim=bt2020:transfer={trc}:colormatrix=bt2020nc:log-level=error", path)
+        return path
+
+    @staticmethod
+    def _yuv_at(video, t, points, depth=8):
+        """[(Y, Cb, Cr)] at each (x, y) of the frame at `t`, as stored (limited-range codes)."""
+        fmt, n = ("yuv420p10le", 2) if depth > 8 else ("yuv420p", 1)
+        size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream=width,height", "-of", "csv=p=0", str(video)],
+                              stdout=subprocess.PIPE, text=True).stdout.strip().split(",")
+        w, h = int(size[0]), int(size[1])
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video), "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", fmt, "-"], stdout=subprocess.PIPE).stdout
+
+        def at(offset):
+            return int.from_bytes(raw[offset * n:offset * n + n], "little")
+        out = []
+        for x, y in points:
+            cw = w // 2
+            out.append((at(y * w + x), at(w * h + (y // 2) * cw + x // 2), at(w * h + w * h // 4 + (y // 2) * cw + x // 2)))
+        return out
+
+    STRIPES = [(32, 32), (96, 32), (160, 32), (224, 32)]
+
+    # ------------------------------------------------------------------ tone map levels
+    def test_to_sdr_takes_the_source_peak_to_sdr_white(self):
+        # PQ 100 / 203 / 1000 / 4000 nits; HLG 50 % / 75 % (BT.2408 reference white) / 100 %
+        pq = self._patches("tm_pq_patches.mp4", "smpte2084", (509, 573, 723, 855))
+        hlg = self._patches("tm_hlg_patches.mp4", "arib-std-b67", (502, 721, 940, 940))
+        self.assertTrue(probe(str(pq))["video"]["hdr"] and probe(str(hlg))["video"]["hdr"], "fixtures are HDR")
+
+        def levels(src, *flags):
+            out = OUT / f"{src.stem}_sdr{'_'.join(flags).replace('-', '')}.mp4"
+            doc = json.loads(script("color.py", src, "--to-sdr", "--fast", "--json", *flags, "-o", out).stdout)
+            self.assertTrue(doc["verified"], doc)
+            return [p[0] for p in self._yuv_at(out, 0.5, self.STRIPES)]
+
+        y = levels(pq)  # --peak 1000
+        self.assertGreaterEqual(y[2], 230, f"a 1000-nit pixel at --peak 1000 is SDR white: {y}")
+        self.assertGreater(y[0], 110, f"100 nits is no longer pushed to the bottom of the range (was Y 73): {y}")
+        y4 = levels(pq, "--peak", "4000")
+        self.assertGreaterEqual(y4[3], 230, f"a 4000-nit pixel at --peak 4000 is SDR white: {y4}")
+        self.assertLess(y4[2], y[2], "a brighter master leaves room above 1000 nits")
+        h = levels(hlg)
+        self.assertGreaterEqual(h[2], 230, f"HLG 100 % is SDR white: {h}")
+        self.assertGreater(h[1], 150, f"HLG reference white is well up the range (was Y 91): {h}")
+        # --peak is a PQ setting: HLG's linear peak is 1000 nits whatever it says
+        self.assertEqual(h, levels(hlg, "--peak", "4000"))
+
+    def test_look_shows_an_hdr_sheet_at_the_to_sdr_levels(self):
+        hlg = self._patches("tm_hlg_look.mp4", "arib-std-b67", (502, 721, 940, 940))
+        png = OUT / "tm_hlg_look.png"
+        script("look.py", hlg, "--at", "0.5", "--width", "256", "--no-timecode", "-o", png)
+        rgb = frame_rgb(png, 0, 160, 32)
+        self.assertGreaterEqual(min(rgb), 240, f"HLG 100 % shows as white on the sheet (was 157): {rgb}")
+
+    def test_look_compare_converts_each_input_by_its_own_tags(self):
+        """`look.py pq.mp4 --compare sdr.mp4`: the PQ picture is tone-mapped and the BT.709 SDR one
+        is shown as it is. Through 3.6.1 the first input's tone map ran on both, so the SDR grey
+        was decoded as PQ and came out near black; the other order kept the PQ picture raw."""
+        pq = self._patches("tm_pq_cmp.mp4", "smpte2084", (509, 573, 723, 855))
+        sdr = OUT / "tm_sdr_cmp.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=0x808080:s=256x64:r=10:d=1",
+           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+           "-qp", "0", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", sdr)
+        self.assertFalse(probe(str(sdr))["video"].get("bt2020_or_hdr"), "fixture is SDR")
+        for first, second, pq_x, sdr_x in ((pq, sdr, 80, 192), (sdr, pq, 208, 64)):
+            with self.subTest(first=first.name):
+                png = OUT / f"tm_cmp_{first.stem}.png"
+                proc = script("look.py", first, "--compare", second, "--at", "0.5", "--width", "256",
+                              "--no-timecode", "-o", png)
+                grey = frame_rgb(png, 0, sdr_x, 16)
+                self.assertTrue(all(abs(c - 128) <= 6 for c in grey), f"the SDR grey is shown as it is: {grey}")
+                white = frame_rgb(png, 0, pq_x, 16)
+                self.assertGreaterEqual(min(white), 230, f"PQ 1000 nits is tone-mapped to white: {white}")
+                self.assertEqual(proc.stderr.count("tone-mapped to SDR for display"), 1, proc.stderr)
+
+    # ------------------------------------------------------------------ PiP opacity colour
+    def test_a_pip_with_opacity_leaves_the_main_picture_alone(self):
+        main = OUT / "op_main709.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=0xC03028:s=320x180:r=30:d=1",
+           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+           "-qp", "0", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", main)
+        pip = tiny_clip(OUT / "op_pip.mp4", "color=0x30B050:s=96x54:r=30")
+        src = self._yuv_at(main, 0.5, [(300, 170)])[0]
+        for opacity in ("1", "0.9", "0.5"):
+            with self.subTest(opacity=opacity):
+                out = OUT / f"op_pip_{opacity}.mp4"
+                proc = script("overlay.py", main, "--video", pip, "--position", "top-left", "--scale", "80",
+                              "--opacity", opacity, "--json", "-o", out)
+                self.assertNotIn("colorchannelmixer", " ".join(json.loads(proc.stdout)["commands"]))
+                got = self._yuv_at(out, 0.5, [(300, 170)])[0]
+                self.assertLessEqual(max(abs(a - b) for a, b in zip(got, src)), 1, f"main away from the PiP: {got} vs {src}")
+        # the PiP is blended at the stated alpha, in YUV: half way between its colour and the main's
+        half = self._yuv_at(OUT / "op_pip_0.5.mp4", 0.5, [(60, 40)])[0]
+        full = self._yuv_at(OUT / "op_pip_1.mp4", 0.5, [(60, 40)])[0]
+        for h, f, m in zip(half, full, src):
+            self.assertLessEqual(abs(h - (f + m) / 2), 3, (half, full, src))
+
+    # ------------------------------------------------------------------ 10-bit through an overlay
+    def test_an_overlay_onto_a_10_bit_main_keeps_its_low_bits(self):
+        """A flat 10-bit PQ picture at Y 402 / Cb 602 / Cr 422 (none a multiple of 4): an 8-bit
+        composite turns them into 400 / 603 / 423 (or, through RGB, 399 / 608 / 418)."""
+        flat = OUT / "d10_flat.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=black:s=320x180:r=30:d=1,format=yuv420p10le,geq=lum=402:cb=602:cr=422",
+           "-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=48000", "-c:v", "libx265", "-preset", "ultrafast",
+           "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
+           "-tag:v", "hvc1", "-c:a", "aac", "-shortest", flat)
+        v = probe(str(flat))["video"]
+        self.assertEqual((v["bit_depth"], v["bt2020_or_hdr"]), (10, True))
+        want = self._yuv_at(flat, 0.1, [(300, 170)], depth=10)[0]
+        self.assertEqual(want, (402, 602, 422), "fixture")
+        pip = tiny_clip(OUT / "d10_pip8.mp4", "color=0x30B050:s=96x54:r=30")
+        logo = OUT / "d10_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red@0.8:s=60x30,format=rgba",
+           "-frames:v", "1", logo)
+        # (tool, arguments, a point the layer does not cover)
+        runs = [
+            ("broll.py", ["--insert", pip, "--at", "0.6", "--duration", "0.3"], (300, 170)),
+            ("broll.py", ["--insert", flat, "--at", "0.6", "--duration", "0.3"], (300, 170)),
+            ("redact.py", ["--x", "10", "--y", "10", "--width", "40", "--height", "40"], (300, 170)),
+            ("redact.py", ["--x", "10", "--y", "10", "--width", "40", "--height", "40", "--mode", "pixelate"], (300, 170)),
+            ("graphics.py", ["--template", "progress", "--start", "0", "--end", "1"], (300, 20)),
+            ("graphics.py", ["--template", "lower-third", "--name", "Name", "--start", "0", "--end", "1"], (300, 20)),
+            ("overlay.py", ["--video", pip, "--position", "top-left", "--scale", "80"], (300, 170)),
+            ("overlay.py", ["--video", pip, "--position", "top-left", "--scale", "80", "--opacity", "0.9"], (300, 170)),
+            ("overlay.py", ["--image", logo, "--position", "top-left"], (300, 170)),
+        ]
+        for i, (tool, args, point) in enumerate(runs):
+            with self.subTest(tool=tool, args=" ".join(map(str, args))):
+                out = OUT / f"d10_{i}_{tool[:-3]}.mp4"
+                doc = json.loads(script(tool, flat, *args, "--json", "-o", out).stdout)
+                self.assertTrue(doc["verified"], doc)
+                self.assertEqual(probe(str(out))["video"]["bit_depth"], 10)
+                got = self._yuv_at(out, 0.1, [point], depth=10)[0]
+                self.assertLessEqual(max(abs(a - b) for a, b in zip(got, want)), 1, f"{tool}: {got} vs {want}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

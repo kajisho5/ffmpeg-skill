@@ -38,6 +38,7 @@ from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            report as alpha_report, source_alpha, tag_args, video_line)
 from _common.decision import keeps_source_tags
+from _common.color import bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402,F401
 
 # the curves of FFmpeg's CPU `tonemap` filter (every version from 5.1 to 9). bt2390 was listed
 # until 2.24 but exists only in tonemap_opencl/libplacebo, so choosing it always failed.
@@ -196,47 +197,6 @@ def lut_legs(meta=None, out_fmt: str = "yuv420p") -> "tuple":
         matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
     return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
             f"scale=out_color_matrix={matrix}:out_range=tv,format={out_fmt}")
-
-
-def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float, desat: float) -> str:
-    v = meta["video"]
-    trc = v.get("color_transfer") or "smpte2084"
-    prim = v.get("color_primaries") or "bt2020"
-    space = v.get("color_space") or "bt2020nc"
-    # zscale needs explicit input tags when the file lacks them
-    chain: List[str] = [
-        f"zscale=tin={trc}:pin={prim}:min={space}:rin={v.get('color_range') or 'tv'}:t=linear:npl={peak:g}",
-        "format=gbrpf32le",
-        "zscale=p=bt709",
-        f"tonemap=tonemap={tonemap}:desat={desat:g}",
-        "zscale=t=bt709:m=bt709:r=tv",
-        "format=yuv420p",
-    ]
-    return ",".join(chain)
-
-
-def bt2020_sdr_to_bt709_chain(meta: dict) -> str:
-    """Gamut conversion only, for BT.2020 primaries on an SDR transfer (probe: `bt2020_or_hdr`
-    true, `hdr_signal` false). Such a file is already display-referred SDR: linearising it with
-    its own transfer, mapping the primaries to BT.709 and re-applying the BT.709 transfer keeps
-    white at white and grey at grey. The tone map the HDR chain adds would treat 100 % SDR white
-    as a fraction of a 1000-nit peak and darken the picture (white Y 235 -> 151, grey 126 -> 90)."""
-    v = meta["video"]
-    trc = v.get("color_transfer") or "bt709"
-    space = v.get("color_space") or "bt2020nc"
-    return ",".join([
-        f"zscale=tin={trc}:pin=bt2020:min={space}:rin={v.get('color_range') or 'tv'}:t=linear",
-        "format=gbrpf32le",
-        "zscale=p=bt709",
-        "zscale=t=bt709:m=bt709:r=tv",
-        "format=yuv420p",
-    ])
-
-
-def is_bt2020_sdr(v: dict) -> bool:
-    """BT.2020 primaries on a non-HDR transfer and no Dolby Vision: gamut-only --to-sdr."""
-    return bool(v.get("bt2020_or_hdr")) and not v.get("hdr_signal") and not v.get("dolby_vision") \
-        and v.get("color_transfer") not in ("smpte2084", "arib-std-b67")
 
 
 # --retag targets: ffprobe's names (colorspace, primaries, transfer) and the ITU-T H.273 code points
@@ -436,7 +396,7 @@ def main() -> int:
                          "(luma 14-241, chroma 5-251) legal range after the 8-bit 4:2:0 conversion, then measure the written "
                          "file's out-of-range share (JSON legalize). --correct with no correction values clamps only")
     ap.add_argument("--tonemap", choices=TONEMAPS, default="hable", help="tone-mapping curve (default hable)")
-    ap.add_argument("--peak", type=float, default=1000.0, help="source peak brightness in nits used for PQ (default 1000)")
+    ap.add_argument("--peak", type=float, default=1000.0, help="the PQ source's peak brightness in nits, the level the tone map takes to SDR white (default 1000; an HLG source peaks at 1000 by definition, so it does not apply there)")
     ap.add_argument("--desat", type=float, default=0.0, help="tonemap desaturation strength (default 0)")
     ap.add_argument("--lut-strength", type=float, default=1.0, help="blend LUT result with the original, 0..1 (default 1)")
     ap.add_argument("--force", action="store_true", help="run --to-sdr even if the file is tagged neither HDR nor BT.2020 (tone-mapped as PQ; a BT.2020 SDR file never needs it)")

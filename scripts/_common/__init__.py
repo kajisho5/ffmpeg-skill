@@ -52,7 +52,7 @@ for _stream in (sys.stdout, sys.stderr):
 # demos/ or evals/ has ever reached for through `_common`.
 
 from _common.runner import (
-    add_common, apply_common, _check_existing_output, refuse_existing_outputs, guard_sidecar, _check_no_overwrite_input, _check_output_path, child_args,
+    add_common, apply_common, _check_existing_output, refuse_existing_outputs, guard_sidecar, _check_no_overwrite_input, _check_output_path, child_args, option_args,
     child_limit, _CHILDREN, _cleanup_partial_output, _cmdline, CODECS, Context, DEFAULT_TIMEOUT,
     _DRAWTEXT_PENDING, _DRAWTEXT_TMPDIR, _drawtext_tmpdir, dry_run_input_pending, _ENCODERS, _env_timeout,
     ERROR_CODE, ERROR_RETRYABLE, EVEN_SCALE, _execute, _fail, ffmpeg_base, ffmpeg_encoders, ffmpeg_exe, _FFMPEG_RELEASE, _FFMPEG_VERSION,
@@ -85,7 +85,7 @@ from _common.decision import (
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
     brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
-    signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, layer_base_chain, matrix_chain, range_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
+    signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
 from _common.asr import (
     ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
@@ -183,7 +183,7 @@ __all__ = [
     "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "LEGAL_RANGE_CHOICES", "LEGAL_RANGES", "legal_limits", "measure_signal_range", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
     "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_matrix_args", "bt709_matrix_filter", "bt709_tag_args", "cfr_args", "_char_em",
-    "char_script", "_check_existing_output", "refuse_existing_outputs", "guard_sidecar", "_check_no_overwrite_input", "_check_output_path", "child_args",
+    "char_script", "_check_existing_output", "refuse_existing_outputs", "guard_sidecar", "_check_no_overwrite_input", "_check_output_path", "child_args", "option_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
     "concat_list_line", "Context", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",
     "filler_spans", "FILLER_WORDS", "FILLER_AMBIGUOUS", "FILLER_DISCOURSE_MARKERS",
@@ -216,7 +216,7 @@ __all__ = [
     "SCRIPTS", "_sdr_bt709", "_set_current_ctx", "_SHAPING_BUILD_CACHE", "SHAPING_SCRIPTS", "shell_quote", "sibling_temp", "still_input_args",
     "_SIGNALS_INSTALLED", "signed_time_arg", "_stage_existing_output", "STATE", "SVT_PRESET", "text_width_em",
     "time_arg", "_timed_out", "_to_float", "_to_int", "_unwatch", "validate_color", "verify_output",
-    "source_codec_video_args", "drawn_chain", "draws_chroma", "drawn_stream_format", "is_neutral_color", "rgb_island", "label_chain", "layer_base_chain", "matrix_chain", "range_chain", "as_limited", "is_full_range", "limited_range_filter", "rgb_chain_to_bt709", "bt709_label_filter", "rgb_to_bt709_filter", "is_rgb", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
+    "source_codec_video_args", "drawn_chain", "draws_chroma", "drawn_stream_format", "is_neutral_color", "rgb_island", "label_chain", "layer_base_chain", "matrix_chain", "overlay_format", "range_chain", "as_limited", "is_full_range", "limited_range_filter", "rgb_chain_to_bt709", "bt709_label_filter", "rgb_to_bt709_filter", "is_rgb", "video_args", "_VS15", "_VS16", "_watch", "WINDOWS_FONTS", "write_plan", "x264_args", "X264_PRESETS",
     "_x264_raw", "_ZWJ",
     "absorb_stage", "audit", "note", "_plan_unbound_inputs", "record_fallback", "record_skip", "refuse", "warn",
     "ASR_ENGINES", "ASR_INSTALL_HINT", "_asr_run", "die_no_engine", "parse_srt", "transcribe",

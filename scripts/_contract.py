@@ -178,8 +178,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
-                                                                    {"capability": "external:whisper", "when": "--filler --transcribe"},
-                                                                    {"capability": "external:parakeet", "when": "--filler --transcribe (English; either engine family satisfies it)"}] + AUDIO_OUT,
+                                                                    {"capability": "external:whisper", "when": "--transcribe (with --filler or a sentence flag)"},
+                                                                    {"capability": "external:parakeet", "when": "--transcribe (with --filler or a sentence flag; English; either engine family satisfies it)"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "join": dict(role="execution", inputs=["two or more video assets, or two or more audio-only assets"], outputs=["concatenated video artifact", "concatenated audio artifact (audio-only inputs, audio output extension)"],
                  required=FF + ["filter:xfade", "filter:acrossfade"],
@@ -289,7 +289,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "caption":   dict(video="conditional", audio="conditional", note="--mode burn (default) always re-encodes both streams to render pixels; --mode mux copies video and audio untouched and only adds a subtitle stream"),
     "overlay":   dict(video="always", audio="always"),
     "graphics":  dict(video="always", audio="always"),
-    "sync":      dict(video="conditional", audio="conditional", note="video is -c:v copy only for --trim-second when the second file started earlier (offset<0) and the copy succeeds; it is re-encoded whenever --replace-audio's stream copy fails, or in --trim-second when the second file started later (offset>=0, the common case) or --fix-drift is used"),
+    "sync":      dict(video="conditional", audio="conditional", note="video is -c:v copy only for --replace-audio (the reference picture) while that copy succeeds; --trim-second always re-encodes a video second file, since a copy would start at the keyframe before the trim point; a sound-only second file that started earlier is stream-copied"),
     "multicam":  dict(video="always", audio="always"),
     "audio":     dict(video="never", audio="always", note="video stream is always -c:v copy when present; this tool's job is the audio"),
     "loudness":  dict(video="never", audio="always"),
@@ -421,6 +421,7 @@ ERROR_REASONS = {
     "input_incomplete": "kind ffmpeg: the input has no index (\"moov atom not found\"): a recording cut off or a copy not finished; --repair cannot rebuild it; details: {}",
     "input_unreadable": "kind ffmpeg: ffmpeg could not read the input as media (\"Invalid data found when processing input\"); details: {}",
     "ffmpeg_unsupported": "kind missing_tool: the ffmpeg/ffprobe on PATH reports a version older than 6.1, which 3.0.0 no longer supports (5.x was deprecated in 2.14.0); details: {version, required}",
+    "read_only_plan_refused": "--plan in a process run with FFMPEG_SKILL_READ_ONLY=1 (mcp/server.py sets it for the tools annotated readOnlyHint: probe, check, cropdetect), which must write no file; details: {plan}",
     "output_exists": "an output already exists and --overwrite was not given; details.outputs: [{path, resolved, size, mtime_ns}]",
     "output_is_input": "the output resolves to the same file as an input; details: {output, input, resolved}",
     "output_is_directory": "the output path is a directory; details: {output}",
@@ -444,9 +445,9 @@ ERROR_REASONS = {
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
     "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or ffmpeg itself reported \"Unknown encoder\" for the encoder the command named (kind ffmpeg; details: {name}; the hint points at doctor)",
-    "asr_engine_missing": "kind missing_tool: --transcribe (caption.py, silence.py --filler) found no local speech-to-text engine; the message lists the install lines; details: {}",
+    "asr_engine_missing": "kind missing_tool: --transcribe (caption.py; silence.py with --filler or a sentence flag) found no local speech-to-text engine; the message lists the install lines; details: {}",
     "encoder_list_unreadable": "--codec av1/prores: the build's encoder list could not be read, so whether it has the encoder is unknown (kind ffmpeg); details: {codec, encoders, error}",
-    "no_speech": "kind input: --transcribe (caption.py, silence.py --filler) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
+    "no_speech": "kind input: --transcribe (caption.py; silence.py with --filler or a sentence flag) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
     "engine_failed": "kind input: --transcribe: an installed speech engine ran and failed (a named --engine, or every engine --engine auto found); details: {engine, detail | engines: [{engine, reason, detail}]}; also top-level reason, engine and detail/engines",
     "english_only": "kind input: --transcribe under --engine auto found only Parakeet engines, which it runs for English speech only, and the language is not English; details: {engine, engines}; also top-level reason, engine and engines",
 }
@@ -618,7 +619,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
             "verified": {"type": "boolean", "description": "true only when the artifact was written, probed, and every self-check the tool ran (verification) met its target; false under --dry-run"},
             "verification": {"type": "array", "items": {"type": "object", "properties": {"step": {"type": "string"}, "ok": {"type": "boolean"}, "stage": {"type": "string"}, "property": {"type": "string"}, "expected": {}, "measured": {}, "delta": {}, "tolerance": {}, "provenance": {"enum": ["specification", "user_specified", "independent_measurement", "input_premeasurement"]}, "attribution": {"enum": ["artifact", "reference", "instrument", "provenance", "unresolved"]}}}, "description": "what the tool itself verified: probe, plus loudness (loudness.py, export platform presets; ok false with reason not_measured when it could not be read), check (render), report.py's sections (loudness, compliance, contact_sheet) and batch.py's items (item). render.py also lists every stage's own steps beyond its artifact probe, tagged with `stage` (a cached stage's as recorded), so its `verified` is the conjunction of every stage's. Since 2.18 a step may carry the property it measured with expected, measured, delta, tolerance and the provenance of the expected value; cut, join and export add a `streams` step comparing the output's video/audio streams with the input's; a step with ok false carries `attribution` (unresolved until a tool knows the cause)"},
             "unverified": {"type": "array", "items": {"type": "string"}, "description": "2.18: the properties of the output this tool did not measure (the unverified range), e.g. caption's rendered_placement; `verified` covers the measured properties only"},
-            "source_carry": {"type": "object", "description": "what the first input carried besides its picture and sound, compared with the written file: {kept: [...], dropped: [...]} over subtitles, chapters, cover_art, audio_channels (a surround source only), creation_time, audio_language, timecode. Present only when the source had at least one of them; absent under --dry-run, for a still or GIF output, and when two or more inputs have a picture or sound. A report, not a check: `verified` does not depend on it. A dropped subtitles/chapters/cover_art/audio_channels also records a source_items_dropped warning"},
+            "source_carry": {"type": "object", "description": "what the first input carried besides its picture and sound, compared with the written file: {kept: [...], dropped: [...]} over subtitles, chapters, cover_art, audio_channels (a surround source only), creation_time, audio_language, timecode (kept only when the written start timecode is the label of the frame the output starts on: the source's own, or moved there by a tool that moved the picture's start; a join of several ranges writes none). Present only when the source had at least one of them; absent under --dry-run, for a still or GIF output, and when two or more inputs have a picture or sound. A report, not a check: `verified` does not depend on it. A dropped subtitles/chapters/cover_art/audio_channels also records a source_items_dropped warning"},
             "diagnostics": DIAGNOSTICS_SCHEMA}
     extra: Dict[str, Any] = {}
     if name == "check":
@@ -666,7 +667,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "hint": {"type": "string", "description": "when nothing sat below --threshold: the track's measured level and the --threshold that would find its pauses"},
                  "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
                  "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, matched_untimed (listed words in the transcript with no usable timing, not removed), matched_too_long (listed words longer than a filler, kept), ...}"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--filler --transcribe under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
+                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--transcribe (with --filler or a sentence flag) under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
     elif name == "sync":
         extra = {"reference": {"type": "string"}, "second": {"type": "string"}, "offset_seconds": {"type": "number"}, "confidence": {"type": "number"}, "meaning": {"type": "string"}, "drift": {"type": "object"},
                  "sources": {"type": "array", "description": "1.18: [{path, offset_s, confidence, drift_ppm}], one per SOURCE; the only per-source shape once more than one SOURCE is given; with --fix-drift each also carries drift_skipped_reason"},
@@ -694,7 +695,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "files": {"type": "array", "description": "one entry per file: {file, probe, steps, skipped}. A step is {step, ok, seconds, error (one line, for the table)}, plus the tool's verified when it completed, and on a failure its own kind, reason, message, details and exit_code (reason step_timeout or step_output_unparsed when the tool printed no failure document); skipped lists the steps that do not apply as {step, reason: quick|no_video|no_audio|not_hdr|not_multichannel|input_unreadable, message}"},
                  "failed": {"type": "integer"}, "total": {"type": "integer"}}
     elif name == "batch":
-        extra = {"results": {"type": "array", "description": "one row per input, every input (an interrupted batch included): ok (every step completed), verified (every step also verified what it wrote; false under --dry-run) and unverified ([{step, tool, failed}] naming the steps that did not); a failed row's error {step, tool, kind, message, code, reason, details, hint, exit_code} from the failing step's own document; diagnostics from its steps (tagged with step); cache_miss {reason: output_missing|output_changed|entry_unverifiable, ...} when a cache entry was not served; skipped \"timeout\" or \"interrupted\" for an item that never started and interrupted true for one stopped while running. A row whose recipe ran cut.py carries cut_reencoded (each cut.py call's reencoded) and cut_reencode_reasons (each reason those calls named, once per call)"},
+        extra = {"results": {"type": "array", "description": "one row per input, every input (an interrupted batch included): ok (every step completed), verified (every step also verified what it wrote; false under --dry-run) and unverified ([{step, tool, failed}] naming the steps that did not); a failed row's error {step, tool, kind, message, code, reason, details, hint, exit_code} from the failing step's own document; diagnostics from its steps (tagged with step); cache_miss {reason: output_missing|output_changed|entry_unverifiable, ...} when a cache entry was not served; skipped \"timeout\" or \"interrupted\" for an item that never started and interrupted true for one stopped while running; under --watch, skipped \"settling\" (ok false, not cached) for a source that changed since the previous poll, or, first seen, was modified within one poll interval: it is processed on a later pass. A row whose recipe ran cut.py carries cut_reencoded (each cut.py call's reencoded) and cut_reencode_reasons (each reason those calls named, once per call)"},
                  "processed": {"type": "integer"}, "total": {"type": "integer"},
                  "cut_stream_copy": {"type": ["object", "null"], "description": "cut.py calls across the folder: {calls, stream_copy, reencoded, stream_copy_rate}; null when no cut.py step ran"},
                  "cut_reencode_reasons": {"type": ["object", "null"], "description": "how many cut.py calls named each reencode_reason ({} when none re-encoded); a re-encoded call whose row came from a cache an earlier 2.x batch wrote, which recorded no reasons, counts as unknown; null when no cut.py step ran"}}
@@ -1759,6 +1760,17 @@ MCP_JSON_EXEMPT = ("look", "probe")
 # them out of every inputSchema (1.10.0-1.x kept them unless FFMPEG_SKILL_MCP_LEAN=1). A client
 # that still sends them is not refused -- build_argv() maps them like any other key.
 MCP_TRANSPORT_FLAGS = ("json", "progress")
+# what a read-only tool's (mcp_read_only: probe, check, cropdetect) MCP inputSchema says of the two
+# keys that would write a file: `plan` is refused over MCP and `overwrite` only governed that plan.
+# The names stay (3.x never removes an inputSchema property); the CLI keeps both working (every
+# tool gets --plan, docs/design-decisions.md).
+MCP_READ_ONLY_REFUSED = {
+    "plan": "refused over MCP (read-only tool; error.reason read_only_plan_refused): this tool writes no file here; run it from the CLI to write a plan",
+    "overwrite": "no effect over MCP: this read-only tool writes no file (it governed --plan, which is refused here)",
+}
+# set by mcp/server.py in the environment of a read-only tool's process: --plan is refused
+# (kind input, error.reason read_only_plan_refused), however the raw argv spells it
+READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # default MCP tools/list surface (roadmap P1-7, shipped 1.18.3): the 42-tool schema dump costs
 # every MCP session context whether it needs it or not. These 12 are the tools eval iterations
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
@@ -1905,6 +1917,13 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
         structured["anyOf"] = one_of[0] if len(one_of) == 1 else [{"allOf": [{"anyOf": g} for g in one_of]}]
     for dest in MCP_TRANSPORT_FLAGS:
         props.pop(dest, None)
+    if mcp_read_only(spec):
+        # a tool that writes no artifact is annotated readOnlyHint; --plan is the one file it could
+        # still write (and --overwrite only governs that file). mcp/server.py runs the tool with
+        # FFMPEG_SKILL_READ_ONLY=1, which refuses --plan however it is spelled; the descriptions say so
+        for dest, text in MCP_READ_ONLY_REFUSED.items():
+            if dest in props:
+                props[dest]["description"] = text
     if structured.get("required"):
         structured["required"] = [d for d in structured["required"] if d not in MCP_TRANSPORT_FLAGS]
         if not structured["required"]:
@@ -1925,14 +1944,23 @@ def mcp_tool(spec: Dict[str, Any]) -> Dict[str, Any]:
             "annotations": mcp_annotations(spec)}
 
 
+def mcp_read_only(spec: Dict[str, Any]) -> bool:
+    """A tool that writes no artifact and does not touch its input: over MCP it writes nothing at
+    all (mcp/server.py refuses its `plan`, see mcp_input_schema), so it is annotated readOnlyHint."""
+    return not (bool(spec.get("produces_artifact")) or bool(spec.get("mutates_input")))
+
+
 def mcp_annotations(spec: Dict[str, Any]) -> Dict[str, Any]:
     """MCP ToolAnnotations (spec 2025-06-18) derived from the ToolSpec flags. Hints only: clients
-    must not treat them as a security boundary. Every tool runs locally (no open world); none edits
-    its input in place; a tool that writes nothing is read-only."""
-    writes = bool(spec.get("produces_artifact")) or bool(spec.get("mutates_input"))
+    must not treat them as a security boundary. Every tool runs locally (no open world). A tool
+    that writes nothing is read-only (mcp_read_only: the server runs it with
+    FFMPEG_SKILL_READ_ONLY=1, which refuses `--plan` however it is spelled). Every other tool is
+    destructive: none edits its input in place, but with `overwrite` it replaces an existing file at its output or plan path, which is not an
+    additive update."""
+    writes = not mcp_read_only(spec)
     return {"title": spec["name"],
             "readOnlyHint": not writes,
-            "destructiveHint": bool(spec.get("mutates_input")),
+            "destructiveHint": writes,
             "idempotentHint": spec.get("idempotency_hint") in ("bit_exact", "content_equivalent", "cached"),
             "openWorldHint": False}
 
@@ -1980,7 +2008,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
             # first time it runs; faster-whisper is a library, so its fetch is made from the skill's own
             # process. A caller that sandboxes the network must know that before a first --transcribe.
             "model_downloads": {
-                "when": "first use of a speech engine (--transcribe; silence.py --filler --transcribe runs it under --dry-run too, caption.py --transcribe does not) whose model is not cached yet; media is never uploaded",
+                "when": "first use of a speech engine (--transcribe; silence.py --transcribe, with --filler or a sentence flag, runs it under --dry-run too, caption.py --transcribe does not) whose model is not cached yet; media is never uploaded",
                 "in_process": {"faster-whisper": "Hugging Face (Systran/faster-whisper-<model>)"},
                 "child_process": {"parakeet-mlx": "Hugging Face (mlx-community/parakeet-*)",
                                   "openai-whisper": "OpenAI (its model checkpoint)"},
@@ -1994,8 +2022,8 @@ def build(detect: bool = True) -> Dict[str, Any]:
                 "canonical": True,
                 "transports": ["cli", "mcp"],
                 "argument_mapping": {
-                    "positional": "listed in input_schema.positional, in order; array values expand to several arguments",
-                    "options": "key -> --key with '_' replaced by '-'; booleans are flags; arrays repeat the flag; input_schema.properties[key].cli lists the accepted spellings",
+                    "positional": "listed in input_schema.positional, in order; array values expand to several arguments; when any of them starts with '-', all of them follow '--' after every option, so none is read as an option",
+                    "options": "key -> --key with '_' replaced by '-'; booleans are flags; arrays repeat the flag; input_schema.properties[key].cli lists the accepted spellings; a value starting with '-' is one token, --long-flag=value (\"-50%\" is text, not an option)",
                     "exceptions": "per tool in mcp.argument_exceptions (key -> flag), e.g. output -> -o, loudness.lufs -> -I, graphics.count_from -> --from",
                     "json": "--json is appended for every tool except look and probe (probe prints JSON by default)",
                 },

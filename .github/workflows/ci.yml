@@ -47,14 +47,15 @@ jobs:
     runs-on: ${{ matrix.python == '3.10' && startsWith(matrix.os, 'ubuntu') && 'ubuntu-24.04' || matrix.os }}
     name: test (${{ matrix.os }}, py${{ matrix.python }}, ${{ matrix.part }}/3)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history (not the default shallow depth-1 clone): test_contract.py's
           # test_changelog_mentions_every_closed_issue_since_last_tag walks git log back to the
           # latest tag to check CHANGELOG.md against "Closes #N" in commit bodies -- a shallow
           # clone would make that check silently a no-op (no tag reachable to diff against).
           fetch-depth: 0
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install ffmpeg (Linux)
@@ -106,7 +107,7 @@ jobs:
           # that is reported, not hidden, but the listings must still be uploaded
           python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
           cat listings/doctor.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ffmpeg-listings-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.part }}
@@ -139,8 +140,9 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg python3 fonts-dejavu-core git nodejs ca-certificates
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: ffmpeg version, listings and doctor
         run: |
@@ -152,7 +154,7 @@ jobs:
           ffmpeg -hide_banner -bsfs > listings/ffmpeg_bsfs.txt
           python3 scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
           cat listings/doctor.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ffmpeg-listings-debian-trixie-ffmpeg7-${{ matrix.part }}

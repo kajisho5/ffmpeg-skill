@@ -525,7 +525,7 @@ def main() -> int:
             # comes back at a level nobody checked.
             ch = a.get("channels") or 0
             row("channels", "PASS" if ch in (1, 2) else "WARN", f"{ch}ch", "1 (mono) or 2 (stereo)",
-                "audio.py --downmix (5.1/7.1 to stereo with the standard weights) or audio.py --mono",
+                "audio.py --downmix (5.1/7.1 to stereo with the ITU-R BS.775 weights) or audio.py --mono",
                 reason="podcast players downmix 5.1 unpredictably")
     if args.platform == "podcast":
         chapters = meta.get("chapters") or []

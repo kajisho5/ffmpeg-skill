@@ -1,4 +1,5 @@
-# Keeps GitHub Actions pins (actions/checkout@v4, release-drafter@v6, etc.) and package.json's
+# Keeps GitHub Actions pins (each `uses:` is a commit SHA with its tag in a comment; Dependabot
+# updates both) and package.json's
 # npm metadata current, opening a PR for each update instead of letting either go stale silently.
 # There's no requirements.txt/pyproject.toml to watch here -- scripts/ is deliberately Python
 # 3.10+ standard library only, no third-party runtime dependencies (see README).

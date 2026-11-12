@@ -56,7 +56,8 @@ at source colour: `export.py --preset prores` does not retag.
 
 What else the source carried is compared on every write: `source_carry: {kept, dropped}` lists
 subtitles, chapters, a cover picture, surround channels, `creation_time`, the audio language tag
-and the start timecode, and a lost subtitle track, chapter list, cover picture or surround layout
+and the start timecode (kept only when it labels the output's first frame: a cut from a later
+frame moves it there, a join of several ranges writes none), and a lost subtitle track, chapter list, cover picture or surround layout
 is a `source_items_dropped` warning. Read it before telling the user the file is complete; to
 carry the items over, use the tool that keeps them (`export.py` keeps subtitle tracks,
 `metadata.py` writes chapters and tags).

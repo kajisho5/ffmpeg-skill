@@ -29,7 +29,11 @@ ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, 
 # a word. A Thai run is therefore one atom, broken only at the spaces (or the manual `|`) the
 # writer put there; an over-long run stays long on its own line, the rule long Latin words
 # already follow.
-NO_SPACE_SCRIPTS = ("ja", "zh", "ko")
+# Korean is NOT here: it is written with spaces between words (eojeol), so a Hangul run is a word
+# like a Latin one -- broken at its spaces, and cut inside only by _slice_atom's escape hatch.
+# Per-character atoms broke `시작|합니다` and, once a pass moved the break, joined the halves
+# with no space (`늦지마세요`) while the result said text_unchanged.
+NO_SPACE_SCRIPTS = ("ja", "zh")
 NO_BOUNDARY_SCRIPTS = ("th",)   # per-character breaking would chop words: keep the run whole
 
 
@@ -304,9 +308,11 @@ def _join(left: str, atom: str, spaced: bool) -> str:
 
 
 def _break_spaced(first: str, second: str) -> bool:
-    """Did a space stand at the break between these two wrapped lines? Only spaced scripts put one
-    there -- a CJK/Thai break sits between two characters that were written with nothing between
-    them, and re-joining them with a space would insert a character the cue never had."""
+    """A guess at whether a space stood at the break between these two wrapped lines, from the
+    scripts on each side. The wrapper's own passes do not use it: the greedy fill records the real
+    answer per break (`gaps`) and every pass carries it along, because a script cannot tell -- a
+    Japanese cue written with spaces (`はい そうです`) lost one whenever a pass moved a break that
+    stood at a space. Kept as the fallback for a caller that has only the two strings."""
     if not first or not second:
         return False
     return char_script(first[-1]) not in NO_SPACE_SCRIPTS and char_script(second[0]) not in NO_SPACE_SCRIPTS \
@@ -477,7 +483,18 @@ def best_break(atoms: "Sequence[Tuple[str, bool]]", max_em: float,
     return None if best is None else best[1]
 
 
-def _fix_orphans(lines: "List[str]", max_em: float) -> "List[str]":
+def _gaps(lines: "List[str]", gaps: "Optional[List[bool]]") -> "List[bool]":
+    """The per-break space flags a pass reads and updates: the caller's list (updated in place, so
+    the next pass sees the moved breaks), or the _break_spaced() guess when the caller has none."""
+    if gaps is None:
+        return [_break_spaced(a, b) for a, b in zip(lines, lines[1:])]
+    if len(gaps) != max(len(lines) - 1, 0):
+        raise ValueError("gaps must hold one flag per break")
+    return gaps
+
+
+def _fix_orphans(lines: "List[str]", max_em: float,
+                 gaps: "Optional[List[bool]]" = None) -> "List[str]":
     """No last line that is a single stranded atom.
 
     Greedy wrapping leaves one character alone whenever the line before it filled exactly: eval 14
@@ -486,6 +503,7 @@ def _fix_orphans(lines: "List[str]", max_em: float) -> "List[str]":
     onto it -- but only while the result still fits and the line above does not become an orphan
     itself, so a two-word cue is never made worse."""
     lines = list(lines)
+    gaps = _gaps(lines, gaps)
     for _ in range(len(lines)):
         if len(lines) < 2:
             break
@@ -499,14 +517,16 @@ def _fix_orphans(lines: "List[str]", max_em: float) -> "List[str]":
         new_prev = ""
         for atom, sp in prev[:-1]:
             new_prev = _join(new_prev, atom, sp)
-        new_last = _join(moved, tail[0][0], _break_spaced(lines[-2], lines[-1]))
+        new_last = _join(moved, tail[0][0], gaps[-1])
         if text_width_em(new_last) > max_em or text_width_em(new_prev) < ORPHAN_MIN_EM:
             break
         lines[-2], lines[-1] = new_prev, new_last
+        gaps[-1] = spaced
     return lines
 
 
-def _fix_weak_lines(lines: "List[str]", max_em: float) -> "List[str]":
+def _fix_weak_lines(lines: "List[str]", max_em: float,
+                    gaps: "Optional[List[bool]]" = None) -> "List[str]":
     """R2, generalised: _fix_orphans run at *every* boundary, against _is_weak_line.
 
     1.15 only ever looked at the last line, so a stranded digit or kana in the middle of a
@@ -514,6 +534,7 @@ def _fix_weak_lines(lines: "List[str]", max_em: float) -> "List[str]":
     of the line above moves down onto it -- with 1.15's two guards intact (the result must still
     fit, and the line above must not itself become weak), so the line count never changes."""
     lines = list(lines)
+    gaps = _gaps(lines, gaps)
     for i in range(len(lines) - 1, 0, -1):
         for _ in range(len(lines)):
             if not _is_weak_line(lines[i]):
@@ -521,19 +542,21 @@ def _fix_weak_lines(lines: "List[str]", max_em: float) -> "List[str]":
             prev = _atoms(lines[i - 1])
             if len(prev) < 2:
                 break
-            moved, _spaced = prev[-1]
+            moved, spaced = prev[-1]
             new_prev = ""
             for atom, sp in prev[:-1]:
                 new_prev = _join(new_prev, atom, sp)
-            new_last = _join(moved, lines[i], _break_spaced(lines[i - 1], lines[i]))
+            new_last = _join(moved, lines[i], gaps[i - 1])
             if text_width_em(new_last) > max_em or _is_weak_line(new_prev) \
                     or text_width_em(new_prev) < ORPHAN_MIN_EM:
                 break
             lines[i - 1], lines[i] = new_prev, new_last
+            gaps[i - 1] = spaced
     return lines
 
 
-def _rebalance(lines: "List[str]", max_em: float) -> "List[str]":
+def _rebalance(lines: "List[str]", max_em: float,
+               gaps: "Optional[List[bool]]" = None) -> "List[str]":
     """Move each break to the one that minimises the widest line of the pair, without changing the
     line count.
 
@@ -544,11 +567,12 @@ def _rebalance(lines: "List[str]", max_em: float) -> "List[str]":
     if len(lines) < 2:
         return lines
     out = list(lines)
+    gaps = _gaps(out, gaps)
     for i in range(len(out) - 1):
         first, second = out[i], out[i + 1]
         tail_atoms = _atoms(second)
         if tail_atoms:
-            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
+            tail_atoms[0] = (tail_atoms[0][0], gaps[i])
         atoms = _atoms(first) + tail_atoms
         if not atoms or any(char_script(ch) in NO_SPACE_SCRIPTS for ch in first + second):
             continue
@@ -568,13 +592,15 @@ def _rebalance(lines: "List[str]", max_em: float) -> "List[str]":
                 continue
             key = (max(wa, wb), abs(wa - wb))
             if best is None or key < best[0]:
-                best = (key, a, b)
+                best = (key, a, b, atoms[cut][1])
         if best is not None:
             out[i], out[i + 1] = best[1], best[2]
+            gaps[i] = best[3]
     return out
 
 
-def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") -> "Tuple[List[str], int]":
+def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]",
+                      gaps: "Optional[List[bool]]" = None) -> "Tuple[List[str], int]":
     """_rebalance with R1-R4 deciding, for every script rather than spaced ones only.
 
     Returns the new lines and how many breaks a phrase rule moved away from the position 1.15's
@@ -582,12 +608,13 @@ def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") 
     if len(lines) < 2:
         return list(lines), 0
     out = list(lines)
+    gaps = _gaps(out, gaps)
     moved = 0
     for i in range(len(out) - 1):
         first, second = out[i], out[i + 1]
         tail_atoms = _atoms(second)
         if tail_atoms:
-            tail_atoms[0] = (tail_atoms[0][0], _break_spaced(first, second))
+            tail_atoms[0] = (tail_atoms[0][0], gaps[i])
         atoms = _split_hyphens(_atoms(first) + tail_atoms)
         if len(atoms) < 2:
             continue
@@ -602,11 +629,13 @@ def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]") 
         if (a, b) != (first, second):
             moved += 1
         out[i], out[i + 1] = a, b
+        gaps[i] = atoms[cut][1]
     return out, moved
 
 
 def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
-                   sliced: "Optional[List[int]]" = None) -> "List[str]":
+                   sliced: "Optional[List[int]]" = None,
+                   gaps: "Optional[List[bool]]" = None) -> "List[str]":
     """The greedy fill on its own: the line count every mode must keep.
 
     `slice_overlong` (off by default -- only caption.py's final burn-in pass turns it on, never
@@ -615,47 +644,65 @@ def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
     katakana run that already fits is completely untouched -- is hard-sliced by _slice_atom()
     instead of kept whole. `sliced`, when given, gets one entry (the number of extra lines that
     one atom produced) per atom actually sliced, which is how the caller counts
-    `broken_inside_word` without re-deriving it from the output lines."""
+    `broken_inside_word` without re-deriving it from the output lines.
+
+    `gaps`, when given, is filled with one flag per break: did a space stand there in `raw`? The
+    passes in _balance() carry it, so a break they move keeps (or drops) exactly that space."""
     current = ""
+    current_gap = False   # did a space stand before `current`'s first atom
     chunk: "List[str]" = []
-    for atom, spaced in _atoms(raw):
-        if slice_overlong and not current and text_width_em(atom) > max_em:
+    breaks: "List[bool]" = []
+
+    def emit(line: str, gap_before: bool) -> None:
+        if chunk:
+            breaks.append(gap_before)
+        chunk.append(line)
+
+    def start_line(atom: str, spaced: bool) -> "Tuple[str, bool]":
+        """The new current line opening with `atom`, sliced first when it is too wide alone."""
+        if slice_overlong and text_width_em(atom) > max_em:
             pieces = _slice_atom(atom, max_em)
             if sliced is not None and len(pieces) > 1:
                 sliced.append(len(pieces) - 1)
-            chunk.extend(pieces[:-1])
-            current = pieces[-1]
+            if len(pieces) > 1:
+                emit(pieces[0], spaced)
+                for piece in pieces[1:-1]:
+                    emit(piece, False)
+                return pieces[-1], False
+        return atom, spaced
+
+    for atom, spaced in _atoms(raw):
+        if not current:
+            current, current_gap = start_line(atom, spaced)
             continue
         candidate = _join(current, atom, spaced)
-        if current and text_width_em(candidate) > max_em:
-            chunk.append(current)
-            if slice_overlong and text_width_em(atom) > max_em:
-                pieces = _slice_atom(atom, max_em)
-                if sliced is not None and len(pieces) > 1:
-                    sliced.append(len(pieces) - 1)
-                chunk.extend(pieces[:-1])
-                current = pieces[-1]
-            else:
-                current = atom
+        if text_width_em(candidate) > max_em:
+            emit(current, current_gap)
+            current, current_gap = start_line(atom, spaced)
         else:
             current = candidate
     if current:
-        chunk.append(current)
+        emit(current, current_gap)
+    if gaps is not None:
+        gaps[:] = breaks
     return chunk
 
 
-def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]") -> "List[str]":
+def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]",
+             gaps: "Optional[List[bool]]" = None) -> "List[str]":
     """The post-passes for one greedy chunk, in the mode's own order. Never changes the count:
     a pass that would is discarded, exactly as 1.15 did."""
     if len(chunk) < 2:
         return chunk
+    gaps = list(gaps) if gaps is not None else None
     if mode == "measured":
-        fixed = _fix_orphans(chunk, max_em)
-        rebalanced = _rebalance(fixed, max_em)
+        fixed = _fix_orphans(chunk, max_em, gaps)
+        rebalanced = _rebalance(fixed, max_em, list(gaps) if gaps is not None else None)
     else:
-        fixed = _fix_weak_lines(_fix_orphans(chunk, max_em), max_em)
-        rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang)
-        rebalanced = _fix_weak_lines(rebalanced, max_em)
+        fixed = _fix_weak_lines(_fix_orphans(chunk, max_em, gaps), max_em, gaps)
+        later = list(gaps) if gaps is not None else None
+        rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang, later)
+        rebalanced = _fix_weak_lines(rebalanced, max_em, later)
     if len(rebalanced) == len(chunk):
         return rebalanced
     return fixed if len(fixed) == len(chunk) else chunk
@@ -681,8 +728,9 @@ def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "ph
     for raw in text.split("\n"):
         if not raw.strip():
             continue
-        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced)
-        lines.extend(_balance(chunk, max_em, mode, lang) if balance else chunk)
+        gaps: "List[bool]" = []
+        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced, gaps=gaps)
+        lines.extend(_balance(chunk, max_em, mode, lang, gaps) if balance else chunk)
     return lines or [text]
 def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
                   lang: "Optional[str]" = None, slice_overlong: bool = False,
@@ -701,10 +749,12 @@ def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
     for raw in text.split("\n"):
         if not raw.strip():
             continue
-        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced)
+        gaps: "List[bool]" = []
+        chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced, gaps=gaps)
         greedy.extend(chunk)
-        wrapped.extend(_balance(list(chunk), max_em, mode, lang))
-        measured.extend(chunk if mode == "measured" else _balance(list(chunk), max_em, "measured", None))
+        wrapped.extend(_balance(list(chunk), max_em, mode, lang, gaps))
+        measured.extend(chunk if mode == "measured"
+                        else _balance(list(chunk), max_em, "measured", None, gaps))
     if not greedy:
         greedy = [text]
     return (wrapped or [text], greedy, measured or [text])
