@@ -18,11 +18,13 @@ import argparse
 import re
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
 from _common.emit import note, warn
 from _common.probe import display_size, square_pixels_note
+from _common.timeline import TimelineError, exact_rate
 
 
 def even(n: float) -> int:
@@ -32,6 +34,27 @@ def even(n: float) -> int:
 
 def _concat_list_line(path: Path) -> str:
     return concat_list_line(str(path))
+
+
+def frame_durations(count: int, rate: Fraction) -> list:
+    """The concat-list duration of each of `count` frames at `rate`, in whole microseconds: frame
+    i lasts round(start(i+1)) - round(start(i)) with start(i) = i/rate, each position rounded
+    once, so the demuxer's running sum is frame i's exact start to within half a microsecond at
+    every frame (#474: 1/30 written 0.033333 fell 3.3e-7 s behind per frame, half a frame after
+    about 50,000 frames)."""
+    def at(i: int) -> int:
+        return round(i * 1_000_000 / rate)
+    return [at(i + 1) - at(i) for i in range(count)]
+
+
+def concat_list(frames: list, rate: Fraction) -> str:
+    """The concat-demuxer list for `frames` (paths) shown one frame each at `rate`."""
+    lines = []
+    for f, us in zip(frames, frame_durations(len(frames), rate)):
+        lines.append(_concat_list_line(f))
+        lines.append(f"duration {us // 1_000_000}.{us % 1_000_000:06d}")
+    lines.append(_concat_list_line(frames[-1]))  # concat demuxer: last entry's duration is ignored, so repeat it
+    return "\n".join(lines)
 
 
 def natural_key(name: str) -> list:
@@ -70,6 +93,10 @@ def main() -> int:
 
     if args.fps <= 0:
         die("--fps must be > 0")
+    try:
+        rate = exact_rate(args.fps)  # 29.97 is 30000/1001, as every other tool reads it
+    except TimelineError as exc:
+        die(f"--fps: {exc}")
     directory = Path(args.dir)
     if not directory.is_dir():
         die(f"--dir not found or not a directory: {args.dir}")
@@ -123,27 +150,20 @@ def main() -> int:
         out_w, out_h = even(sw), even(sh)
 
     output = args.output or default_output(str(directory).rstrip("/\\") or "sequence", "sequence", "mp4")
-    frame_duration = 1.0 / args.fps
-
     with tempfile.TemporaryDirectory(prefix="ffmpeg-skill-sequence-") as tmp:
         list_path = Path(tmp) / "frames.txt"
-        lines = []
-        for f in frames:
-            lines.append(_concat_list_line(f.resolve()))
-            lines.append(f"duration {frame_duration:.6f}")
-        lines.append(_concat_list_line(frames[-1].resolve()))  # concat demuxer: last entry's duration is ignored, so repeat it
-        list_path.write_text("\n".join(lines), encoding="utf-8")
+        list_path.write_text(concat_list([f.resolve() for f in frames], rate), encoding="utf-8")
 
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", str(list_path)]
-        vf = [f"scale={out_w}:{out_h}", "setsar=1", f"fps={args.fps:g}"]
+        vf = [f"scale={out_w}:{out_h}", "setsar=1", f"fps={rate.numerator}/{rate.denominator}"]
         cmd += ["-vf", ",".join(vf)]
         # RGB (PNG) frames are converted to the BT.709 the line is tagged with (the first frame's probe)
         cmd += video_args(None, args.crf, args.preset, source=frame_meta)
         # The concat demuxer's trailing repeated-last-file trick (needed so the last real file's
         # duration line takes effect) has been observed to produce an extra frame's worth of
         # duration on some ffmpeg builds -- force the exact intended length rather than trust it.
-        total_duration = len(frames) * frame_duration
-        cmd += ["-t", f"{total_duration:.6f}", "-an", output]
+        total_us = sum(frame_durations(len(frames), rate))
+        cmd += ["-t", f"{total_us // 1_000_000}.{total_us % 1_000_000:06d}", "-an", output]
         run(cmd)
 
     result = probe(output, role="output")

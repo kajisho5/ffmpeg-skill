@@ -15,6 +15,15 @@
   before the replace and refuse a changed or new file (`kind: input`, `reason: output_exists`),
   removing the new output's temp. `--overwrite` still replaces whatever is at the path.
 
+- **`sequence.py` keeps every frame on its frame grid in a long sequence** (#474). Each image was
+  written to the concat list as `duration 0.033333` at 30 fps, 3.3e-7 s short of 1/30, and the
+  demuxer adds the durations up: after about 50,000 frames (28 minutes) the running total was half a
+  frame behind and a frame could be dropped or repeated; 29.97 and 23.976 drifted the same way.
+  Each duration is now the difference of two frame positions at the exact rate, each rounded once
+  to the microsecond, so the total stays within half a microsecond of the frame's time. `--fps 29.97`
+  and `23.976` are read as 30000/1001 and 24000/1001, as the other tools read them, and the output
+  is tagged at that rate.
+
 ### Changed
 
 - **A version that was tagged but never reached npm can be finished from CI** (#448). A release
