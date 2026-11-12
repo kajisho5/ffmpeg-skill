@@ -3348,9 +3348,12 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   brighter master's darkened everything. zimg decodes HLG for a 1000-nit display, so an HLG
   picture always peaks at 1000 nits there and `--peak` is not applied to it. `look.py` shows an HDR
   source through the same chain at `--to-sdr`'s defaults (hable, 1000 nits), and a BT.2020 SDR one
-  through the gamut conversion only, so the sheet shows what the conversion would give. Code:
-  `_common/color.py` (`hdr_to_sdr_chain`). Test: `test_to_sdr_takes_the_source_peak_to_sdr_white`,
-  `test_look_shows_an_hdr_sheet_at_the_to_sdr_levels`.
+  through the gamut conversion only, so the sheet shows what the conversion would give; with
+  `--compare`, each picture by its own tags (a BT.709 SDR one gets none). Code:
+  `_common/color.py` (`hdr_to_sdr_chain`), `look.display_conversion`. Test:
+  `test_to_sdr_takes_the_source_peak_to_sdr_white`,
+  `test_look_shows_an_hdr_sheet_at_the_to_sdr_levels`,
+  `test_look_compare_converts_each_input_by_its_own_tags`.
 - **An overlay onto a picture deeper than 8 bits, on a line that keeps more than 8 bits, runs at
   10 bits.** overlay's default format is 8-bit `yuv420`, `format=auto` picks an 8-bit one as soon
   as a layer is 8-bit, and `drawbox` is 8-bit only on 6.1: through 3.6.0 a cutaway, a redaction,

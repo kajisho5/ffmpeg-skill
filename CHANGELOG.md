@@ -77,7 +77,9 @@
   across `--max-lines` keeps its italics and position on every part. Any other tag or `{...}`
   block stays escaped text, as before; under `--karaoke` a `<font color>` is dropped for the
   highlight's colours, and `--karaoke-style word` no longer resets the cue's style (`{\r}`) after
-  the active word.
+  the active word. A tag pair around whitespace alone (`A<font color=red> </font>B`)
+  stays around it through the wrap, rather than styling the next word, and a `{\an8}` that a
+  `--max-lines` split puts in a later part places the earlier parts too.
 - **`speedramp.py`: a sped-up segment no longer leaves the rest of the picture late.** `setpts`
   kept each sped-up frame's unscaled duration, and the concat started the next segment after it:
   a 2x segment followed by a 1x one showed every later frame two frames (67 ms) after its sound
@@ -115,7 +117,9 @@
   linearises at `npl=100` and passes `peak=--peak/100` (HLG: always 1000 nits, the peak zimg
   decodes it to), so a PQ pixel at `--peak` nits and HLG at 100 % land on Y 235. `look.py` used
   the same `npl=1000` chain for HDR sheets and tone-mapped a BT.2020 SDR source too; it now uses
-  `--to-sdr`'s chains at their defaults.
+  `--to-sdr`'s chains at their defaults. `look.py --compare` converts each picture by its own
+  tags: the first input's tone map ran on both, so an SDR clip beside a PQ one was read as PQ
+  (and an HDR clip given second was shown untone-mapped).
 - **`overlay.py --video --opacity` below 1 no longer shifts the colours of the whole frame.** The
   alpha was scaled with `colorchannelmixer`, which takes RGB only, so FFmpeg composited the main
   picture in RGB and it came back BT.601 under its BT.709 tag (the defect 2.10.2 removed from

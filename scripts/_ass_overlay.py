@@ -216,15 +216,25 @@ def reinsert_srt_markup(marked: str, lines: "Sequence[str]") -> "List[str]":
     break between two characters), so each tag is anchored to a character: a closing tag right
     after the visible character before it, any other tag right before the visible character after
     it. Lines that do not hold the stripped text in order come back unchanged (markup dropped):
-    tags would otherwise land in the wrong word."""
+    tags would otherwise land in the wrong word.
+
+    A tag pair that encloses no visible character (`A<font color=red> </font>B`) has no character
+    to anchor to, and the rule above would put its closing tag after A and its opening tag before
+    B, colouring B. In a gap between two visible characters that holds such a pair, the tags keep
+    their source order instead: those before the pair's closing tag go right after the character
+    before the gap, the rest right before the character after it (both at the start of the next
+    line when the gap's whitespace became the break)."""
     tokens = srt_markup_tokens(marked)
     if not any(markup for markup, _p in tokens):
         return list(lines)
     # (line, column) of every non-space character of the wrapped lines, in reading order
     slots = [(li, ci) for li, line in enumerate(lines) for ci, ch in enumerate(line) if not ch.isspace()]
+    if not slots:
+        return list(lines)
+    split_at = _empty_pair_splits(tokens)
     inserts: "Dict[Tuple[int, int], List[str]]" = {}
     seen = 0   # non-space visible characters passed so far
-    for markup, piece in tokens:
+    for index, (markup, piece) in enumerate(tokens):
         if not markup:
             for ch in piece:
                 if ch.isspace():
@@ -233,14 +243,21 @@ def reinsert_srt_markup(marked: str, lines: "Sequence[str]") -> "List[str]":
                     return list(lines)
                 seen += 1
             continue
-        closing = piece.lstrip("< \t").startswith("/")
-        if not slots:
-            return list(lines)
-        if (closing and seen) or seen >= len(slots):
-            li, ci = slots[seen - 1]
-            key = (li, ci + 1)
+        after_prev = (slots[seen - 1][0], slots[seen - 1][1] + 1) if seen else None
+        before_next = slots[seen] if seen < len(slots) else None
+        split = split_at.get(seen)
+        if split is not None:
+            # this gap holds a pair that encloses no visible character: keep the source order
+            if after_prev is None or before_next is None:
+                key = after_prev or before_next
+            elif after_prev[0] != before_next[0]:
+                key = before_next
+            else:
+                key = after_prev if index < split else before_next
+        elif piece.lstrip("< \t").startswith("/") and after_prev or before_next is None:
+            key = after_prev
         else:
-            key = slots[seen]
+            key = before_next
         inserts.setdefault(key, []).append(piece)
     if seen != len(slots):
         return list(lines)
@@ -255,6 +272,32 @@ def reinsert_srt_markup(marked: str, lines: "Sequence[str]") -> "List[str]":
     return out
 
 
+def _empty_pair_splits(tokens: "Sequence[Tuple[bool, str]]") -> "Dict[int, int]":
+    """For each gap between visible characters (keyed by the number of non-space characters
+    before it) that holds a tag pair enclosing none, the token index of the first such pair's
+    closing tag."""
+    splits: "Dict[int, int]" = {}
+    seen = 0
+    open_here: "List[str]" = []   # names of the tags opened in the current gap
+    for index, (markup, piece) in enumerate(tokens):
+        if not markup:
+            if piece.strip():
+                seen += sum(1 for ch in piece if not ch.isspace())
+                open_here = []
+            continue
+        m = _SRT_TAG_RE.fullmatch(piece)
+        if not m or m.group(4):
+            continue
+        name = (m.group(2) or "font").lower()
+        if piece.lstrip("< \t").startswith("/"):
+            if name in open_here:
+                splits.setdefault(seen, index)
+                del open_here[len(open_here) - 1 - open_here[::-1].index(name)]
+        else:
+            open_here.append(name)
+    return splits
+
+
 def carry_srt_markup(chunks: "Sequence[str]") -> "List[str]":
     """Consecutive cues cut from one marked cue, each made to stand alone: a tag still open at the
     end of a piece is closed there and opened again at the start of the next, and the cue's
@@ -262,10 +305,9 @@ def carry_srt_markup(chunks: "Sequence[str]") -> "List[str]":
     italic and at the top."""
     out: "List[str]" = []
     carried: "List[str]" = []
-    align = None
+    # the cue's position, wherever in it the {\anN} stands: an earlier piece takes it too
+    align = next((a for a in (srt_alignment(c) for c in chunks) if a is not None), None)
     for chunk in chunks:
-        if align is None:
-            align = srt_alignment(chunk)
         lead = "".join(carried)
         if align is not None and srt_alignment(chunk) is None:
             lead = "{\\an%d}" % align + lead

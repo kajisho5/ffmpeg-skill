@@ -5749,6 +5749,51 @@ class CaptionTextFidelityTests(unittest.TestCase):
         for _s, _e, text in split:
             self.assertTrue(text.startswith("{\\an8}<i>") and text.endswith("</i>"), text)
 
+    def test_markup_around_whitespace_only_keeps_its_place(self):
+        """A tag pair that encloses no visible character has nothing to anchor to: it stays where
+        the source has it, around the whitespace. Through 3.6.1 the closing tag went after A and
+        the opening one before B, so `A<font color=red> </font>B` coloured B. Tags that enclose a
+        character are anchored as before."""
+        from _ass_overlay import ass_escape_markup, reinsert_srt_markup
+        cases = [
+            ("A<font color=red> </font>B", ["A B"], ["A<font color=red> </font>B"]),
+            ("A<i> </i>B", ["A B"], ["A<i> </i>B"]),
+            ("A<i><b> </b></i>B", ["A B"], ["A<i><b> </b></i>B"]),
+            ('A<font color=blue><font color=red> </font>B</font>', ["A B"],
+             ['A<font color=blue><font color=red> </font>B</font>']),
+            ("A<i></i>B", ["AB"], ["A<i></i>B"]),
+            # the whitespace became the break: the pair goes to the start of the next line, whole
+            ("A<font color=red> </font>B", ["A", "B"], ["A", "<font color=red></font>B"]),
+            # unchanged: each tag anchored to the character it encloses
+            ("<i>A</i> <b>B</b>", ["A B"], ["<i>A</i> <b>B</b>"]),
+            ("<i>A</i> <b>B</b>", ["A", "B"], ["<i>A</i>", "<b>B</b>"]),
+            ("A <font color=red>B</font>", ["A B"], ["A <font color=red>B</font>"]),
+        ]
+        for marked, lines, want in cases:
+            with self.subTest(marked=marked, lines=lines):
+                self.assertEqual(reinsert_srt_markup(marked, lines), want)
+        # the drawn result: B keeps the default colour (the reset comes before it)
+        drawn = ass_escape_markup(reinsert_srt_markup("A<font color=red> </font>B", ["A B"])[0])
+        self.assertTrue(drawn.endswith("{\\c}B"), drawn)
+
+    def test_a_split_cue_takes_its_alignment_from_any_piece(self):
+        """A cue's {\\anN} places the whole cue: a piece cut before the tag is placed by it too.
+        Through 3.6.1 an {\\an8} first met in the second piece was given to that piece only."""
+        from _ass_overlay import carry_srt_markup, srt_alignment
+        for chunks in (["one two", "three {\\an8}four"], ["{\\an8}one", "two"], ["<i>one", "two</i>{\\an7}", "six"]):
+            with self.subTest(chunks=chunks):
+                want = srt_alignment("".join(chunks))
+                out = carry_srt_markup(chunks)
+                self.assertEqual([srt_alignment(p) for p in out], [want] * len(chunks), out)
+        self.assertEqual(carry_srt_markup(["one", "two"]), ["one", "two"])
+        C = self.caption
+        plain = "Hello there my good friend how are you today"
+        split = C.layout_cues([(0.0, 4.0, "%s {\\an8}" % plain)], max_em=8.0, max_lines=1,
+                              min_duration=0, offset=0)[0]
+        self.assertGreater(len(split), 1)
+        for _s, _e, text in split:
+            self.assertEqual(C.srt_alignment(text), 8, text)
+
     def test_the_generated_ass_route_draws_no_srt_tag(self):
         """The reported run, on the routes where caption.py writes its own ASS: --animate fade,
         --karaoke (sweep and word) with --animate pop (the tiktok/reels/shorts templates' pair).
@@ -5868,6 +5913,27 @@ class HdrLevelsAndDepthTests(unittest.TestCase):
         script("look.py", hlg, "--at", "0.5", "--width", "256", "--no-timecode", "-o", png)
         rgb = frame_rgb(png, 0, 160, 32)
         self.assertGreaterEqual(min(rgb), 240, f"HLG 100 % shows as white on the sheet (was 157): {rgb}")
+
+    def test_look_compare_converts_each_input_by_its_own_tags(self):
+        """`look.py pq.mp4 --compare sdr.mp4`: the PQ picture is tone-mapped and the BT.709 SDR one
+        is shown as it is. Through 3.6.1 the first input's tone map ran on both, so the SDR grey
+        was decoded as PQ and came out near black; the other order kept the PQ picture raw."""
+        pq = self._patches("tm_pq_cmp.mp4", "smpte2084", (509, 573, 723, 855))
+        sdr = OUT / "tm_sdr_cmp.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=0x808080:s=256x64:r=10:d=1",
+           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+           "-qp", "0", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", sdr)
+        self.assertFalse(probe(str(sdr))["video"].get("bt2020_or_hdr"), "fixture is SDR")
+        for first, second, pq_x, sdr_x in ((pq, sdr, 80, 192), (sdr, pq, 208, 64)):
+            with self.subTest(first=first.name):
+                png = OUT / f"tm_cmp_{first.stem}.png"
+                proc = script("look.py", first, "--compare", second, "--at", "0.5", "--width", "256",
+                              "--no-timecode", "-o", png)
+                grey = frame_rgb(png, 0, sdr_x, 16)
+                self.assertTrue(all(abs(c - 128) <= 6 for c in grey), f"the SDR grey is shown as it is: {grey}")
+                white = frame_rgb(png, 0, pq_x, 16)
+                self.assertGreaterEqual(min(white), 230, f"PQ 1000 nits is tone-mapped to white: {white}")
+                self.assertEqual(proc.stderr.count("tone-mapped to SDR for display"), 1, proc.stderr)
 
     # ------------------------------------------------------------------ PiP opacity colour
     def test_a_pip_with_opacity_leaves_the_main_picture_alone(self):
