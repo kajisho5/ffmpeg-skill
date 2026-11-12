@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import stat
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE
@@ -322,10 +323,22 @@ def audit(event: str, details: Dict[str, Any], *, default_path: Optional[str] = 
         # a default path is a hidden name in someone's output directory: never appended to through a
         # symlink planted there. A log the caller named (--audit-log) is opened as named.
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | (0 if ctx.audit_log else getattr(os, "O_NOFOLLOW", 0))
-        if not ctx.audit_log and not hasattr(os, "O_NOFOLLOW") and os.path.islink(path):
-            # no O_NOFOLLOW (Windows): a link at the default name is refused by looking first
+        checked = not ctx.audit_log and not hasattr(os, "O_NOFOLLOW")
+        if checked and os.path.islink(path):
             raise OSError(f"{path} is a symbolic link")
-        with os.fdopen(os.open(path, flags, 0o666), "a", encoding="utf-8") as f:
+        fd = os.open(path, flags, 0o666)
+        if checked:
+            # no O_NOFOLLOW (Windows): a link that appeared between the look above and the open is
+            # caught after it -- the descriptor must be the file now at that name, not a link's
+            # target -- and nothing is written through it
+            try:
+                st, at = os.fstat(fd), os.lstat(path)
+                if stat.S_ISLNK(at.st_mode) or (st.st_dev, st.st_ino) != (at.st_dev, at.st_ino):
+                    raise OSError(f"{path} was replaced by a link while it was opened")
+            except BaseException:
+                os.close(fd)
+                raise
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(json_safe(rec), ensure_ascii=False, sort_keys=True) + "\n")
     except OSError as exc:
         warn(f"could not append the {event} record to the audit log {path} ({exc}); the run is unaffected",

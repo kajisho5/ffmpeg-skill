@@ -3994,15 +3994,19 @@ class ContractTests(unittest.TestCase):
         ag.write_text(json.dumps({"output": "ag.mp4", "clips": [{"src": str(self.wav)}],
                                   "audiogram": {"image": "cover.png"}}), encoding="utf-8")
         proc = tool("render", ag, "--dry-run", "--json", cwd=self.work)
-        forwarded = [l for l in proc.stderr.splitlines() if "waveform.py" in l]
-        self.assertTrue(forwarded and str(img) in forwarded[0], proc.stderr)
+        def forwarded_path(stage: str, flag: str) -> str:
+            line = next((l for l in proc.stderr.splitlines() if stage in l), "")
+            m = re.search(re.escape(flag) + r" (.+?) --", line)
+            self.assertTrue(m, proc.stderr)
+            return m.group(1)
+        # the same file, whatever spelling (a Windows 8.3 short name) the temp directory has
+        self.assertTrue(os.path.samefile(forwarded_path("waveform.py", "--image"), img), proc.stderr)
         # an overlay font_file reaches overlay.py resolved the same way
         ov = work / "p_font.json"
         ov.write_text(json.dumps({"output": "f.mp4", "clips": [{"src": str(self.src)}],
                                   "overlays": [{"text": "hi", "font_file": "brand.json"}]}), encoding="utf-8")
         proc = tool("render", ov, "--dry-run", "--json", cwd=self.work)
-        forwarded = [l for l in proc.stderr.splitlines() if "overlay.py" in l]
-        self.assertTrue(forwarded and str(brand) in forwarded[0], proc.stderr)
+        self.assertTrue(os.path.samefile(forwarded_path("overlay.py", "--font-file"), brand), proc.stderr)
         # and the project file itself is an input: its own output may not replace it
         selfout = work / "selfout.json"
         selfout.write_text(json.dumps({"output": "selfout.json", "clips": [{"src": str(self.src)}]}), encoding="utf-8")
@@ -4090,6 +4094,30 @@ class ContractTests(unittest.TestCase):
             res = emit.audit("stale_lock_taken_over", {"lock": "x"}, default_path=str(log))
         self.assertFalse(res["written"], res)
         self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+        # without O_NOFOLLOW (Windows) a link at the name is refused, and so is one that appears
+        # between the look and the open
+        nofollow = os.O_NOFOLLOW
+        real_open = os.open
+        def swap_then_open(p, *a, **k):
+            if os.path.lexists(p):
+                os.unlink(p)
+            os.symlink(victim, p)
+            return real_open(p, *a, **k)
+        try:
+            del os.O_NOFOLLOW
+            for opener in (real_open, swap_then_open):
+                if not log.is_symlink():
+                    if log.exists():
+                        log.unlink()
+                    if opener is real_open:
+                        log.symlink_to(victim)
+                with unittest.mock.patch.object(emit, "warn"), unittest.mock.patch.object(emit.os, "open", opener):
+                    res = emit.audit("stale_lock_taken_over", {"lock": "x"}, default_path=str(log))
+                self.assertFalse(res["written"], (opener, res))
+                self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+                log.unlink()
+        finally:
+            os.O_NOFOLLOW = nofollow
 
     def test_a_url_never_reaches_ffmpeg_as_an_input_or_an_output(self):
         """The path guards read -o as a path, ffmpeg reads a value with a protocol prefix as a URL.
