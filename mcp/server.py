@@ -64,30 +64,39 @@ def build_argv(name: str, args: Dict[str, Any]) -> List[str]:
         return argv
     spec = specs().get(name)
     exceptions = spec["mcp"]["argument_exceptions"] if spec else {}
-    argv: List[str] = []
+    props = spec["input_schema"]["properties"] if spec else {}
+    positionals: List[str] = []
     args = dict(args)
     for key in POSITIONAL[name]:
         val = args.pop(key, None)
         if val is None:
             continue
         if isinstance(val, list):
-            argv += [str(v) for v in val]
+            positionals += [str(v) for v in val]
         else:
-            argv.append(str(val))
+            positionals.append(str(val))
+    options: List[str] = []
     for key, val in args.items():
         if val is None or val is False:
             continue
         flag = exceptions.get(key, "--" + key.replace("_", "-"))
         if val is True:
-            argv.append(flag)
-        elif isinstance(val, list):
-            for v in val:
-                argv += [flag, str(v)]
-        else:
-            argv += [flag, str(val)]
-    if name not in _contract.MCP_JSON_EXEMPT and "--json" not in argv and "--help" not in argv:
-        argv.append("--json")
-    return argv
+            options.append(flag)
+            continue
+        # A value is always a value: one starting with '-' goes as `--flag=value` (option_args),
+        # which needs the long spelling of a short exception (-o -> --output, -I -> --lufs).
+        cli = props.get(key, {}).get("cli")
+        longs = [f for f in cli if f.startswith("--")] if isinstance(cli, list) else []
+        long_flag = flag if flag.startswith("--") or not longs else longs[0]
+        for v in (val if isinstance(val, list) else [val]):
+            options += _common.option_args(long_flag, v) if str(v).startswith("-") else [flag, str(v)]
+    if name not in _contract.MCP_JSON_EXEMPT and "--json" not in options and "--help" not in options:
+        options.append("--json")
+    # A positional starting with '-' would be read as an option (`--plan=x` given as an input path
+    # wrote a plan through a read-only tool): such positionals go after `--`, after every option.
+    if any(p.startswith("-") for p in positionals):
+        return options + ["--"] + positionals
+    return positionals + options
 
 
 def _timeout_in_argv(argv: List[str]) -> Optional[float]:
@@ -150,7 +159,13 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     # `--timeout` inside a raw argv list sets both (0 = no limit); otherwise
     # FFMPEG_SKILL_TIMEOUT / the 1800 s default.
     per_call = timeout_from_call(args or {})
-    proc = _common.run_tool([str(script)] + argv, per_call=per_call)
+    # A tool annotated readOnlyHint must write nothing: its schema has no `plan`, and this makes
+    # the tool itself refuse --plan however a raw argv spells it. Every other tool runs without
+    # the variable, even when the server's own environment has it.
+    env = {k: v for k, v in os.environ.items() if k != _contract.READ_ONLY_ENV}
+    if _contract.mcp_read_only(specs()[name]):
+        env[_contract.READ_ONLY_ENV] = "1"
+    proc = _common.run_tool([str(script)] + argv, per_call=per_call, env=env)
     stdout = proc.stdout.strip()
     text = stdout
     structured = None

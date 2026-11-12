@@ -421,6 +421,7 @@ ERROR_REASONS = {
     "input_incomplete": "kind ffmpeg: the input has no index (\"moov atom not found\"): a recording cut off or a copy not finished; --repair cannot rebuild it; details: {}",
     "input_unreadable": "kind ffmpeg: ffmpeg could not read the input as media (\"Invalid data found when processing input\"); details: {}",
     "ffmpeg_unsupported": "kind missing_tool: the ffmpeg/ffprobe on PATH reports a version older than 6.1, which 3.0.0 no longer supports (5.x was deprecated in 2.14.0); details: {version, required}",
+    "read_only_plan_refused": "--plan in a process run with FFMPEG_SKILL_READ_ONLY=1 (mcp/server.py sets it for the tools annotated readOnlyHint: probe, check, cropdetect), which must write no file; details: {plan}",
     "output_exists": "an output already exists and --overwrite was not given; details.outputs: [{path, resolved, size, mtime_ns}]",
     "output_is_input": "the output resolves to the same file as an input; details: {output, input, resolved}",
     "output_is_directory": "the output path is a directory; details: {output}",
@@ -1759,6 +1760,17 @@ MCP_JSON_EXEMPT = ("look", "probe")
 # them out of every inputSchema (1.10.0-1.x kept them unless FFMPEG_SKILL_MCP_LEAN=1). A client
 # that still sends them is not refused -- build_argv() maps them like any other key.
 MCP_TRANSPORT_FLAGS = ("json", "progress")
+# what a read-only tool's (mcp_read_only: probe, check, cropdetect) MCP inputSchema says of the two
+# keys that would write a file: `plan` is refused over MCP and `overwrite` only governed that plan.
+# The names stay (3.x never removes an inputSchema property); the CLI keeps both working (every
+# tool gets --plan, docs/design-decisions.md).
+MCP_READ_ONLY_REFUSED = {
+    "plan": "refused over MCP (read-only tool; error.reason read_only_plan_refused): this tool writes no file here; run it from the CLI to write a plan",
+    "overwrite": "no effect over MCP: this read-only tool writes no file (it governed --plan, which is refused here)",
+}
+# set by mcp/server.py in the environment of a read-only tool's process: --plan is refused
+# (kind input, error.reason read_only_plan_refused), however the raw argv spells it
+READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # default MCP tools/list surface (roadmap P1-7, shipped 1.18.3): the 42-tool schema dump costs
 # every MCP session context whether it needs it or not. These 12 are the tools eval iterations
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
@@ -1905,6 +1917,13 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
         structured["anyOf"] = one_of[0] if len(one_of) == 1 else [{"allOf": [{"anyOf": g} for g in one_of]}]
     for dest in MCP_TRANSPORT_FLAGS:
         props.pop(dest, None)
+    if mcp_read_only(spec):
+        # a tool that writes no artifact is annotated readOnlyHint; --plan is the one file it could
+        # still write (and --overwrite only governs that file). mcp/server.py runs the tool with
+        # FFMPEG_SKILL_READ_ONLY=1, which refuses --plan however it is spelled; the descriptions say so
+        for dest, text in MCP_READ_ONLY_REFUSED.items():
+            if dest in props:
+                props[dest]["description"] = text
     if structured.get("required"):
         structured["required"] = [d for d in structured["required"] if d not in MCP_TRANSPORT_FLAGS]
         if not structured["required"]:
@@ -1925,14 +1944,23 @@ def mcp_tool(spec: Dict[str, Any]) -> Dict[str, Any]:
             "annotations": mcp_annotations(spec)}
 
 
+def mcp_read_only(spec: Dict[str, Any]) -> bool:
+    """A tool that writes no artifact and does not touch its input: over MCP it writes nothing at
+    all (mcp/server.py refuses its `plan`, see mcp_input_schema), so it is annotated readOnlyHint."""
+    return not (bool(spec.get("produces_artifact")) or bool(spec.get("mutates_input")))
+
+
 def mcp_annotations(spec: Dict[str, Any]) -> Dict[str, Any]:
     """MCP ToolAnnotations (spec 2025-06-18) derived from the ToolSpec flags. Hints only: clients
-    must not treat them as a security boundary. Every tool runs locally (no open world); none edits
-    its input in place; a tool that writes nothing is read-only."""
-    writes = bool(spec.get("produces_artifact")) or bool(spec.get("mutates_input"))
+    must not treat them as a security boundary. Every tool runs locally (no open world). A tool
+    that writes nothing is read-only (mcp_read_only: the server runs it with
+    FFMPEG_SKILL_READ_ONLY=1, which refuses `--plan` however it is spelled). Every other tool is
+    destructive: none edits its input in place, but with `overwrite` it replaces an existing file at its output or plan path, which is not an
+    additive update."""
+    writes = not mcp_read_only(spec)
     return {"title": spec["name"],
             "readOnlyHint": not writes,
-            "destructiveHint": bool(spec.get("mutates_input")),
+            "destructiveHint": writes,
             "idempotentHint": spec.get("idempotency_hint") in ("bit_exact", "content_equivalent", "cached"),
             "openWorldHint": False}
 
@@ -1994,8 +2022,8 @@ def build(detect: bool = True) -> Dict[str, Any]:
                 "canonical": True,
                 "transports": ["cli", "mcp"],
                 "argument_mapping": {
-                    "positional": "listed in input_schema.positional, in order; array values expand to several arguments",
-                    "options": "key -> --key with '_' replaced by '-'; booleans are flags; arrays repeat the flag; input_schema.properties[key].cli lists the accepted spellings",
+                    "positional": "listed in input_schema.positional, in order; array values expand to several arguments; when any of them starts with '-', all of them follow '--' after every option, so none is read as an option",
+                    "options": "key -> --key with '_' replaced by '-'; booleans are flags; arrays repeat the flag; input_schema.properties[key].cli lists the accepted spellings; a value starting with '-' is one token, --long-flag=value (\"-50%\" is text, not an option)",
                     "exceptions": "per tool in mcp.argument_exceptions (key -> flag), e.g. output -> -o, loudness.lufs -> -I, graphics.count_from -> --from",
                     "json": "--json is appended for every tool except look and probe (probe prints JSON by default)",
                 },

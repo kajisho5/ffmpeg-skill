@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 from _common.decision import rebase_project_paths
@@ -363,7 +363,7 @@ def render_pack(names: List[str], args) -> int:
                             ("--chapters", args.chapters), ("--image", args.image),
                             ("--intermediate-preset", args.intermediate_preset)):
             if value:
-                argv += [flag, str(value)]
+                argv += option_args(flag, value)
         info(f"→ pack: {name}")
         proc = run_tool(argv + child_args() + ["--json"])
         try:
@@ -1414,17 +1414,17 @@ def main() -> int:
         if needs_cut:
             argv: List[Any] = [src, "-o", part, "--accurate"]
             if c.get("in") is not None:
-                argv += ["--start", c["in"]]
+                argv += option_args("--start", c["in"])
             if c.get("out") is not None:
-                argv += ["--end", c["out"]]
+                argv += option_args("--end", c["out"])
             clip_snap = dict(snap_spec)
             clip_snap.update(c.get("snap") or {})
             if str(clip_snap.get("to") or "none") == "beats":
                 argv += ["--snap", "beats"]
                 if clip_snap.get("tolerance") is not None:
-                    argv += ["--snap-tolerance", str(clip_snap["tolerance"])]
+                    argv += option_args("--snap-tolerance", clip_snap["tolerance"])
                 if clip_snap.get("min_confidence") is not None:
-                    argv += ["--min-confidence", str(clip_snap["min_confidence"])]
+                    argv += option_args("--min-confidence", clip_snap["min_confidence"])
                 if clip_snap.get("source"):
                     argv += ["--snap-source", rel(clip_snap["source"])]
             sh("cut.py", *argv, stage="clips")
@@ -1471,7 +1471,7 @@ def main() -> int:
                     # against the project file, as every other path here and as the output guard
                     # checks it; it used to reach waveform.py as written, against the cwd
                     value = rel(value)
-                argv += [flag, str(value)]
+                argv += option_args(flag, value)
         argv += brand_args
         sh("waveform.py", *argv, stage="audiogram")
         current = nxt
@@ -1487,11 +1487,11 @@ def main() -> int:
         current = str(work / f"joined{mid}")
         argv = list(parts) + ["-o", current, "--transition", trans.get("type", "fade"), "--duration", str(trans.get("duration", 0.5))]
         if frame.get("width"):
-            argv += ["--width", str(frame["width"])]
+            argv += option_args("--width", frame["width"])
         if frame.get("height"):
-            argv += ["--height", str(frame["height"])]
+            argv += option_args("--height", frame["height"])
         if frame.get("fps"):
-            argv += ["--fps", str(frame["fps"])]
+            argv += option_args("--fps", frame["fps"])
         sh("join.py", *argv, stage="join")
         stages_done.append("join")
     if args.stop_after == "join":
@@ -1506,7 +1506,7 @@ def main() -> int:
         for k, flag in (("threshold", "--threshold"), ("min_silence", "--min-silence"), ("margin", "--margin"),
                         ("margin_lead", "--margin-lead"), ("margin_tail", "--margin-tail")):
             if sil.get(k) is not None:
-                argv += [flag, str(sil[k])]
+                argv += option_args(flag, sil[k])
         sh("silence.py", *argv, stage="silence")
         current = nxt
         stages_done.append("silence")
@@ -1543,7 +1543,7 @@ def main() -> int:
         argv = [current, "-o", nxt]
         for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth")):
             if fit.get(k) is not None:
-                argv += [flag, str(fit[k])]
+                argv += option_args(flag, fit[k])
         sh("fit.py", *argv, stage="fit")
         current = nxt
         stages_done.append("fit")
@@ -1567,7 +1567,7 @@ def main() -> int:
         for k, flag in (("font", "--font"), ("size", "--size"), ("color", "--color"), ("position", "--position"), ("margin", "--margin"), ("animate", "--animate"), ("highlight_color", "--highlight-color"), ("outline", "--outline"), ("lang", "--lang"), ("offset", "--offset"), ("max_lines", "--max-lines"), ("min_duration", "--min-duration"),
                         ("fit_size", "--fit-size"), ("min_size", "--min-size"), ("fit_size_scope", "--fit-size-scope")):
             if cap.get(k) is not None:
-                argv += [flag, str(cap[k])]
+                argv += option_args(flag, cap[k])
         for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")):
             if cap.get(k):
                 argv.append(flag)
@@ -1585,11 +1585,11 @@ def main() -> int:
         nxt = str(work / f"graphics{i:02d}{mid}")
         if not g.get("template"):
             die(f"graphics[{i}] needs a template")
-        argv = [current, "-o", nxt, "--template", g["template"]]
+        argv = [current, "-o", nxt] + option_args("--template", g["template"])
         for k, flag in (("name", "--name"), ("title", "--title"), ("subtitle", "--subtitle"), ("start", "--start"), ("end", "--end"), ("position", "--position"), ("from", "--from"), ("scale", "--scale"), ("primary", "--primary"), ("text_color", "--text-color"), ("lang", "--lang"),
                         ("text", "--text"), ("top", "--top"), ("bottom", "--bottom"), ("duration", "--duration"), ("margin", "--margin"), ("platform", "--platform")):
             if g.get(k) is not None:
-                argv += [flag, str(g[k])]
+                argv += option_args(flag, g[k])
         # the entry's own "platform" is the more specific statement than the template's destination
         sh("graphics.py", *(argv + brand_args + ([] if g.get("platform") else platform_args)), stage="graphics")
         current = nxt
@@ -1608,7 +1608,7 @@ def main() -> int:
         elif ov.get("image"):
             argv += ["--image", rel(ov["image"])]
         elif ov.get("text"):
-            argv += ["--text", ov["text"]]
+            argv += option_args("--text", ov["text"])
         elif ov.get("video"):
             # #326: sized and placed here, after fit, against the frame that ships
             argv += ["--video", rel(ov["video"])]
@@ -1618,7 +1618,7 @@ def main() -> int:
                         ("chromakey", "--chromakey"), ("chromakey_similarity", "--chromakey-similarity"), ("chromakey_blend", "--chromakey-blend")):
             if ov.get(k) is not None:
                 # font_file is a path: the same one project_input_files() guards
-                argv += [flag, rel(ov[k]) if k == "font_file" and ov[k] else str(ov[k])]
+                argv += option_args(flag, rel(ov[k]) if k == "font_file" and ov[k] else ov[k])
         if ov.get("box"):
             argv.append("--box")
         # review 12: the overlay stage was the one stage that never heard which destination this
@@ -1654,10 +1654,10 @@ def main() -> int:
                 argv += [flag, rel(au[k])]
         for k, flag in (("music_volume", "--music-volume"), ("effects_volume", "--effects-volume"), ("fade_in", "--fade-in"), ("fade_out", "--fade-out"), ("music_fade_out", "--music-fade-out"), ("gain", "--gain"), ("duck_amount", "--duck-amount"), ("duck_threshold", "--duck-threshold"), ("duck_attack", "--duck-attack"), ("duck_release", "--duck-release"), ("stereo_widen", "--stereo-widen")):
             if au.get(k) is not None:
-                argv += [flag, str(au[k])]
+                argv += option_args(flag, au[k])
         # "voice": true is the medium chain; "voice": "light"|"medium"|"strong" names one
         if au.get("voice") is not None and au.get("voice") is not False:
-            argv += ["--voice"] + ([] if au["voice"] is True else [str(au["voice"])])
+            argv += ["--voice"] if au["voice"] is True else option_args("--voice", au["voice"])
         for k, flag in (("denoise", "--denoise"), ("duck", "--duck"), ("music_loop", "--music-loop"), ("stereo", "--stereo"), ("mono", "--mono"), ("downmix", "--downmix")):
             if au.get(k):
                 argv.append(flag)
@@ -1679,9 +1679,9 @@ def main() -> int:
         nxt = str(work / f"loudnorm{mid}")
         argv = [current, "-o", nxt]
         if ld.get("lufs") is not None:
-            argv += ["-I", str(ld["lufs"])]
+            argv += option_args("--lufs", ld["lufs"])
         if ld.get("tp") is not None:
-            argv += ["--tp", str(ld["tp"])]
+            argv += option_args("--tp", ld["tp"])
         sh("loudness.py", *argv, stage="loudness")
         current = nxt
         stages_done.append("loudness")
@@ -1694,9 +1694,9 @@ def main() -> int:
     if ex and ex.get("preset"):
         argv = [current, "--preset", ex["preset"], "-o", output]
         if ex.get("fit"):
-            argv += ["--fit", ex["fit"]]
+            argv += option_args("--fit", ex["fit"])
         if ex.get("crf") is not None:
-            argv += ["--crf", str(ex["crf"])]
+            argv += option_args("--crf", ex["crf"])
         normalize = ex.get("normalize")
         if normalize is None and ex["preset"] in PLATFORM_OF and not proj.get("loudness"):
             # eval 8: a reels project without the key rendered fully, failed the loudness check and

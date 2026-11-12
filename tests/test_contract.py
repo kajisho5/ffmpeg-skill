@@ -3014,7 +3014,7 @@ class ContractTests(unittest.TestCase):
         ran with no limit. A negative value matches apply_common and is also no limit."""
         captured = {}
 
-        def fake_run_tool(argv, per_call=None):
+        def fake_run_tool(argv, per_call=None, env=None):
             captured["per_call"] = per_call
             captured["ceiling"] = _common.child_limit(per_call)
             return subprocess.CompletedProcess(argv, 0, "{}", "")
@@ -8016,6 +8016,126 @@ class Issue415Tests(unittest.TestCase):
                     "--json", env=env, check=False)
         self.assertLess(time.monotonic() - t0, 40)
         self.assertEqual((proc.returncode, json.loads(proc.stdout)["error"]["kind"]), (124, "timeout"))
+
+
+
+class McpArgumentSafetyTests(unittest.TestCase):
+    """What the MCP annotations claim is what a call can do, and a structured value is never read
+    as an option (audit A9, A10)."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls.work = Path(tempfile.mkdtemp(prefix="mcp_args_"))
+        cls.clip = cls.work / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25", "-f", "lavfi", "-i", f"aevalsrc='{TONE}':s=48000",
+               "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.clip)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work, ignore_errors=True)
+
+    def test_mcp_annotations_match_what_the_schema_lets_a_call_write(self):
+        # readOnlyHint only where no key writes a file: `output` is absent, `plan` is described as
+        # refused (the name stays, 3.x removes no property; the refusal itself is the next test).
+        # Every tool that writes can replace an existing file with `overwrite`: destructive.
+        read_only = []
+        for spec in _contract.build(detect=False)["tools"]:
+            entry = _contract.mcp_tool(spec)
+            hints, props = entry["annotations"], entry["inputSchema"]["properties"]
+            if hints["readOnlyHint"]:
+                read_only.append(spec["name"])
+                self.assertNotIn("output", props, spec["name"])
+                self.assertIn("refused over MCP", props["plan"]["description"], spec["name"])
+                self.assertIn("no effect over MCP", props["overwrite"]["description"], spec["name"])
+                self.assertFalse(hints["destructiveHint"], spec["name"])
+            else:
+                self.assertIn("overwrite", props, spec["name"])
+                self.assertTrue(hints["destructiveHint"], f"{spec['name']}: overwrite replaces an existing file")
+        self.assertEqual(sorted(read_only), ["check", "cropdetect", "probe"])
+
+    def test_mcp_read_only_tools_write_no_plan_in_any_spelling(self):
+        victim = self.work / "victim.txt"
+        victim.write_text("precious user data", encoding="utf-8")
+        calls = [("probe", {"inputs": [str(self.clip)], "plan": str(victim), "overwrite": True}),
+                 ("check", {"input": str(self.clip), "plan": str(victim), "overwrite": True}),
+                 ("cropdetect", {"input": str(self.clip), "plan": str(victim), "overwrite": True}),
+                 ("probe", {"argv": [str(self.clip), "--pla=" + str(victim), "--overwrite"]}),
+                 ("check", {"argv": [str(self.clip), "--plan", str(victim), "--overwrite", "--json"]})]
+        for name, args in calls:
+            result = mcp_server.call_tool(name, args)
+            self.assertTrue(result.get("isError"), f"{name} {args}")
+            self.assertIn("read-only", result["content"][0]["text"], name)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "precious user data", f"{name} {args}")
+        doc = mcp_server.call_tool("check", calls[1][1])["structuredContent"]
+        self.assertEqual(doc["error"]["reason"], "read_only_plan_refused")
+        self.assertIn("read_only_plan_refused", _contract.ERROR_REASONS)
+        # a positional that looks like an option is an input path, not --plan
+        injected = self.work / "injected.json"
+        result = mcp_server.call_tool("probe", {"inputs": [str(self.clip), "--plan=" + str(injected)]})
+        self.assertTrue(result.get("isError"))
+        self.assertFalse(injected.exists())
+        # the variable reaches only the read-only tools: a writing tool still writes its plan,
+        # even when the server's own environment carries the variable
+        plan = self.work / "cut_plan.json"
+        with unittest.mock.patch.dict(os.environ, {_contract.READ_ONLY_ENV: "1"}):
+            result = mcp_server.call_tool("cut", {"input": str(self.clip), "start": "0", "end": "0.5",
+                                                  "output": str(self.work / "cut.mp4"), "plan": str(plan)})
+        self.assertFalse(result.get("isError"), result["content"][0]["text"])
+        self.assertTrue(plan.exists())
+
+    def test_mcp_value_starting_with_a_dash_is_a_value_for_every_tool(self):
+        # every free-text option and every positional of every tool, through build_argv into that
+        # tool's own parser: '-50%' and '--plan=x' arrive as the values they are
+        for spec in _contract.build(detect=False)["tools"]:
+            name = spec["name"]
+            parser = _contract._capture_parser(SCRIPTS / f"{name}.py")
+            for action in parser._actions:
+                action.required, action.type, action.choices = False, None, None
+            for group in parser._mutually_exclusive_groups:
+                group.required = False
+            props = spec["input_schema"]["properties"]
+            positional = spec["input_schema"]["positional"]
+            pos_args = {d: (["-a.mp4", "--plan=x"] if props[d]["type"] == "array" else "--plan=x") for d in positional}
+            keys = [d for d, p in props.items() if d not in positional and p["type"] == "string" and "enum" not in p]
+            for key in [None] + keys:
+                args = dict(pos_args)
+                if key:
+                    args[key] = "-50%"
+                argv = mcp_server.build_argv(name, args)
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    try:
+                        ns = parser.parse_args(argv)
+                    except SystemExit:
+                        self.fail(f"{name} {key}: {argv}: {err.getvalue().strip()}")
+                if key:
+                    self.assertIn(getattr(ns, key), ("-50%", ["-50%"]), f"{name} {key}: {argv}")  # append: a list
+                for d, v in pos_args.items():
+                    self.assertEqual(getattr(ns, d), v, f"{name} {d}: {argv}")
+                if key != "plan":
+                    self.assertIsNone(getattr(ns, "plan", None), f"{name}: {argv}")
+        self.assertEqual(mcp_server.build_argv("loudness", {"input": "a.wav", "lufs": -16}), ["a.wav", "--lufs=-16", "--json"])
+        self.assertEqual(mcp_server.build_argv("cut", {"input": "a.mp4", "start": "1", "output": "b.mp4"}),
+                         ["a.mp4", "--start", "1", "-o", "b.mp4", "--json"])
+
+    def test_dash_leading_text_over_mcp_and_in_a_render_project(self):
+        result = mcp_server.call_tool("overlay", {"input": str(self.clip), "text": "-50%", "dry_run": True,
+                                                  "output": str(self.work / "sale.mp4")})
+        self.assertFalse(result.get("isError"), result["content"][0]["text"])
+        self.assertEqual(result["structuredContent"]["status"], "completed")
+        project = self.work / "sale.json"
+        project.write_text(json.dumps({"clips": [{"src": "clip.mp4"}], "overlays": [{"text": "-50%"}],
+                                       "graphics": [{"template": "title", "title": "--help"}],
+                                       "audio": {"gain": -3}, "loudness": {"lufs": -16, "tp": -1.5}}), encoding="utf-8")
+        proc = tool("render", project, "-o", self.work / "sale_out.mp4", "--dry-run", "--json", check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        for stage in ("overlays", "graphics", "audio", "loudness"):
+            self.assertIn(stage, doc["stages"])
+        self.assertEqual(_common.option_args("--text", "-50%"), ["--text=-50%"])
+        self.assertEqual(_common.option_args("--text", "SALE -50%"), ["--text", "SALE -50%"])
+        with self.assertRaises(ValueError):
+            _common.option_args("-o", "-x.mp4")
 
 
 if __name__ == "__main__":

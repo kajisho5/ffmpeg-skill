@@ -637,6 +637,14 @@ The mapping is stated in `invocation.structured.argument_mapping`: positionals i
 arrays repeated, `output` → `-o`, `loudness.lufs` → `-I`. `--json` is appended for every
 tool except `probe` (JSON by default) and `look`.
 
+A value is always a value. One that starts with `-` is passed as a single `--long-flag=value`
+token (`{"text": "-50%"}` → `--text=-50%`, `{"lufs": -16}` → `--lufs=-16`), because argparse
+reads a separate token that starts with `-` as the next option. When any positional starts with
+`-`, every positional follows `--` after all the options, so `{"inputs": ["--plan=x"]}` names a
+file called `--plan=x` instead of setting `--plan`. `render.py` builds its stage commands the
+same way (`_common.option_args`), so an overlay or a title that starts with `-` works in a
+project too.
+
 The MCP server also accepts `{"argv": [...]}` for CLI compatibility. That path is
 marked `canonical: false`: it is still bound to the named script and never reaches a
 shell, but an agent ecosystem should use the structured form. No tool, CLI or MCP,
@@ -1045,6 +1053,20 @@ itself -- it appends `--json` for every tool but `look` and `probe` -- rather th
 caller chooses. 1.10.0-1.26 listed them unless `FFMPEG_SKILL_MCP_LEAN=1`; 2.0 leaves them out for
 good (see "What 2.0 changed"). A client that still sends either is not refused: the server maps
 it like any other key.
+
+### Annotations: read-only means it writes no file
+
+Each `tools/list` entry carries MCP `annotations` (`_contract.mcp_annotations`). `readOnlyHint` is
+true for the three tools that write no artifact: `probe`, `check` and `cropdetect`. On the CLI
+they still take `--plan FILE` and `--overwrite` like every tool. Over MCP the two property names
+stay in their `inputSchema` (3.x removes no property) with descriptions that say they are refused
+or have no effect (`_contract.MCP_READ_ONLY_REFUSED`), and the server runs these three tools
+with `FFMPEG_SKILL_READ_ONLY=1`. With that variable set, `--plan` is refused after argparse,
+however a raw `argv` spells it (`kind: input`, `error.reason: read_only_plan_refused`), and no
+file is written. Every other tool is annotated `destructiveHint: true`: none edits its input,
+but with `overwrite` it replaces an existing file at its output or plan path, which MCP does not
+count as an additive update. The hints are hints: a client must not treat them as a security
+boundary.
 
 ### Default `tools/list` surface: core 12, opt-in for all 42
 

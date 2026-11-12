@@ -364,6 +364,8 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 
 No `inputSchema` lists `json` or `progress`: they are transport flags the server sets itself, not tool arguments (2.0; 1.x listed them unless `FFMPEG_SKILL_MCP_LEAN=1`). A client that still sends them is not refused.
 
+A structured value is never read as an option: one that starts with `-` (overlay text `-50%`) is passed as `--flag=value`, and positionals that start with `-` follow `--`. `probe`, `check` and `cropdetect` are annotated `readOnlyHint` and write no file over MCP (their `plan` is refused, structured or in a raw `argv`); every other tool is `destructiveHint`, because with `overwrite` it replaces an existing file. See `docs/contract.md` § MCP relationship.
+
 The server also advertises a `prompts` capability: five canned workflow recipes an agent can ask for by name instead of composing the individual tool calls itself — `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `prompts/list` returns each one's name, description and arguments; `prompts/get {name, arguments}` fills the matching template and returns one text message naming the actual command lines to run and what to check afterward. These are recipes, not new tool calls — every command line a prompt names is one `tools/call` (or the CLI) can already run.
 
 ### Capability detection

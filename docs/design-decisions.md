@@ -75,6 +75,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
+- [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
 <!-- contents:end -->
 
 ## Time limits
@@ -3364,3 +3365,29 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   and 199/55/32 at 0.999). Code: `_common/decision.py` (`overlay_format`), `broll`, `redact`,
   `graphics`, `overlay`, `caption`'s emoji. Tests: `test_an_overlay_onto_a_10_bit_main_keeps_its_low_bits`,
   `test_a_pip_with_opacity_leaves_the_main_picture_alone`.
+
+## After 3.6.0 — MCP annotations and argument values (audit A9, A10)
+
+- **Over MCP, `probe`, `check` and `cropdetect` refuse `plan`; the property stays listed.** They
+  are annotated `readOnlyHint`, and a client may run a read-only tool without asking; `--plan FILE`
+  was the one file they could still write, and with `--overwrite` it replaced any existing file.
+  The CLI keeps both flags (every tool gets `--plan`, above). The MCP schema keeps both names,
+  because the 3.x promise removes no `inputSchema` property (`mcp_tools.json` pins it), and says in
+  their descriptions that `plan` is refused and `overwrite` has no effect
+  (`_contract.MCP_READ_ONLY_REFUSED`). The server runs these three with
+  `FFMPEG_SKILL_READ_ONLY=1`, which refuses `--plan` after argparse (`read_only_plan_refused`),
+  so a raw `argv` cannot write one under any spelling either. Every other tool is
+  `destructiveHint: true`: its `overwrite` replaces an existing file, which MCP does not count as
+  additive. Code: `_contract.mcp_annotations()`, `_common.apply_common()`. Tests:
+  `test_mcp_annotations_match_what_the_schema_lets_a_call_write`,
+  `test_mcp_read_only_tools_write_no_plan_in_any_spelling`.
+- **A value that starts with `-` is passed as `--flag=value`; others keep `--flag value`.**
+  argparse reads a separate token that starts with `-` as an option, so `{"text": "-50%"}` was
+  refused and an overlay in a project could not start with a minus. Only those values change
+  form, so a call without one records the same argv as before (a plan's `argv`, a `--cache` key);
+  a render stage with a negative number (`loudness.lufs`, `audio.gain`) gets a new cache key once.
+  Positionals that start with `-` follow `--`, after every option. The joined form needs a long
+  flag, so `output` and `loudness.lufs` use `--output` / `--lufs` there. A raw `argv` is passed
+  as given: its caller chose the tokens. Code: `_common.option_args()`, `mcp/server.build_argv()`,
+  render.py's stage commands. Tests: `test_mcp_value_starting_with_a_dash_is_a_value_for_every_tool`,
+  `test_dash_leading_text_over_mcp_and_in_a_render_project`.

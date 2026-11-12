@@ -482,6 +482,14 @@ def apply_common(args: "argparse.Namespace") -> None:
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
+    if STATE.plan and os.environ.get("FFMPEG_SKILL_READ_ONLY", "") not in ("", "0"):
+        # mcp/server.py runs the tools it annotates readOnlyHint (probe, check, cropdetect) with
+        # this set: a plan is the one file they could write, so it is refused here, after argparse,
+        # whatever spelling of --plan a raw argv used. Refused before the exit hook can write it.
+        plan_path, STATE.plan = STATE.plan, None
+        refuse("input", "read_only_plan_refused",
+               f"--plan {plan_path!r}: this tool runs read-only here (FFMPEG_SKILL_READ_ONLY) and writes no file; "
+               "run it from the command line to write a plan", plan=plan_path)
     if STATE.plan:
         # the plan is a file this run writes itself: the side-file guards apply (#408), so it
         # never replaces an input, the output or an existing file without --overwrite
@@ -1650,13 +1658,14 @@ def child_limit(per_call: Optional[float] = None) -> Optional[float]:
     return (limit * 4 + 60) if limit else None
 
 
-def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subprocess.CompletedProcess:
+def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
+             env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
     """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
     child is killed and a CompletedProcess is returned whose stdout is this skill's own failure
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
-    exactly as they would from the child itself."""
+    exactly as they would from the child itself. `env` replaces the inherited environment."""
     limit = child_limit(per_call)
-    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     try:
         out, err = child.communicate(timeout=limit)
@@ -1673,6 +1682,20 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None) -> subpro
                "commands": []}
         partial = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
         return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), partial + f"\nerror: {msg}\n")
+
+
+def option_args(flag: str, value: Any) -> List[str]:
+    """One option and its value for a sibling tool's argparse, as [flag, value] -- or as the single
+    token `flag=value` when the value starts with '-'. argparse reads a separate token that starts
+    with '-' (and is not a negative number) as the next option, so overlay text "-50%" was refused
+    as "expected one argument" and a value like "--plan=x" became an option of its own. The joined
+    form is read as the value whatever it holds. `flag` must be a long option: `-o=x` is not."""
+    text = str(value)
+    if text.startswith("-"):
+        if not flag.startswith("--"):
+            raise ValueError(f"option_args: {flag!r} is not a long option")
+        return [f"{flag}={text}"]
+    return [flag, text]
 
 
 def child_args() -> List[str]:
