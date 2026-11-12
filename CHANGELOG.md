@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.2
+
+_Automated release: version and notes generated from pull requests merged since 3.6.1._
+
 ### Security
 
 - **Every GitHub Action is pinned to a commit.** A tag can be moved; the release job's
@@ -156,6 +162,7 @@
 - **`silence.py`'s sentence lookup is a binary search.** Placing the word before each silence
   scanned the whole transcript once per silence: about 1.2 s for an hour of speech and 11 s for
   three hours. It is now proportional to the number of silences times the log of the words.
+- fix: the audit's high findings (captions, timing, audio, colour, batch), MCP argument safety, and Scorecard hardening (#469)
 
 ## 3.6.1
 
