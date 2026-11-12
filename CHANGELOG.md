@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.5.0
+
+_Automated release: version and notes generated from pull requests merged since 3.4.3._
+
 ### Added
 
 - **`silence.py --sentence-min-silence` and `--sentence-margin-tail`.** With word timings
@@ -41,6 +47,10 @@
   it runs) and the next run can list the current version, released before
   this change, if its checks and the publish succeed. A failure never blocks or undoes a release, and a
   tagged version that npm does not have now turns the job red instead of passing unnoticed.
+- feat(silence): --margin-lead and --margin-tail keep different amounts on each side of a silence (#451)
+- test: read the icon word list from the publish script and bound the PNG chunk walk (#447)
+- docs: the MCP Registry entry is live (#446)
+- ci: the release workflow publishes the MCP Registry entry (#445)
 
 ## 3.4.3
 
