@@ -1583,17 +1583,19 @@ class EditingTests(MediaFixtures):
                    "sine=f=440:r=48000", "-frames:v", "300", "-t", "11", "-c:v", "ffv1", "-c:a", "pcm_s16le", src)
                 clips = []
                 for k in range(60):
-                    # PCM in MOV: a sound exactly as long as the clip's frames. An AAC clip's tail
-                    # is read differently by FFmpeg versions (7.1 ran each 5-frame clip 1-2 frames
-                    # long, #475), which is not what this test measures
+                    # FFV1 + PCM in MOV: every frame a keyframe (no reordering delay), exact frame
+                    # times (Matroska rounds them to the millisecond), and a sound exactly as long as
+                    # the clip's frames. An H.264 clip in MP4/MOV is read with different stream
+                    # starts by FFmpeg 7.1 (each 5-frame clip was held to 7 frames, AAC or PCM:
+                    # #475), which is not what this test measures
                     clip = d / f"c{tag}_{k:02d}.mov"
                     s0, s1 = round(5 * k * 48000 / q), round(5 * (k + 1) * 48000 / q)
                     sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf",
                        f"trim=start_frame={5 * k}:end_frame={5 * k + 5},setpts=PTS-STARTPTS", "-af",
-                       f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "libx264", "-qp", "0",
-                       "-preset", "ultrafast", "-c:a", "pcm_s16le", clip)
+                       f"atrim=start_sample={s0}:end_sample={s1},asetpts=PTS-STARTPTS", "-c:v", "ffv1",
+                       "-c:a", "pcm_s16le", clip)
                     clips.append(clip)
-                self.assertEqual(probe(str(clips[0]))["video"]["nb_frames"], 5, "the premise: 5 frames a clip")
+                self.assertEqual(len(self._frame_pts(clips[0])), 5, "the premise: 5 frames a clip")
                 out = d / f"joined_{tag}.mp4"
                 doc = json.loads(script("join.py", *clips, "--transition", "none", "--preset", "ultrafast", "--json",
                                         "-o", out).stdout)
