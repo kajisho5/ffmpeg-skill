@@ -20,7 +20,8 @@ a centred title needs no text-width measurement at all. `move` is (x1, y1, x2, y
 milliseconds relative to the line's own start; `fade` is (in_ms, out_ms); `scale_t` is
 (t1_ms, t2_ms, percent) for a pop.
 """
-from typing import Any, Dict, List, Optional, Sequence
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 # One sentinel character stands in drawn text where an emoji was, so the placeholder is inserted
@@ -103,6 +104,196 @@ def ass_escape(text: str) -> str:
 def ass_text(text: str) -> str:
     """Back-compatible name for ass_escape()."""
     return ass_escape(text)
+
+
+# --- SRT markup -------------------------------------------------------------------------------
+# The tags ffmpeg's own SRT reader turns into styling (libavcodec/htmlsubtitles.c): <i> <b> <u>
+# <s>, <font color=...>, and a `{\anN}` position block. caption.py's plain --srt route hands the
+# file to ffmpeg, which draws `<i>Hello</i>` in italics; the routes where caption.py writes its own
+# ASS (--animate, --karaoke, an emoji-forced ASS, the tiktok/reels/shorts templates) escaped the
+# same cue and drew the tags as text, and the wrapper measured them as width. Only these tags are
+# markup here: an unknown `<tag>` and every other `{\...}` block stay text, escaped as before
+# (a caption still cannot open \pos or \t from its cue text).
+_SRT_TAG_RE = re.compile(
+    r"<\s*(/?)\s*(i|b|u|s)\s*>"                       # 1, 2: simple style tags
+    r"|<\s*font\b([^<>]*)>"                           # 3: <font ...attributes>
+    r"|<\s*/\s*font\s*>"                              # closing font
+    r"|\{\\an([1-9])\}",                              # 4: position block
+    re.IGNORECASE)
+_FONT_COLOR_RE = re.compile(r"""\bcolor\s*=\s*["']?\s*([#\w]+)""", re.IGNORECASE)
+_NAMED_COLORS = {
+    "white": "ffffff", "black": "000000", "red": "ff0000", "lime": "00ff00", "green": "008000",
+    "blue": "0000ff", "yellow": "ffff00", "cyan": "00ffff", "aqua": "00ffff",
+    "magenta": "ff00ff", "fuchsia": "ff00ff", "silver": "c0c0c0", "gray": "808080",
+    "grey": "808080", "maroon": "800000", "olive": "808000", "navy": "000080",
+    "purple": "800080", "teal": "008080", "orange": "ffa500"}
+
+
+def srt_markup_tokens(text: str) -> "List[Tuple[bool, str]]":
+    """`text` cut into (is_markup, piece) runs, in order; the pieces concatenate back to `text`."""
+    out: "List[Tuple[bool, str]]" = []
+    pos = 0
+    for m in _SRT_TAG_RE.finditer(text or ""):
+        if m.start() > pos:
+            out.append((False, text[pos:m.start()]))
+        out.append((True, m.group(0)))
+        pos = m.end()
+    if pos < len(text or ""):
+        out.append((False, text[pos:]))
+    return out
+
+
+def strip_srt_markup(text: str) -> str:
+    """The words a viewer reads: `text` with the SRT markup tags removed."""
+    return "".join(piece for markup, piece in srt_markup_tokens(text) if not markup)
+
+
+def srt_alignment(text: str) -> "Optional[int]":
+    """The `{\\anN}` a cue asks for, or None."""
+    for markup, piece in srt_markup_tokens(text):
+        m = _SRT_TAG_RE.fullmatch(piece) if markup else None
+        if m and m.group(4):
+            return int(m.group(4))
+    return None
+
+
+def _font_colour(attrs: str) -> "Optional[str]":
+    m = _FONT_COLOR_RE.search(attrs or "")
+    if not m:
+        return None
+    value = m.group(1).lower()
+    value = _NAMED_COLORS.get(value, value)
+    if value.startswith("0x"):
+        value = value[2:]
+    value = value.lstrip("#")
+    if re.fullmatch(r"[0-9a-f]{6}", value):
+        return "&H%s%s%s&" % (value[4:6].upper(), value[2:4].upper(), value[0:2].upper())
+    return None   # ffmpeg ignores a colour it cannot read (#f00 included); so does this
+
+
+def _markup_to_ass(tag: str, colours: "List[str]", colour: bool = True) -> str:
+    m = _SRT_TAG_RE.fullmatch(tag)
+    if not m:
+        return ""
+    if not colour and not m.group(2) and not m.group(4):
+        return ""   # a <font> tag where the caller owns the colours (karaoke): dropped
+    if m.group(2):
+        return "{\\%s%d}" % (m.group(2).lower(), 0 if m.group(1) else 1)
+    if m.group(4):
+        return "{\\an%s}" % m.group(4)
+    if m.group(0).lstrip("< \t").lower().startswith("/"):
+        if colours:
+            colours.pop()
+        return "{\\c%s}" % colours[-1] if colours else "{\\c}"
+    colour = _font_colour(m.group(3))
+    colours.append(colour or (colours[-1] if colours else ""))
+    return "{\\c%s}" % colour if colour else ""
+
+
+def ass_escape_markup(text: str, colour: bool = True) -> str:
+    """ass_escape() for cue text that may carry SRT markup: the tags ffmpeg's SRT reader styles
+    become the same ASS overrides it writes for them (`<i>` -> `{\\i1}`, `<font color="#ffff00">`
+    -> `{\\c&H00FFFF&}`, `{\\an8}` kept), and everything else is escaped exactly as ass_escape()
+    escapes it. `colour=False` drops the <font> tags instead: karaoke's highlight IS the primary
+    colour, and a cue colour would replace it."""
+    out: "List[str]" = []
+    colours: "List[str]" = []
+    for markup, piece in srt_markup_tokens(text):
+        if markup:
+            out.append(_markup_to_ass(piece, colours, colour))
+            continue
+        escaped = ass_escape(piece)
+        if escaped.endswith("\\") and not escaped.endswith("\\​"):
+            escaped += "​"   # a trailing backslash must not run into the override after it
+        out.append(escaped)
+    return "".join(out)
+
+
+def reinsert_srt_markup(marked: str, lines: "Sequence[str]") -> "List[str]":
+    """Put `marked`'s markup back into `lines`, a wrap of strip_srt_markup(marked).
+
+    A wrap keeps every visible character in order and only turns whitespace into a break (or puts a
+    break between two characters), so each tag is anchored to a character: a closing tag right
+    after the visible character before it, any other tag right before the visible character after
+    it. Lines that do not hold the stripped text in order come back unchanged (markup dropped):
+    tags would otherwise land in the wrong word."""
+    tokens = srt_markup_tokens(marked)
+    if not any(markup for markup, _p in tokens):
+        return list(lines)
+    # (line, column) of every non-space character of the wrapped lines, in reading order
+    slots = [(li, ci) for li, line in enumerate(lines) for ci, ch in enumerate(line) if not ch.isspace()]
+    inserts: "Dict[Tuple[int, int], List[str]]" = {}
+    seen = 0   # non-space visible characters passed so far
+    for markup, piece in tokens:
+        if not markup:
+            for ch in piece:
+                if ch.isspace():
+                    continue
+                if seen >= len(slots) or lines[slots[seen][0]][slots[seen][1]] != ch:
+                    return list(lines)
+                seen += 1
+            continue
+        closing = piece.lstrip("< \t").startswith("/")
+        if not slots:
+            return list(lines)
+        if (closing and seen) or seen >= len(slots):
+            li, ci = slots[seen - 1]
+            key = (li, ci + 1)
+        else:
+            key = slots[seen]
+        inserts.setdefault(key, []).append(piece)
+    if seen != len(slots):
+        return list(lines)
+    out = []
+    for li, line in enumerate(lines):
+        cols = sorted(ci for (l2, ci) in inserts if l2 == li)
+        built, last = "", 0
+        for ci in cols:
+            built += line[last:ci] + "".join(inserts[(li, ci)])
+            last = ci
+        out.append(built + line[last:])
+    return out
+
+
+def carry_srt_markup(chunks: "Sequence[str]") -> "List[str]":
+    """Consecutive cues cut from one marked cue, each made to stand alone: a tag still open at the
+    end of a piece is closed there and opened again at the start of the next, and the cue's
+    `{\\anN}` is repeated on every piece -- the second half of an italic, top-placed cue stays
+    italic and at the top."""
+    out: "List[str]" = []
+    carried: "List[str]" = []
+    align = None
+    for chunk in chunks:
+        if align is None:
+            align = srt_alignment(chunk)
+        lead = "".join(carried)
+        if align is not None and srt_alignment(chunk) is None:
+            lead = "{\\an%d}" % align + lead
+        opened: "List[str]" = list(carried)
+        for markup, piece in srt_markup_tokens(chunk):
+            if not markup:
+                continue
+            m = _SRT_TAG_RE.fullmatch(piece)
+            if not m or m.group(4):
+                continue
+            closing = piece.lstrip("< \t").startswith("/")
+            name = (m.group(2) or "font").lower()
+            if closing:
+                for k in range(len(opened) - 1, -1, -1):
+                    if _tag_name(opened[k]) == name:
+                        del opened[k]
+                        break
+            else:
+                opened.append(piece)
+        tail = "".join("</%s>" % _tag_name(t) for t in reversed(opened))
+        out.append(lead + chunk + tail)
+        carried = opened
+    return out
+
+
+def _tag_name(tag: str) -> str:
+    m = _SRT_TAG_RE.fullmatch(tag)
+    return ((m.group(2) if m else None) or "font").lower()
 
 
 def text_overlay_ass(elements: Sequence[Dict[str, Any]], *, play_w: int, play_h: int,

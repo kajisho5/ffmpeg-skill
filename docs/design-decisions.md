@@ -743,6 +743,16 @@ Each item is recorded here so it is not re-proposed from scratch.
   1.14.0, so the demos, the golden frames and every existing test do not move (the filter
   string itself did change: the label moved from `text=` into `textfile=…:expansion=none`) —
   and the new route carries no risk for the 95 % of jobs that never needed it.
+- **SRT markup on `caption.py`'s own ASS route is the set ffmpeg's SRT reader styles, minus
+  free override blocks.** `<i> <b> <u> <s>`, `<font color>` and a `{\anN}` become the overrides
+  ffmpeg writes for them, so `--animate`/`--karaoke` draw what the plain `--srt` route draws. Any
+  other `{\...}` block stays escaped text there, although ffmpeg's SRT route would apply it: cue
+  text (an SRT, `--text`, a transcript) must not be able to `\pos`, `\t` or `\fscx` itself, which
+  1.15 decided and this keeps. An unknown `<tag>` stays text too (ffmpeg removes it), so a
+  caption that says `press <Enter>` is not shortened. Under `--karaoke`, `<font color>` is
+  dropped: the highlight is the primary colour, and the cue's colour would replace it. Tests:
+  `test_srt_markup_becomes_ass_overrides_not_text`,
+  `test_caption_ass_dialogue_text_cannot_forge_override_blocks`.
 
 
 ## 1.16.0 — long-form delivery

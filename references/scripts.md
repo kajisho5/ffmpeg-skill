@@ -1716,7 +1716,11 @@ Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` 
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
 energy` (default) follows the speech loudness in the audio, `even` splits the
-cue equally (word timing is derived, not transcribed). The ASS is kept next to the
+cue equally (word timing is derived, not transcribed). SRT markup in the cues is styled the
+way ffmpeg's own SRT route styles it: `<i>` `<b>` `<u>` `<s>` and `<font color>` become
+ASS overrides and a `{\anN}` keeps its position, measured as no width; any other tag or `{...}`
+stays text (escaped), and under `--karaoke` `<font color>` is dropped for the highlight's
+colours. The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
 Emoji (1.15): `--emoji-assets DIR` is a directory of PNGs named by code point
 (`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji/Noto
@@ -1726,7 +1730,9 @@ with an invisible placeholder reserving the emoji's box and each PNG is
 composited on top (`--emoji-scale` sizes the box, `--emoji-max` caps the count).
 Without one the run still succeeds and says `emoji: {"mode": "mono"}` plus a
 warning; `--emoji none` strips them; `--emoji color` insists on a colour-capable
-libass and refuses otherwise. Nothing is ever downloaded. What this machine can
+libass and refuses otherwise. An emoji is what Unicode draws as one by default: a text
+symbol such as `♪ ✓ ★` is never one, and `♥ ✔ ☺` only with VS16 (`♥️`) or a skin tone
+after them; the font draws the rest. Nothing is ever downloaded. What this machine can
 do: `doctor --json` → `.fonts.emoji`. Details: `references/gotchas.md#emoji`.
 
 Readable by default (1.12, rebalanced in 1.15): every cue is wrapped to the safe area — the
@@ -1735,9 +1741,10 @@ frame width minus the two side margins below, 90 % of it without a `--platform` 
 full em per character, Latin per character from a table read off DejaVu Sans (so
 an all-caps line measures as wide as it draws), Cyrillic/Greek about 0.55,
 Arabic/Hebrew 0.6, Devanagari 0.7, and a combining mark nothing at all —
-breaking between characters for CJK (a katakana word stays whole) and at spaces
-otherwise, but never between a character and the combining marks that belong
-to it (Devanagari matras, Arabic and Hebrew points). Thai (1.16.1) is never
+breaking between characters for Chinese and Japanese (a katakana word stays whole) and at
+spaces otherwise (Korean included: it is written with spaces between words, and a space
+that stood at a break is kept when a later pass moves the break), but never between a
+character and the combining marks that belong to it (Devanagari matras, Arabic and Hebrew points). Thai (1.16.1) is never
 broken inside a run: it writes no space inside a phrase and the wrapper has no
 dictionary, so the break goes where you put a space or a `|`, and a run with
 none stays long on its own line — `caption.py` counts such lines as `overlong`

@@ -5590,6 +5590,200 @@ class UserReportTests(unittest.TestCase):
                 self.assertIn("odd_dimensions_scaled_even", codes, doc)
 
 
+class CaptionTextFidelityTests(unittest.TestCase):
+    """The words a viewer reads are the words handed in: no text symbol taken for an emoji and cut
+    out, no space lost when a wrap pass moves a break, no SRT tag drawn as text. Each test iterates
+    the class, not the one reported input."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        self.caption = importlib.import_module("caption")
+
+    # ------------------------------------------------------------ text symbols are not emoji
+    def test_text_symbols_are_drawn_by_the_font_not_counted_as_emoji(self):
+        """♪ ✓ ★ are not emoji in Unicode's emoji-data, and ♥ ✔ ☺ are emoji only with VS16:
+        counting the whole Misc Symbols/Dingbats block made SDH music notes "emoji", and an
+        `--emoji none` run (auto on macOS, or on Linux without a colour face) cut them out."""
+        from _common import char_script, emoji_clusters, emoji_codepoint_name, has_emoji
+
+        def names(text):
+            return [emoji_codepoint_name(cl) for _i, cl in emoji_clusters(text)]
+
+        # never emoji: not in emoji-data at all, or text-default with nothing asking for the picture
+        for text in ("♪", "♫", "✓", "★", "☆", "→", "♥", "✔",
+                     "☺", "❤", "☀", "⬆", "\U0001F0A1", "♥︎"):
+            with self.subTest(text=text):
+                self.assertEqual(names(text), [])
+                self.assertEqual(names("a %s b" % text), [])
+                self.assertNotEqual(char_script(text[0]), "emoji")
+        self.assertFalse(has_emoji("♪ La la la ♪ / Done ✓ / ★★★"))
+        # emoji: presentation by default, or asked for with VS16 / a skin tone / inside a ZWJ sequence
+        for text, want in (("✅", ["2705"]), ("✨", ["2728"]), ("⭐", ["2b50"]),
+                           ("⚡", ["26a1"]), ("\U0001F004", ["1f004"]),
+                           ("❤️", ["2764-fe0f"]), ("♥️", ["2665-fe0f"]),
+                           ("✔️", ["2714-fe0f"]), ("☝\U0001F3FD", ["261d-1f3fd"]),
+                           ("\U0001F3C3‍♀️", ["1f3c3-200d-2640-fe0f"]),
+                           ("\U0001F469‍❤️‍\U0001F468", ["1f469-200d-2764-fe0f-200d-1f468"]),
+                           ("⛹️‍♂️", ["26f9-fe0f-200d-2642-fe0f"])):
+            with self.subTest(text=text):
+                self.assertEqual(names(text), want)
+
+    def test_emoji_none_keeps_the_text_symbols_in_the_drawn_text(self):
+        """The reported run: mode none (no face draws emoji here) on an SDH cue. The emoji goes,
+        the music notes and the check mark stay, and only the emoji is counted."""
+        caption = self.caption
+        support = {"mode": "none", "libass_color": False, "libass_glyph": False, "detail": "no face",
+                   "assets": None, "color_font": None, "color_font_file": None, "fix": ""}
+        args = argparse.Namespace(emoji="auto", emoji_assets=None, fonts_dir=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=None), \
+                unittest.mock.patch.object(caption, "warn", lambda *a, **k: None), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(caption.plan_emoji([(0.0, 2.0, "♪ La la la ♪"),
+                                                 (2.0, 4.0, "Done ✓")], args, 640, 360),
+                             ([(0.0, 2.0, "♪ La la la ♪"), (2.0, 4.0, "Done ✓")], None))
+            cues, plan = caption.plan_emoji([(0.0, 2.0, "♪ Party \U0001F389 ★")], args, 640, 360)
+        self.assertEqual(cues[0][2], "♪ Party ★")
+        self.assertEqual((plan["count"], plan["clusters"]), (1, ["1f389"]))
+
+    # ------------------------------------------------------------ a moved break keeps its space
+    @staticmethod
+    def _round_trips(original, lines):
+        """Do `lines` read back as `original`, each break either a space that stood there or a
+        break between two characters written together? Spaces are compared, not stripped."""
+        norm = re.sub(r"\s+", " ", original.strip())
+        pos = 0
+        for k, line in enumerate(lines):
+            if k and norm.startswith(" ", pos) and not norm.startswith(line, pos):
+                pos += 1
+            if not norm.startswith(line, pos):
+                return False
+            pos += len(line)
+        return pos == len(norm)
+
+    def test_wrap_keeps_every_space_through_every_pass_in_every_script(self):
+        """The greedy fill knows whether a space stood at each break; the orphan, weak-line and
+        rebalance passes used to guess it from the script, so a moved break in Korean (spaced, but
+        counted as unspaced) or in Japanese/Chinese written with spaces ran two words together:
+        `늦지마세요`, `したよろしく`, `谢谢大家` -- and the result still said text_unchanged."""
+        C = self.caption
+        corpus = [
+            "오늘 회의는 오후 세시에 시작합니다 "
+            "늦지 마세요 감사합니다",
+            "그럼 내일 다시 이야기해요 네",
+            "はい そうです それでは また あした "
+            "よろしく おねがいします",
+            "我 爱 你 我们 明天 见 好的 谢谢 大家",
+            "Hello 世界 good 你好 morning 早上好 everyone 大家",
+            "A third line the tool times for me",
+            "Done ✓ now \U0001F389 party \U0001F44D yes ok fine",
+        ]
+        for text in corpus:
+            for mode in ("phrase", "measured"):
+                for max_em in [x / 2 for x in range(6, 50)]:
+                    with self.subTest(text=text[:10], mode=mode, max_em=max_em):
+                        lines = C.wrap_text(text, max_em, mode=mode)
+                        self.assertTrue(self._round_trips(text, lines), lines)
+                        wrapped, _greedy, measured = C.wrap_variants(text, max_em, mode=mode)
+                        self.assertTrue(self._round_trips(text, wrapped), wrapped)
+                        self.assertTrue(self._round_trips(text, measured), measured)
+
+    def test_korean_breaks_only_between_words(self):
+        """Korean is written with spaces: a break goes at one, never inside a word (eojeol), unless
+        the word alone is wider than the line (the slice escape hatch, counted as such)."""
+        C = self.caption
+        text = ("오늘 회의는 오후 세시에 시작합니다 "
+                "늦지 마세요 감사합니다")
+        words = text.split(" ")
+        for mode in ("phrase", "measured"):
+            for max_em in (5.0, 6.075, 9.0, 12.0, 19.2):
+                with self.subTest(mode=mode, max_em=max_em):
+                    lines = C.wrap_text(text, max_em, mode=mode, lang="ko")
+                    self.assertEqual(" ".join(lines).split(" "), words, lines)
+        stats = C.layout_cues([(0.0, 4.0, text)], max_em=19.2, max_lines=2, min_duration=0, offset=0,
+                              lang="ko")[1]
+        self.assertNotIn("broken_inside_word", stats)
+
+    # ------------------------------------------------------------ SRT markup is markup on every route
+    def test_srt_markup_becomes_ass_overrides_not_text(self):
+        """What ffmpeg's SRT reader writes for the same cue (`ffmpeg -i tags.srt -f ass -`), with
+        the one difference kept on purpose: other `{\\...}` blocks stay escaped text."""
+        from _ass_overlay import ass_escape_markup, strip_srt_markup
+        cases = {
+            "<i>Hello there</i>": "{\\i1}Hello there{\\i0}",
+            "<B>bold</B> <u>u</u> <s>s</s>": "{\\b1}bold{\\b0} {\\u1}u{\\u0} {\\s1}s{\\s0}",
+            '{\\an8}<font color="#ffff00">Top</font>': "{\\an8}{\\c&H00FFFF&}Top{\\c}",
+            "<font color=red>r</font>": "{\\c&H0000FF&}r{\\c}",
+            "I <3 you {curly} {\\pos(1,1)}p": "I <3 you \\{curly\\} \\{\\pos(1,1)\\}p",
+            "<i>a\nb</i>": "{\\i1}a\\Nb{\\i0}",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(ass_escape_markup(src), want)
+        self.assertEqual(ass_escape_markup('<font color="#ffff00">k</font>', colour=False), "k")
+        self.assertEqual(strip_srt_markup('{\\an8}<font color="#ff0000">Top</font> <b>bold</b>'), "Top bold")
+
+    def test_layout_measures_the_words_and_keeps_the_tags_with_them(self):
+        """The tags take no width (a tagged cue wraps where the plain one does), a break never
+        lands inside `<font color=...>`, and a cue split in two keeps its italics and its {\\anN}
+        on both halves."""
+        C = self.caption
+        plain = "Hello there my good friend how are you today"
+        for src in ("<i>%s</i>" % plain, '{\\an8}<font color="#ffff00">%s</font>' % plain,
+                    "<b>Hello</b> there my <i>good friend</i> how are you <u>today</u>"):
+            for max_em in (6.075, 9.0, 12.96):
+                with self.subTest(src=src[:14], max_em=max_em):
+                    want = C.layout_cues([(0.0, 4.0, plain)], max_em=max_em, max_lines=9,
+                                         min_duration=0, offset=0)[0]
+                    got = C.layout_cues([(0.0, 4.0, src)], max_em=max_em, max_lines=9,
+                                        min_duration=0, offset=0)[0]
+                    self.assertEqual([C.strip_srt_markup(t) for _s, _e, t in got],
+                                     [t for _s, _e, t in want])
+                    self.assertEqual(C.strip_srt_markup(got[0][2]).count("\n"), want[0][2].count("\n"))
+                    for line in got[0][2].split("\n"):
+                        self.assertEqual(line.count("<"), line.count(">"), line)
+        split = C.layout_cues([(0.0, 4.0, "{\\an8}<i>%s</i>" % plain)], max_em=8.0, max_lines=1,
+                              min_duration=0, offset=0)[0]
+        self.assertGreater(len(split), 1)
+        for _s, _e, text in split:
+            self.assertTrue(text.startswith("{\\an8}<i>") and text.endswith("</i>"), text)
+
+    def test_the_generated_ass_route_draws_no_srt_tag(self):
+        """The reported run, on the routes where caption.py writes its own ASS: --animate fade,
+        --karaoke (sweep and word) with --animate pop (the tiktok/reels/shorts templates' pair).
+        No Dialogue carries `<i>`, `<font` or an escaped `\\{\\an8\\}`, the italic and the
+        position are real overrides, and the result still says the text is unchanged."""
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        src = tiny_clip(OUT / "markup_src.mp4", "testsrc2=size=320x180:rate=25", seconds=2, audio=True)
+        srt = OUT / "markup.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n<i>Hello there</i>\n\n"
+                       "2\n00:00:01,000 --> 00:00:02,000\n{\\an8}<font color=\"#ffff00\">Top</font> <b>bold</b>\n\n",
+                       encoding="utf-8")
+        routes = {"fade": ["--animate", "fade"],
+                  "sweep": ["--karaoke", "--karaoke-timing", "even", "--animate", "pop"],
+                  "word": ["--karaoke", "--karaoke-style", "word", "--karaoke-timing", "even"]}
+        for name, extra in routes.items():
+            with self.subTest(route=name):
+                ass = OUT / ("markup_%s.ass" % name)
+                doc = json.loads(script("caption.py", src, "--srt", srt, *extra, "--write-ass", ass,
+                                        "--preset", "ultrafast", "-o", OUT / ("markup_%s.mp4" % name),
+                                        "--overwrite", "--json").stdout)
+                self.assertTrue(doc["caption"]["text_unchanged"], doc["caption"])
+                dialogue = [l for l in ass.read_text(encoding="utf-8-sig").splitlines()
+                            if l.startswith("Dialogue:")]
+                body = "\n".join(dialogue)
+                for literal in ("<i>", "</i>", "<b>", "<font", "\\{\\an8\\}"):
+                    self.assertNotIn(literal, body)
+                self.assertIn("{\\i1}", body)
+                self.assertIn("{\\an8}", body)
+                self.assertIn("Hello", body)
+                if name == "fade":
+                    self.assertIn("{\\c&H00FFFF&}Top", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

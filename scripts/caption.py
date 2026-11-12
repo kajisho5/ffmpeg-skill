@@ -43,7 +43,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
                         resolve as resolve_platform)
-from _ass_overlay import EMOJI_SENTINEL, emoji_placeholder, ass_escape
+from _ass_overlay import (EMOJI_SENTINEL, emoji_placeholder, ass_escape, ass_escape_markup,
+                          strip_srt_markup, reinsert_srt_markup, carry_srt_markup, srt_alignment)
 from _common.emit import refuse  # noqa: E402
 from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, layer_base_chain, load_brand, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
@@ -277,12 +278,12 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
     margin_px = args.margin * play_h / 288.0
     line_h = size_px * 1.2
     box_px = size_px * scale
-    align = ALIGN[args.position]
     out_cues = []
     for start, end, text in cues:
         lines = _cue_lines(text)
         n = len(lines)
         new_lines = []
+        align = srt_alignment(text) or ALIGN[args.position]   # a cue's {\anN} moves its emoji too
         for i, line in enumerate(lines):
             if align in (7, 8, 9):
                 y_top = margin_px + i * line_h
@@ -290,7 +291,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
                 y_top = play_h / 2.0 - (n * line_h) / 2.0 + i * line_h
             else:
                 y_top = play_h - margin_px - (n - i) * line_h
-            line_w = text_width_em(line, scale) * size_px
+            line_w = text_width_em(strip_srt_markup(line), scale) * size_px
             if align in (1, 4, 7):
                 x0 = margin_px
             elif align in (3, 6, 9):
@@ -300,7 +301,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
             # libass lays an RTL line out right-to-left, so the LOGICAL prefix of a cluster
             # occupies the RIGHT end of the rendered line. Measuring the prefix from the left
             # edge put the PNG on top of the text, mirrored, on every Arabic/Hebrew cue (1.15.0).
-            rtl = detect_script(line) in BIDI_SCRIPTS
+            rtl = detect_script(strip_srt_markup(line)) in BIDI_SCRIPTS
             rebuilt = ""
             cursor = 0
             for idx, cluster in emoji_clusters(line):
@@ -313,6 +314,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
                     rebuilt += line[cursor:idx + len(cluster)]
                     cursor = idx + len(cluster)
                     continue
+                prefix = strip_srt_markup(prefix)   # a tag before the emoji takes no room
                 if rtl:
                     x = x0 + line_w - text_width_em(prefix + cluster, scale) * size_px
                 else:
@@ -390,9 +392,12 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
             # greedy wrap would have given (`rebalanced`) and what 1.15's wrap would have
             # given (`phrase_breaks`). Three wrap_text() calls re-ran the atomiser each time.
             sliced_atoms: List[int] = []
-            lines, greedy, measured = wrap_variants(text, own_em, mode=wrap, lang=lang,
+            # SRT markup (<i>, <font color>, {\an8}) is not text: the wrap measures and breaks
+            # the words a viewer reads, and the tags go back next to the characters they styled
+            plain = strip_srt_markup(text)
+            lines, greedy, measured = wrap_variants(plain, own_em, mode=wrap, lang=lang,
                                                      slice_overlong=True, sliced=sliced_atoms)
-            if lines != [l for l in text.split("\n") if l.strip()]:
+            if lines != [l for l in plain.split("\n") if l.strip()]:
                 stats["wrapped"] += 1
             if sliced_atoms:
                 # the escape hatch fired: a word or run with no break point the wrapper may use
@@ -407,19 +412,22 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
                 stats["rebalanced"] += 1
             if wrap != "measured" and lines != measured:
                 stats["phrase_breaks"] += 1
+            marked = reinsert_srt_markup(text, lines) if plain != text else lines
             if len(lines) > max_lines:
                 chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
                 weights = [max(1.0, sum(len(l) for l in c)) for c in chunks]
                 total_w = sum(weights)
+                pieces = carry_srt_markup(["\n".join(marked[i:i + max_lines])
+                                           for i in range(0, len(marked), max_lines)])
                 t = start
-                for chunk, weight in zip(chunks, weights):
+                for piece, weight in zip(pieces, weights):
                     seg = (end - start) * weight / total_w
-                    staged.append((t, min(end, t + seg), "\n".join(chunk)))
+                    staged.append((t, min(end, t + seg), piece))
                     staged_sizes.append(own_size)
                     t += seg
                 stats["split"] += len(chunks) - 1
                 continue
-            text = "\n".join(lines)
+            text = "\n".join(marked)
         staged.append((start, end, text))
         staged_sizes.append(own_size)
     out: List[Tuple[float, float, str]] = []
@@ -572,7 +580,7 @@ def parse_ass_cues(path: str, stats: Optional[dict] = None) -> List[Tuple[float,
 
 
 def cue_text_visible(text: str) -> bool:
-    return bool((text or "").strip())
+    return bool(strip_srt_markup(text or "").strip())   # `<i></i>` draws nothing
 
 
 def count_visible_cues(cues, duration) -> Tuple[int, int]:
@@ -664,6 +672,17 @@ def _karaoke_word_durations(args, video: Optional[str], start: float, end: float
     return durs
 
 
+# an override block this file wrote (a converted SRT tag), not the escaped `\{` a user typed
+_OVERRIDE_BLOCK_RE = re.compile(r"(?<!\\)\{\\[^{}]*\}")
+
+
+def _karaoke_word(token: str) -> bool:
+    """Does this space-separated Dialogue token hold something a viewer reads? An emoji
+    placeholder does not, and neither does a lone converted tag (`{\\i1}` from `<i> Hello`):
+    neither gets a share of the cue's time or a highlight of its own."""
+    return bool(_OVERRIDE_BLOCK_RE.sub("", token).strip(EMOJI_SENTINEL))
+
+
 def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int, play_h: int, video: str = None) -> None:
     """Write a styled ASS file with optional animation and word-by-word highlight."""
     def t(sec: float) -> str:
@@ -687,6 +706,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     word_active = ass_color(args.highlight_color)
     word_upcoming = ass_color(args.upcoming_color)
     word_bord = f"{args.outline * scale * (max(1.0, args.karaoke_scale) / 100.0):.2f}"
+    style_bord = f"{args.outline * scale:.2f}"
     word_scale = int(round(args.karaoke_scale))
     # --karaoke-style word emits one Dialogue per word carrying the WHOLE cue with explicit \N
     # breaks (the layout's own fixed line list -- see max_line_em's docstring). WrapStyle: 2 tells
@@ -713,7 +733,9 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         # escapes for the braces, so 1.15 escapes them (ass_escape) rather than deleting them:
         # a cue that says "use {curly} braces" is read out with its braces, and still cannot open
         # an override block. Newlines become \N in the same pass.
-        text = ass_escape(text)
+        # SRT markup is the exception (#X2): <i>/<b>/<u>/<s>, <font color> and {\anN} become the
+        # overrides ffmpeg's SRT reader gives them, so this route draws what the plain one draws
+        text = ass_escape_markup(text, colour=not args.karaoke)
         fx = ""
         if args.animate == "fade":
             fx = "{\\fad(200,200)}"
@@ -740,7 +762,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
             # the active word's larger \fscx/\fscy, which is the jump the issue is filed against.
             line_words = [[w for w in seg.split(" ") if w] for seg in body.split("\\N")]
             flat = [w for lw in line_words for w in lw]
-            real_idx = [i for i, w in enumerate(flat) if w.strip(EMOJI_SENTINEL)]
+            real_idx = [i for i, w in enumerate(flat) if _karaoke_word(w)]
             if not real_idx:
                 # nothing to highlight (an all-emoji or empty cue) -- one plain event, same as
                 # today's karaoke-off rendering, rather than zero Dialogue lines for this cue
@@ -764,15 +786,18 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
                 for lw in line_words:
                     styled_line = []
                     for w in lw:
-                        if not w.strip(EMOJI_SENTINEL):
+                        if not _karaoke_word(w):
                             styled_line.append(w)
                         else:
                             rank = real_idx.index(flat_pos)
                             if rank < j:
                                 styled_line.append(f"{{\\c{word_past}}}{w}")
                             elif rank == j:
+                                # put back what the active word changed, not {\r}: a reset would
+                                # also drop the cue's own <i>/<b>/colour and a --fit-size \fs
                                 styled_line.append(
-                                    f"{{\\c{word_active}\\fscx{word_scale}\\fscy{word_scale}\\bord{word_bord}}}{w}{{\\r}}")
+                                    f"{{\\c{word_active}\\fscx{word_scale}\\fscy{word_scale}\\bord{word_bord}}}{w}"
+                                    f"{{\\fscx100\\fscy100\\bord{style_bord}}}")
                             else:
                                 styled_line.append(f"{{\\c{word_upcoming}}}{w}")
                         flat_pos += 1
@@ -789,7 +814,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         if args.karaoke:
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
             segments = body.split("\\N")
-            words = [w for seg in segments for w in seg.split(" ") if w and w.strip(EMOJI_SENTINEL)]
+            words = [w for seg in segments for w in seg.split(" ") if w and _karaoke_word(w)]
             durs = _karaoke_word_durations(args, video, start, end, len(words))
             it = iter(durs)
             out_segments = []
@@ -799,7 +824,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
                 # past the reserved gap without spending cue time on a glyph nobody sees (rendered
                 # and confirmed -- libass keeps the full gap inside a karaoke run).
                 out_segments.append(" ".join(
-                    ("{\\kf0}" + w) if not w.strip(EMOJI_SENTINEL) else f"{{\\kf{next(it)}}}{w}" for w in ws))
+                    ("{\\kf0}" + w) if not _karaoke_word(w) else f"{{\\kf{next(it)}}}{w}" for w in ws))
             body = "\\N".join(out_segments)
         if EMOJI_SENTINEL in body:
             body = body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
@@ -1223,7 +1248,7 @@ def main() -> int:
             # viewer sees and would silently change the SRT this run writes, so the mux path is
             # left exactly as 1.16 wrote it.
             return
-        fit = fit_size(cue_list, **fit_params())
+        fit = fit_size([(s, e, strip_srt_markup(t)) for s, e, t in cue_list], **fit_params())
         fit_stats["size_used"] = fit["size"]
         fit_stats["size_source"] = "platform-frame" if planned_frame else "input"
         fit_stats["shrunk"] = fit["shrunk"]
