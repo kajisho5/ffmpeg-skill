@@ -25,13 +25,15 @@
   cross-filesystem delivery temp had fixed names and were opened through
   whatever was already there, a planted symlink included: the encode was written into the link's
   target and the output left as a symlink to it. A copy the tool makes itself is written
-  through the descriptor that created the temp, never by reopening its name. A lock's default
-  audit log is opened without following a symlink.
+  through the descriptor that created the temp, never by reopening its name, and a directory that
+  refuses the exclusive create fails the run (`output_dir_not_writable`) instead of handing ffmpeg
+  a name nobody reserved. A lock's default audit log is opened without following a symlink.
 - **`render.py` refuses an output that is any file the project names.** The guard compared the
   output with the clips and overlay videos only, so with `--overwrite` a project whose output was
-  its own music bed, brand file, overlay image or font, caption file or beat source replaced it.
-  `audiogram.image` is now passed to the audiogram stage resolved against the project file, as
-  every other project path is, instead of against the caller's working directory.
+  its own music bed, brand file, overlay image or font, caption file, beat source, or the
+  project file itself replaced it. `audiogram.image` and an overlay's `font_file` are now passed
+  to their stages resolved against the project file, as every other project path is, instead of
+  against the caller's working directory.
 
 ### Fixed
 

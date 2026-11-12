@@ -3996,6 +3996,20 @@ class ContractTests(unittest.TestCase):
         proc = tool("render", ag, "--dry-run", "--json", cwd=self.work)
         forwarded = [l for l in proc.stderr.splitlines() if "waveform.py" in l]
         self.assertTrue(forwarded and str(img) in forwarded[0], proc.stderr)
+        # an overlay font_file reaches overlay.py resolved the same way
+        ov = work / "p_font.json"
+        ov.write_text(json.dumps({"output": "f.mp4", "clips": [{"src": str(self.src)}],
+                                  "overlays": [{"text": "hi", "font_file": "brand.json"}]}), encoding="utf-8")
+        proc = tool("render", ov, "--dry-run", "--json", cwd=self.work)
+        forwarded = [l for l in proc.stderr.splitlines() if "overlay.py" in l]
+        self.assertTrue(forwarded and str(brand) in forwarded[0], proc.stderr)
+        # and the project file itself is an input: its own output may not replace it
+        selfout = work / "selfout.json"
+        selfout.write_text(json.dumps({"output": "selfout.json", "clips": [{"src": str(self.src)}]}), encoding="utf-8")
+        text = selfout.read_text(encoding="utf-8")
+        proc = tool("render", selfout, "--overwrite", "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input", proc.stderr)
+        self.assertEqual(selfout.read_text(encoding="utf-8"), text)
 
     def test_a_colour_is_six_hex_digits_or_refused(self):
         """color_hex() checked the length only: a six-letter name ("yellow", "orange") drew black text
@@ -4061,6 +4075,13 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(Path(again).read_bytes(), Path(self.src).read_bytes())
         os.remove(again)
         self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n")
+        # a name that could not be created exclusively is never handed out
+        from unittest import mock
+        with mock.patch.object(runner, "_reserve", return_value=(str(work / ".x"), None)):
+            with self.assertRaises(SystemExit):
+                runner.reserve_sibling(str(work), "out", ".mp4")
+            with self.assertRaises(OSError):
+                runner.copy_to_sibling(str(self.src), str(out))
         log = work / ".out.mp4.ffskill-audit.jsonl"
         if log.is_symlink() or log.exists():
             log.unlink()

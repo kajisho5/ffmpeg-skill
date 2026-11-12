@@ -1263,7 +1263,7 @@ def main() -> int:
     # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
     # (review 5): every file the project names is passed here, not only the clips, or --overwrite
     # replaced a music bed or a brand file named as the output
-    refuse_output_is_input(output, *project_input_files(proj, rel))
+    refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel))
     if _reaches("overlays", args.stop_after):
         # #326: an overlay video is the caller's file, never an earlier stage's output, so a
         # missing one is refused here, under --dry-run too, not after every stage before it ran
@@ -1593,7 +1593,8 @@ def main() -> int:
         for k, flag in (("position", "--position"), ("start", "--start"), ("end", "--end"), ("fade", "--fade"), ("opacity", "--opacity"), ("scale", "--scale"), ("font_size", "--font-size"), ("font", "--font"), ("font_file", "--font-file"), ("margin", "--margin"), ("platform", "--platform"),
                         ("chromakey", "--chromakey"), ("chromakey_similarity", "--chromakey-similarity"), ("chromakey_blend", "--chromakey-blend")):
             if ov.get(k) is not None:
-                argv += [flag, str(ov[k])]
+                # font_file is a path: the same one project_input_files() guards
+                argv += [flag, rel(ov[k]) if k == "font_file" and ov[k] else str(ov[k])]
         if ov.get("box"):
             argv.append("--box")
         # review 12: the overlay stage was the one stage that never heard which destination this

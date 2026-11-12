@@ -1325,8 +1325,11 @@ def reserve_sibling(d: str, stem: str, ext: str, tag: str = "") -> str:
     sticky shared directory (/tmp), nor in one only the caller can write. A copy this process makes
     itself goes through copy_to_sibling(), which writes the descriptor it created."""
     path, fd = _reserve(d, stem, ext, tag)
-    if fd is not None:
-        os.close(fd)
+    if fd is None:
+        # fail closed: a name that was not created exclusively is never handed to ffmpeg
+        refuse("input", "output_dir_not_writable", f"cannot create a temporary file in {d or '.'!r}",
+               output=os.path.join(d, stem + ext), directory=d or ".")
+    os.close(fd)
     return path
 
 
@@ -1340,7 +1343,16 @@ def copy_to_sibling(src: str, dst: str) -> str:
     if fd is None:
         raise OSError(f"cannot create a temporary file beside {dst}")
     try:
-        with open(src, "rb") as fin, os.fdopen(fd, "wb") as fout:
+        fout = os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    try:
+        with fout, open(src, "rb") as fin:
             shutil.copyfileobj(fin, fout, 1 << 20)
     except BaseException:
         try:
