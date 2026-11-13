@@ -1190,7 +1190,10 @@ class OrchestrationTests(MediaFixtures):
         }), encoding="utf-8")
         doc = json.loads(script("render.py", proj, "--fast", "--json").stdout)
         cap = doc["caption"]
-        self.assertEqual((cap["fit_size"], cap["size_floor"], cap["fit_scope"]), ("on", 15, "cue"))
+        # the project's fit_size_scope reaches caption.py; on this plain SRT burn (one FontSize)
+        # the scope applied is the file's, which the result now says instead of "cue" (A67)
+        self.assertEqual((cap["fit_size"], cap["size_floor"], cap["fit_scope"]), ("on", 15, "file"))
+        self.assertTrue(any("--fit-size-scope cue" in n for n in doc.get("notes") or []), doc.get("notes"))
         self.assertGreaterEqual(cap["size_used"], 15)
         self.assertEqual(cap["split"], 0)
 

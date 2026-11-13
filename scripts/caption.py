@@ -1229,7 +1229,9 @@ def main() -> int:
     args._fit_floor = args.min_size if args.min_size is not None else ass_units(MIN_CAPTION_FRACTION)
     fit_unmeasurable = not (play_w and play_h)
     fit_stats: dict = {"fit_size": args.fit_size, "size_requested": args.size,
-                       "size_used": None if fit_unmeasurable else args.size,
+                       # A76: null until a fit (or a stated size) decides it; a --transcribe
+                       # dry run has no cues, so nothing is fitted and nothing is claimed
+                       "size_used": args.size if (args.fit_size == "off" or (args.fit_size == "auto" and args._size_explicit)) else None,
                        "size_floor": args._fit_floor,
                        "size_pct_height": round(args.size * 100.0 / ASS_SCRIPT_HEIGHT, 2),
                        "shrunk": 0, "fit_scope": args.fit_size_scope, "fit_exhausted": False}
@@ -1569,14 +1571,22 @@ def main() -> int:
             cmd += [f"-c:s:{i}", existing_out[i]]
         tracks: List[Dict[str, Any]] = []
         converted: List[str] = []
+        # A60: a kept track is reported with the disposition the input gives it (the muxer copies
+        # it), not False whatever the file says; when --default-track makes a new track the
+        # default, the kept ones are cleared so the file does not carry two defaults
+        new_default = bool(args.default_track and any(
+            lang and lang.lower() == args.default_track.lower() for _p, lang in added))
         for i in range(existing_subs):
             detail = existing_details[i] if i < len(existing_details) else {}
             written = detail.get("codec") if existing_out[i] == "copy" else existing_out[i]
             if existing_out[i] != "copy":
                 converted.append(f"{detail.get('codec')} -> {existing_out[i]}")
+            kept_default = bool(detail.get("default")) and not new_default
+            if new_default and detail.get("default"):
+                cmd += [f"-disposition:s:{i}", "0"]
             tracks.append({"index": i, "file": None, "language": detail.get("language"),
                            "title": detail.get("title"), "codec": written,
-                           "default": False, "cues": None, "kept_from_input": True})
+                           "default": kept_default, "cues": None, "kept_from_input": True})
         for n, (path, lang) in enumerate(added):
             idx = existing_subs + n
             cmd += [f"-c:s:{idx}", codec]
@@ -1726,6 +1736,13 @@ def main() -> int:
         generated_ass = True
     else:
         generated_ass = False
+    if not generated_ass and caption_stats.get("fit_scope") == "cue":
+        # A67: one size per cue is a {\fsN} override in the generated ASS; the plain SRT burn
+        # (and a caller's own --ass) draws every cue at one FontSize, so the scope that was
+        # applied is the file's, and saying "cue" described sizes nobody drew
+        caption_stats["fit_scope"] = "file"
+        side_notes.append("--fit-size-scope cue applies on the generated-ASS route (--animate, --karaoke, emoji "
+                          "overlays); this burn draws every cue at one size (size_used), so the fit is file-scoped")
 
     if args.ass:
         if not generated_ass and not os.path.exists(args.ass) and not planned_ass:

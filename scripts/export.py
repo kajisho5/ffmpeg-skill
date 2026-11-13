@@ -44,7 +44,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from _common.runner import child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
@@ -54,6 +54,7 @@ from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
+from _common.probe import SILENT_PEAK_DBFS
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
 # from a literal restated here: before 1.14 they were typed twice and the facebook preset had
@@ -288,17 +289,22 @@ def _luma_stats(path: str) -> "Dict[str, float] | None":
     return _frame_means([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"], path, "format=gray")
 
 
-def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: str, spec: Dict, normalized: bool = False) -> None:
-    """The written file's loudness could not be read (ffmpeg's loudnorm JSON did not parse): the
+def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: str, spec: Dict, normalized: bool = False,
+                         tp: Optional[float] = None) -> None:
+    """The written file's loudness could not be read (ffmpeg's loudnorm JSON did not parse, or,
+    with `tp`, the audio is shorter than one 400 ms gating block and has only a true peak): the
     platform's loudness was not verified, and the document says so -- a `loudness` block with null
     values and a reason, a failing `loudness` verification step, a warning -- rather than leaving
     the block out, which read as "nothing to check". check.py reports the same case as a WARN row."""
     reason = "not_measured"
-    extra["loudness"] = {"lufs": None, "tp": None, "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": None,
-                         "measured": False, "reason": reason, **({"normalized": True} if normalized else {})}
+    extra["loudness"] = {"lufs": None, "tp": tp, "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": None,
+                         "measured": False, "reason": reason, **({"too_short": True} if tp is not None else {}),
+                         **({"normalized": True} if normalized else {})}
     extra["verification"] = [{"step": "loudness", "ok": False, "platform": platform, "reason": reason}]
+    why = ("the audio is shorter than one 400 ms loudness block, so it has a true peak but no integrated loudness"
+           if tp is not None else "ffmpeg's loudnorm output did not parse")
     msg = (f"the written file's loudness could not be measured{' after --normalize' if normalized else ''} "
-           f"(ffmpeg's loudnorm output did not parse), so {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP was not "
+           f"({why}), so {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP was not "
            "verified; run check.py on the file")
     notes.append(msg)
     warn(msg, "loudness_not_measured", platform=platform, normalized=normalized)
@@ -722,7 +728,11 @@ def main() -> int:
         # written file here so the result names the gap and the caller plans one pass, not two.
         spec = PLATFORMS[platform]
         m = measure_loudness(output)
-        if not m:
+        if m and not math.isfinite(m["lufs"]) and math.isfinite(m["tp"]) and m["tp"] > SILENT_PEAK_DBFS:
+            # A257: too short for a gating block is not silent (it has a measured peak)
+            _loudness_unmeasured(extra, notes, platform, spec, tp=m["tp"])
+            m = {}
+        elif not m:
             _loudness_unmeasured(extra, notes, platform, spec)
         if m:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB

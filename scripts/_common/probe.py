@@ -297,6 +297,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "codec": s.get("codec_name"),
             "language": (s.get("tags") or {}).get("language"),
             "title": (s.get("tags") or {}).get("title"),
+            # the stream's default disposition as the file states it (caption.py --mode mux
+            # reports a kept track's from here, A60)
+            "default": bool((s.get("disposition") or {}).get("default")),
         } for n, s in enumerate(subs)],
     }
     if video:

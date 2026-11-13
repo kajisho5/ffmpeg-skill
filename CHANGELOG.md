@@ -57,6 +57,40 @@
   command with its own output by tool-use id, and grades a run that never started `NOT_RUN`;
   `evals/README.md` counts 99 + 11 prompts and says which paths in them are the maintainer's.
 
+### Fixed
+
+- **A measurement that did not happen is reported as not measured, never as a value or a pass**
+  (A60, A67, A76, A97, A111, A113, A114, A117, A131, A172, A182, A193, A236, A237, A239, A240,
+  A241, A257). `check.py` PASSed the duration of a file that states no length (read as 0.00 s) and
+  dropped its `--content` black/frozen/silence rows; those rows are now "could not measure"
+  (duration FAILs under a length limit), as are an unread frame rate and file size. Its aspect row
+  reads the displayed frame, so a 16:9 anamorphic file (1440x1080 at SAR 4:3) is 16:9, not 4:3,
+  and `--platform custom --tp N` without `--lufs` now measures the true peak instead of reporting
+  0 failed. `multicam.py --fix-drift` reports `drift_ppm: null` and a `drift_skipped_reason`
+  (`too_short` / `low_confidence`, a `drift_correction_skipped` skip) for a camera whose drift it
+  did not measure, as `sync.py` does, where it said 0.0. A clip shorter than one 400 ms loudness
+  block is not silent: `loudness.py --measure-only` says `too_short` with its true peak and a
+  normalisation is refused (`error.reason: audio_too_short`) without telling the caller to replace
+  the audio; `export.py` records `loudness_not_measured` with the measured peak instead of
+  `output_audio_silent`, and `check.py`'s loudness row WARNs. A loudness step on an output with no
+  integrated loudness fails (`not_measured`) where a silent one passed. `loudness.py` reports
+  `loudnorm_mode` and, when loudnorm fell back to dynamic mode, its shortfall note says so instead
+  of blaming the encoder. `caption.py` reports `size_used: null` when no fit ran (a
+  `--transcribe --dry-run`), `fit_scope: file` with a note when `--fit-size-scope cue` met the
+  plain SRT burn (which draws one size), and a kept subtitle track's own default disposition in
+  `--mode mux` (`probe.py`'s `subtitle_stream_details` carries `default`), clearing it when
+  `--default-track` makes a new track the default. `render.py --dry-run` plans a clip's speed on
+  its in..out (a stand-in 10 s only when nothing can be read, recorded as
+  `speed_length_placeholder`), and a pack row whose check did not run says `not checked`, not
+  `pass`. `overlay.py` and `graphics.py` refuse a `--start` at or after the end of the video,
+  where they completed `verified: true` with nothing drawn. `pad.py` records the even scale it
+  adds (`odd_dimensions_scaled_even`). A stopped run says "nothing was written" only when no file
+  it wrote is on disk. `verify.py --dry-run` (accepted and ignored) says `dry_run: false` and a
+  note. The contract lists `metadata` (`--auto-chapters`), `cut` (`--snap beats`), `render` and
+  `batch` as `analysis_only` under `--dry-run`, which a test now derives from what each tool's dry
+  run decodes; `report`'s note no longer claims contact sheets are measured, and `commands` no
+  longer claims every ffmpeg command line.
+
 ## 3.6.6
 
 _Automated release: version and notes generated from pull requests merged since 3.6.5._

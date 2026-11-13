@@ -250,8 +250,12 @@ read-only (ffprobe still runs); `sync`, `multicam`, `scenes`, `cropdetect`, `rep
 `loudness` and `stabilize` still run their ffmpeg/ffprobe measurements (the analysis is the
 tool's job; only the artifact is skipped, including side files such as `--edl`, `--sheet` or a
 generated `.ass`), `overlay` measures the lines of a multi-line `--text` with one drawtext on a
-generated frame on FFmpeg 8.0, 8.0.1 and 8.1.0 (it draws them one by one there), and `verify`
-does not support dry-run (its steps run). `SKILL.md` and
+generated frame on FFmpeg 8.0, 8.0.1 and 8.1.0 (it draws them one by one there), `metadata`
+with `--auto-chapters` and `cut` with `--snap beats` decode the input for their measurement,
+`render` and `batch` run each stage or step as its own dry run (a measuring stage measures an
+input that exists), and `verify` does not support dry-run (its steps run, and its document says
+`dry_run: false`). `tests/test_contract.py` runs every tool's dry run behind an ffmpeg that logs
+each decode and asserts that every tool that decoded is in `DRY_RUN_ANALYSIS`. `SKILL.md` and
 `references/scripts.md` repeat the same list; the contract is the authority.
 
 `--codec h264|hevc|av1|prores` and `--quality N` (1.8) are on every tool that re-encodes,
@@ -690,7 +694,7 @@ Per-tool keys added in 1.17, all additive:
 
 | key | tool | what it holds |
 |---|---|---|
-| `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`, `shrunk`, `fit_scope`, `fit_exhausted` | `caption.py` | siblings inside the same `caption` block: which mode fitted the size (`auto`/`on`/`off`), the size asked for and the size used in ASS units, the floor (13 = 4.5 % of the frame height), that size as a percentage of the frame, how many cues the shrink rescued, `file` or `cue` scope, whether the floor was reached with cues still split, and `size_source` (`input`, or `platform-frame` when a plan was written before the input existed). `size_used` is `null` when there was no geometry to fit against at all |
+| `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`, `shrunk`, `fit_scope`, `fit_exhausted` | `caption.py` | siblings inside the same `caption` block: which mode fitted the size (`auto`/`on`/`off`), the size asked for and the size used in ASS units, the floor (13 = 4.5 % of the frame height), that size as a percentage of the frame, how many cues the shrink rescued, `file` or `cue` scope, whether the floor was reached with cues still split, and `size_source` (`input`, or `platform-frame` when a plan was written before the input existed). `size_used` is `null` when there was no geometry to fit against at all, and when no fit ran (a `--transcribe --dry-run` has no cues yet; a stated `--size` or `--fit-size off` is the size used and is reported); `fit_scope` is the scope applied: `cue` only on the generated-ASS route, `file` (with a `notes` line) when `--fit-size-scope cue` met the plain SRT burn |
 | `beats`, `beat_grid` | `scenes.py --beats` | the measured beat times, and `{supported_beats, tempo_bpm, interval, confidence, phase, onsets, supported, unsupported, method, step_s, range_bpm, usable}`. `supported_beats` is the subset of the regular grid that a measured onset marks — the only list a tool that moves a cut may snap to. `usable` is `confidence >= --min-confidence`; a low confidence is reported, not refused — `scenes.py` measures, it does not act |
 | `snap` | `cut.py --snap beats`, `render.py` | `{mode, tolerance, confidence, tempo_bpm, grid, grid_points, moved, snapped, unchanged, source}`. `grid` is `"supported"`: points are moved only onto grid points a measured onset marks, never onto the regular grid's continuation through a silent passage. `moved` has exactly one row per in/out point given (`from`, `to`, `delta`, `snapped`, `beat_index`) — a point is never added or dropped, and `to` is always either a measured beat or the caller's own value |
 | `filler`, `removed_seconds_total` | `silence.py --filler` | `{lang, source, engine, words, removed, removed_count, removed_seconds, removed_words, word_timings, list, warnings}`. The existing `removed_seconds` is unchanged in name and meaning — the seconds of *silence* removed, which is what it has always held — and `removed_seconds_total` is the additive sibling covering silence plus filler |
