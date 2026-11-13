@@ -147,6 +147,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "swap in the narration track" | `audio.py in.mp4 --replace narration.wav` |
 | "give me the sound as WAV" | `audio.py in.mp4 -o in.wav` |
 | "speed the line up, same pitch", "exactly 96000 samples long" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` |
+| "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
 | "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` |

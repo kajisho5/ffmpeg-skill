@@ -2039,7 +2039,7 @@ audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25
           [--duck-attack 20] [--duck-release 400]] [--music-loop]]
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
          [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE]
-         [--tempo FACTOR] [--length-samples N] [-o OUT]
+         [--tempo FACTOR] [--length-samples N] [--channel N] [--sample-rate HZ] [-o OUT]
 ```
 `--denoise` is `afftdn=nf=-N:tn=1`, where N is `--denoise-strength`, the noise
 floor in dB below full scale (20..60, default 25). It is the starting floor that
@@ -2105,6 +2105,12 @@ them (exact for PCM/FLAC/ALAC, within one codec frame for a lossy codec). Both n
 or for `--tempo` a `--replace` track beside the picture: the input's own sound beside its
 stream-copied picture would drift from it (`fit.py --method speed` retimes both). `timing` reports
 `{tempo, atempo, length_samples, sample_rate}`.
+`--channel N` keeps channel N of the track (0-based, `pan=mono|c0=cN`, first in the chain) as a
+1-channel output, or both sides of a stereo one with `--stereo`; an index past the track's channels
+and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the output (`aresample`,
+after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
+output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
+the `audio` block reports `channel` and `sample_rate`.
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation

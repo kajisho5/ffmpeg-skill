@@ -681,6 +681,11 @@ and the rate that count is in (`null` before a pending input is measured); with
 `--length-samples` a `length_samples` verification step decodes the written track and counts its
 samples (`expected`, `measured`, `tolerance_samples`: 0 for PCM/FLAC/ALAC, one codec frame for a
 lossy codec; `reason: not_measured` and `ok: false` when the count cannot be read).
+Since #487 `audio.py --sample-rate HZ` resamples the output and `--channel N` keeps one channel by
+index (0-based); the `audio` block reports `channel` and `sample_rate` (`null` when not asked), and
+each is read back from the output by probe as a verification step, `sample_rate` and `channels`
+(`{expected, measured}`; 1 channel, or 2 with `--stereo`; `reason: not_measured` when probe cannot
+read it).
 `loudness.py` reports `measured` (the input's loudnorm measurement,
 including `input_lra`) and `targets` (the requested lufs / tp / lra).
 `check.py --platform podcast` adds two informational rows to `checks`,

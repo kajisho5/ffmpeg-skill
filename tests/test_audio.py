@@ -567,6 +567,51 @@ class AudioTests(MediaFixtures):
                 self.assertEqual(err["kind"], "input")
                 self.assertIn(needle, err["message"])
 
+    def test_audio_sample_rate_and_channel_are_checked_on_the_output(self):
+        """#487: --sample-rate resamples, --channel N keeps one channel by index; both are read
+        back from the output with probe as verification steps, and the kept channel is the one
+        asked for (each channel of the fixture is its own tone)."""
+        tones = (200, 300, 500, 700)
+        src = OUT / "quad_tones.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           *[a for f in tones for a in ("-f", "lavfi", "-i", f"sine=f={f}:sample_rate=48000:d=1")],
+           "-filter_complex", "[0][1][2][3]amerge=inputs=4", "-c:a", "pcm_s16le", src)
+        self.assertEqual(probe(str(src))["audio"]["channels"], 4, "fixture")
+        for index, rate in ((0, 44100), (2, 16000), (3, None)):
+            with self.subTest(channel=index, rate=rate):
+                out = OUT / "quad_pick.wav"
+                doc = json.loads(script("audio.py", src, "--channel", str(index),
+                                        *(("--sample-rate", str(rate)) if rate else ()), "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                steps = {s["step"]: s for s in doc["verification"]}
+                self.assertEqual((steps["channels"]["expected"], steps["channels"]["measured"]), (1, 1))
+                a = probe(str(out))["audio"]
+                self.assertEqual(a["channels"], 1)
+                self.assertEqual(int(a["sample_rate"]), rate or 48000)
+                if rate:
+                    self.assertEqual((steps["sample_rate"]["expected"], steps["sample_rate"]["measured"]), (rate, rate))
+                else:
+                    self.assertNotIn("sample_rate", steps)
+                got = self._pcm(out)
+                self.assertAlmostEqual(self._frequency(got, rate or 48000, len(got) // 10, len(got) * 9 // 10),
+                                       tones[index], delta=tones[index] * 0.01)
+        # --stereo duplicates the kept channel; a rate alone resamples a kept picture's sound too
+        doc = json.loads(script("audio.py", src, "--channel", "1", "--stereo", "-o", OUT / "quad_pick_st.wav", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(probe(str(OUT / "quad_pick_st.wav"))["audio"]["channels"], 2)
+        mp4 = OUT / "rate_video.mp4"
+        doc = json.loads(script("audio.py", self.src, "--sample-rate", "44100", "-o", mp4, "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(int(probe(str(mp4))["audio"]["sample_rate"]), 44100)
+        self.assertIsNotNone(probe(str(mp4))["video"])
+        for argv, needle in ((("--channel", "4"), "0..3"), (("--channel", "0", "--downmix"), "contradict"),
+                             (("--sample-rate", "10"), "1000..768000")):
+            with self.subTest(argv=argv):
+                proc = script("audio.py", src, *argv, "-o", OUT / "quad_x.wav", "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(needle, err["message"])
+
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the
         accepted 20..60 produce a file, and 12 (once accepted, then exit 222 inside ffmpeg) is refused first."""

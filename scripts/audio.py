@@ -19,6 +19,7 @@ Examples:
   python3 audio.py multi.mkv --audio-stream 1 --voice -o lav.m4a # pick the second audio track, clean it, write M4A
   python3 audio.py talk.wav --compress --comp-threshold -20 --comp-ratio 4 --limit --limit-ceiling -1 -o talk_dyn.wav
   python3 audio.py line.wav --tempo 1.25 --length-samples 96000 -o line_fit.wav   # faster, same pitch, exactly 2 s at 48 kHz
+  python3 audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav   # the third microphone alone, resampled to 48 kHz
 """
 import argparse
 import os
@@ -239,6 +240,19 @@ def length_step(path: str, codec: str, expected: int) -> Dict[str, Any]:
     return dict(step, ok=abs(measured - expected) <= tolerance)
 
 
+SAMPLE_RATE_RANGE = (1000, 768000)
+
+
+def property_step(name: str, expected: int, measured: Any) -> Dict[str, Any]:
+    """A verification step comparing one probed property of the written track with the request
+    (#487: `sample_rate`, `channels`); `reason: not_measured` when probe could not read it."""
+    try:
+        value = int(measured)
+    except (TypeError, ValueError):
+        return {"step": name, "expected": expected, "measured": None, "ok": False, "reason": "not_measured"}
+    return {"step": name, "expected": expected, "measured": value, "ok": value == expected}
+
+
 def conform_filter(samples: int, rate: int) -> str:
     """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
     seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
@@ -283,6 +297,11 @@ def main() -> int:
                        help="widen the stereo image, 0..1 (0 = untouched, 1 = maximum); needs a real stereo source: a mono input is "
                             "refused (duplicating it leaves both channels identical, so there is nothing to widen) and more than two "
                             "channels are refused unless --downmix folds them to stereo first")
+    fades.add_argument("--channel", type=int, default=None, metavar="N",
+                       help="keep only channel N of the track (0-based, in the track's own order), as a 1-channel output "
+                            "(--stereo duplicates it to both sides); checked on the output by probe")
+    fades.add_argument("--sample-rate", type=int, default=None, metavar="HZ",
+                       help="resample the output to HZ (aresample); checked on the output by probe. Default: the track's own rate")
     fades.add_argument("--downmix", action="store_true", help="downmix 5.1/7.1 to stereo with the ITU-R BS.775 weights (centre and surrounds -3 dB, LFE dropped), scaled so the fold-down cannot clip")
     fades.add_argument("--replace", help="replace the audio with this file (trimmed/padded to the video)")
     timing = ap.add_argument_group("timing (an audio output, or --replace beside a kept picture)")
@@ -395,6 +414,17 @@ def main() -> int:
         if keep_video:
             die("--length-samples needs an audio output: beside a stream-copied picture the sound is conformed to "
                 "the picture's length; write -o NAME.wav (or .flac, .m4a, ...)", kind="input")
+    if args.sample_rate is not None and not (SAMPLE_RATE_RANGE[0] <= args.sample_rate <= SAMPLE_RATE_RANGE[1]):
+        die(f"--sample-rate must be {SAMPLE_RATE_RANGE[0]}..{SAMPLE_RATE_RANGE[1]} Hz, got {args.sample_rate}")
+    if args.channel is not None:
+        if args.channel < 0:
+            die(f"--channel is a 0-based channel index, got {args.channel}")
+        if args.downmix:
+            die("--channel and --downmix contradict each other: --channel keeps one channel, --downmix folds them all to stereo")
+        if in_channels and args.channel >= in_channels:
+            die(f"--channel {args.channel}: the track has {in_channels} channel(s), 0..{in_channels - 1}",
+                kind="input", channels=in_channels)
+        in_channels = 1  # what every later stage sees: the one channel kept
     if args.stereo_widen is not None:
         if args.mono:
             die("--stereo-widen and --mono contradict each other: there is no stereo image in a 1-channel output")
@@ -417,6 +447,9 @@ def main() -> int:
         idx += 1
 
     fx: List[str] = []
+    if args.channel is not None:
+        # #487: one channel by index, first, so every later stage works on it alone
+        fx.append(f"pan=mono|c0=c{args.channel}")
     if args.downmix:
         # ITU-R BS.775: centre and surrounds at -3 dB (0.707), LFE dropped. pan's '<' scales each
         # output so its gains sum to 1 over the channels the input has (1/2.414 on 5.1, 1/3.121 on
@@ -508,7 +541,10 @@ def main() -> int:
     # -shortest below that used to shorten the *video* to match: 12.00 s in, 11.925 s out, four
     # frames of a stream-copied picture gone (#164). Padding the audio, not cutting the picture,
     # is the only correct answer for a tool whose contract says the video is never touched.
-    rate = main_track_rate(args, meta)
+    rate = args.sample_rate or main_track_rate(args, meta)
+    if args.sample_rate:
+        # #487: resampled after the mix and the fades, ahead of the sample count, which is in this rate
+        post.append(f"aresample={args.sample_rate}")
     conform_samples = None
     if args.length_samples is not None:
         # #486: an exact length asked for, counted at the track's rate (unknown only for a dry
@@ -521,7 +557,7 @@ def main() -> int:
             post.append(conform_filter(conform_samples, rate))
         else:
             # a dry run's pending input: no rate to count in yet; the real run counts samples
-            post.append(f"apad,atrim=0:{dur:.6f}")
+            post.append(f"apad,atrim=0:{main_dur:.6f}")
     if post:
         graph.append(f"[{last}]{','.join(post)}[out]")
         last = "out"
@@ -560,6 +596,12 @@ def main() -> int:
     verification: List[Dict[str, Any]] = []
     if args.length_samples is not None and not STATE.dry_run:
         verification.append(length_step(output, str(a.get("codec") or ""), args.length_samples))
+    if args.sample_rate is not None and not STATE.dry_run:
+        verification.append(property_step("sample_rate", args.sample_rate, a.get("sample_rate")))
+    if args.channel is not None and not STATE.dry_run:
+        verification.append(property_step("channels", 2 if args.stereo else 1, a.get("channels")))
+    audio_block["channel"] = args.channel
+    audio_block["sample_rate"] = args.sample_rate
     timing_block = {"tempo": args.tempo, "atempo": tempo_steps, "length_samples": args.length_samples,
                     "sample_rate": rate or None}
     emit(output, audio=audio_block, timing=timing_block, **({"verification": verification} if verification else {}), video=bool(has_video and not audio_out), audio_stream=args.audio_stream,
