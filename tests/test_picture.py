@@ -1121,6 +1121,27 @@ class PictureTests(MediaFixtures):
                 self.assertEqual(err["kind"], "input", err)
                 self.assertIn("offset_mux_en.srt before 0", err["message"])
                 self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
+        # text cues are a cue source too: every one moved before 0 is the same refusal, not an
+        # empty SRT (or, with a frame rate to report in, an IndexError)
+        cue_file = OUT / "offset_mux_cues.txt"
+        cue_file.write_text("0:00-0:01 hello\n", encoding="utf-8")
+        proc = script("caption.py", self.src, "--mode", "mux", "--text", cue_file, "--offset=-30", "-o", empty,
+                      "--json", expect_fail=True)
+        self.assertNotIn("Traceback", proc.stderr)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input", err)
+        self.assertIn("offset_mux_cues.txt before 0", err["message"])
+        self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
+        # a dry run plans an added track an earlier step has not written yet under the name the
+        # real run reads: the shifted copy, not the unshifted source
+        pending = OUT / "offset_mux_pending.srt"
+        pending.unlink(missing_ok=True)
+        plan = json.loads(script("caption.py", self.src, "--mode", "mux", "--srt", f"{files['en']}:en", "--srt",
+                                 f"{pending}:ja", "--offset", "0.5", "-o", OUT / "offset_mux_plan.mkv", "--dry-run",
+                                 "--json").stdout)
+        planned = " ".join(" ".join(c) if isinstance(c, list) else str(c) for c in plan["commands"])
+        self.assertIn("offset_mux_plan_track1.srt", planned)
+        self.assertNotIn("offset_mux_pending.srt", planned)
 
     def test_mux_without_default_track_leaves_every_matroska_track_off(self):
         """Given two or more new subtitle streams and no --default-track, ffmpeg flags the first

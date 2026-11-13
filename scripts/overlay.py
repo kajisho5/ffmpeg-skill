@@ -298,7 +298,7 @@ def main() -> int:
         args.image = brand["logo"]
         if args.position == ap.get_default("position"):
             args.position = brand.get("logo_position", "top-right")
-        if not args.scale and not args.scale_percent:
+        if args.scale is None and args.scale_percent is None:  # a given 0 is refused below, not replaced
             args.scale = int(brand.get("logo_scale", 160))
         if args.opacity == 1.0:
             args.opacity = float(brand.get("logo_opacity", 1.0))

@@ -42,7 +42,8 @@
   `audio` block with these and no `music` is refused by its audio stage, not before the first
   stage); `waveform.py --style spectrum` with `--color` or `--waveform-mode`; `scenes.py --edl`,
   `--target` or `--max-scene` without `--highlights`; `cut.py --segments` with `--start`, `--end`
-  or `--duration`; `overlay.py --video` with `--fade` (and a `render.py` video layer's `fade`);
+  or `--duration`; `overlay.py --video` with `--fade` (and a `render.py` video layer's `fade`, in a run that
+  reaches the overlays: not a timeline export, not one stopped before them);
   a `render.py` template pack with `--stop-after`, `--cache`, `--from`, `--work`, `--keep` or
   `--export-timeline` (`--audit-log` is now handed to each destination). A flag recognised by
   comparing it with its default (`--music-volume`, `--music-fade-out`, `--effects-volume`,
@@ -55,13 +56,17 @@
   offset that would leave any track with no cue is refused before a file is written (the first
   track's empty copy used to fail inside ffmpeg and stay behind). `--max-lines` and
   `--min-duration` still lay out the first track only; a note now says so when they changed it.
+  `--text` cues that `--offset` moves before 0, all of them, are refused the same way (an empty
+  SRT, or an IndexError when the video's frame rate was known), and a dry run plans a track an
+  earlier step has yet to write under its shifted copy's name.
 - **A project or recipe value no stage reads as written is refused before the first stage** (A89,
   A92, A93, A94, A104): a clip's own `snap.to` other than `beats`/`none` on a clip the render
-  cuts (it rendered unsnapped); `chapters` that is neither a file path nor a list; an `audiogram`
+  cuts (it rendered unsnapped); `chapters` that is neither a file path nor a list (`false` and `0` stay "no chapters"); an `audiogram`
   with more than one clip in a render (not in `--export-timeline`; only the first clip was
   rendered); `render.py --template audiogram` without `--image`, unless `--write-project` (the
   dry run completed and the real run failed at the export); an unknown key in a `batch.py`
-  recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default).
+  recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default; the refusal names
+  the nearest valid key when one is close, else lists them).
 
 ## 3.8.5
 

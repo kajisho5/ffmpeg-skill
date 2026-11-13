@@ -1439,6 +1439,11 @@ def main() -> int:
     if args.text:
         cues = parse_text_cues(args.text, args.auto_seconds, args.gap, fps_for_tc)
         cues, _ = lay_out(cues)
+        if not cues:
+            # --offset dropped every cue (one that ends at or before 0 goes): an empty SRT was
+            # written, and with a frame rate known the report below indexed the empty list
+            die(f"--offset {args.offset:+g} moves every cue of {args.text} before 0: no cue would be left",
+                kind="input")
         if args.write_srt:
             srt_path = args.write_srt
         elif args.input:
@@ -1560,17 +1565,20 @@ def main() -> int:
                 die(f"SRT file not found: {path}")
         for n in range(1, len(added)):
             path, lang = added[n]
-            if not os.path.exists(path):
-                continue  # a dry run's pending track: an earlier step writes it
+            pending = not os.path.exists(path)  # a dry run's pending track: an earlier step writes it
+            if pending and not args.offset:
+                continue
             if args.offset:
                 # A61: --offset moved the first --srt only, so the other languages stayed where
                 # they were against the sound. Every added track is shifted by the same rule
-                # (a cue that ends at or before 0 is dropped, a start below 0 is clamped)
-                moved = [(max(0.0, s + args.offset), e + args.offset, t) for s, e, t in parse_srt(path)
-                         if e + args.offset > 0]  # never empty: refused before the first write, above
+                # (a cue that ends at or before 0 is dropped, a start below 0 is clamped). A
+                # pending track's copy is planned under the same name, so the planned command
+                # reads the file the real run reads; only its cues wait for the file
                 copy = f"{os.path.splitext(output)[0]}_track{n}.srt"
                 claim([(copy, f"shifted SRT {n}")])
-                if not STATE.dry_run:
+                if not pending and not STATE.dry_run:
+                    moved = [(max(0.0, s + args.offset), e + args.offset, t) for s, e, t in parse_srt(path)
+                             if e + args.offset > 0]  # never empty: refused before the first write, above
                     write_srt(moved, copy)
                     info(f"wrote {copy} ({len(moved)} cues of {os.path.basename(path)} shifted by {args.offset:+g} s)")
                 side_notes.append(f"subtitle track {n} is {copy}, a copy of {os.path.basename(path)} shifted by "

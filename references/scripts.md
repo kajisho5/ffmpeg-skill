@@ -1334,7 +1334,8 @@ placeholders, chained) or `project` (a render project applied per file).
 Outputs land in `output_dir` with `suffix`; a content-hash cache skips files
 already done with the same recipe. Use `--dry-run` to preview the plan. The recipe's
 keys are `glob`, `steps`, `project`, `clip_key`, `output_dir`, `suffix` and `ext`; any
-other key is refused before an item runs, with the nearest valid name.
+other key is refused before an item runs, with the nearest valid name when one is close, else
+with the list of valid keys.
 A recipe that runs `cut.py` rolls its calls up: each of those `results` rows carries
 `cut_reencoded` (each call's `reencoded`) and `cut_reencode_reasons` (each
 `reencode_reason` its calls named, once per call),

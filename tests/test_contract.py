@@ -9827,6 +9827,7 @@ class FlagValueTests(unittest.TestCase):
             "Dialogue: 0,0:00:00.20,0:00:01.50,Default,,0,0,0,,hello\n", encoding="utf-8")
         (w / "media").mkdir()
         shutil.copy(cls.clip, w / "media" / "a.mp4")
+        (w / "brand.json").write_text(json.dumps({"logo": str(cls.still)}), encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -9863,6 +9864,8 @@ class FlagValueTests(unittest.TestCase):
             ("fit --height -64", "fit", [clip, "--width", "64", "--height=-64"], ("--height", "-64")),
             ("fit --aspect -1:1", "fit", [clip, "--aspect=-1:1"], ("-1:1",)),
             ("fit --aspect 16:-9", "fit", [clip, "--aspect", "16:-9"], ("16:-9",)),
+            ("fit --aspect -16:-9", "fit", [clip, "--aspect=-16:-9"], ("-16:-9",)),  # a positive fraction
+            ("fit --width 0 alone", "fit", [clip, "--width", "0"], ("--width", "0")),  # not "nothing to do"
             ("color --peak 0", "color", [clip, "--to-sdr", "--force", "--peak", "0"], ("--peak", "0")),
             ("color --peak -5", "color", [clip, "--to-sdr", "--force", "--peak=-5"], ("--peak", "-5")),
             ("color --desat -5", "color", [clip, "--to-sdr", "--force", "--desat=-5"], ("--desat", "-5")),
@@ -9885,6 +9888,7 @@ class FlagValueTests(unittest.TestCase):
             ("overlay --font-size 0", "overlay", [clip, "--image", still, "--font-size", "0"], ("--font-size", "0")),
             ("overlay --scale -1", "overlay", [clip, "--image", still, "--scale=-1"], ("--scale", "-1")),
             ("overlay --scale-percent 0", "overlay", [clip, "--image", still, "--scale-percent", "0"], ("--scale-percent",)),
+            ("overlay --logo --scale 0", "overlay", [clip, "--logo", "--brand", "brand.json", "--scale", "0"], ("--scale", "0")),
             ("overlay --fade -1", "overlay", [clip, "--image", still, "--fade=-1"], ("--fade", "-1")),
             ("sync --max-offset -1", "sync", [clip, wav, "--max-offset=-1"], ("--max-offset", "-1")),
             ("sync --max-offset 0", "sync", [clip, wav, "--max-offset", "0"], ("--max-offset", "0")),
@@ -10007,12 +10011,21 @@ class FlagValueTests(unittest.TestCase):
                     (self.work / "p.json").write_text(json.dumps(body), encoding="utf-8")
                 self.refused(label, name, argv, expect, wrote=("proj.mp4",))
         # a clip's own "beats", a chapters list and a one-clip audiogram are still planned
-        for label, body in (("clip snap beats", {"clips": [{"src": clip, "in": 0.2, "out": 1.0, "snap": {"to": "none"}}]}),
-                            ("chapters list", {"clips": [{"src": clip}], "chapters": [{"at": 0, "title": "Start"}]}),
-                            ("one-clip audiogram", {"clips": [{"src": wav}], "audiogram": {"background": "black"}})):
+        # ... as are false and 0 for "no chapters" (the stage's own `if ch:`), and a video layer's
+        # fade in a run that never composites the layer: a timeline export, a preview that stops
+        # before the overlays
+        faded = {"clips": [{"src": clip}], "overlays": [{"video": clip, "fade": 0.5}]}
+        for label, body, argv in (
+                ("clip snap beats", {"clips": [{"src": clip, "in": 0.2, "out": 1.0, "snap": {"to": "none"}}]}, render),
+                ("chapters list", {"clips": [{"src": clip}], "chapters": [{"at": 0, "title": "Start"}]}, render),
+                ("chapters false", {"clips": [{"src": clip}], "chapters": False}, render),
+                ("chapters 0", {"clips": [{"src": clip}], "chapters": 0}, render),
+                ("video layer fade, stopped after clips", faded, render + ["--stop-after", "clips"]),
+                ("video layer fade, timeline export", faded, ["p.json", "--export-timeline", "cut.otio", "--dry-run"]),
+                ("one-clip audiogram", {"clips": [{"src": wav}], "audiogram": {"background": "black"}}, render)):
             with self.subTest(label):
                 (self.work / "p.json").write_text(json.dumps(body), encoding="utf-8")
-                doc = json.loads(tool("render", *render, "--json", cwd=self.work).stdout)
+                doc = json.loads(tool("render", *argv, "--json", cwd=self.work).stdout)
                 self.assertEqual(doc["status"], "completed", label)
 
 

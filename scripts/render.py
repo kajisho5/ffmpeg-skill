@@ -456,7 +456,7 @@ def check_keys(obj: Any, schema: str, label: str) -> None:
             else f" (valid keys: {', '.join(sorted(valid))})"))
 
 
-def check_overlay(ov: Any, label: str) -> None:
+def check_overlay(ov: Any, label: str, rendered: bool = True) -> None:
     """#326: a video layer is one kind of overlay, as overlay.py's --image/--text/--logo/--video
     are one mutually exclusive choice, and the chromakey* keys only act on it. A logo, image and
     text in one entry still draw the first of them, as before; only a combination with the new
@@ -472,8 +472,10 @@ def check_overlay(ov: Any, label: str) -> None:
         keyed = [k for k in ("chromakey", "chromakey_similarity", "chromakey_blend") if ov.get(k) is not None]
         if keyed:
             die(f"{label}: {keyed[0]} keys a colour out of a video layer and needs \"video\" (overlay.py --chromakey needs --video)")
-    if ov.get("video") and ov.get("fade"):
-        # A171: overlay.py --video has no fade; the layer was composited with a hard edge
+    if rendered and ov.get("video") and ov.get("fade"):
+        # A171: overlay.py --video has no fade; the layer was composited with a hard edge. Only a
+        # run that composites the layer refuses it: an export or a preview that stops before the
+        # overlays never read the entry, and completed
         die(f"{label}: fade fades an image, logo or text layer; a video layer is shown from start to end "
             "without one (drop \"fade\" from this entry)", kind="input")
     if ov.get("chromakey") is None:
@@ -613,7 +615,8 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: O
         for i, item in enumerate(items if isinstance(items, list) else []):
             check_keys(item, f"{name}[]", f"{name}[{i}]")
             if name == "overlays":
-                check_overlay(item, f"overlays[{i}]")
+                check_overlay(item, f"overlays[{i}]",
+                              rendered=not timeline and _reaches(READ_AT["overlays"], stop_after))
             if name != "clips":
                 continue
             # every clip stage starts from rel(c["src"]): without one it was a KeyError traceback
@@ -641,9 +644,10 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: O
         die(f"audiogram: an audiogram is drawn from one audio source, and this project has {len(clips)} clips "
             "(only the first would be in the output); join them first (join.py) and name the joined file as the one clip")
     chapters = proj.get("chapters")
-    if chapters is not None and not isinstance(chapters, (str, list)):
+    if chapters and not isinstance(chapters, (str, list)):
         # A94: a number or an object was handed to metadata.py as a file name by the last stage,
-        # after the whole render ("chapters file not found: .../5")
+        # after the whole render ("chapters file not found: .../5"). false and 0 are "no chapters",
+        # as the stage's own `if ch:` reads them, and stay that
         die(f'chapters: must be a chapters file path or a list of {{"at": TIME, "title": STR}}, got '
             f"{type(chapters).__name__} {chapters!r:.60}")
 
