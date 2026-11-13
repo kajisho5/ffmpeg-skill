@@ -54,8 +54,10 @@ whether each field is something the tool *measured*.
 
 `--dry-run` claims matter too: `info()` rewrites `wrote X` to `[dry-run] would
 write X`, and `analysis_only` tools (`check`, `sync`, `multicam`, `scenes`,
-`cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `overlay`) do run
-FFmpeg to measure; `probe` is not one of them (`ffmpeg_execution: none`). A change that makes a writing tool print a write claim under
+`cropdetect`, `report`, `silence`, `loudness`, `stabilize`) do run FFmpeg to
+measure. `overlay` is one only for a multi-line `--text` on FFmpeg 8.0, 8.0.1
+or 8.1.0 (it measures each line on a generated frame); otherwise its dry run
+runs no ffmpeg. `probe` is not one of them (`ffmpeg_execution: none`). A change that makes a writing tool print a write claim under
 dry-run is a defect.
 
 See `references/result-honesty.md` for the code pointers and the exact test names
