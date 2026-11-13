@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.4
+
+_Automated release: version and notes generated from pull requests merged since 3.8.3._
+
 ### Fixed
 
 - **`fit.py --method trim` ends its sound to the sample, and `broll.py` and
@@ -32,6 +38,7 @@
   change what they write: `join.py`'s silence for a part without sound, `insert.py`,
   `background.py`, `grid.py`'s picture and `export.py`'s platform maximum
   (docs/design-decisions.md, "After 3.8.3"). Measured on FFmpeg 6.1.1 only.
+- fix: fit --method trim, broll's cutaway sound and sync --replace-audio's delay are written to the sample (#500)
 
 ## 3.8.3
 
