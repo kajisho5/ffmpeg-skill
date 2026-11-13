@@ -1457,7 +1457,7 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
 ```
 `--keep-alpha` draws the template on the input's alpha (a canvas from `background.py --transparent`,
 or any alpha clip) and writes it in an alpha line (see `background.py`; ProRes 4444 by default) with
-the source's colour tags kept (an RGB input on a ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709): boxes and bars are composited as layers with their alpha, drawtext and
+the source's colour tags kept (an SDR RGB input on a ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709): boxes and bars are composited as layers with their alpha, drawtext and
 libass (`alpha=1`) draw into the alpha, all at 4:4:4. The `alpha` step checks that the written
 stream stores an alpha plane, that no frame's alpha fell below the source's, and that the output
 did not go opaque in every frame the source was transparent in. Without `--keep-alpha` on a source
@@ -1870,7 +1870,7 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
            [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
 `--keep-alpha` composites onto the input's alpha (a `background.py --transparent` canvas or an alpha
-clip) and writes the result in an alpha line with the source's tags kept (an RGB input on a
+clip) and writes the result in an alpha line with the source's tags kept (an SDR RGB input on a
 ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709), checked as
 `graphics.py --keep-alpha` is. A `--video` layer with alpha keeps it: VP9 with alpha (`export.py
 --preset vp9-alpha`) is decoded with libvpx-vp9 (FFmpeg's own VP9 decoder drops the alpha), and an

@@ -22,6 +22,8 @@
   opaque colour the same way; an RGB `overlay.py --video` layer on a BT.709 alpha line was BT.601
   (pure red read FF1800; with `--chromakey` it is keyed first, in the BT.601 the key is computed in). Commands for a YUV source are unchanged except in those three cases, each
   on a BT.709-tagged source. An untagged YUV source is unchanged everywhere.
+  The grade of an RGB source names no matrix on its way in to RGB (with one, FFmpeg 7.1 wrote
+  BT.601 samples on the ProRes 4444/VP9 line).
 
 ## 3.8.1
 

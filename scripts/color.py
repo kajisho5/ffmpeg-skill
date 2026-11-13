@@ -99,7 +99,8 @@ def _checked_levels(args: argparse.Namespace, flag: str) -> int:
     return value
 
 
-def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p", matrix: str = "bt601") -> str:
+def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p", matrix: str = "bt601",
+                     rgb_in: bool = False) -> str:
     """Always-present filter stages, in a fixed order chosen so each stage sees a picture already
     corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint/
     lift/gain, so contrast/saturation act on colour-balanced footage) -> contrast/saturation/gamma
@@ -139,7 +140,7 @@ def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p", matrix:
         # "unchanged" adds no term at all
         rgb.append(f"colortemperature=temperature={temperature:g}")
     rgb.append(f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}")
-    terms = [_rgb_stage(rgb, out_fmt, matrix), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
+    terms = [_rgb_stage(rgb, out_fmt, matrix, rgb_in), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
     rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
         rimin, rimax = in_black / 255.0, in_white / 255.0
@@ -157,7 +158,7 @@ def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p", matrix:
     return ",".join(terms)
 
 
-def _rgb_stage(filters: list, out_fmt: str = "yuv420p", matrix: str = "bt601") -> str:
+def _rgb_stage(filters: list, out_fmt: str = "yuv420p", matrix: str = "bt601", rgb_in: bool = False) -> str:
     """Wrap a run of RGB-only filters in explicit, matching YUV<->RGB conversions.
 
     exposure/colortemperature/colorbalance/colorlevels/curves take RGB, so libavfilter inserts a
@@ -179,8 +180,15 @@ def _rgb_stage(filters: list, out_fmt: str = "yuv420p", matrix: str = "bt601") -
     alpha line converts nothing in front, and with bt601 here its ProRes 4444 or VP9 master of an
     RGB source held BT.601 YUV under no tag, which a player reads as BT.709 at HD (30C050 shown as
     26AB4D, #496): for an RGB source on a YUV alpha line `matrix` is bt709 (working_matrix()),
-    and the line is tagged so. A later stage of the same chain takes the same matrix on both legs."""
-    return (f"scale=in_color_matrix={matrix},format=gbrpf32le," + ",".join(filters)
+    and the line is tagged so. A later stage of the same chain takes the same matrix on both legs.
+
+    `rgb_in`: the picture reaches this stage as RGB (the first stage of an RGB source on an alpha
+    line), so the way in names no matrix. It has none to read, and with
+    `scale=in_color_matrix=bt709` in front of RGB frames FFmpeg 7.1 wrote BT.601 samples whatever
+    the way out asked for (30C050 as 26AB4D again; 6.1 was right either way). Seen in CI, not
+    traced inside FFmpeg: --lut-strength 0, whose chain has the way out alone, was right there."""
+    way_in = "format=gbrpf32le," if rgb_in else f"scale=in_color_matrix={matrix},format=gbrpf32le,"
+    return (way_in + ",".join(filters)
             + f",scale=out_color_matrix={matrix},format={out_fmt}")
 
 
@@ -224,8 +232,10 @@ def lut_legs(meta=None, out_fmt: str = "yuv420p") -> "tuple":
         matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
         # an RGB source on an alpha line: the matrix of the YUV its line is written from (#496)
         matrix = working_matrix(meta) or matrix
-    return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
-            f"scale=out_color_matrix={matrix}:out_range=tv,format={out_fmt}")
+    # an RGB source on an alpha line reaches the way in as RGB: no matrix is named there (see
+    # _rgb_stage's rgb_in; with one, FFmpeg 7.1 wrote BT.601 samples)
+    way_in = "format=gbrpf32le" if keeps_source_tags() and working_matrix(meta) else f"scale=in_color_matrix={matrix},format=gbrpf32le"
+    return (way_in, f"scale=out_color_matrix={matrix}:out_range=tv,format={out_fmt}")
 
 
 # --retag targets: ffprobe's names (colorspace, primaries, transfer) and the ITU-T H.273 code points
@@ -537,7 +547,7 @@ def main() -> int:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
                 f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
         vf = ("" if args.legalize and correction_is_identity(args)
-              else correction_chain(args, out_fmt, working_matrix(meta) or "bt601"))
+              else correction_chain(args, out_fmt, working_matrix(meta) or "bt601", working_matrix(meta) is not None))
         output = args.output or default_output(args.input, "correct", ext)
         tag = "correct"
         # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
