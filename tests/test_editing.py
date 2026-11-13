@@ -3319,6 +3319,28 @@ class OneClockTests(MediaFixtures):
         again = json.loads(script("sync.py", ref, out, "--json").stdout)
         self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
 
+    def test_multicam_conforms_the_sound_to_the_reference_in_samples(self):
+        """#493: the sound was trimmed to the reference's length to the millisecond, so a reference
+        that is not a whole millisecond came out up to 24 samples (48 kHz) off. The sound is pinned
+        to 48 kHz and counted in samples, as audio.py conforms its track (#478)."""
+        ref = make_tones_take(OUT / "clock_cam0.mp4", dur=8)
+        cam = make_tones_take(OUT / "clock_cam1.mp4", start=1.0, audio_late=0.3, dur=7)
+        doc = json.loads(script("multicam.py", ref, cam, "--switch", "0-8:0", "--audio", "1", "--preset", "veryfast",
+                                "-o", OUT / "clock_multicam_samples.mp4", "--dry-run", "--json").stdout)
+        expected = round(probe(str(ref))["duration"] * 48000)
+        self.assertIn(f"aformat=sample_rates=48000:channel_layouts=stereo,apad=whole_len={expected},"
+                      f"atrim=end_sample={expected}[aout]", json.dumps(doc["commands"]))
+
+    def test_broll_conforms_the_mix_to_the_a_roll_in_samples(self):
+        """#493: the mix was trimmed to the A-roll's length to the millisecond, so an A-roll that is not
+        a whole millisecond came out up to 24 samples (48 kHz) off. The mix is 48 kHz stereo and is
+        counted in samples, as audio.py conforms its track (#478)."""
+        src = self._fx("sync")
+        doc = json.loads(script("broll.py", src, "--insert", src, "--at", "1", "--duration", "1", "--audio", "b",
+                                "-o", OUT / "clock_broll_samples.mp4", "--dry-run", "--json").stdout)
+        expected = round(probe(str(src))["duration"] * 48000)
+        self.assertIn(f"apad=whole_len={expected},atrim=end_sample={expected}[aout]", json.dumps(doc["commands"]))
+
 
 class FillerSpansTests(unittest.TestCase):
     """1.17: which words become removal spans, as pure arithmetic on measured timings."""

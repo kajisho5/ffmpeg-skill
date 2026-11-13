@@ -34,7 +34,7 @@ from typing import Dict, List, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
-from _common.decision import av_trim, rebase_project_paths
+from _common.decision import av_trim, conform_filter, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
 from sync import measure_offset
 
@@ -339,7 +339,10 @@ def main() -> int:
         afx += [f"asetrate={sr * ratios[a]:.6f}", f"aresample={sr}"]
     if offsets[a] > 0:
         afx.append(f"adelay={int(round(offsets[a] * 1000))}:all=1")
-    afx += [f"atrim=0:{ref_dur:.3f}", "aformat=sample_rates=48000:channel_layouts=stereo"]
+    # #493: pinned to 48 kHz, then conformed to the reference's length in samples, as audio.py conforms
+    # its track (#478), not trimmed to the millisecond
+    tail = conform_filter(round(ref_dur * 48000), 0) if ref_dur else f"atrim=0:{ref_dur:.3f}"
+    afx += ["aformat=sample_rates=48000:channel_layouts=stereo", tail]
     parts.append(f"[{a}:a]{','.join(afx)}[aout]")
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")

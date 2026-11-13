@@ -33,6 +33,7 @@ from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.fonts import script_font_for_text  # noqa: E402
 from _common.probe import square_pixels  # noqa: E402
+from _common.decision import conform_filter  # noqa: E402
 from _common.wrap import text_width_em  # noqa: E402
 
 LABEL_MARGIN = 10
@@ -189,7 +190,12 @@ def main() -> int:
     layout = "|".join(f"{c * cw}_{r * ch}" for r in range(args.rows) for c in range(args.cols))
     parts.append("".join(f"[v{i}]" for i in range(n)) + f"xstack=inputs={n}:layout={layout}:fill={args.background}[out]")
     if args.audio_from is not None and args.pad and durations[args.audio_from] < target_duration:
-        parts.append(f"[{args.audio_from}:a:0]apad,atrim=duration={target_duration:.3f}[aout]")
+        # #493: counted in samples at the track's own rate, as audio.py conforms it (#478). Trimmed
+        # to the millisecond, a target that is not a whole millisecond came out up to 24 samples
+        # (48 kHz) off. A track with no rate known keeps the old form.
+        rate = (metas[args.audio_from].get("audio") or {}).get("sample_rate") or 0
+        conform = conform_filter(round(target_duration * rate), rate) if rate else f"apad,atrim=duration={target_duration:.3f}"
+        parts.append(f"[{args.audio_from}:a:0]{conform}[aout]")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[out]"]
 
     if args.audio_from is not None:

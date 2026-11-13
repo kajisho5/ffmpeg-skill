@@ -30,6 +30,7 @@ from typing import Any, Dict, List
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import warn
+from _common.decision import conform_filter
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -252,14 +253,6 @@ def property_step(name: str, expected: int, measured: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {"step": name, "expected": expected, "measured": None, "ok": False, "reason": "not_measured"}
     return {"step": name, "expected": expected, "measured": value, "ok": value == expected}
-
-
-def conform_filter(samples: int, rate: int) -> str:
-    """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
-    seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
-    aformat pins the rate the count is in, so a resampler FFmpeg inserts sits ahead of the count."""
-    head = f"aformat=sample_rates={rate}," if rate else ""
-    return f"{head}apad=whole_len={samples},atrim=end_sample={samples}"
 
 
 def main() -> int:

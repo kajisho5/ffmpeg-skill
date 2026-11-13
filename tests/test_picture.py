@@ -148,6 +148,19 @@ class PictureTests(MediaFixtures):
                                    "stream=duration", "-of", "default=nw=1:nk=1", out).stdout.strip())
         self.assertClose(audio_duration, full_duration, 0.5, "audio must be padded with silence to match the padded video, not stop at 2s")
 
+    def test_grid_conforms_the_padded_audio_to_a_whole_number_of_samples(self):
+        """#493: the padded track was trimmed to the millisecond (atrim=duration=1.067), so a target
+        that is not a whole millisecond came out up to 24 samples (48 kHz) off the picture. It is
+        counted in samples at the track's own rate, as audio.py conforms its track (#478)."""
+        short = OUT / "grid_samples_short.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-c", "copy", short)
+        doc = json.loads(script("grid.py", short, self.src, "--cols", "2", "--rows", "1", "--audio-from", "0",
+                                "--pad", "--dry-run", "--json").stdout)
+        rate = probe(str(short))["audio"]["sample_rate"]
+        expected = round(probe(str(self.src))["duration"] * rate)
+        self.assertIn(f"[0:a:0]aformat=sample_rates={rate},apad=whole_len={expected},atrim=end_sample={expected}[aout]",
+                      json.dumps(doc["commands"]))
+
     def test_grid_filename_derived_label_refuses_filter_graph_injection(self):
         """The per-cell label is the clip's own filename (extension stripped), which the caller
         does not choose through a flag -- but on a filesystem where filenames can contain a comma

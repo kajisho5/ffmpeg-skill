@@ -829,6 +829,15 @@ def matrix_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, A
     return f + "," if f else ""
 
 
+def conform_filter(samples: int, rate: int) -> str:
+    """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
+    seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
+    aformat pins the rate the count is in, so a resampler FFmpeg inserts sits ahead of the count.
+    `rate` 0 leaves the rate alone, for a graph whose stream is already pinned to the count's rate."""
+    head = f"aformat=sample_rates={rate}," if rate else ""
+    return f"{head}apad=whole_len={samples},atrim=end_sample={samples}"
+
+
 def label_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:
     """For a picture that meets a converted one in a mixing filter (a still over the video, a grid
     cell beside a converted cell), encoded through video_args(line_meta): the BT.709 label an

@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, conform_filter, frame_rate, grid_at_or_after, stream_starts
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -161,7 +161,10 @@ def main() -> int:
                 parts.append(f"[{i + 1}:a:0]{av_trim(first, first + c['length'])[1]},"
                              f"aformat=sample_rates=48000:channel_layouts=stereo,adelay={int(c['at'] * 1000)}|{int(c['at'] * 1000)}[ab{i}]")
                 layers.append(f"[ab{i}]")
-            parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,atrim=duration={dur_a:.3f}[aout]")
+            # #493: the mix is 48 kHz stereo (every layer is pinned to it), so it is conformed to the
+            # A-roll's length in samples, as audio.py conforms its track (#478), not trimmed to the millisecond
+            tail = conform_filter(round(dur_a * 48000), 48000) if dur_a else f"atrim=duration={dur_a:.3f}"
+            parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,{tail}[aout]")
             aout = "[aout]"
 
     cmd += ["-filter_complex", ";".join(parts), "-map", vout]
