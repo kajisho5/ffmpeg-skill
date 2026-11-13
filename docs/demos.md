@@ -659,6 +659,16 @@ python3 scripts/audio.py demos/out/fixtures/motion.mp4 --music demos/out/fixture
 
 **Look for:** The bed drops by 12 dB whenever the speech-like track is active and comes back up in the pauses.
 
+### Faster at the same pitch, to an exact length
+
+![Faster at the same pitch, to an exact length](demos/tempo_exact_length.gif)
+
+```bash
+python3 scripts/audio.py demos/out/fixtures/music.m4a --tempo 1.25 --sample-rate 44100 --length-samples 176400 -o demos/out/tempo_exact_length_after.wav
+```
+
+**Look for:** The bed plays 1.25x faster without its pitch moving, resampled to 44.1 kHz, and is cut at sample 176400 (4 s): the right-hand plot holds more of the bed's pulses in half the time. The result's length_samples step counts the written samples.
+
 ### External mic aligned to the camera
 
 ![External mic aligned to the camera](demos/sync_mic.gif)

@@ -2095,7 +2095,9 @@ look-ahead is compensated, so the limited sound starts on the input's own sample
 `--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476).
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
-so it is exact to the sample, not to the millisecond (#478).
+so it is exact to the sample, not to the millisecond (#478). Sound that starts after the picture
+keeps its start and still ends with the picture (a trim on the timestamp follows the count).
+A fade-out ends where the output ends, which is `--length-samples` when that is given.
 `--tempo FACTOR` (0.1..10) changes the main track's tempo and keeps its pitch: `atempo` stages of
 0.5..2.0 whose product is the factor (3 is `atempo=2,atempo=1.5`, 0.3 is `atempo=0.5,atempo=0.6`).
 atempo's own output length is close to, not exactly, the input's divided by the factor, so

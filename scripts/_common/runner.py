@@ -1011,6 +1011,33 @@ _WEBM_AUDIO_ENCODER_RE = re.compile(r"^(?:libopus|opus|libvorbis|vorbis)$")
 _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec$")
 
 
+def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
+    """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a")
+    stream, and no filter graph could make one. An encoder option for a stream the output will
+    not have selects nothing (FFmpeg applies -c:a after stream selection), so it is not a reason
+    to refuse: cut.py names -c:a aac for a silent source too. Anything not known counts as present."""
+    if any(tok in ("-filter_complex", "-lavfi", "-filter_complex_script") for tok in cmd):
+        return True
+    paths = [cmd[i + 1] for i, tok in enumerate(cmd[:-1]) if tok == "-i"]
+    if not paths:
+        return True
+    for i, tok in enumerate(cmd[:-1]):
+        if tok == "-f" and cmd[i + 1] in ("lavfi", "concat"):
+            return True
+    for path in paths:
+        if not os.path.isfile(path):
+            return True
+        try:
+            proc = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
+                                   "-show_entries", "stream=index", "-of", "csv=p=0", path],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return True
+        if proc.returncode != 0 or proc.stdout.strip():
+            return True
+    return False
+
+
 def _check_container_codecs(cmd: Sequence[str]) -> None:
     """A `.webm` output whose command encodes a picture or a sound WebM cannot hold (the tools'
     H.264/HEVC and AAC lines) is refused before anything runs, dry runs included: the muxer
@@ -1020,7 +1047,7 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
     output = cmd[-1]
     if os.path.splitext(output)[1].lower() != ".webm":
         return
-    refused: List[str] = []
+    refused: List[Any] = []
     for i, tok in enumerate(cmd[:-2]):
         m = _CODEC_OPTION_RE.match(tok)
         if not m:
@@ -1029,8 +1056,10 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
         if value == "copy" or stream is None:
             continue
         allowed = _WEBM_VIDEO_ENCODER_RE if stream == "v" else _WEBM_AUDIO_ENCODER_RE
-        if not allowed.match(value) and value not in refused:
-            refused.append(value)
+        if not allowed.match(value):
+            refused.append((stream, value))
+    # only for a stream the output will have: asked last, and only when something would be refused
+    refused = [value for stream, value in dict.fromkeys(refused) if _an_input_has(cmd, stream)]
     if refused:
         refuse("input", "output_container_codecs",
                f"output {output!r} is WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound; this tool "

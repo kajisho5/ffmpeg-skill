@@ -8,15 +8,17 @@
 
 - **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
   the main track and keeps its pitch, with `atempo` stages of 0.5–2.0 chained for a factor outside
-  that range (0.1–10); `--length-samples` pads with silence or trims the output to exactly N
-  samples per channel, and a `length_samples` verification step decodes the written track and
-  counts them. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
+  that range (0.1–10); `--length-samples` pads with silence or trims the track to N samples per
+  channel before it is encoded, and a `length_samples` verification step decodes the written track
+  and counts them: the count must be N for a lossless output (PCM, FLAC, ALAC) and within one
+  codec frame of N for a lossy one, whose encoder pads to whole frames. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
   need an audio output (`--tempo` also takes a `--replace` track beside the picture): the input's
   own sound beside its stream-copied picture would drift from it, and is refused.
 - **`audio.py --sample-rate HZ` and `--channel N`** (#487). `--sample-rate` resamples the output
   (`aresample`, after the mix); `--channel N` keeps one channel of the track by its 0-based index
-  as a 1-channel output (two identical sides with `--stereo`). Each is read back from the output by
-  probe, as the `sample_rate` and `channels` verification steps, and reported in the `audio` block.
+  as a 1-channel output (two identical sides with `--stereo`). The output's rate and channel count
+  are read back by probe, as the `sample_rate` and `channels` verification steps; the `audio`
+  block reports what was asked (`sample_rate`, `channel`), not a measurement.
   An index past the track's channels, and `--channel` with `--downmix`, are refused before ffmpeg
   runs.
 
@@ -31,6 +33,10 @@
   `bt470bg` (PAL/NTSC-tagged sources), which failed the same alpha line and made `cut.py --smart`
   fall back to a full re-encode. `_common/color.carried_tag()` now spells every such tag the way
   its destination takes it.
+- **A video-only VP9/AV1 `.webm` is not refused for an audio encoder it never uses** (review of
+  #492). The new WebM check (#488, below) read `-c:a aac` in `cut.py`'s line for a silent source
+  as a sound WebM cannot hold; an encoder option is only a reason to refuse when an input has a
+  stream of that kind.
 - **`audio.py --limit` no longer delays the sound** (#476). `alimiter` ran without latency
   compensation, so the output was the input delayed by the look-ahead (`--limit-attack`, 5 ms by
   default: 240 samples at 48 kHz) and drifted off a stream-copied picture. It now runs with

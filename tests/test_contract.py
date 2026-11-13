@@ -8674,6 +8674,19 @@ class Issue415Tests(unittest.TestCase):
         doc = json.loads(tool("crop", mkv, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
                               "-o", d / "crop.mkv", "--json").stdout)
         self.assertEqual(doc["status"], "completed")
+        # An encoder option for a stream the output will not have selects nothing: cut.py names
+        # -c:a aac for a silent source too, and a video-only VP9/AV1 WebM of it is a valid output
+        # (review of #492: the check refused it). With sound in the input the same line is refused.
+        from _common.runner import _check_container_codecs
+        silent = d / "silent.mkv"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", silent)
+        line = lambda src: ["ffmpeg", "-y", "-i", str(src), "-c:v", "libvpx-vp9", "-c:a", "aac", str(d / "v.webm")]  # noqa: E731
+        _check_container_codecs(line(silent))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(mkv))
+        # an input that is not there yet (a dry run's planned file) counts as having the stream
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(d / "not_written_yet.mkv"))
 
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,

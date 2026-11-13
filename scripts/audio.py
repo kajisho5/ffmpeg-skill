@@ -492,6 +492,10 @@ def main() -> int:
     # the main track's length in the output: the source's, or the source's / --tempo on an audio
     # output of the input's own sound (beside a picture, or for --replace, it is the picture's)
     main_dur = dur / args.tempo if dur and tempo_steps and not (keep_video or args.replace) else dur
+    rate = args.sample_rate or main_track_rate(args, meta)
+    # where the output ends, which is where a fade-out has to end: --length-samples when it is
+    # given (a fade timed on the source's length sat past the trim and was never heard)
+    end_dur = args.length_samples / rate if args.length_samples is not None and rate else main_dur
 
     graph: List[str] = []
     graph.append(f"[{main_src}]{','.join(fx) if fx else 'anull'}[main]")
@@ -505,8 +509,8 @@ def main() -> int:
         m = f"{idx}:a:0"
         idx += 1
         mfx = [f"volume={args.music_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
-        if args.music_fade_out and main_dur:
-            mfx.append(f"afade=t=out:st={max(0.0, main_dur - args.music_fade_out):.3f}:d={args.music_fade_out:g}")
+        if args.music_fade_out and end_dur:
+            mfx.append(f"afade=t=out:st={max(0.0, end_dur - args.music_fade_out):.3f}:d={args.music_fade_out:g}")
         graph.append(f"[{m}]{','.join(mfx)}[music]")
         if args.duck:
             graph.append("[main]asplit=2[mainA][sc]")
@@ -533,15 +537,14 @@ def main() -> int:
     post: List[str] = []
     if args.fade_in:
         post.append(f"afade=t=in:st=0:d={args.fade_in:g}")
-    if args.fade_out and main_dur:
-        post.append(f"afade=t=out:st={max(0.0, main_dur - args.fade_out):.3f}:d={args.fade_out:g}")
+    if args.fade_out and end_dur:
+        post.append(f"afade=t=out:st={max(0.0, end_dur - args.fade_out):.3f}:d={args.fade_out:g}")
     # The audio track is conformed to the source duration whenever it is known: padded with
     # silence if the graph came out short, trimmed if long. A mixed track can come out a few
     # hundredths short (amix's dropout_transition, a looped bed's atrim boundary), and with
     # -shortest below that used to shorten the *video* to match: 12.00 s in, 11.925 s out, four
     # frames of a stream-copied picture gone (#164). Padding the audio, not cutting the picture,
     # is the only correct answer for a tool whose contract says the video is never touched.
-    rate = args.sample_rate or main_track_rate(args, meta)
     if args.sample_rate:
         # #487: resampled after the mix and the fades, ahead of the sample count, which is in this rate
         post.append(f"aresample={args.sample_rate}")
@@ -554,7 +557,12 @@ def main() -> int:
     elif main_dur and (args.replace or args.music or keep_video):
         if rate:
             conform_samples = round(main_dur * rate)
-            post.append(conform_filter(conform_samples, rate))
+            # The count is of samples, and sound that starts after the picture keeps its start
+            # (apad and atrim=end_sample do not move timestamps): N samples from 0.3 s end 0.3 s
+            # past the picture. The trim on the timestamp, which is what this was before #478,
+            # ends it with the picture; half a sample of slack keeps the Nth sample of a track
+            # that starts at 0.
+            post.append(conform_filter(conform_samples, rate) + f",atrim=end={main_dur + 0.5 / rate:.6f}")
         else:
             # a dry run's pending input: no rate to count in yet; the real run counts samples
             post.append(f"apad,atrim=0:{main_dur:.6f}")

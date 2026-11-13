@@ -147,10 +147,12 @@ class AudioTests(MediaFixtures):
         out = OUT / "voice_level.mp4"
         bare, _ = self._audio_filters(self.src, "--voice", "-o", out)
         n = round(probe(str(self.src))["duration"] * 48000)
+        end = probe(str(self.src))["duration"] + 0.5 / 48000
         self.assertEqual(bare, "[0:a:0]highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,"
                                "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2[main];"
-                               f"[main]aformat=sample_rates=48000,apad=whole_len={n},atrim=end_sample={n}[out]",
-                         "a bare --voice is the 1.12 chain, unchanged (conformed to the picture in samples since #478)")
+                               f"[main]aformat=sample_rates=48000,apad=whole_len={n},atrim=end_sample={n},atrim=end={end:.6f}[out]",
+                         "a bare --voice is the 1.12 chain, unchanged (conformed to the picture in samples since #478, "
+                         "and ended with it on the timestamp for sound that starts late)")
         chains = {}
         for level in ("light", "medium", "strong"):
             chains[level], data = self._audio_filters(self.src, "--voice", level, "-o", out)
@@ -519,6 +521,24 @@ class AudioTests(MediaFixtures):
                     self.assertEqual(self._samples(out)[2], samples)
                     self.assertEqual(len(self._pcm(out)), samples)
 
+    def test_audio_that_starts_after_the_picture_still_ends_with_it(self):
+        """Review of #492: the sample count that replaced the millisecond trim (#478) does not move
+        timestamps, so sound that starts 0.3 s into the picture was padded to the picture's length
+        in samples and ran 0.3 s past it. It ends with the picture, as it did before."""
+        base = OUT / "late_base.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=d=2:s=160x120:r=25",
+           "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", base)
+        late = OUT / "late_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-itsoffset", "0.3", "-i", base,
+           "-map", "0:v", "-map", "1:a", "-c", "copy", "-t", "2", late)
+        self.assertGreater(float(probe(str(late))["audio"].get("start_time") or 0), 0.2, "fixture: the sound starts late")
+        out = OUT / "late_out.mp4"
+        script("audio.py", late, "--voice", "light", "-o", out)
+        ends = json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=start_time,duration", "-of", "json",
+             str(out)], capture_output=True, text=True, check=True).stdout)["streams"][0]
+        self.assertLess(float(ends["start_time"]) + float(ends["duration"]), 2.0 + 0.05)
+
     @staticmethod
     def _frequency(pcm, rate, lo, hi):
         """The frequency of a pure tone over samples lo..hi, from its zero crossings."""
@@ -556,6 +576,15 @@ class AudioTests(MediaFixtures):
         doc = json.loads(script("audio.py", src, "--length-samples", "48001", "-o", out, "--json").stdout)
         self.assertTrue(doc["verified"], doc["verification"])
         self.assertEqual(len(self._pcm(out)), 48001)
+        # a fade-out ends where the output ends: timed on the 2 s source it sat past the 1 s trim
+        # and was never heard (review of #492)
+        out = OUT / "tempo_trim_fade.wav"
+        script("audio.py", src, "--length-samples", "48000", "--fade-out", "0.5", "-o", out)
+        faded = self._pcm(out)
+        self.assertEqual(len(faded), 48000)
+        peak = lambda lo, hi: max(abs(v) for v in faded[lo:hi])  # noqa: E731
+        self.assertLess(peak(47000, 48000), 0.1 * peak(12000, 24000), "the last 20 ms are faded down")
+        self.assertGreater(peak(23000, 24000), 0.9 * peak(12000, 13000), "and the fade starts at 0.5 s, not before")
         # refusals: the input's own sound beside a copied picture, an exact length beside one, a range
         for argv, needle in ((("--tempo", "1.2", "-o", OUT / "tempo_x.mp4"), "stream-copied"),
                              (("--length-samples", "1000", "-o", OUT / "tempo_x.mp4"), "audio output"),

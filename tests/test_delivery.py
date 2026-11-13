@@ -265,15 +265,20 @@ class DeliveryTests(MediaFixtures):
                           "iec61966-2-4", "bt1361e", "iec61966-2-1", "bt2020-10", "bt2020-12", "smpte2084", "smpte428",
                           "arib-std-b67"),
         }
-        head = ("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=16x16:d=0.04", "-frames:v", "1")
+        head = ("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi")
+        tail = ("-frames:v", "1", "-f", "null", "-")
         for kind, values in names.items():
             for name in values:
                 with self.subTest(kind=kind, name=name):
                     opt, label = carried_tag(kind, name, "option"), carried_tag(kind, name, "setparams")
                     self.assertEqual(opt is None, name == "gbr")
                     if opt:
-                        sh(*head, f"-{kind}", opt, "-f", "null", "-")
-                        sh(*head, "-vf", f"setparams={kind}={label}", "-f", "null", "-")
+                        # The frames already carry the tag the option names, as a carried tag's
+                        # do: FFmpeg 8 converts to an output option's colour space when the
+                        # input's differs, and swscale has no path to several of these (ictcp,
+                        # ycgco, ...), which is a refusal of the conversion, not of the name.
+                        sh(*head, "-i", f"color=s=16x16:d=0.04,setparams={kind}={label}", f"-{kind}", opt, *tail)
+                        sh(*head, "-i", "color=s=16x16:d=0.04", "-vf", f"setparams={kind}={label}", *tail)
         # the smart cut's x264 line is one such caller: a PAL-tagged H.264 re-encoded part
         import _smartcut
         line = _smartcut.x264_line({"profile": "High", "pix_fmt": "yuv420p", "level": 30, "color_space": "bt470bg",
