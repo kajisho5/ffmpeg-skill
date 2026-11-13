@@ -1701,7 +1701,8 @@ and `size_used` is `null`, rather than presenting the requested size as a
 fitted one. It is `null` too under `--transcribe --dry-run`, where there are no
 cues to fit yet. `--fit-size-scope cue` sizes each cue only on the generated-ASS
 route (`--animate`, `--karaoke`, emoji overlays); a plain SRT burn draws one size
-and reports `fit_scope: file` with a note.
+and reports `fit_scope: file` with a note. With a caller's own `--ass` the file sets its
+sizes itself, so `fit_scope` is `null` with a note.
 
 | ASS size | px on 1920 | % frame h | em per line |
 |---|---|---|---|

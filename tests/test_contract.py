@@ -9361,6 +9361,20 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertEqual([t["default"] for t in doc["tracks"]], [False, True])
         written = json.loads(tool("probe", self.work / "m2.mkv", "--json").stdout)["subtitle_stream_details"]
         self.assertEqual([s["default"] for s in written], [False, True])
+        # the language is asked of the tracks this run adds: the input's own default does not
+        # make --default-track de true when nothing added is tagged de
+        doc, _ = self.doc("caption", subbed, "--mode", "mux", "--srt", f"{fr}:fr", "--default-track", "de", "-o", "m3.mkv", ok_codes=(1,))
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertFalse((self.work / "m3.mkv").exists())
+        # clearing a kept track's default leaves its other flags (forced) as the input had them
+        forced = self.work / "forced.mkv"
+        ffmpeg("-i", self.clip, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt",
+               "-disposition:s:0", "default+forced", forced)
+        self.doc("caption", forced, "--mode", "mux", "--srt", f"{fr}:fr", "--default-track", "fr", "-o", "m4.mkv")
+        flags = json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "s:0", "-show_entries", "stream_disposition=default,forced",
+             "-of", "json", str(self.work / "m4.mkv")], capture_output=True, text=True, check=True).stdout)["streams"][0]["disposition"]
+        self.assertEqual((flags["default"], flags["forced"]), (0, 1))
 
     def test_render_dry_run_plans_a_speed_on_the_clips_length(self):
         """A97: under --dry-run a clip's speed stage was planned from an invented 10 s; it is now the
@@ -9389,6 +9403,19 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertFalse(doc["verified"])
         doc, _ = self.doc("check", self.short_av, "--platform", "x")
         self.assertEqual(self.rows(doc)["loudness"]["status"], "WARN")
+
+    def test_a_long_track_under_the_loudness_gate_is_not_called_too_short(self):
+        """Review of #490: -inf integrated loudness beside a finite peak was read as "shorter than
+        one 400 ms block". A long, very quiet track gives the same two numbers (every block is
+        under the absolute gate), so the length decides: it keeps the answers it had before."""
+        quiet = self.work / "quiet.wav"  # 3 s of silence after a 10 ms tick at -45 dBFS: a finite peak, no gated block
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:duration=0.01,volume=-45dB,apad=whole_dur=3", quiet)
+        doc, _ = self.doc("loudness", quiet, "--measure-only")
+        self.assertEqual((doc["measured"]["silent"], doc["measured"].get("too_short", False)), (True, False))
+        ffmpeg("-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-i", quiet, "-t", "3", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", self.work / "quiet_av.mov")
+        doc, _ = self.doc("check", self.work / "quiet_av.mov", "--platform", "x", ok_codes=(0, 1))
+        self.assertEqual(self.rows(doc)["loudness"]["status"], "FAIL")
 
     def test_loudnorm_mode_matches_what_ffmpeg_reports_and_the_note_names_it(self):
         """A111: the shortfall note always blamed encoder overshoot, also on a lossless output where
@@ -9468,6 +9495,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertFalse(base.startswith("every"), base)
         self.assertIn("batch.py lists none", base)
 
+    @unittest.skipIf(platform.system() == "Windows", "the ffmpeg wrapper is a #!/bin/sh shim on a POSIX-only PATH")
     def test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis(self):
         """A236/A193: metadata --auto-chapters, cut --snap beats, render and batch ran ffmpeg
         decodes under --dry-run while the contract said ffmpeg_execution "none". The list is now
@@ -9489,7 +9517,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         cues = w / "dry_cues.txt"
         cues.write_text("0-2 Hello\n2-4 World\n", encoding="utf-8")
         proj = w / "dry_project.json"
-        proj.write_text(json.dumps({"clips": [{"src": str(c), "in": 0, "out": 4}], "snap": {"to": "beats"}}), encoding="utf-8")
+        proj.write_text(json.dumps({"clips": [{"src": str(w / "beat.mp4"), "in": 1.1, "out": 3.2}], "snap": {"to": "beats"}}), encoding="utf-8")
         batch_in = w / "dry_batch_in"
         batch_in.mkdir(exist_ok=True)
         shutil.copy(c, batch_in / "a.mp4")
@@ -9497,9 +9525,15 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         recipe.write_text(json.dumps({"steps": [["loudness.py", "{in}", "-o", "{out}"]], "output_dir": str(w / "dry_batch_out")}),
                           encoding="utf-8")
         o = lambda ext="mp4": ["-o", str(w / "dry_out" / f"x.{ext}")]  # noqa: E731
+        # a click every 0.5 s: --snap beats refuses a clip with no beat grid, and a refused case
+        # decodes but is not the tool's completed dry run
+        beat = w / "beat.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi",
+               "-i", "aevalsrc='sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.05)':d=8", "-t", "8",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", beat)
         cases = {
             "probe": [c], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
-            "cut --snap": [c, "--start", "1", "--end", "3", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
+            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
             "metadata": [c, "--title", "t", *o()], "metadata --auto-chapters": [c, "--auto-chapters", *o()],
             "caption": [c, "--text", cues, *o()], "overlay": [c, "--image", logo, *o()],
             "graphics": [c, "--template", "title", "--title", "T", *o()], "audio": [c, "--voice", "light", *o()],
@@ -9536,6 +9570,11 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
             proc = tool(name, *map(str, args), "--dry-run", "--json", env=env, check=False, cwd=w)
             self.assertFalse(proc.stdout.strip() == "", f"{label}: no document\n{proc.stderr[-800:]}")
             self.assertEqual(sorted(p.name for p in (w / "dry_out").iterdir()), [], f"{label} --dry-run wrote files")
+            self.assertFalse((w / "dry_batch_out").exists(), f"{label} --dry-run made batch's output_dir")
+            # a refused case writes nothing and decodes nothing either: it would count as coverage.
+            # A completed check whose rows FAIL is a verification result, not a refusal.
+            kind = (json.loads(proc.stdout).get("error") or {}).get("kind")
+            self.assertIn(kind, (None, "verification"), f"{label}: the dry run was refused or failed\n{proc.stdout[-800:]}")
             if log.exists():
                 decoded.add(name)
         allowed = set(_contract.DRY_RUN_ANALYSIS) | {"probe"}

@@ -23,7 +23,7 @@ from _platforms import TP_TOLERANCE_DB
 
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
-from _common.probe import PROBED_AUDIO, probed_maps
+from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
 from _common.emit import refuse
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
@@ -83,8 +83,11 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
         if data.get(k) in (None, "-inf", "inf", "nan"):
             # A257: a clip shorter than one 400 ms gating block has no integrated loudness but a
-            # true peak; that is not silence, and telling the caller to replace the audio was wrong
-            data["too_short"] = data.get("input_tp") not in (None, "-inf", "inf", "nan")
+            # true peak; that is not silence, and telling the caller to replace the audio was wrong.
+            # The length decides it, not the peak: a long track under the absolute gate has a
+            # finite peak and no integrated loudness as well, and stays "silent" as before.
+            data["too_short"] = (data.get("input_tp") not in (None, "-inf", "inf", "nan")
+                                 and shorter_than_a_loudness_block(audio_length(probe(path))))
             data["silent"] = not data["too_short"]
             return data
     data["silent"] = False

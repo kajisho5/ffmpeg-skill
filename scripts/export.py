@@ -54,7 +54,7 @@ from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
-from _common.probe import SILENT_PEAK_DBFS
+from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
 # from a literal restated here: before 1.14 they were typed twice and the facebook preset had
@@ -728,8 +728,11 @@ def main() -> int:
         # written file here so the result names the gap and the caller plans one pass, not two.
         spec = PLATFORMS[platform]
         m = measure_loudness(output)
-        if m and not math.isfinite(m["lufs"]) and math.isfinite(m["tp"]) and m["tp"] > SILENT_PEAK_DBFS:
-            # A257: too short for a gating block is not silent (it has a measured peak)
+        written_audio = probe(output, role="output").get("audio") or {}
+        if (m and not math.isfinite(m["lufs"]) and math.isfinite(m["tp"]) and m["tp"] > SILENT_PEAK_DBFS
+                and shorter_than_a_loudness_block(written_audio.get("duration") or written_audio.get("tagged_duration"))):
+            # A257: too short for a gating block is not silent (it has a measured peak); a longer
+            # track under the gate is not "too short" and takes the path it took before
             _loudness_unmeasured(extra, notes, platform, spec, tp=m["tp"])
             m = {}
         elif not m:

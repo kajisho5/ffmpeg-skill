@@ -59,7 +59,7 @@
 
 ### Fixed
 
-- **A measurement that did not happen is reported as not measured, never as a value or a pass**
+- **In the paths below, a measurement that did not happen is reported as not measured instead of as a value or a pass**
   (A60, A67, A76, A97, A111, A113, A114, A117, A131, A172, A182, A193, A236, A237, A239, A240,
   A241, A257). `check.py` PASSed the duration of a file that states no length (read as 0.00 s) and
   dropped its `--content` black/frozen/silence rows; those rows are now "could not measure"

@@ -1583,7 +1583,8 @@ def main() -> int:
                 converted.append(f"{detail.get('codec')} -> {existing_out[i]}")
             kept_default = bool(detail.get("default")) and not new_default
             if new_default and detail.get("default"):
-                cmd += [f"-disposition:s:{i}", "0"]
+                # "-default" takes that one flag off; "0" would clear forced and the rest with it
+                cmd += [f"-disposition:s:{i}", "-default"]
             tracks.append({"index": i, "file": None, "language": detail.get("language"),
                            "title": detail.get("title"), "codec": written,
                            "default": kept_default, "cues": None, "kept_from_input": True})
@@ -1618,7 +1619,9 @@ def main() -> int:
             tracks.append({"index": idx, "file": path, "language": stored, "title": title,
                            "codec": codec, "default": is_default, "cues": cues_n,
                            "kept_from_input": False})
-        if args.default_track and not any(t["default"] for t in tracks):
+        # asked of the tracks this run adds: a default the input already carried does not make
+        # --default-track fr true when no --srt was tagged fr
+        if args.default_track and not new_default:
             die(f"--default-track {args.default_track}: no --srt was tagged with that language",
                 kind="input")
         # MPEG-4 has no way to say "no default subtitle track": the muxer sets the track-header
@@ -1738,11 +1741,17 @@ def main() -> int:
         generated_ass = False
     if not generated_ass and caption_stats.get("fit_scope") == "cue":
         # A67: one size per cue is a {\fsN} override in the generated ASS; the plain SRT burn
-        # (and a caller's own --ass) draws every cue at one FontSize, so the scope that was
-        # applied is the file's, and saying "cue" described sizes nobody drew
-        caption_stats["fit_scope"] = "file"
-        side_notes.append("--fit-size-scope cue applies on the generated-ASS route (--animate, --karaoke, emoji "
-                          "overlays); this burn draws every cue at one size (size_used), so the fit is file-scoped")
+        # draws every cue at one FontSize, so the scope that was applied is the file's, and
+        # saying "cue" described sizes nobody drew. A caller's own --ass sets its sizes itself
+        # (styles, per-cue overrides): this tool decided none of them, so it claims no scope.
+        if args.ass:
+            caption_stats["fit_scope"] = None
+            side_notes.append("--fit-size-scope cue was not applied: the --ass file sets its own sizes, "
+                              "which this tool does not read or change")
+        else:
+            caption_stats["fit_scope"] = "file"
+            side_notes.append("--fit-size-scope cue applies on the generated-ASS route (--animate, --karaoke, emoji "
+                              "overlays); this burn draws every cue at one size (size_used), so the fit is file-scoped")
 
     if args.ass:
         if not generated_ass and not os.path.exists(args.ass) and not planned_ass:

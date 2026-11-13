@@ -161,6 +161,7 @@ def main() -> int:
         # A240: the flag is accepted and ignored (docs/design-decisions.md "Dry run"); the steps
         # run and write, so the document says dry_run: false and a note says the flag was ignored
         STATE.dry_run = False
+        info("--dry-run is ignored by verify.py: its steps run and write their outputs")
 
     files = collect(args.paths)
     tmp = None

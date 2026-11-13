@@ -48,7 +48,7 @@ from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity
 from _common.probe import PROBED_AUDIO
-from _common.probe import display_size as shown_size
+from _common.probe import display_size as shown_size, shorter_than_a_loudness_block
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -465,7 +465,7 @@ def main() -> int:
     # --content rows that are shares of the running time say so too instead of disappearing.
     dur_read = meta.get("duration")
     dur = dur_read or 0.0
-    if not dur_read:
+    if dur_read is None:
         row("duration", "FAIL" if spec["max_duration"] else "WARN", "could not measure",
             f"<= {spec['max_duration']:g}s" if spec["max_duration"] else "any",
             "remux the file (export.py --preset copy) so the container states its length, then check again",
@@ -601,9 +601,12 @@ def main() -> int:
             elif not lm and tp_only:
                 row("true peak", "WARN", "could not measure", f"<= {spec['tp']:g} dBTP", "re-run check.py, or verify true peak manually",
                     reason="ffmpeg's loudness measurement didn't produce a readable result -- this was not actually checked")
-            elif lm and lm["lufs"] == float("-inf") and lm["tp"] > SILENT_PEAK_DBFS:
+            elif (lm and lm["lufs"] == float("-inf") and lm["tp"] > SILENT_PEAK_DBFS
+                  and shorter_than_a_loudness_block(a.get("duration") or a.get("tagged_duration") or dur_read)):
                 # A257: shorter than one 400 ms gating block: a true peak but no integrated
-                # loudness. Not silence, and not a -inf LUFS that FAILs the target
+                # loudness. Not silence, and not a -inf LUFS that FAILs the target. Decided on
+                # the sound's length: a longer track whose every block is under the gate reads
+                # -inf too, and that one still FAILs the target below
                 row("loudness", "WARN", "could not measure (shorter than one 400 ms loudness block)",
                     f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", "",
                     reason="integrated loudness is gated over 400 ms blocks; a clip this short has none")

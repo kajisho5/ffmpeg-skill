@@ -422,7 +422,8 @@ def render_pack(names: List[str], args) -> int:
             code=stopped[0]["exit_code"] if stopped else 1, kind=stopped[0]["kind"] if stopped else "verification",
             output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
     emit(pack, pack=rows, outputs=outputs, stages=["pack"],
-         verification=[{"step": "check", "ok": r["ok"], "platform": r["platform"]} for r in rows])
+         # a destination whose check did not run has no check step: "not checked" is not ok: true
+         verification=[{"step": "check", "ok": True, "platform": r["platform"]} for r in rows if r["check"] == "pass"])
     return 0
 
 
@@ -1193,12 +1194,15 @@ def planned_clip_length(clip: Dict[str, Any], src: str, index: int) -> float:
     can be read is the speed planned on a stand-in 10 s, and that is recorded (A97): a plan that
     gave no sign its fit.py --duration came from an invented number read as a measured one."""
     from _common.decision import parse_time
-    length = None
+    length = fps = None
     if os.path.isfile(src):
-        length = probe(src).get("duration") or None
+        meta = probe(src)
+        length = meta.get("duration") or None
+        # hh:mm:ss:ff needs the source's rate, which the real cut reads from the same place
+        fps = (meta.get("video") or {}).get("fps") or None
     try:
-        start = parse_time(str(clip["in"])) if clip.get("in") is not None else 0.0
-        end = parse_time(str(clip["out"])) if clip.get("out") is not None else length
+        start = parse_time(str(clip["in"]), fps) if clip.get("in") is not None else 0.0
+        end = parse_time(str(clip["out"]), fps) if clip.get("out") is not None else length
     except ValueError:
         start, end = 0.0, None
     if end is not None and end - start > 0:
