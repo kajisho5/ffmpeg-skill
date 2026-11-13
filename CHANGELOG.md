@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.3
+
+_Automated release: version and notes generated from pull requests merged since 3.8.2._
+
 ### Fixed
 
 - **`overlay.py`, `waveform.py`, `loop.py` and `sync.py --replace-audio` end their sound to the
@@ -28,6 +34,7 @@
   time base); a frame that starts in the last half millisecond before the end, which `-t {:.3f}`
   left out when it rounded down, is now written. `pad.py`'s and `freeze.py`'s picture
   (`tpad`, whole frames) is unchanged. Measured on FFmpeg 6.1.1.
+- fix: overlay, waveform, loop and sync --replace-audio end their sound to the sample; pad and freeze add silence to the sample (#499)
 
 ## 3.8.2
 
