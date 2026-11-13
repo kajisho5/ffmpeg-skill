@@ -298,8 +298,9 @@ def rgb_to_bt709_line(meta: Optional[Dict[str, Any]], codec: Optional[str] = Non
     qtrle clip was read as BT.709 by every player and showed 30C050 as 26AB4D (#496). Such a
     source is converted to BT.709 (source_format(); color.py's grade legs), RGB layers are
     converted to match (decision.rgb_chain_to_bt709) and the line is tagged BT.709 (_source_tags),
-    as the H.264 line does for an RGB source. An RGB line (qtrle, PNG) and an HDR/BT.2020 source
-    are left as they were."""
+    as the H.264 line does for an RGB source. An RGB line (qtrle, PNG) is left as it was; an
+    HDR/BT.2020 source is not converted to BT.709 here (FFmpeg's own conversion makes its YUV, as
+    before)."""
     codec = codec or STATE.alpha_line
     v = (meta or {}).get("video") or {}
     return bool(codec) and ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv") and is_rgb(meta) and not v.get("bt2020_or_hdr")

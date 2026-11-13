@@ -3148,7 +3148,7 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
 - **An RGB source that is neither HDR nor BT.2020 is converted to BT.709 on a YUV alpha line and tagged so (#496).** "It converts
   no matrix" above holds for a YUV source, which has one to keep. An SDR RGB source (qtrle, PNG in
-  `.mov`/`.mkv`; one that probes HDR or BT.2020 is left as it was) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
+  `.mov`/`.mkv`; one that probes HDR or BT.2020 is not converted to BT.709: FFmpeg's own conversion makes its YUV, as before) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
   the tool does. Left to FFmpeg it was BT.601, with no tag on 6.1: a 1280x720 master read as
   BT.709 showed 30C050 as 26AB4D, from `color.py --correct`, `graphics.py` and `overlay.py` alike
   (`--lut` wrote BT.709 samples with no tag). The conversion is now BT.709, RGB layers are

@@ -1983,7 +1983,7 @@ color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--
 split off before the grade, never touched, and merged back in front of the alpha line (ProRes 4444
 by default, `--alpha-codec qtrle|png|vp9`); the grade runs at 4:4:4 and the source's colour tags are
 kept (no BT.709 conversion, as `--codec prores`). An RGB source that is neither HDR nor BT.2020 (qtrle, PNG in `.mov`) has no matrix
-to keep: a ProRes 4444 or VP9 line of it is BT.709 YUV and tagged BT.709 (an HDR/BT.2020 one is left as it is), a qtrle or PNG line keeps
+to keep: a ProRes 4444 or VP9 line of it is BT.709 YUV and tagged BT.709 (an HDR or BT.2020 one is not: FFmpeg's own conversion makes its YUV, as before), a qtrle or PNG line keeps
 its RGB. The `alpha` step compares the written alpha with
 the source's frame by frame on 64x36 copies, each within 2 of 255. A source without an alpha plane is
 refused. Without `--keep-alpha`, a grade of a source whose alpha is used writes opaque H.264 and the
