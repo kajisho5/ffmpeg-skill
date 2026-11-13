@@ -108,8 +108,8 @@ def caseless_glob(pattern: str) -> str:
             if ch == "]" and i > first:
                 in_class = False
         elif ch == "[":
-            in_class = "]" in pattern[i + 2:]  # an unclosed [ is a literal character to fnmatch
             first = i + 2 if pattern[i + 1:i + 2] == "!" else i + 1
+            in_class = "]" in pattern[first + 1:]  # an unclosed [ ("[!]x") is a literal character to fnmatch
             out.append(ch if in_class else "[[]")
         elif ch.isalpha() and ch.lower() != ch.upper():
             out.append(f"[{ch.lower()}{ch.upper()}]")

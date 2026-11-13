@@ -2955,7 +2955,8 @@ class Issue458Tests(MediaFixtures):
             # a class's first member may be "[" or "]": the class still ends, and the letters after it fold
             import fnmatch
             import batch
-            for pattern, name in (("[[]take*.mp4", "[TAKE001.MP4"), ("[]a]x.mp4", "aX.MP4"), ("[!]a]x.mp4", "bX.Mp4")):
+            for pattern, name in (("[[]take*.mp4", "[TAKE001.MP4"), ("[]a]x.mp4", "aX.MP4"), ("[!]a]x.mp4", "bX.Mp4"),
+                                  ("[!]take*.mp4", "[!]TAKE1.MP4"), ("[take*.mp4", "[TAKE1.MP4")):  # unclosed: literal
                 self.assertTrue(fnmatch.fnmatchcase(name, batch.caseless_glob(pattern)), (pattern, name))
             self.assertFalse(fnmatch.fnmatchcase("AC.mp4", batch.caseless_glob("[ab]c.mp4")))  # a class keeps its case
         with self.subTest("A267: --export-timeline probes each file once"):
