@@ -15,8 +15,11 @@ fallback codes, source_carry.dropped, and the last line of an error message. Not
 a row: a refusal with a hint can be the decided behaviour (docs/design-decisions.md). Read the
 rows that differ from the baseline, then decide.
 
-The table holds one minimal invocation per tool. A tool that needs a second file or a project is
-not in it (join, sync, multicam, broll, render, batch, sequence, grid, insert): sweep those by hand.
+The table holds one minimal invocation per tool that takes one media file, the ones that write no
+media included (probe, check, cropdetect, scenes, verify). A tool that needs a second file or a
+project, or takes no input, is not in it (join, sync, multicam, broll, render, batch, sequence,
+grid, insert, report, background): sweep those by hand. tests/test_contract.py fails when a script
+is in neither list.
 """
 import argparse
 import json
@@ -29,12 +32,18 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
 # tool -> (arguments after the input, output extension). {w} and {h} are an even size at or
-# below the input's; {mid} is the middle of the clip in seconds and {dur} its length.
+# below the input's; {mid} is the middle of the clip in seconds and {dur} its length; {work} is
+# the sweep's temp folder. An extension of None is a tool that takes no -o.
+# Not in the table, by decision: see the docstring. The test compares both lists with scripts/.
+BY_HAND = ("join", "sync", "multicam", "broll", "render", "batch", "sequence", "grid", "insert",
+           "report", "background")
 TABLE = {
     "audio": (["--voice", "light"], ".mp4"),
     "caption": (["--text", "{cues}"], ".mp4"),
+    "check": (["--platform", "youtube"], None),
     "color": (["--correct", "--contrast", "1.1"], ".mp4"),
     "crop": (["--x", "0", "--y", "0", "--width", "{w}", "--height", "{h}"], ".mp4"),
+    "cropdetect": ([], None),
     "cut": (["--start", "0.2", "--end", "{mid}"], ".mp4"),
     "cut --accurate": (["--start", "0.2", "--end", "{mid}", "--accurate"], ".mp4"),
     "deinterlace": ([], ".mp4"),
@@ -49,13 +58,18 @@ TABLE = {
     "metadata": (["--title", "sweep"], ".mp4"),
     "overlay": (["--image", "{still}"], ".mp4"),
     "pad": (["--end", "0.5"], ".mp4"),
+    "probe": ([], None),
     "proxy": ([], ".mp4"),
     "redact": (["--x", "0", "--y", "0", "--width", "{w}", "--height", "{h}"], ".mp4"),
     "reverse": ([], ".mp4"),
+    "scenes": ([], None),
     "silence": ([], ".mp4"),
     "speedramp": (["--segment", "0-{dur}:2.0"], ".mp4"),
+    "sphere": ([], ".mp4"),
     "stabilize": ([], ".mp4"),
     "straighten": (["--degrees", "2"], ".mp4"),
+    "verify": (["--quick", "--out", "{work}/sweep_verify"], None),
+    "waveform": ([], ".mp4"),
 }
 
 
@@ -79,15 +93,19 @@ def row_for(tool, source, facts, work):
     name = tool.split()[0]
     args, ext = TABLE[tool]
     args = [a.format(**facts) for a in args]
-    out = os.path.join(work, f"sweep_{tool.replace(' ', '_').replace('-', '')}{ext}")
-    doc, proc = run_json([sys.executable, str(SCRIPTS / f"{name}.py"), source, *args, "-o", out, "--overwrite", "--json"])
+    out = ["-o", os.path.join(work, f"sweep_{tool.replace(' ', '_').replace('-', '')}{ext}")] if ext else []
+    doc, proc = run_json([sys.executable, str(SCRIPTS / f"{name}.py"), source, *args, *out, "--overwrite", "--json"])
+    if isinstance(doc, list):          # probe.py prints one document per input
+        doc = doc[0] if doc and isinstance(doc[0], dict) else None
     if doc is None:
         tail = (proc.stderr or proc.stdout).strip().splitlines()[-1:] or [""]
         status = "timeout" if proc.returncode == -1 and "timed out" in tail[0] else "no-json"
         return {"tool": tool, "status": status, "exit": proc.returncode, "message": tail[0][:200]}
     err = doc.get("error") or {}
     diag = doc.get("diagnostics") or {}
-    row = {"tool": tool, "status": doc.get("status"), "kind": err.get("kind"), "verified": doc.get("verified"),
+    # probe.py's success document is the measurement itself: it has no status key
+    status = doc.get("status") or ("completed" if not err and proc.returncode == 0 else None)
+    row = {"tool": tool, "status": status, "kind": err.get("kind"), "verified": doc.get("verified"),
            "warnings": sorted(w.get("code") for w in diag.get("warnings") or []),
            "fallbacks": sorted(w.get("code") for w in diag.get("fallbacks") or []),
            "dropped": (doc.get("source_carry") or {}).get("dropped") or []}
@@ -116,7 +134,7 @@ def facts_for(source, work):
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=white:s=64x64", "-frames:v", "1", still], check=True)
     return {"w": max(2, (w // 2) // 2 * 2), "h": max(2, (h // 2) // 2 * 2), "mid": f"{max(duration / 2, 0.4):.2f}",
             "dur": f"{duration:.3f}",
-            "cues": cues, "still": still}
+            "cues": cues, "still": still, "work": work}
 
 
 def sweep(source, tools, work):
@@ -163,7 +181,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="ffskill-sweep-") as work:
         rows = sweep(args.input, tools, work)
         if args.baseline:
-            base = {r["tool"]: r for r in sweep(args.baseline, tools, work)}
+            # its own folder: verify.py refuses to replace the files an earlier run left in --out
+            base_work = os.path.join(work, "baseline")
+            os.mkdir(base_work)
+            base = {r["tool"]: r for r in sweep(args.baseline, tools, base_work)}
             rows = [r for r in rows if {k: v for k, v in r.items() if k != "message"} !=
                     {k: v for k, v in base[r["tool"]].items() if k != "message"}]
     if args.json:

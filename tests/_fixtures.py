@@ -402,7 +402,7 @@ def _ass_advance(family, body):
         encoding="utf-8-sig")
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=%dx%d:d=0.04" % (W, H),
-         "-vf", "ass=%s" % str(path).replace("\\", "/"), "-frames:v", "1",
+         "-vf", "ass=%s" % escape_filter_path(str(path)), "-frames:v", "1",
          "-f", "rawvideo", "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     data = proc.stdout
     if proc.returncode != 0 or len(data) < W * H:

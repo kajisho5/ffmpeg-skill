@@ -1125,8 +1125,18 @@ class EditingTests(MediaFixtures):
         self.assertClose(m["duration"], 1.0, 0.1)
 
     def test_sequence_no_match_refused(self):
-        frames_dir = OUT / "seqframes"
-        script("sequence.py", "--dir", frames_dir, "--pattern", "*.jpg", "--fps", "5", expect_fail=True)
+        # its own directory, made here: with another test's it was missing whenever this ran first,
+        # and the run below then tested the missing-directory refusal instead
+        frames_dir = OUT / "seqframes_nomatch"
+        frames_dir.mkdir(exist_ok=True)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x48",
+           "-frames:v", "1", frames_dir / "frame_0000.png")
+        doc = json.loads(script("sequence.py", "--dir", frames_dir, "--pattern", "*.jpg", "--fps", "5",
+                                "-o", OUT / "seq_nomatch.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input", doc)
+        self.assertIn("match", doc["error"]["message"])
+        self.assertNotIn("not a directory", doc["error"]["message"])
+        self.assertFalse((OUT / "seq_nomatch.mp4").exists())
 
     def test_sequence_missing_dir_refused(self):
         script("sequence.py", "--dir", str(OUT / "does_not_exist"), "--pattern", "*.png", "--fps", "5", expect_fail=True)
@@ -1214,7 +1224,7 @@ class EditingTests(MediaFixtures):
         self.assertClose(m["video"]["fps"], 30.0, 0.05, "frame rate preserved while slowing down")
 
     def test_silence_removal(self):
-        gappy = OUT / "gappy.mp4"
+        gappy = OUT / "gappy_sine.mp4"   # not gappy.mp4: MediaFixtures._gappy keeps a different layout under that name
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*gt(sin(2*PI*0.25*t)\\,0)':s=48000",
            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", gappy)

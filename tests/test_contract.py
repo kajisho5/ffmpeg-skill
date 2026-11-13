@@ -184,6 +184,10 @@ class ContractTests(unittest.TestCase):
         cls.work = Path(tempfile.mkdtemp(prefix="ffskill_contract_"))
         cls.input_hashes = {p: cls._sha(p) for p in (cls.src, cls.wav, cls.mic, cls.camb, cls.vfr, cls.hdr, cls.surround)}
 
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.work, ignore_errors=True)
+
     @staticmethod
     def _sha(path):
         import hashlib
@@ -386,6 +390,19 @@ class ContractTests(unittest.TestCase):
         with unittest.mock.patch.object(sys, "argv", ["sweep.py", "--list"]), contextlib.redirect_stdout(out):
             self.assertEqual(sweep.main(), 0)
         self.assertEqual(out.getvalue().split("\n")[:-1], list(sweep.TABLE))
+        # #467 (A225): the table left seven one-file tools out while its docstring said "every tool".
+        # A script is in the table or in the by-hand list, never in neither and never in both.
+        swept, by_hand = {t.split()[0] for t in sweep.TABLE}, set(sweep.BY_HAND)
+        scripts = {p.stem for p in SCRIPTS.glob("*.py") if not p.name.startswith("_")}
+        self.assertEqual(swept | by_hand, scripts, "a tool tests/sweep.py neither runs nor names as by-hand")
+        self.assertEqual(swept & by_hand, set())
+        for name in sweep.BY_HAND:
+            self.assertIn(name, sweep.__doc__)
+        skill = (ROOT / ".claude" / "skills" / "sibling-sweep" / "SKILL.md").read_text(encoding="utf-8")
+        for name in sweep.BY_HAND:
+            self.assertIn("`%s`" % name, skill, "sibling-sweep names every tool the table leaves out")
+        self.assertIn("the %d single-input tools" % len(swept),
+                      (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"))
         err = io.StringIO()
         with unittest.mock.patch.object(sys, "argv", ["sweep.py"]), contextlib.redirect_stderr(err):
             with self.assertRaises(SystemExit) as usage:
@@ -808,6 +825,51 @@ class ContractTests(unittest.TestCase):
                     continue  # Google Fonts serves CSS per user agent; SRI cannot pin it
                 self.assertIn("integrity=\"sha384-", tag, tag)
                 self.assertIn("crossorigin=\"anonymous\"", tag, tag)
+
+    def test_release_drops_a_superseded_bump_and_asks_pages_to_rebuild(self):
+        """#467. A25: the bump commit was `git pull --rebase`d onto a merge that landed while it was
+        being prepared, so that merge shipped in the tag with its label unread and no CHANGELOG
+        line, and its own run found nothing to release. The push is now tried once; refused
+        because main moved, the bump is dropped and the queued run releases both. A28: the bump
+        commit carries [skip ci], so pages.yml's push trigger never saw a release; release.yml
+        dispatches it (workflow_dispatch is an event GITHUB_TOKEN may raise)."""
+        wf = ROOT / ".github" / "workflows"
+        release = (wf / "release.yml").read_text(encoding="utf-8")
+        jobs = release[release.index("\njobs:\n"):]
+        normal = jobs[:jobs.index("\n  recover:\n")]
+        commands = "\n".join(line for line in normal.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotIn("pull --rebase", commands)
+        self.assertNotIn("git rebase", commands)
+        bump = normal[normal.index("      - name: Auto-bump"):normal.index("      - name: Check whether this version is already released")]
+        self.assertIn("[skip ci]", bump)
+        push = bump[bump.index("BASE=$(git rev-parse HEAD~1)"):]
+        self.assertRegex(push, r"if ! git push origin HEAD:main; then\n")
+        # a refusal with main where it was is a failure; with main moved, the bump is dropped
+        self.assertRegex(push, r'if \[ "\$\(git rev-parse origin/main\)" = "\$BASE" \]; then\n(?:.*\n)?\s+exit 1\n')
+        self.assertIn("git reset --hard origin/main", push)
+        self.assertLess(push.index("exit 1"), push.index("git reset --hard origin/main"))
+        # the dispatch: after the tag exists, not able to stop the npm publish, reported at the end
+        step = normal[normal.index("      - name: Rebuild GitHub Pages for the released version\n"):]
+        step = step[:step.index("\n      - ", 1)]
+        self.assertIn("        if: steps.check.outputs.already_released == 'false'\n", step)
+        self.assertIn("        continue-on-error: true\n", step)
+        self.assertIn("        run: gh workflow run pages.yml --ref main", step)
+        self.assertLess(normal.index("      - name: Create tag and GitHub Release"), normal.index("      - name: Rebuild GitHub Pages"))
+        self.assertLess(normal.index("      - name: Rebuild GitHub Pages"), normal.index("      - name: Publish to npm"))
+        self.assertIn("        if: always() && steps.pages_dispatch.outcome == 'failure'\n", normal)
+        perms = re.search(r"\n    permissions:\n((?:      \S.*\n)+)", normal).group(1)
+        self.assertEqual(sorted(line.split("#")[0].strip() for line in perms.splitlines()),
+                         ["actions: write", "contents: write", "id-token: write", "pull-requests: read"])
+        pages = (wf / "pages.yml").read_text(encoding="utf-8")
+        on = pages[pages.index("\non:\n"):pages.index("\npermissions:")]
+        self.assertRegex(on, r"(?m)^  workflow_dispatch:$")
+
+    def test_changelog_has_one_heading_per_version(self):
+        """#466 (A215): two `## 1.15.0` headings, and release.yml's notes extraction stops at the
+        next `## `, so that release's notes were the three-line stub above the real section."""
+        headings = re.findall(r"(?m)^## (\S+)", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(h for h in set(headings) if headings.count(h) > 1), [])
+        self.assertEqual(headings[0], "Unreleased")
 
     def test_every_fuzz_target_runs_on_its_seeds(self):
         """ClusterFuzzLite builds fuzz/*_fuzzer.py with atheris; without atheris each target runs
@@ -1576,7 +1638,8 @@ class ContractTests(unittest.TestCase):
         b = sh(sys.executable, SCRIPTS / "_contract.py", "--json").stdout
         self.assertEqual(a, b)
         doc = json.loads(a)
-        self.assertEqual(json.dumps(doc, sort_keys=True), json.dumps(doc, sort_keys=True))
+        self.assertEqual(json.dumps(doc), json.dumps(doc, sort_keys=True),
+                         "keys are sorted at every depth, not only at the top")
         self.assertEqual(list(json.loads(a).keys()), sorted(json.loads(a).keys()), "top-level keys sorted")
 
     # ------------------------------------------------------------------ release version resolution
@@ -2669,6 +2732,60 @@ class ContractTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0, "the simulated crash should make the installer report failure")
             self.assertTrue(marker.exists(), "an install interrupted mid-copy must not destroy the previous install")
             self.assertEqual(marker.read_text(encoding="utf-8"), "preserve me")
+
+    def test_installer_copies_the_shipped_set_refuses_unknown_arguments_and_leaves_no_scratch(self):
+        """#467. A31/A37: from a git checkout the installer copied all of docs/ and references/
+        (17 MB, the demo GIFs and the maintainer diary) and no LICENSE; it now copies what
+        package.json `files` ships. A30: an unknown flag, or --dir with no value, fell through to
+        the default target, so `--uninstall --cursr` removed the Claude Code install with exit 0.
+        A29: a failed install left <name>.tmp-<pid>/ with a SKILL.md in the skills folder, and
+        nothing removed it."""
+        installer = ROOT / "bin" / "install.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
+            skills = Path(tmp) / ".claude" / "skills"
+            installed = skills / "ffmpeg-skill"
+            sh("node", installer, env=env)
+            files = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["files"]
+            self.assertTrue((installed / "LICENSE").is_file())
+            self.assertEqual(sorted(p.name for p in (installed / "docs").iterdir()), ["contract.md"])
+            self.assertEqual(sorted("references/" + p.name for p in (installed / "references").iterdir()),
+                             sorted(f for f in files if f.startswith("references/")))
+            self.assertFalse((installed / "bin").exists())
+            self.assertTrue((installed / "templates").is_dir() and (installed / "mcp" / "server.py").is_file())
+
+            for argv, said in ((["--uninstall", "--cursr"], "unknown argument --cursr"),
+                               (["--uninstall", "--dir"], "--dir needs a directory"),
+                               (["--uninstall", "--dir", "--project"], "--dir needs a directory"),
+                               (["--cursor", "stray"], "unknown argument stray")):
+                proc = sh("node", installer, *argv, env=env, check=False)
+                self.assertEqual(proc.returncode, 2, argv)
+                self.assertIn(said, proc.stderr)
+                self.assertTrue((installed / "SKILL.md").is_file(), f"{argv} removed the default install")
+                self.assertFalse((Path(tmp) / ".cursor").exists(), argv)
+            # --dir still takes its value, and the value is not read as an unknown argument
+            sh("node", installer, "--dir", str(Path(tmp) / "custom"), env=env)
+            self.assertTrue((Path(tmp) / "custom" / "ffmpeg-skill" / "SKILL.md").is_file())
+
+            crashing = Path(tmp) / "install_crash_test.js"
+            js = installer.read_text(encoding="utf-8")
+            crashing.write_text(js.replace(
+                "copyRecursive(src, path.join(tmpDir, item));",
+                "copyRecursive(src, path.join(tmpDir, item)); "
+                "if (item === 'SKILL.md') throw new Error('SIMULATED_CRASH_MID_COPY');", 1)
+                .replace("path.resolve(__dirname, '..')", repr(str(ROOT)), 1), encoding="utf-8")
+            proc = sh("node", crashing, env=env, check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("SIMULATED_CRASH_MID_COPY", proc.stderr)
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), ["ffmpeg-skill"], "the failed run's scratch copy is removed")
+            # one left by a killed run (nothing ran its catch) goes with --uninstall
+            stale = skills / "ffmpeg-skill.tmp-4242"
+            stale.mkdir()
+            (stale / "SKILL.md").write_text("partial", encoding="utf-8")
+            (skills / "ffmpeg-skill.tmp-notes").mkdir()
+            sh("node", installer, "--uninstall", env=env)
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), ["ffmpeg-skill.tmp-notes"],
+                             "only the installer's own <name>.tmp-<pid> folders are removed")
 
     # ------------------------------------------------------------------ integration: claims hold at run time
     def test_every_1_17_flag_is_reachable_off(self):
@@ -5490,6 +5607,7 @@ class SilentPathTests(unittest.TestCase):
             setattr(_common.STATE, bucket, [])
 
     def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
         _common.STATE.timeout, _common.STATE.dry_run, _common.STATE.audit_log = self.saved
         for bucket in ("warnings", "fallbacks", "skipped", "notes"):
             setattr(_common.STATE, bucket, [])
@@ -7798,6 +7916,70 @@ class EvalRunnerTests(unittest.TestCase):
             doc = json.loads(proc.stdout)
             self.assertEqual(doc["total"], 1)
             self.assertEqual(doc["passed"], 1)
+
+    def test_eval_25_grader_reads_the_named_tools_own_result_and_marks_an_unstarted_run(self):
+        """#467. A272: result_expect paired commands with outputs by position and, when the two
+        counts differed (any Read or Write call), read the last document any tool printed, so a
+        correct run failed. A273: an agent that never started was a routing `fail` (and a
+        record_only prompt `recorded`). A251: grade_runs.py read a prompts file that does not exist."""
+        import importlib
+        g = importlib.import_module("grade_runs_25")
+        prompt = {"id": "tt1", "expect": ["join"], "result_expect": {"tool": "join", "ok": True}}
+
+        def event(kind, *content):
+            return json.dumps({"type": kind, "message": {"content": list(content)}})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "tt1"
+            d.mkdir()
+            (d / "transcript.jsonl").write_text("\n".join([
+                event("assistant", {"type": "tool_use", "name": "Read", "id": "r1", "input": {"file_path": "parts.txt"}}),
+                event("user", {"type": "tool_result", "tool_use_id": "r1", "content": "a.wav\nb.wav"}),
+                event("assistant", {"type": "tool_use", "name": "Bash", "id": "b1",
+                                    "input": {"command": "python3 scripts/join.py --list parts.txt -o out.wav --json"}}),
+                event("user", {"type": "tool_result", "tool_use_id": "b1", "content": '{"status": "completed", "output": "out.wav"}'}),
+                event("assistant", {"type": "tool_use", "name": "Bash", "id": "b2",
+                                    "input": {"command": "python3 scripts/check.py out.wav --json"}}),
+                event("user", {"type": "tool_result", "tool_use_id": "b2", "content": '{"status": "failed", "error": {"kind": "verification"}}'}),
+                event("assistant", {"type": "text", "text": "Done: out.wav"}),
+            ]), encoding="utf-8")
+            row = g.grade(prompt, d)
+            self.assertEqual((row["verdict"], row["result_status"]), ("pass", "completed"), row)
+            # the named tool printed no document: said so, not answered from check.py's
+            row = g.grade(dict(prompt, expect=["check"], result_expect={"tool": "probe", "ok": True}), d)
+            self.assertEqual(row["failures"], ["no probe --json result document"])
+
+            for name, text in (("empty", ""), ("init_only", json.dumps({"type": "system", "subtype": "init"}))):
+                e = Path(tmp) / name
+                e.mkdir()
+                (e / "transcript.jsonl").write_text(text, encoding="utf-8")
+                self.assertEqual(g.grade(prompt, e), {"id": "tt1", "verdict": "NOT_RUN"})
+                self.assertEqual(g.grade(dict(prompt, record_only=True), e)["verdict"], "NOT_RUN")
+            self.assertEqual(g.grade(prompt, Path(tmp) / "absent")["verdict"], "MISSING")
+        source = (ROOT / "evals" / "grade_runs.py").read_text(encoding="utf-8")
+        named = re.search(r'W / "([\w.]+\.json)"', source).group(1)
+        self.assertTrue((ROOT / "evals" / named).is_file(), named)
+
+    def test_every_media_fixture_a_prompt_names_has_a_builder(self):
+        """#467 (A250): kw1 and ff1 name source.mp4, which write_fixtures.py could not build, so
+        staging either stopped with "no media fixture builder" and `--all` stopped partway."""
+        import importlib
+        wf = importlib.import_module("write_fixtures")
+        source = (ROOT / "evals" / "write_fixtures.py").read_text(encoding="utf-8")
+        body = source[source.index("def build_media_fixture"):source.index("\ndef main")]
+        literal = set(re.findall(r'name == "([^"]+)"', body))
+        for group in re.findall(r"name in \(([^)]*)\)", body):
+            literal |= set(re.findall(r'"([^"]+)"', group))
+        patterns = re.findall(r're\.fullmatch\(r"([^"]+)", name\)', body)
+        for path in sorted((ROOT / "evals").glob("agent_prompts*.json")):
+            for prompt in json.loads(path.read_text(encoding="utf-8")):
+                for name in prompt.get("media_fixtures") or []:
+                    self.assertTrue(name in literal or any(re.fullmatch(rx, name) for rx in patterns),
+                                    f"{path.name} {prompt['id']}: no builder for {name}")
+        if shutil.which("ffmpeg"):
+            with tempfile.TemporaryDirectory() as tmp:
+                written = wf.write(Path(tmp), {"media_fixtures": ["source.mp4"]})
+                self.assertGreater(written[0].stat().st_size, 10_000)
 
     def test_run_py_has_no_claude_cli_or_llm_judge_dependency(self):
         """The cross-vendor contract: grading is regex/substring only, so a Cursor or Codex
