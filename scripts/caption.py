@@ -1727,8 +1727,8 @@ def main() -> int:
             cues if (args.text or args.transcribe) else (
                 planned_cues if planned_cues is not None else parse_srt(srt_path)))
         if args.karaoke and not getattr(args, "_word_timings", None):
-            # a copy that only rewrote the timings keeps the caller's word-timing JSON beside it
-            args._word_timings = whisper_word_timings(args.srt if normalised_only else srt_path)
+            # Use the cue source's sidecar, even when layout rewrites the caller's SRT.
+            args._word_timings = whisper_word_timings(args.srt if args.srt and not (args.text or args.transcribe) else srt_path)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         claim([(ass_path, "ASS")])
         w, h = display_size(meta["video"])

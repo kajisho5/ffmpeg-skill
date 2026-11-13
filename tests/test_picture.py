@@ -510,6 +510,80 @@ class PictureTests(MediaFixtures):
         self.assertIn(r"{\kf50}beta", body)
         self.assertIn(r"{\kf300}gamma", body)
 
+    def test_caption_karaoke_keeps_source_word_timings_after_srt_layout(self):
+        """Layout can rewrite the SRT, but word timings still belong to the caller's file."""
+        cases = [
+            ("unchanged", "00:00:00,500 --> 00:00:00,900", ["--min-duration", "0"],
+             [10, 5, 25], ["0:00:00.50", "0:00:00.60", "0:00:00.65", "0:00:00.90"]),
+            ("normalised", "00:00,500 --> 00:00,900", ["--min-duration", "0"],
+             [10, 5, 25], ["0:00:00.50", "0:00:00.60", "0:00:00.65", "0:00:00.90"]),
+            ("extended", "00:00:00,500 --> 00:00:00,900", [],
+             [10, 5, 85], ["0:00:00.50", "0:00:00.60", "0:00:00.65", "0:00:01.50"]),
+            ("offset", "00:00:00,500 --> 00:00:00,900", ["--offset", "0.05"],
+             [5, 5, 90], ["0:00:00.55", "0:00:00.60", "0:00:00.65", "0:00:01.55"]),
+            ("incomplete", "00:00:00,500 --> 00:00:00,900", ["--offset", "0.2"],
+             [33, 33, 33], ["0:00:00.70", "0:00:01.03", "0:00:01.36", "0:00:01.69"]),
+        ]
+        for name, timing, flags, durations, boundaries in cases:
+            for style in ("sweep", "word"):
+                with self.subTest(layout=name, style=style):
+                    srt = OUT / f"source_words_{name}_{style}.srt"
+                    srt.write_text(f"1\n{timing}\nhello big world\n\n", encoding="utf-8")
+                    sidecar = srt.with_suffix(".words.json")
+                    sidecar.write_text(json.dumps({"words": [
+                        {"word": "hello", "start": 0.5, "end": 0.6},
+                        {"word": "big", "start": 0.6, "end": 0.65},
+                        {"word": "world", "start": 0.65, "end": 0.9}]}), encoding="utf-8")
+                    before = (srt.read_bytes(), sidecar.read_bytes())
+                    ass = OUT / f"laid_out_words_{name}_{style}.ass"
+                    proc = script("caption.py", self._small(), "--srt", srt, "--karaoke",
+                                  "--karaoke-style", style, "--karaoke-timing", "even",
+                                  "--write-ass", ass, "--fast", "-o", ass.with_suffix(".mp4"), *flags)
+                    body = ass.read_text(encoding="utf-8-sig")
+                    if style == "sweep":
+                        self.assertEqual([int(n) for n in re.findall(r"\\kf(\d+)", body)], durations)
+                    else:
+                        intervals = [line.split(",")[1:3] for line in body.splitlines()
+                                     if line.startswith("Dialogue:")]
+                        self.assertEqual(intervals, [boundaries[i:i + 2] for i in range(3)])
+                    self.assertIn("word timings", proc.stderr)
+                    self.assertEqual((srt.read_bytes(), sidecar.read_bytes()), before)
+
+    def test_caption_karaoke_text_keeps_its_own_word_timing_source(self):
+        """--text supplies the cues even when --srt names another transcript with word timings."""
+        srt = OUT / "ignored_words.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello big world\n\n", encoding="utf-8")
+        srt.with_suffix(".words.json").write_text(json.dumps({"words": [
+            {"word": "hello", "start": 0, "end": 0.1},
+            {"word": "big", "start": 0.1, "end": 0.15},
+            {"word": "world", "start": 0.15, "end": 1}]}), encoding="utf-8")
+        text = OUT / "preferred_cues.txt"
+        text.write_text("0:00-0:01 fresh cue text\n", encoding="utf-8")
+        for sidecar in (False, True):
+            for style in ("sweep", "word"):
+                with self.subTest(sidecar=sidecar, style=style):
+                    ass = OUT / f"preferred_words_{sidecar}_{style}.ass"
+                    if sidecar:
+                        ass.with_suffix(".words.json").write_text(json.dumps({"words": [
+                            {"word": "fresh", "start": 0, "end": 0.2},
+                            {"word": "cue", "start": 0.2, "end": 0.5},
+                            {"word": "text", "start": 0.5, "end": 1}]}), encoding="utf-8")
+                    script("caption.py", self._small(), "--srt", srt, "--text", text,
+                           "--karaoke", "--karaoke-style", style, "--karaoke-timing", "even",
+                           "--write-ass", ass, "--fast", "-o", ass.with_suffix(".mp4"))
+                    body = ass.read_text(encoding="utf-8-sig")
+                    self.assertIn("fresh", body)
+                    self.assertNotIn("hello", body)
+                    if style == "sweep":
+                        self.assertEqual([int(n) for n in re.findall(r"\\kf(\d+)", body)],
+                                         [20, 30, 50] if sidecar else [33, 33, 33])
+                    else:
+                        boundaries = (["0:00:00.00", "0:00:00.20", "0:00:00.50", "0:00:01.00"] if sidecar
+                                      else ["0:00:00.00", "0:00:00.33", "0:00:00.66", "0:00:00.99"])
+                        self.assertEqual([line.split(",")[1:3] for line in body.splitlines()
+                                          if line.startswith("Dialogue:")],
+                                         [boundaries[i:i + 2] for i in range(3)])
+
     def test_caption_brand_styles_caption_block_sets_the_look(self):
         """brand.json's `styles.caption` is the documented 1.12 spelling, shared with graphics.py;
         an explicit flag still beats it."""
