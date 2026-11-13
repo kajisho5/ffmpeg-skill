@@ -63,6 +63,21 @@
   dry run completed and the real run failed at the export); an unknown key in a `batch.py`
   recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default).
 
+## 3.8.5
+
+_Automated release: version and notes generated from pull requests merged since 3.8.4._
+
+### Fixed
+
+- `caption.py --karaoke` finds the caller's word-timing sidecar after layout rewrites
+  the SRT, including minimum-duration extensions and offsets (#502). Both karaoke
+  styles use the original absolute word timings when they cover the adjusted cue,
+  and retain the existing fallback when coverage is incomplete. `--text` and
+  `--transcribe` keep their own timing source when also passed `--srt`.
+- fix: preserve karaoke timing through SRT layout (#503)
+
+Closes: #502
+
 ## 3.8.4
 
 _Automated release: version and notes generated from pull requests merged since 3.8.3._
