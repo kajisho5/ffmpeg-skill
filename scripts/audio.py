@@ -241,7 +241,7 @@ def length_step(path: str, codec: str, expected: int) -> Dict[str, Any]:
 
 
 SAMPLE_RATE_RANGE = (1000, 768000)
-OPUS_RATES = (8000, 12000, 16000, 24000, 48000)  # the rates Opus codes at; libopus takes no other
+OPUS_DECODED_RATE = 48000  # what an Opus stream decodes at, whatever rate was encoded (measured: 16 kHz in, 48 kHz out)
 
 
 def property_step(name: str, expected: int, measured: Any) -> Dict[str, Any]:
@@ -497,11 +497,11 @@ def main() -> int:
     # where the output ends, which is where a fade-out has to end: --length-samples when it is
     # given (a fade timed on the source's length sat past the trim and was never heard)
     end_dur = args.length_samples / rate if args.length_samples is not None and rate else main_dur
-    if args.length_samples is not None and rate and "libopus" in audio_codec_for(output, args.bitrate) and rate not in OPUS_RATES:
-        # Opus has five rates; libopus is fed 48 kHz for any other, so the written track has
-        # N * 48000 / rate samples and the count asked for is not the file's
-        die(f"--length-samples counts at {rate} Hz, and an Opus output is written at 48000 Hz for a rate other than "
-            f"{', '.join(str(r) for r in OPUS_RATES)}: the file would not hold {args.length_samples} samples",
+    if args.length_samples is not None and rate and rate != OPUS_DECODED_RATE and "libopus" in audio_codec_for(output, args.bitrate):
+        # An Opus stream decodes at 48 kHz whatever rate went in (a 16 kHz track too), so the
+        # decoded track has N * 48000 / rate samples and the count asked for is not the file's
+        die(f"--length-samples counts at {rate} Hz, and an Opus output decodes at {OPUS_DECODED_RATE} Hz: "
+            f"the file would not hold {args.length_samples} samples",
             kind="input", hint="add --sample-rate 48000 and give the length in 48 kHz samples, or write .wav/.flac")
 
     graph: List[str] = []

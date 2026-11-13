@@ -587,9 +587,16 @@ class AudioTests(MediaFixtures):
         self.assertEqual(err["kind"], "input")
         self.assertIn("--sample-rate 48000", json.dumps(err))
         self.assertFalse((OUT / "len.opus").exists())
+        # a rate Opus codes at is not the rate it decodes at: 16 kHz in is 48 kHz out
+        proc = script("audio.py", src441, "--sample-rate", "16000", "--length-samples", "16000", "-o", OUT / "len.opus",
+                      "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertFalse((OUT / "len.opus").exists())
         doc = json.loads(script("audio.py", src441, "--sample-rate", "48000", "--length-samples", "48000",
                                 "-o", OUT / "len.opus", "--json").stdout)
         self.assertTrue(doc["verified"], doc["verification"])
+        # without --length-samples nothing is refused
+        script("audio.py", src441, "-o", OUT / "plain.opus")
         # a fade-out ends where the output ends: timed on the 2 s source it sat past the 1 s trim
         # and was never heard (review of #492)
         out = OUT / "tempo_trim_fade.wav"

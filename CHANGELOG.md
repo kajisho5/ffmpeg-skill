@@ -11,8 +11,10 @@
   that range (0.1–10); `--length-samples` pads with silence or trims the track to N samples per
   channel before it is encoded, and a `length_samples` verification step decodes the written track
   and counts them: the count must be N for a lossless output (PCM, FLAC, ALAC) and within one
-  codec frame of N for a lossy one, whose encoder pads to whole frames. An Opus output of a track
-  whose rate Opus does not have (44.1 kHz) is refused with `--sample-rate 48000` as the way out. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
+  codec frame of N for a lossy one, whose encoder pads to whole frames. With
+  `--length-samples`, an Opus output counted at a rate other than 48 kHz is refused (an Opus stream
+  decodes at 48 kHz, so the file would not hold N samples), with `--sample-rate 48000` as the way
+  out; without `--length-samples` an Opus output of any rate is written as before. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
   need an audio output (`--tempo` also takes a `--replace` track beside the picture): the input's
   own sound beside its stream-copied picture would drift from it, and is refused.
 - **`audio.py --sample-rate HZ` and `--channel N`** (#487). `--sample-rate` resamples the output

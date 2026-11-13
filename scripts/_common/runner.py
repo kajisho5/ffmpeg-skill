@@ -1029,13 +1029,13 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
                      "-show_entries", "stream=index", "-of", "csv=p=0", path]
-        limit = _limit_for(probe_cmd)  # a probe's ceiling: PROBE_TIMEOUT, or --timeout when that is lower
+        limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
         except subprocess.TimeoutExpired:
             # a stalled read is reported as what it is, not turned into "the stream is there"
             die(f"ffprobe did not finish reading {path} within {limit:g} s and was killed; nothing was written",
-                kind="timeout", output=cmd[-1])
+                code=124, kind="timeout", output=cmd[-1])
         except OSError:
             return True
         if proc.returncode != 0 or proc.stdout.strip():

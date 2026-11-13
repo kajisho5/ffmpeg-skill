@@ -8698,7 +8698,13 @@ class Issue415Tests(unittest.TestCase):
                 contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(silent))
         self.assertEqual(seen["timeout"], 2.0)
-        self.assertEqual(json.loads(buf.getvalue())["error"]["kind"], "timeout")
+        failure = json.loads(buf.getvalue())
+        self.assertEqual((failure["error"]["kind"], failure["exit_code"]), ("timeout", 124))
+        # --timeout 0 lifts the ceiling of an encode, never of a read
+        with unittest.mock.patch.object(runner_mod.STATE, "timeout", 0), unittest.mock.patch.object(runner_mod.subprocess, "run", stalled), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            _check_container_codecs(line(silent))
+        self.assertEqual((seen["timeout"], stop.exception.code), (runner_mod.PROBE_TIMEOUT, 124))
         # an input that is not there yet (a dry run's planned file) counts as having the stream
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(d / "not_written_yet.mkv"))
