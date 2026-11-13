@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.5
+
+_Automated release: version and notes generated from pull requests merged since 3.8.4._
+
 ### Fixed
 
 - `caption.py --karaoke` finds the caller's word-timing sidecar after layout rewrites
@@ -11,6 +17,9 @@
   styles use the original absolute word timings when they cover the adjusted cue,
   and retain the existing fallback when coverage is incomplete. `--text` and
   `--transcribe` keep their own timing source when also passed `--srt`.
+- fix: preserve karaoke timing through SRT layout (#503)
+
+Closes: #502
 
 ## 3.8.4
 
