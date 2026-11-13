@@ -763,7 +763,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "tool_result": {"type": "object", "description": "plan execution: the tool's own --json document"},
                  "timeline": {"type": "object", "description": "--export-timeline: format, rate, duration, frames, clips, transition, "
                               "transition_frames, music, markers, notes, and not_exported (what the project asks for that an "
-                              "editor timeline cannot carry)"}}
+                              "editor timeline cannot carry)"},
+                 "templates": {"type": "array", "description": "--list-templates --json: one row per shipped template, {template, "
+                               "destination, frame: {width, height} or null (audio), fit, max_duration, lufs, safe: {top, bottom, "
+                               "left, right}}; without --json the same rows are a table"}}
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]},
                  "files": {"type": "array", "description": "one entry per file: {file, probe, steps, skipped}. A step is {step, ok, seconds, error (one line, for the table)}, plus the tool's verified when it completed, and on a failure its own kind, reason, message, details and exit_code (reason step_timeout or step_output_unparsed when the tool printed no failure document); skipped lists the steps that do not apply as {step, reason: quick|no_video|no_audio|not_hdr|not_multichannel|input_unreadable, message}"},

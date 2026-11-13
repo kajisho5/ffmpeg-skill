@@ -52,6 +52,10 @@ def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
         # chapter files carry no fps, so hh:mm:ss:ff needs its @fps suffix; time_arg() says so
         start = time_arg(parts[0], f"{path}:{n}")
         title = parts[1].strip() if len(parts) > 1 else f"Chapter {len(entries) + 1}"
+        if "\x00" in title:
+            # FFmpeg ends a metadata value at NUL: "A\x00B" was written as "A", verified (the
+            # sibling of A260 in render.py's inline chapters)
+            die(f"{path}:{n}: the chapter title holds a NUL character, which a chapter title cannot carry; remove it")
         if entries and start <= entries[-1]["start"]:
             die(f"{path}:{n}: chapter at {start:g}s does not come after the previous one at {entries[-1]['start']:g}s")
         if duration and start >= duration:

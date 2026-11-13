@@ -119,6 +119,32 @@ PACK_CSS = """
 """
 
 
+def md_cells(line: str) -> List[str]:
+    """The cells of one GFM table row, as render.py's md_cell() writes them: a '|' preceded by a
+    backslash is part of the cell, and a doubled backslash is one. Splitting on every '|' moved a
+    file name such as `a | b.mp4` into the next column (A263)."""
+    cells: List[str] = []
+    cur: List[str] = []
+    body = line.strip()
+    body = body[1:] if body.startswith("|") else body
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body) and body[i + 1] in "\\|":
+            cur.append(body[i + 1])
+            i += 2
+            continue
+        if ch == "|":
+            cells.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    if "".join(cur).strip():
+        cells.append("".join(cur).strip())
+    return cells
+
+
 def pack_report(args) -> int:
     """render.py --template all writes <stem>_pack.md: one row per destination. This renders the
     same rows as HTML, so a pack can be handed over the way a single delivery report is -- no
@@ -130,7 +156,7 @@ def pack_report(args) -> int:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
+        cells = md_cells(line)
         if all(set(c) <= set("-: ") for c in cells):
             continue
         if not header:

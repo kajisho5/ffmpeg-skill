@@ -977,8 +977,9 @@ rows, youtube's spec assumed, as `check.py --content` without `--platform`); und
 
 `"export": {"preset": "reels", "normalize": true}` forwards `export.py --normalize`
 so the rendered file meets the platform's loudness without a separate pass. Since
-1.9.0 it is on by default when the preset is a platform (`youtube|youtube4k|reels|x`)
-and the project has no `loudness` stage; `"normalize": false` opts out.
+1.9.0 it is on by default when the preset is a platform's (`youtube`, `youtube4k`,
+`youtube-hdr`, `youtube-av1`, `reels`, `tiktok`, `shorts`, `x`, `linkedin`, `facebook`:
+`export.PLATFORM_OF`) and the project has no `loudness` stage; `"normalize": false` opts out.
 
 `"audio": {"stems": {"dialogue": -2, "music": -18, "effects": -24}}` names one
 level per element of the mix: `dialogue` is the main track's gain, `music` the
@@ -1015,7 +1016,29 @@ relative to the project file; `--export-timeline` lists the layer under
 before `check`, so the markers are in the file that ships (streams copied). The
 entries and the file path are validated before the first stage runs, and the
 stage plans its `metadata.py` command under `--dry-run`/`--plan` like every
-other stage, so the plan lists `chapters` and the run does the same work.
+other stage, so the plan lists `chapters` and the run does the same work. An
+inline title is one line: a line feed, carriage return or NUL in it is refused
+(`kind: input`), since the chapters file holds one `TIME TITLE` line per chapter
+and FFmpeg ends a title at NUL. Under `--dry-run` the list is written to a
+temporary file, not into the work directory.
+
+**`--stop-after export`** stops once the delivery is written: the chapters and
+check stages do not run (and their sections are not read). **Without an export
+stage** the delivery is the last stage's file copied as it is (`.mp4`, or the
+audio container of an audio-only output), so an output named for another
+container (`.webm`, `.mkv`) is refused, `kind: input`, before the first stage
+when the copy is certainly an intermediate and at the copy otherwise (a single
+uncut clip that no stage touches is its source, copied as it is); `.mov`,
+`.m4v`, `.m4a` and `.3gp` are the MP4 family and are accepted.
+
+**The work directory.** Without `--work`, each run makes a new
+`<output>_work_<pid>_<random>/` beside the output and removes it at exit (kept
+with `--keep`, or by a `--stop-after` preview whose output is in it). `--work
+DIR` is used as given and never emptied; a stage file an earlier render wrote
+there, still unchanged (size, mtime, inode: `DIR/.ffskill-render-stages.json`
+records them), is replaced without `--overwrite`, while any other existing file
+is refused as before. A `--dry-run` writes nothing there and removes a `--work`
+directory it had to create.
 
 **`--cache DIR` (1.17)** reuses the artifact of a stage that already ran with
 exactly the same arguments and the same inputs. Opt-in only: **there is no
@@ -1023,7 +1046,8 @@ default cache directory** — one appearing on someone's disk unasked would
 contradict this tool's "a plan leaves nothing behind" posture. The key is a
 sha1 over the stage name, the tool, its arguments (every existing path replaced
 by its content hash), the input hashes, the **forwarded** flags (`--fast`,
-`--overwrite`, `--timeout`, `--codec`), the output's extension, and **the ffmpeg
+`--overwrite`, `--timeout`; render.py has no `--codec`), the GPU setting (`--hw`/`--no-hw`,
+`FFMPEG_SKILL_HW`), the output's extension, and **the ffmpeg
 build banner, the skill version and the contract version**. `--fast` matters as
 much as any of them: it rewrites every child's preset to `veryfast`, so without
 it in the key a `--cache --fast` draft would be served back to a later run that
@@ -1046,7 +1070,14 @@ store that fails is a `cache_store_failed` warning (the run is unaffected).
 
 A stage whose flags changed misses the cache, so editing the captions block (for
 example to `"fit_size": "off"`) re-runs captions and everything after it and
-serves the earlier stages from the cache.
+serves the earlier stages from the cache. A file is keyed by its name, size,
+modification time (in nanoseconds; in whole seconds up to 3.8.4) and
+first and last MiB, the batch cache's key (`batch.file_key()`); a file whose
+mtime was set back to the old value keeps its key. The chapters file an inline
+`chapters` list is written to is new every run, so it is keyed by its content
+instead, and the chapters stage hits when the delivery under it is the cached
+one (an export served from the cache; a delivery copied without an export stage
+is a new file, and misses).
 
 `stages_done` is unchanged: a cached stage is still a stage that happened.
 Nothing is written under `--dry-run`, which instead reports `cache.would_hit`.
@@ -1086,7 +1117,10 @@ no overlay stage at all, not an overlay of nothing. The filled project then rend
 normal stages, so `--dry-run --json`, `--stop-after` and the work directory behave as always. An
 unknown name is refused (`kind: input`) with the list. Output defaults to
 `<input>_<template>.mp4` **next to the input** (`.m4a` for an audio-only destination such as
-`podcast`) — the same rule for one template and for a pack, whose `-o` names the directory.
+`podcast`) — the same rule for one template and for a pack. A pack writes each destination as
+`<input>_<template>.<ext>` and the table as `<input>_pack.md` in the **directory of** `-o`:
+`-o packs/talk.mp4` writes into `packs/`, and `-o packs` into the folder that holds `packs`
+(the file name in `-o` is not used).
 Alias spellings are accepted everywhere one name is: `youtube-shorts`/`yt-shorts` = `shorts`,
 `yt` = `youtube`, `instagram`/`ig` = `reels`, `twitter` = `x`, `fb` = `facebook`
 (`check.py --platform`, `export.py --preset`, `caption.py`/`graphics.py`/`overlay.py
@@ -1137,7 +1171,8 @@ whose destinations did not all pass exits non-zero with the per-destination rows
 
 `audiogram` (1.16) is the one-call form of the podcast-to-video job: an `audiogram` stage runs
 **first** (it makes the picture the rest of the chain works on, through `waveform.py --image`),
-then captions, loudness, export and check. It needs `--image` (a local file) or a `background`
+then captions, a `--title` lower third (graphics, as the youtube template draws it), loudness,
+export and check, with `--brand` reaching the audiogram, caption and graphics stages. It needs `--image` (a local file) or a `background`
 colour in the project — this skill fetches nothing and invents no cover art; `--template
 audiogram` without `--image` is refused before anything runs, and a project with an `audiogram`
 and more than one clip is refused (it is drawn from one audio source) — and it is
@@ -1331,8 +1366,18 @@ batch.py FOLDER --recipe batch.json [--force] [--watch SECONDS] [--jobs N|auto] 
 ```
 `batch.json` holds either `steps` (a list of script argv with `{in}`/`{out}`
 placeholders, chained) or `project` (a render project applied per file).
-Outputs land in `output_dir` with `suffix`; a content-hash cache skips files
-already done with the same recipe. Use `--dry-run` to preview the plan. The recipe's
+Outputs land in `output_dir` with `suffix`, named with the source's extension
+unless the recipe sets `ext` -- except a `.webm` source, whose output is `.mp4`
+(the steps re-encode to H.264/AAC, which WebM cannot hold; a recipe that keeps
+WebM sets `"ext": "webm"`). `glob` matches names without regard to case on every
+platform (`"*.mp4"` finds `GOPR0001.MP4`; the letters inside a `[...]` class keep
+theirs), and a glob that matches nothing is a note. A cache skips files already
+done with the same recipe: an item's key is its source's `file_key()` (name,
+size, mtime in nanoseconds, first and last MiB), the recipe, the GPU setting,
+the files the steps name and, for a project recipe, the project file and every
+file it names (music, cues, brand and its logo and font, overlays, chapters,
+the clips other than the one each item replaces), read again on every
+`--watch` pass. Use `--dry-run` to preview the plan. The recipe's
 keys are `glob`, `steps`, `project`, `clip_key`, `output_dir`, `suffix` and `ext`; any
 other key is refused before an item runs, with the nearest valid name when one is close, else
 with the list of valid keys.

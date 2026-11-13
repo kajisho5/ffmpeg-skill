@@ -37,7 +37,8 @@ from _common import STATE, add_common, apply_common, child_args, die, emit, info
 from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
-from _common.decision import rebase_project_paths
+from _common.decision import NO_DEFAULT_ENCODE_EXT, rebase_project_paths
+from _common.runner import parse_json
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -51,9 +52,16 @@ ALLOWED_STEP_SCRIPTS = {p.name for p in HERE.glob("*.py") if not p.name.startswi
 
 
 def file_key(path: Path) -> str:
+    """A cheap change detector: the name, the size, the modification time in nanoseconds and the
+    first and last MiB. A rewrite of the middle of a file keeps its size and its ends, so the
+    modification time is what tells it apart: in whole seconds (up to 3.8.4) two writes within
+    one second shared a key, and the old output was served as cached. A file whose mtime is reset
+    to the earlier value (``touch -r``, a copy that preserves it) or a filesystem that keeps
+    whole seconds (FAT keeps two) still shares one; hashing every byte would cost a read of the
+    whole file per item per run (docs/design-decisions.md, "After 3.8.4")."""
     st = path.stat()
     h = hashlib.sha1(usedforsecurity=False)  # a change detector, not a secret
-    h.update(f"{path.name}|{st.st_size}|{int(st.st_mtime)}".encode())
+    h.update(f"{path.name}|{st.st_size}|{st.st_mtime_ns}".encode())
     with open(path, "rb") as fh:  # first and last MB: cheap and good enough to detect changes
         h.update(fh.read(1 << 20))
         if st.st_size > 2 << 20:
@@ -86,6 +94,28 @@ def side_inputs_key(recipe: Dict[str, Any]) -> str:
     return h.hexdigest()[:8]
 
 
+def caseless_glob(pattern: str) -> str:
+    """`pattern` with every letter outside a [...] class matched in either case: "*.mp4" finds
+    GOPR0001.MP4, as it already did on macOS's and Windows' default filesystems, so a recipe means
+    the same files on every platform (A82: on Linux a camera folder was an empty batch). pathlib's
+    case_sensitive= needs Python 3.12; 3.10 is the floor."""
+    out: List[str] = []
+    in_class = False
+    for i, ch in enumerate(pattern):
+        if in_class:
+            out.append(ch)
+            if ch == "]" and pattern[i - 1] != "[" and not (pattern[i - 1] == "!" and pattern[i - 2:i - 1] == "["):
+                in_class = False
+        elif ch == "[":
+            in_class = "]" in pattern[i + 2:]  # an unclosed [ is a literal character to fnmatch
+            out.append(ch if in_class else "[[]")
+        elif ch.isalpha() and ch.lower() != ch.upper():
+            out.append(f"[{ch.lower()}{ch.upper()}]")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def recipe_key(recipe: Dict[str, Any]) -> str:
     # A "project" recipe is just {"project": "<path>", "clip_key": N} -- the actual settings
     # (export preset, captions, everything) live in the file at that path, not in this dict.
@@ -93,16 +123,55 @@ def recipe_key(recipe: Dict[str, Any]) -> str:
     # itself) left the key, and so every cache hit, unchanged: a preset swapped from "copy" to
     # "x" (a real re-encode) still served the old cached output. Fold the referenced file's own
     # content into the key so a content change invalidates the cache like any other edit would.
+    # main() calls this on every pass, so a --watch loop sees an edit made while it runs (A81).
     project_content = ""
     if recipe.get("project"):
         try:
             project_content = Path(recipe["project"]).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             # keyed on the recipe alone: an unreadable project cannot invalidate the cache by its
-            # content, so say so (each item that needs it then fails on reading it)
-            warn(f"recipe.project {recipe['project']} could not be read ({exc}); the cache key covers the recipe only",
-                 "recipe_project_unreadable", path=str(recipe["project"]), error=str(exc))
+            # content, so say so (each item that needs it then fails on reading it); once per run
+            entry = {"code": "recipe_project_unreadable", "path": str(recipe["project"])}
+            if not any(all(w.get(k) == v for k, v in entry.items()) for w in STATE.warnings if isinstance(w, dict)):
+                warn(f"recipe.project {recipe['project']} could not be read ({exc}); the cache key covers the recipe only",
+                     "recipe_project_unreadable", path=str(recipe["project"]), error=str(exc))
+        else:
+            project_content += "\0" + project_files_key(recipe, project_content)
     return hashlib.sha1((json.dumps(recipe, sort_keys=True) + "\0" + project_content).encode(), usedforsecurity=False).hexdigest()[:12]
+
+
+def project_files_key(recipe: Dict[str, Any], text: str) -> str:
+    """The files a project recipe's project names (music, cues, the brand and its logo and font,
+    overlay images and videos, the chapters file, every clip but the one each item replaces),
+    each keyed by its own content as file_key() keys a source (A80): an edited cue file or music
+    bed changes the output, so it has to change the key. The list is render.py's own
+    project_input_files(), read against the project file's directory as render reads it. A
+    project that does not parse adds nothing: each item then fails reading it."""
+    try:
+        proj = parse_json(text)
+    except ValueError:
+        return ""
+    if not isinstance(proj, dict):
+        return ""
+    from render import project_input_files  # here, not at the top: render.py imports this module
+    base = Path(str(recipe["project"])).resolve().parent
+    clips = proj.get("clips")
+    idx = int(recipe.get("clip_key") or 0)  # check_recipe_types() has refused anything else
+    if isinstance(clips, list) and idx < len(clips) and isinstance(clips[idx], dict):
+        # the clip every item replaces with itself: its placeholder is no input of any item
+        proj = dict(proj, clips=[dict(c, src=None) if i == idx else c for i, c in enumerate(clips)])
+
+    def rel(p: Any) -> str:
+        return str(p) if os.path.isabs(str(p)) else str(base / str(p))
+    h = hashlib.sha1(usedforsecurity=False)
+    for name in sorted(set(project_input_files(proj, rel))):
+        path = Path(name)
+        try:
+            ident = file_key(path) if path.is_file() else "-"
+        except OSError:
+            ident = "-"
+        h.update(f"{name}\0{ident}\0".encode())
+    return h.hexdigest()
 
 
 def gpu_key() -> str:
@@ -222,6 +291,11 @@ def final_path(src: Path, recipe: Dict[str, Any], outdir: Path) -> Path:
     # detection of its own; see one_pass()'s pre-flight check, which uses this same computation
     # to catch that before any file is actually processed (and the earlier one silently clobbered).
     final_ext = recipe.get("ext") or src.suffix.lstrip(".") or "mp4"
+    if not recipe.get("ext") and src.suffix.lower() in NO_DEFAULT_ENCODE_EXT:
+        # the #415 default-name rule (default_output()): the steps re-encode to x264/AAC, which a
+        # WebM cannot hold, so every .webm item was refused output_container_codecs (A83). A
+        # recipe that keeps WebM (a stream copy, export.py --preset vp9-alpha) sets "ext".
+        final_ext = "mp4"
     steps = recipe.get("steps") or []
     if not recipe.get("ext") and not recipe.get("project") and steps and not step_writes(steps[-1]) and not writes_nothing(recipe):
         # the last step writes nothing, so what is delivered is an intermediate: its name says its
@@ -649,7 +723,6 @@ def main() -> int:
             audit("batch_cache_reset", {"path": str(cache_path), "size": size, "error": str(exc)},
                   default_path=str(outdir / ".ffskill-audit.jsonl"))
             cache = {}
-    rkey = recipe_key(recipe) + gpu_key()
     glob = recipe.get("glob") or "*"
 
     # --jobs: every item is itself an ffmpeg that already threads across cores, so beyond a few
@@ -706,6 +779,7 @@ def main() -> int:
     # first seen, last modified at least one interval ago; until then its row is
     # skipped: "settling", not cached, and the next pass looks again.
     last_seen: Dict[str, "tuple[int, int]"] = {}
+    shown_empty = {"done": False}
 
     def settle_poll(files: List[Path]) -> "set":
         if not args.watch:
@@ -728,7 +802,12 @@ def main() -> int:
         return unsettled
 
     def one_pass() -> List[Dict[str, Any]]:
-        files = sorted(p for p in folder.glob(glob) if p.is_file() and p.suffix.lower() in MEDIA_EXT and outdir not in p.parents)
+        files = sorted(p for p in folder.glob(caseless_glob(glob)) if p.is_file() and p.suffix.lower() in MEDIA_EXT and outdir not in p.parents)
+        if not files and not shown_empty["done"]:
+            # a batch of nothing completed with total 0 and not a word (A82): say what matched nothing
+            shown_empty["done"] = True
+            note(f"no media file in {folder} matches the recipe's glob {glob!r} (matched without regard to case); "
+                 "nothing was processed")
         # Two different sources can compute the same final path (most often a fixed recipe "ext"
         # collapsing e.g. clip.mp4 and clip.mov to the same clip_out.mp4) -- catch that before
         # processing anything, rather than letting the later one silently overwrite the earlier
@@ -805,7 +884,9 @@ def main() -> int:
         slots: "List[Optional[Dict[str, Any]]]" = [None] * len(files)
         pending: List[tuple] = []
         cache_miss: Dict[int, Dict[str, Any]] = {}
-        pass_key = rkey + side_inputs_key(recipe)
+        # read on every pass: a --watch loop serves nothing from an edited project.json, cue file or
+        # music bed (computed once before the loop, it did: A81)
+        pass_key = recipe_key(recipe) + gpu_key() + side_inputs_key(recipe)
         polled = settle_poll(files)
         for i, src in enumerate(files):
             if str(src) in polled:

@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, script, sh  # noqa: E402
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, script, sh, tiny_clip  # noqa: E402
 from _common import font_for_script, probe, shell_quote  # noqa: E402
 
 
@@ -960,7 +960,8 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(out["stages"], ["clips"])
         work_dirs = [p for p in OUT.glob("render_workdir_check_work*") if p.is_dir()]
         self.assertEqual(len(work_dirs), 1)
-        self.assertRegex(work_dirs[0].name, r"^render_workdir_check_work_\d+$",
+        # #458 A77: a new directory per run (mkdtemp), not the PID alone with exist_ok
+        self.assertRegex(work_dirs[0].name, r"^render_workdir_check_work_\d+_\w+$",
                           "the default work dir name must carry a PID suffix, not just the bare output stem")
 
     def test_render_single_clip_fit_height_is_not_silently_dropped(self):
@@ -1997,9 +1998,6 @@ class DemoGalleryTests(unittest.TestCase):
                           f"demo) or, if it only ever prints a table, add it to INSPECTION")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class CommonFacadeTests(unittest.TestCase):
     """`_common` is a package with a facade since the refactor release after 1.15.0. A name
@@ -2620,3 +2618,355 @@ class TimelineExportTests(unittest.TestCase):
                 # without --stop-after the full run reads them, and refuses up front
                 proc = sh(sys.executable, SCRIPTS / "render.py", proj, "--dry-run", "--json", expect_fail=True)
                 self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+
+class Issue458Tests(MediaFixtures):
+    """#458 (audit 2026-11 of render.py, batch.py and sequence.py): one test per class, a subtest
+    per finding. A refusal asserts the exit code, `kind` and that nothing was written."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.d = OUT / "i458"
+        shutil.rmtree(cls.d, ignore_errors=True)
+        cls.d.mkdir(parents=True)
+        cls.clip = tiny_clip(cls.d / "clip.mp4", "testsrc2=size=160x90:rate=30", seconds=2, audio=True)
+
+    def _project(self, name, body):
+        p = self.d / name
+        p.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        return p
+
+    @staticmethod
+    def _run(name, *args):
+        """A tool run without the test helper's --overwrite; returns (exit code, document)."""
+        proc = subprocess.run([sys.executable, str(SCRIPTS / name), *map(str, args), "--json"], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        try:
+            doc = json.loads(proc.stdout)
+        except ValueError:
+            doc = {"stdout": proc.stdout, "stderr": proc.stderr[-800:]}
+        return proc.returncode, doc
+
+    def assertRefused(self, rc, doc, kind="input", *, unwritten=()):
+        self.assertEqual(rc, 1, doc)
+        self.assertEqual((doc.get("status"), (doc.get("error") or {}).get("kind")), ("failed", kind), doc)
+        for path in unwritten:
+            self.assertFalse(Path(path).exists(), f"{path} was written")
+
+    # ------------------------------------------------------------- docs that disagreed with the code
+    def test_the_reference_says_what_render_does(self):
+        sys.path.insert(0, str(SCRIPTS))
+        from export import PLATFORM_OF
+        ref = (ROOT / "references" / "scripts.md").read_text(encoding="utf-8")
+        with self.subTest("A86: a pack is written into the directory of -o"):
+            out = self.d / "packdir" / "named.mp4"
+            out.parent.mkdir(exist_ok=True)
+            doc = json.loads(script("render.py", self.clip, "--template", "tiktok,x", "-o", out, "--dry-run", "--json").stdout)
+            self.assertEqual(Path(doc["output"]), out.parent / "clip_pack.md")
+            self.assertNotIn("whose `-o` names the directory", ref)
+            self.assertIn("**directory of** `-o`", ref)
+        with self.subTest("A103: normalize is on for every platform preset, and render has no --codec"):
+            sentence = ref[ref.index("Since\n1.9.0 it is on by default"):][:400]
+            for preset in PLATFORM_OF:
+                self.assertIn(f"`{preset}`", sentence)
+            self.assertNotIn("--codec`), the output's", ref)
+            self.assertNotIn("--codec", script("render.py", "--help").stdout)
+        with self.subTest("A107: the example brand carries no block that no tool reads"):
+            brand = json.loads((ROOT / "examples" / "brand.json").read_text(encoding="utf-8"))
+            self.assertNotIn("loudness", brand)
+
+    # ---------------------------------------------------------------------------------- cache keys
+    def test_a_cache_key_changes_with_every_file_the_output_depends_on(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import batch
+        with self.subTest("A277: a same-size rewrite within the same second"):
+            f = self.d / "key.bin"
+            f.write_bytes(b"a" * (3 << 20))
+            os.utime(f, ns=(1_700_000_000_100_000_000,) * 2)
+            before = batch.file_key(f)
+            with open(f, "r+b") as fh:  # the middle MiB, which the key does not read
+                fh.seek(3 << 19)
+                fh.write(b"b" * 1024)
+            os.utime(f, ns=(1_700_000_000_600_000_000,) * 2)
+            self.assertEqual(f.stat().st_size, 3 << 20)
+            self.assertNotEqual(batch.file_key(f), before)
+        with self.subTest("A80: a file the project recipe's project names"):
+            cues = self.d / "a80_cues.txt"
+            cues.write_text("0:00-0:01 One\n", encoding="utf-8")
+            proj = self._project("a80_project.json", {"clips": [{"src": "x.mp4"}], "captions": {"text": "a80_cues.txt"}})
+            recipe = {"project": str(proj)}
+            first = batch.recipe_key(recipe)
+            self.assertEqual(batch.recipe_key(recipe), first)
+            cues.write_text("0:00-0:01 Two\n", encoding="utf-8")
+            self.assertNotEqual(batch.recipe_key(recipe), first)
+        with self.subTest("A81: --watch reads the recipe's files again on every pass"):
+            folder = self.d / "a81"
+            shutil.rmtree(folder, ignore_errors=True)
+            folder.mkdir()
+            shutil.copy(self.clip, folder / "one.mp4")
+            os.utime(folder / "one.mp4", (1_700_000_000, 1_700_000_000))  # settled
+            proj = folder / "p.json"
+            proj.write_text(json.dumps({"clips": [{"src": "x.mp4"}], "export": {"preset": "copy"}}), encoding="utf-8")
+            recipe = folder / "r.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "project": "p.json", "output_dir": str(self.d / "a81_out")}),
+                              encoding="utf-8")
+            shutil.rmtree(self.d / "a81_out", ignore_errors=True)
+            # two passes: the sleep between them edits the project, the second sleep stops the watch
+            code = ("import json, sys, time\nsys.path.insert(0, sys.argv[1])\nimport batch\ncalls = []\nP = sys.argv[2]\n"
+                    "def sleep(_s):\n    calls.append(1)\n    if len(calls) > 1:\n        raise KeyboardInterrupt\n"
+                    "    p = P\n    d = json.load(open(p))\n    d['export'] = {'preset': 'youtube'}\n"
+                    "    json.dump(d, open(p, 'w'))\n"
+                    # batch's own name for the module only: time.sleep itself is used by locks and children
+                    "class Clock:\n    def __getattr__(self, name):\n        return getattr(time, name)\n"
+                    "batch.time = Clock()\nbatch.time.sleep = sleep\nsys.argv = ['batch.py', sys.argv[3], '--recipe', sys.argv[4], '--watch', '1', '--json']\n"
+                    "sys.exit(batch.main())\n")
+            proc = subprocess.run([sys.executable, "-c", code, str(SCRIPTS), str(proj), str(folder), str(recipe)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            doc = json.loads(proc.stdout or "{}") or {"stderr": proc.stderr[-800:]}
+            row = (doc.get("results") or [doc])[0]
+            self.assertFalse(row.get("cached"), "the edited project was served from the first pass's cache")
+            self.assertTrue(row["ok"], row)
+        with self.subTest("A100: render --cache serves the chapters stage of an inline chapters list"):
+            cdir = self.d / "a100_cache"
+            shutil.rmtree(cdir, ignore_errors=True)
+            out = self.d / "a100.mp4"
+            proj = self._project("a100.json", {"output": str(out), "clips": [{"src": str(self.clip), "in": 0, "out": 1}],
+                                               "export": {"preset": "copy"}, "chapters": [{"at": 0, "title": "One"}]})
+            script("render.py", proj, "--cache", cdir, "--json")
+            doc = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
+            self.assertIn("chapters", doc["cache"]["hits"], doc["cache"])
+
+    # ----------------------------------------------------------------------------- work directory
+    def test_the_work_directory_belongs_to_one_run(self):
+        out = self.d / "w.mp4"
+        proj = self._project("w.json", {"output": str(out), "clips": [{"src": str(self.clip), "in": 0, "out": 1}],
+                                        "chapters": [{"at": 0, "title": "One"}]})
+        with self.subTest("A77: a later run with the same PID leaves an earlier run's directory alone"):
+            code = ("import os, sys\nsys.path.insert(0, sys.argv[1])\nfrom pathlib import Path\n"
+                    "kept = Path(sys.argv[2][:-4] + f'_work_{os.getpid()}')\nkept.mkdir(exist_ok=True)\n"
+                    "(kept / 'clip00.mp4').write_bytes(b'an earlier preview')\nimport render\n"
+                    "sys.argv = ['render.py', sys.argv[3], '--overwrite', '--json']\nrender.main()\n"
+                    "print('KEPT' if (kept / 'clip00.mp4').exists() else 'GONE', file=sys.stderr)\n")
+            proc = subprocess.run([sys.executable, "-c", code, str(SCRIPTS), str(out), str(proj)], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(proc.stderr.strip().splitlines()[-1], "KEPT", proc.stderr[-600:])
+            for d in self.d.glob("w_work_*"):
+                shutil.rmtree(d)
+        with self.subTest("A98: a re-run with the same --work replaces its own stage files"):
+            work = self.d / "w98"
+            shutil.rmtree(work, ignore_errors=True)
+            for _ in range(2):
+                out.unlink(missing_ok=True)
+                rc, doc = self._run("render.py", proj, "--work", work)
+                self.assertEqual((rc, doc.get("status")), (0, "completed"), doc)
+            # one the caller changed is still somebody else's
+            (work / "clip00.mp4").write_bytes(b"edited")
+            out.unlink()
+            rc, doc = self._run("render.py", proj, "--work", work)
+            self.assertRefused(rc, doc, unwritten=[out])
+            self.assertEqual((work / "clip00.mp4").read_bytes(), b"edited")
+            shutil.rmtree(work)
+        with self.subTest("A99: a dry run writes nothing into --work and removes one it created"):
+            work = self.d / "w99"
+            shutil.rmtree(work, ignore_errors=True)
+            out.unlink(missing_ok=True)
+            rc, doc = self._run("render.py", proj, "--work", work, "--dry-run")
+            self.assertEqual((rc, doc.get("status"), doc.get("stages")), (0, "completed", ["clips", "chapters"]), doc)
+            self.assertFalse(work.exists())
+            work.mkdir()
+            rc, doc = self._run("render.py", proj, "--work", work, "--dry-run")
+            self.assertEqual(rc, 0, doc)
+            self.assertEqual(list(work.iterdir()), [])
+            shutil.rmtree(work)
+
+    # ------------------------------------------------------------------- output name or container
+    def test_an_output_is_named_for_the_container_it_holds(self):
+        with self.subTest("A84: no export stage, a .webm name"):
+            out = self.d / "a84.webm"
+            for clip in ({"src": str(self.clip), "in": 0, "out": 1}, {"src": str(self.clip)}):
+                for dry in ((), ("--dry-run",)):
+                    with self.subTest(clip=clip, dry=bool(dry)):
+                        proj = self._project("a84.json", {"output": str(out), "clips": [clip]})
+                        rc, doc = self._run("render.py", proj, *dry)
+                        self.assertRefused(rc, doc, unwritten=[out])
+                        self.assertIn('no "export" stage', doc["error"]["message"])
+            proj = self._project("a84_mov.json", {"output": str(self.d / "a84.mov"), "clips": [{"src": str(self.clip), "in": 0, "out": 1}]})
+            self.assertEqual(json.loads(script("render.py", proj, "--json").stdout)["status"], "completed",
+                             "a .mov is the MP4 family")
+        with self.subTest("A83: batch names a .webm source's output .mp4"):
+            if "libvpx-vp9" not in sh("ffmpeg", "-hide_banner", "-encoders").stdout:
+                self.skipTest("no libvpx-vp9 encoder to make a WebM fixture")
+            folder = self.d / "a83"
+            shutil.rmtree(folder, ignore_errors=True)
+            folder.mkdir()
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.clip, "-c:v", "libvpx-vp9", "-deadline",
+               "realtime", "-c:a", "libopus", folder / "w.webm")
+            recipe = folder / "r.json"
+            recipe.write_text(json.dumps({"glob": "*.webm", "output_dir": str(self.d / "a83_out"),
+                                          "steps": [["fit.py", "{in}", "--width", "80", "-o", "{out}"]]}), encoding="utf-8")
+            shutil.rmtree(self.d / "a83_out", ignore_errors=True)
+            doc = json.loads(script("batch.py", folder, "--recipe", recipe, "--json").stdout)
+            row = doc["results"][0]
+            self.assertTrue(row["ok"], row)
+            self.assertEqual(Path(row["output"]).name, "w_out.mp4")
+        with self.subTest("A108: sequence.py --dir . is named after the folder"):
+            frames = self.d / "frames108"
+            shutil.rmtree(frames, ignore_errors=True)
+            frames.mkdir()
+            for i in range(3):
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=32x32",
+                   "-frames:v", "1", frames / f"f{i}.png")
+            target = self.d / "frames108_sequence.mp4"
+            target.unlink(missing_ok=True)
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "sequence.py"), "--dir", ".", "--pattern", "*.png",
+                                   "--fps", "10", "--json"], cwd=frames, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(proc.returncode, 0, proc.stderr[-600:])
+            self.assertEqual(Path(json.loads(proc.stdout)["output"]).resolve(), target.resolve())
+
+    # ------------------------------------------------------- caller strings in a line-based format
+    def test_caller_text_cannot_add_lines_to_a_file_render_writes(self):
+        out = self.d / "a260.mp4"
+        for ch in ("\n", "\r", "\x00"):
+            with self.subTest(f"A260: a chapter title with U+{ord(ch):04X}"):
+                proj = self._project("a260.json", {"output": str(out), "clips": [{"src": str(self.clip)}],
+                                                   "chapters": [{"at": 0, "title": f"Intro{ch}0:01 Evil"}]})
+                for dry in ((), ("--dry-run",)):
+                    rc, doc = self._run("render.py", proj, *dry)
+                    self.assertRefused(rc, doc, unwritten=[out])
+                    self.assertIn("chapters[0].title", doc["error"]["message"])
+        with self.subTest("A264: a lone surrogate in a project string"):
+            p = self.d / "a264.json"
+            p.write_text('{"output": "%s", "clips": [{"src": "%s"}], "chapters": [{"at": 0, "title": "A\\ud83d"}]}'
+                         % (out.as_posix(), Path(self.clip).as_posix()), encoding="utf-8")
+            rc, doc = self._run("render.py", p)
+            self.assertRefused(rc, doc, unwritten=[out])
+            self.assertIn("surrogate", doc["error"]["message"])
+        with self.subTest("A261: names in an EDL stay on their line"):
+            from _common import timeline as tl_mod
+            probes = {f"/m/a{c}b.mp4": {"duration": 4, "video": {"fps": 30.0, "width": 320, "height": 180},
+                                         "audio": {"channels": 2}} for c in ("\n", "\r", "\u2028", "\x0b")}
+            proj = {"output": "x\ny.mp4", "clips": [{"src": p} for p in probes], "transition": {"type": "none"},
+                    "chapters": [{"at": 1, "title": "One\x85Two"}]}
+            tl = tl_mod.build(proj, probes, lambda p: p)
+            lines = tl_mod.to_edl(tl).split("\n")
+            self.assertTrue(all(ln == "" or ln[:3].isdigit() or ln.startswith(("TITLE:", "FCM:", "* ")) for ln in lines), lines)
+            self.assertEqual(len([ln for ln in lines if ln[:3].isdigit()]), 4)
+            self.assertEqual(tl_mod.to_edl(tl).splitlines(), lines[:-1], "no line break str.splitlines() sees is left")
+            import xml.etree.ElementTree as ET
+            ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8"))  # a control character made it not well-formed
+        with self.subTest("A263: a '|' in a pack's file name stays in its column"):
+            sys.path.insert(0, str(SCRIPTS))
+            import render
+            import report
+            cells = ["tiktok", "a | b\\c.mp4", "1.0 MB", "2.00 s", "pass"]
+            row = "| " + " | ".join(render.md_cell(c) for c in cells) + " |"
+            self.assertEqual(report.md_cells(row), cells)
+            pack = self.d / "a263_pack.md"
+            pack.write_text("# Social pack — a\n\n| platform | file | size | duration | check |\n|---|---|---|---|---|\n"
+                            + row + "\n", encoding="utf-8")
+            html_out = self.d / "a263.html"
+            html_out.unlink(missing_ok=True)
+            doc = json.loads(script("report.py", "--pack", pack, "-o", html_out, "--json").stdout)
+            self.assertEqual(doc["pack"][0]["check"], "pass")
+            self.assertEqual(doc["pack"][0]["file"], "a | b\\c.mp4")
+            self.assertEqual(render.md_line("a\nb\u2028c"), "a b c")
+
+    # ------------------------------------------------------------------------------- EDL limits
+    def test_an_edl_refuses_what_cmx_3600_cannot_number(self):
+        from fractions import Fraction
+        from _common import timeline as tl_mod
+        probes = {"/m/a.mp4": {"duration": 400, "video": {"fps": 30.0, "width": 320, "height": 180}, "audio": {"channels": 2}}}
+        with self.subTest("A265: 1000 events"):
+            tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": i * 0.2, "out": i * 0.2 + 0.1} for i in range(1000)],
+                               "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+            with self.assertRaisesRegex(tl_mod.TimelineError, "three digits"):
+                tl_mod.to_edl(tl)
+            tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": i * 0.2, "out": i * 0.2 + 0.1} for i in range(999)],
+                               "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+            self.assertEqual(max(int(ln[:3]) for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()), 999)
+        with self.subTest("A266: a source timecode past midnight wraps"):
+            probes["/m/a.mp4"]["timecode"] = {"value": "23:59:59:00", "drop_frame": False}
+            tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 0, "out": 3}]}, probes, lambda p: f"/m/{p}")
+            event = [ln for ln in tl_mod.to_edl(tl).splitlines() if ln[:3].isdigit()][0]
+            self.assertIn(" C        23:59:59:00 00:00:02:00 01:00:00:00 01:00:03:00", event)
+            # drop-frame: a 29.97 day is 2589408 frames
+            self.assertEqual(tl_mod._tc_label(2589408 + 30, Fraction(30000, 1001), True), "00:00:01;00")
+
+    # ----------------------------------------------------------------------------------- the rest
+    def test_render_and_batch_do_what_their_flags_say(self):
+        with self.subTest("A87: --stop-after export stops, and a check it never reads is not read"):
+            out = self.d / "a87.mp4"
+            out.unlink(missing_ok=True)
+            proj = self._project("a87.json", {"output": str(out), "clips": [{"src": str(self.clip)}],
+                                              "chapters": [{"at": 0, "title": "A"}, {"at": 1, "title": "B"}], "check": "bad"})
+            rc, doc = self._run("render.py", proj, "--stop-after", "export")
+            self.assertEqual((rc, doc.get("status")), (0, "completed"), doc)
+            self.assertNotIn("chapters", doc["stages"])
+            self.assertEqual(json.loads(sh("ffprobe", "-v", "error", "-show_chapters", "-of", "json", out).stdout)["chapters"], [])
+            out.unlink()
+            rc, doc = self._run("render.py", proj)
+            self.assertRefused(rc, doc, unwritten=[out])
+        with self.subTest("A96: an executed plan reports where its output is"):
+            plan_dir = self.d / "a96"
+            shutil.rmtree(plan_dir, ignore_errors=True)
+            (plan_dir / "other").mkdir(parents=True)
+            shutil.copy(self.clip, plan_dir / "in.mp4")
+            subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), "in.mp4", "--start", "0", "--end", "1", "-o", "o96.mp4",
+                            "--plan", "plan.json", "--json"], cwd=plan_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "render.py"), "../plan.json", "--json"], cwd=plan_dir / "other",
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            doc = json.loads(proc.stdout)
+            self.assertEqual(doc["status"], "completed", doc)
+            self.assertEqual(Path(doc["output"]), (plan_dir / "o96.mp4").resolve())
+        with self.subTest("A82: a glob matches camera files in either case, and an empty batch says so"):
+            folder = self.d / "a82"
+            shutil.rmtree(folder, ignore_errors=True)
+            folder.mkdir()
+            shutil.copy(self.clip, folder / "GOPR0001.MP4")
+            recipe = folder / "r.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(self.d / "a82_out"),
+                                          "steps": [["probe.py", "{in}"]]}), encoding="utf-8")
+            doc = json.loads(script("batch.py", folder, "--recipe", recipe, "--json").stdout)
+            self.assertEqual(doc["total"], 1, doc)
+            recipe.write_text(json.dumps({"glob": "*.mov", "output_dir": str(self.d / "a82_out"),
+                                          "steps": [["probe.py", "{in}"]]}), encoding="utf-8")
+            doc = json.loads(script("batch.py", folder, "--recipe", recipe, "--json").stdout)
+            self.assertEqual(doc["total"], 0)
+            self.assertTrue(any("matches the recipe's glob" in n for n in doc.get("notes") or []), doc.get("notes"))
+        with self.subTest("A267: --export-timeline probes each file once"):
+            proj = self._project("a267.json", {"output": "x.mp4", "clips": [{"src": str(self.clip), "in": i, "out": i + 0.5}
+                                                                             for i in (0, 0.5, 1)], "transition": {"type": "none"}})
+            code = ("import sys\nsys.path.insert(0, sys.argv[1])\nimport render\ncalls = []\nreal = render.probe\n"
+                    "render.probe = lambda p, *a, **k: (calls.append(p), real(p, *a, **k))[1]\n"
+                    "sys.argv = ['render.py', sys.argv[2], '--export-timeline', sys.argv[3], '--dry-run', '--json']\n"
+                    "render.main()\nprint(f'PROBES {len(calls)}', file=sys.stderr)\n")
+            proc = subprocess.run([sys.executable, "-c", code, str(SCRIPTS), str(proj), str(self.d / "a267.edl")],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(proc.stderr.strip().splitlines()[-1], "PROBES 1", proc.stderr[-600:])
+        with self.subTest("A102: --list-templates and --init under --json print a JSON document"):
+            doc = json.loads(script("render.py", "--list-templates", "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            self.assertIn("audiogram", [t["template"] for t in doc["templates"]])
+            init = self.d / "a102_init.json"
+            init.unlink(missing_ok=True)
+            doc = json.loads(script("render.py", "--init", init, "--json").stdout)
+            self.assertEqual((doc["status"], Path(doc["output"])), ("completed", init))
+        with self.subTest("A90: the audiogram template takes --brand and --title"):
+            brand = self.d / "a90_brand.json"
+            brand.write_text(json.dumps({"colors": {"primary": "FF0000"}}), encoding="utf-8")
+            plate = self.d / "a90_plate.png"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64",
+               "-frames:v", "1", plate)
+            filled = self.d / "a90_project.json"
+            filled.unlink(missing_ok=True)
+            script("render.py", self.clip, "--template", "audiogram", "--image", plate, "--brand", brand,
+                   "--title", "Episode 12", "--write-project", filled, "--json")
+            proj = json.loads(filled.read_text(encoding="utf-8"))
+            self.assertEqual(proj["brand"], os.path.abspath(brand))
+            self.assertIn("Episode 12", json.dumps(proj.get("graphics")))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

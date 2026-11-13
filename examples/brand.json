@@ -20,9 +20,5 @@
     "karaoke": true,
     "bold": true,
     "outline": 2
-  },
-  "loudness": {
-    "lufs": -14,
-    "tp": -1
   }
 }

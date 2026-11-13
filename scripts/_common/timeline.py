@@ -142,11 +142,15 @@ def start_tc_frames(tc: Dict[str, Any], rate: Fraction) -> int:
 
 def _tc_label(frames: int, rate: Fraction, drop: bool) -> str:
     """`frames` as hh:mm:ss:ff at the nominal integer rate; drop-frame (`;`) for an NTSC source
-    whose own timecode is drop-frame, so the label is the one the media itself shows."""
+    whose own timecode is drop-frame, so the label is the one the media itself shows. Timecode
+    wraps at 24 hours as the media's own does (output_timecode_args() counts the same day): a
+    source starting at 23:59:50:00 is labelled 00:00:00:00 ten seconds in, not 24:00:00:00, which
+    no editor reads (A266)."""
     nominal = int(round(float(rate)))
     if not _drop_frame(drop, rate):
-        return _tc(frames, nominal)
+        return _tc(frames % (nominal * 86400), nominal) if nominal >= 1 else _tc(frames, nominal)
     d = nominal // 15
+    frames %= (nominal * 600 - d * 9) * 144
     per_10, per_min = nominal * 600 - d * 9, nominal * 60 - d
     tens, rem = divmod(frames, per_10)
     frames += d * 9 * tens + (d * ((rem - d) // per_min) if rem > d else 0)
@@ -376,6 +380,19 @@ def _tc(frames: int, fps_int: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}:{f:02d}"
 
 
+# CMX 3600 numbers events in a three-digit field, and record timecode runs from 01:00:00:00 within
+# one 24-hour day.
+EDL_MAX_EVENTS = 999
+
+
+def _edl_text(value: Any) -> str:
+    """Caller text (a file name, a clip or chapter name, the title) on one EDL line. The format is
+    one statement per line with no escape, so a line break -- any str.splitlines() boundary -- or
+    another control character in a name added lines, or whole events, that parse_error() then
+    accepted (A261). Each becomes a space."""
+    return "".join(" " if (ch in "\x85\u2028\u2029" or ord(ch) < 32 or ord(ch) == 127) else ch for ch in str(value))
+
+
 def to_edl(tl: Dict[str, Any]) -> str:
     """CMX 3600, non-drop timecode at the nominal integer rate, record starting at 01:00:00:00.
     Every event is reel AX (the convention for file-based media) with the file named in
@@ -386,16 +403,24 @@ def to_edl(tl: Dict[str, Any]) -> str:
     from where the previous one stopped to where the next dissolve begins."""
     fps_int = int(round(float(tl["rate"])))
     hour = fps_int * 3600
+    rate = tl["rate"]
     clips = tl["clips"]
     d = tl["transition_frames"]
     # record range of each event: starts `trim_head` before its visible start (the dissolve
     # window), ends where the next event starts
     starts = [c["record_in"] - c["trim_head"] for c in clips]
     ends = starts[1:] + [tl["total"]]
-    lines = [f"TITLE: {tl['name']}", "FCM: NON-DROP FRAME", ""]
+    events = len(clips) + (1 if tl["music"] else 0)
+    if events > EDL_MAX_EVENTS:
+        # A265: f"{n:03d}" wrote event 1000 as four digits, outside the field
+        raise TimelineError(f"an EDL numbers its events in three digits (at most {EDL_MAX_EVENTS}); this timeline has "
+                            f"{events} -- export .fcpxml or .otio, or split the project")
+    if hour + tl["total"] > fps_int * 86400:
+        raise TimelineError(f"the timeline ({float(Fraction(tl['total']) / rate):.0f}s) runs past 24:00:00:00 when the "
+                            "EDL's record starts at 01:00:00:00 -- export .fcpxml or .otio, or split the project")
+    lines = [f"TITLE: {_edl_text(tl['name'])}", "FCM: NON-DROP FRAME", ""]
     n = 0
     prev_src_end = ""
-    rate = tl["rate"]
 
     def src_tc(c: Dict[str, Any], seq_frames: int) -> str:
         """The source timecode `seq_frames` (sequence frames of source media) after the clip's in
@@ -415,13 +440,13 @@ def to_edl(tl: Dict[str, Any]) -> str:
                          f"{_tc(rec_in, fps_int)} {_tc(rec_in, fps_int)}")
             lines.append(f"{n:03d}  AX       {chan:<5} D    {d:03d} {s_in} {s_out} "
                          f"{_tc(rec_in, fps_int)} {_tc(rec_out, fps_int)}")
-            lines.append(f"* FROM CLIP NAME: {clips[i - 1]['name']}")
-            lines.append(f"* TO CLIP NAME: {c['name']}")
+            lines.append(f"* FROM CLIP NAME: {_edl_text(clips[i - 1]['name'])}")
+            lines.append(f"* TO CLIP NAME: {_edl_text(c['name'])}")
         else:
             lines.append(f"{n:03d}  AX       {chan:<5} C        {s_in} {s_out} "
                          f"{_tc(rec_in, fps_int)} {_tc(rec_out, fps_int)}")
-            lines.append(f"* FROM CLIP NAME: {c['name']}")
-        lines.append(f"* SOURCE FILE: {c['src']}")
+            lines.append(f"* FROM CLIP NAME: {_edl_text(c['name'])}")
+        lines.append(f"* SOURCE FILE: {_edl_text(c['src'])}")
         if abs(c["speed"] - 1.0) > 1e-6:
             # the speed in source frames per second, at the rate the source labels are counted in
             own_fps = int(round(float(c.get("rate") or rate)))
@@ -433,11 +458,11 @@ def to_edl(tl: Dict[str, Any]) -> str:
         m = tl["music"]
         lines.append(f"{n:03d}  AX       A2    C        {_tc(0, fps_int)} {_tc(m['length'], fps_int)} "
                      f"{_tc(hour, fps_int)} {_tc(hour + m['length'], fps_int)}")
-        lines.append(f"* FROM CLIP NAME: {m['name']}")
-        lines.append(f"* SOURCE FILE: {m['src']}")
+        lines.append(f"* FROM CLIP NAME: {_edl_text(m['name'])}")
+        lines.append(f"* SOURCE FILE: {_edl_text(m['src'])}")
         lines.append("")
     for mk in tl["markers"]:
-        lines.append(f"* LOC: {_tc(hour + mk['at'], fps_int)} WHITE   {mk['title']}")
+        lines.append(f"* LOC: {_tc(hour + mk['at'], fps_int)} WHITE   {_edl_text(mk['title'])}")
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -459,6 +484,14 @@ def _url(path: str) -> str:
     return Path(os.path.abspath(path)).as_uri()
 
 
+def _xml_text(value: Any) -> str:
+    """Caller text as XML 1.0 can hold it: a control character other than tab, line feed and
+    carriage return (and U+FFFE/U+FFFF) has no representation at all, not even escaped, so a clip
+    or chapter name carrying one made the FCPXML not well-formed (the sibling of A261). Each
+    becomes a space."""
+    return "".join(" " if ((ord(ch) < 32 and ch not in "\t\n\r") or ch in "\ufffe\uffff") else ch for ch in str(value))
+
+
 def to_fcpxml(tl: Dict[str, Any]) -> str:
     """FCPXML 1.10 (Final Cut Pro 10.6+, DaVinci Resolve): one library/event/project, a spine of
     asset-clips with cross dissolves between them, the music bed as a connected clip on lane -1
@@ -466,7 +499,7 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
     sequence has its own format (r1); each video asset has its source's, and a clip of another
     aspect states its spatial conform (adjust-conform) for frame.fit."""
     rate = tl["rate"]
-    q = lambda s: _xml_escape(str(s), {'"': "&quot;"})  # noqa: E731
+    q = lambda s: _xml_escape(_xml_text(s), {'"': "&quot;"})  # noqa: E731
     fd = _t(1, rate)
     res: List[str] = []
     ids: Dict[Any, str] = {}  # a format's (width, height, frameDuration) or an asset's path -> its id

@@ -156,7 +156,11 @@ def main() -> int:
     else:
         out_w, out_h = even(sw), even(sh)
 
-    output = args.output or default_output(str(directory).rstrip("/\\") or "sequence", "sequence", "mp4")
+    # beside the folder, named after it: `--dir .` (run inside the frames folder) or `--dir ..` has
+    # no name of its own, so the folder's resolved name is used (A108: "." was a ValueError
+    # traceback); the filesystem root, which has none either, still names it sequence_sequence.mp4
+    named = directory if directory.name not in ("", ".", "..") else directory.resolve()
+    output = args.output or default_output(str(named).rstrip("/\\") or "sequence", "sequence", "mp4")
     with tempfile.TemporaryDirectory(prefix="ffmpeg-skill-sequence-") as tmp:
         list_path = Path(tmp) / "frames.txt"
         list_path.write_text(concat_list([f.resolve() for f in frames], rate), encoding="utf-8")

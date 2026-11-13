@@ -2692,8 +2692,21 @@ def parse_json(text: str) -> Any:
         if isinstance(value, (dict, list)):
             if depth > JSON_MAX_DEPTH:
                 raise JsonTooDeep(f"nested more than {JSON_MAX_DEPTH} levels deep")
+            if isinstance(value, dict):
+                stack.extend((k, depth) for k in value)
             stack.extend((v, depth + 1) for v in (value.values() if isinstance(value, dict) else value))
+        elif isinstance(value, str) and _SURROGATE.search(value):
+            # A264: "\ud83d" alone is valid JSON and no text: json reads it as a lone surrogate,
+            # which no UTF-8 file, argument or stdout can encode -- the run died on the first write
+            # with a UnicodeEncodeError traceback and nothing on stdout
+            bad = _SURROGATE.search(value).group(0)
+            raise ValueError(f"the string \"{value[:60].encode('ascii', 'backslashreplace').decode()}\" holds \\u{ord(bad):04x}, "
+                             "half of a UTF-16 surrogate pair with no other half: it is no character, so no file can "
+                             "hold it -- write the character itself, or both halves of its \\u escape")
     return data
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def read_json(path: "os.PathLike[str] | str") -> Any:
