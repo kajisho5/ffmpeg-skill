@@ -8684,6 +8684,21 @@ class Issue415Tests(unittest.TestCase):
         _check_container_codecs(line(silent))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(mkv))
+        # a read that stalls is reported as a timeout, under the probe's own ceiling, not taken
+        # for "the stream is there" (which would answer output_container_codecs instead)
+        import _common.runner as runner_mod
+        seen = {}
+
+        def stalled(cmd, **kw):
+            seen["timeout"] = kw.get("timeout")
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 0)
+        buf = io.StringIO()
+        with unittest.mock.patch.object(runner_mod.STATE, "timeout", 2.0), unittest.mock.patch.object(runner_mod.STATE, "json", True), \
+                unittest.mock.patch.object(runner_mod.subprocess, "run", stalled), \
+                contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(silent))
+        self.assertEqual(seen["timeout"], 2.0)
+        self.assertEqual(json.loads(buf.getvalue())["error"]["kind"], "timeout")
         # an input that is not there yet (a dry run's planned file) counts as having the stream
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(d / "not_written_yet.mkv"))

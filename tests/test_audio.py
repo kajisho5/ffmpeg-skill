@@ -576,6 +576,20 @@ class AudioTests(MediaFixtures):
         doc = json.loads(script("audio.py", src, "--length-samples", "48001", "-o", out, "--json").stdout)
         self.assertTrue(doc["verified"], doc["verification"])
         self.assertEqual(len(self._pcm(out)), 48001)
+        # An Opus file of a 44.1 kHz track is written at 48 kHz, so N samples at 44.1 kHz is not
+        # the file's count: refused with the way out, and exact once the rate is one Opus has
+        src441 = OUT / "tempo_441.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:sample_rate=44100:d=2",
+           "-c:a", "pcm_s16le", src441)
+        (OUT / "len.opus").unlink(missing_ok=True)
+        proc = script("audio.py", src441, "--length-samples", "44100", "-o", OUT / "len.opus", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--sample-rate 48000", json.dumps(err))
+        self.assertFalse((OUT / "len.opus").exists())
+        doc = json.loads(script("audio.py", src441, "--sample-rate", "48000", "--length-samples", "48000",
+                                "-o", OUT / "len.opus", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
         # a fade-out ends where the output ends: timed on the 2 s source it sat past the 1 s trim
         # and was never heard (review of #492)
         out = OUT / "tempo_trim_fade.wav"
