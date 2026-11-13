@@ -9408,14 +9408,37 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         """Review of #490: -inf integrated loudness beside a finite peak was read as "shorter than
         one 400 ms block". A long, very quiet track gives the same two numbers (every block is
         under the absolute gate), so the length decides: it keeps the answers it had before."""
-        quiet = self.work / "quiet.wav"  # 3 s of silence after a 10 ms tick at -45 dBFS: a finite peak, no gated block
-        ffmpeg("-f", "lavfi", "-i", "sine=f=440:duration=0.01,volume=-45dB,apad=whole_dur=3", quiet)
+        # 3 s of silence after a 1 ms tick at -45 dBFS: a true peak above SILENT_PEAK_DBFS, and
+        # every 400 ms block under the absolute gate (sine's own level is -18 dBFS, so -27 dB)
+        quiet = self.work / "quiet.wav"
+        ffmpeg("-f", "lavfi", "-i", "sine=f=2000:duration=0.001,volume=-27dB,apad=whole_dur=3", quiet)
+        doc, _ = self.doc("check", quiet, "--platform", "x", ok_codes=(0, 1))
+        rows = self.rows(doc)
+        # the two numbers the wrong branch keyed on, read back before the result is judged
+        self.assertGreater(float(rows["true peak"]["value"].split()[0]), -50.0)
+        self.assertEqual(rows["loudness"]["value"], "-inf LUFS")
+        self.assertEqual(rows["loudness"]["status"], "FAIL")
         doc, _ = self.doc("loudness", quiet, "--measure-only")
         self.assertEqual((doc["measured"]["silent"], doc["measured"].get("too_short", False)), (True, False))
+        quiet_av = self.work / "quiet_av.mov"
         ffmpeg("-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-i", quiet, "-t", "3", "-c:v", "libx264",
-               "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", self.work / "quiet_av.mov")
-        doc, _ = self.doc("check", self.work / "quiet_av.mov", "--platform", "x", ok_codes=(0, 1))
-        self.assertEqual(self.rows(doc)["loudness"]["status"], "FAIL")
+               "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", quiet_av)
+        doc, _ = self.doc("export", quiet_av, "--preset", "x", "-o", "quiet_x.mp4")
+        self.assertFalse((doc.get("loudness") or {}).get("too_short", False))
+
+    def test_caption_with_the_callers_ass_claims_no_fit_scope(self):
+        """Review of #490: with the caller's own --ass the sizes are the file's (styles, per-cue
+        overrides), so --fit-size-scope cue is neither applied nor reported as file-scoped."""
+        ass = self.work / "own.ass"
+        ass.write_text("[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 240\n\n[V4+ Styles]\n"
+                       "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+                       "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
+                       "MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,"
+                       "10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                       "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\\fs30}Hello\n", encoding="utf-8")
+        doc, _ = self.doc("caption", self.clip, "--ass", ass, "--fit-size-scope", "cue", "-o", "own_ass.mp4")
+        self.assertIsNone(doc["caption"]["fit_scope"])
+        self.assertTrue(any("--fit-size-scope cue was not applied" in n for n in doc.get("notes", [])), doc.get("notes"))
 
     def test_loudnorm_mode_matches_what_ffmpeg_reports_and_the_note_names_it(self):
         """A111: the shortfall note always blamed encoder overshoot, also on a lossless output where
