@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.1
+
+_Automated release: version and notes generated from pull requests merged since 3.8.0._
+
 ### Fixed
 
 - **An input that states no length is refused, not read as 0 s long** (#491). A Matroska written
@@ -28,6 +34,7 @@
   `--audio-from` track, not only a padded one. A dry run's pending input keeps the old filter.
   An MP4's stated stream duration is still a whole millisecond (its edit list is in 1/1000 s);
   the track holds the samples.
+- fix: an input that states no length is refused, not read as 0 s; grid, broll and multicam end their sound to the sample (#497)
 
 ## 3.8.0
 
