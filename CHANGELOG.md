@@ -4,11 +4,6 @@
 
 ## Unreleased
 
-(nothing yet)
-
-## 3.6.7
-
-_Automated release: version and notes generated from pull requests merged since 3.6.6._
 ### Added
 
 - **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
@@ -24,6 +19,41 @@ _Automated release: version and notes generated from pull requests merged since 
   probe, as the `sample_rate` and `channels` verification steps, and reported in the `audio` block.
   An index past the track's channels, and `--channel` with `--downmix`, are refused before ffmpeg
   runs.
+
+### Fixed
+
+- **A source tagged colour space `gbr` can be graded with `--keep-alpha`** (#454). FFmpeg's PNG
+  encoder tags a PNG-in-`.mov`/`.mkv` stream `gbr`, and the alpha line passed it back as
+  `-colorspace gbr`, a name the option refuses, so every `color.py --lut/--correct --keep-alpha` of
+  such a source failed (`graphics.py` and `overlay.py` share the line). `gbr` is no longer carried
+  over (the PNG line tags itself; a YUV line would be mislabelled by it). The sweep of every probed
+  tag passed back as an option found a second name: `-color_trc` refuses ffprobe's `bt470m` and
+  `bt470bg` (PAL/NTSC-tagged sources), which failed the same alpha line and made `cut.py --smart`
+  fall back to a full re-encode. `_common/color.carried_tag()` now spells every such tag the way
+  its destination takes it.
+- **`audio.py --limit` no longer delays the sound** (#476). `alimiter` ran without latency
+  compensation, so the output was the input delayed by the look-ahead (`--limit-attack`, 5 ms by
+  default: 240 samples at 48 kHz) and drifted off a stream-copied picture. It now runs with
+  `latency=1`; so does `--voice strong`'s limiter, the one other `alimiter` in the skill. The
+  limited sound starts on the input's own sample (measured, within 3 samples) and keeps its length.
+- **`audio.py` pads and trims to the sample** (#478). The sound was conformed to the source with
+  `apad,atrim=0:{seconds:.3f}`, rounded to the millisecond, so a `--replace` or `--music` result,
+  or a track beside a stream-copied picture, could be up to 24 samples (48 kHz) longer or shorter
+  than the source. It is now `apad=whole_len=N,atrim=end_sample=N`, N counted at the track's own
+  rate (pinned with `aformat`), as `join.py` has done since #455.
+- **A `.webm` output of an H.264/AAC encode is refused before anything runs** (#488).
+  `crop.py -o out.webm` failed in the muxer after the encode had started ("Nothing was written into
+  output file", `kind: ffmpeg`) while its dry run said completed. The cause is shared: every
+  re-encoding tool writes H.264 (or HEVC) and AAC, which WebM cannot hold, and the sweep of every
+  tool in `tests/sweep.py` with a `.webm` output failed the same way (24 of 25; `look` writes a
+  PNG). The one check every ffmpeg command passes now refuses it, real run and dry run alike, as
+  `kind: input` with reason `output_container_codecs` and the encoders in `details`; name a
+  `.mp4`/`.mov`/`.mkv` output instead. VP9/Opus lines (`--alpha-codec vp9`, `export.py --preset
+  vp9-alpha`) and stream copies are unchanged.
+
+## 3.6.7
+
+_Automated release: version and notes generated from pull requests merged since 3.6.6._
 
 ### Changed
 
@@ -113,52 +143,6 @@ _Automated release: version and notes generated from pull requests merged since 
   longer claims every ffmpeg command line.
 - fix: a measurement that did not happen is reported as not measured (#490)
 - chore: tests, CI, installer, evals and docs findings from the audit (#489)
-### Added
-
-- **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
-  the main track and keeps its pitch, with `atempo` stages of 0.5–2.0 chained for a factor outside
-  that range (0.1–10); `--length-samples` pads with silence or trims the output to exactly N
-  samples per channel, and a `length_samples` verification step decodes the written track and
-  counts them. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
-  need an audio output (`--tempo` also takes a `--replace` track beside the picture): the input's
-  own sound beside its stream-copied picture would drift from it, and is refused.
-- **`audio.py --sample-rate HZ` and `--channel N`** (#487). `--sample-rate` resamples the output
-  (`aresample`, after the mix); `--channel N` keeps one channel of the track by its 0-based index
-  as a 1-channel output (two identical sides with `--stereo`). Each is read back from the output by
-  probe, as the `sample_rate` and `channels` verification steps, and reported in the `audio` block.
-  An index past the track's channels, and `--channel` with `--downmix`, are refused before ffmpeg
-  runs.
-
-### Fixed
-
-- **A source tagged colour space `gbr` can be graded with `--keep-alpha`** (#454). FFmpeg's PNG
-  encoder tags a PNG-in-`.mov`/`.mkv` stream `gbr`, and the alpha line passed it back as
-  `-colorspace gbr`, a name the option refuses, so every `color.py --lut/--correct --keep-alpha` of
-  such a source failed (`graphics.py` and `overlay.py` share the line). `gbr` is no longer carried
-  over (the PNG line tags itself; a YUV line would be mislabelled by it). The sweep of every probed
-  tag passed back as an option found a second name: `-color_trc` refuses ffprobe's `bt470m` and
-  `bt470bg` (PAL/NTSC-tagged sources), which failed the same alpha line and made `cut.py --smart`
-  fall back to a full re-encode. `_common/color.carried_tag()` now spells every such tag the way
-  its destination takes it.
-- **`audio.py --limit` no longer delays the sound** (#476). `alimiter` ran without latency
-  compensation, so the output was the input delayed by the look-ahead (`--limit-attack`, 5 ms by
-  default: 240 samples at 48 kHz) and drifted off a stream-copied picture. It now runs with
-  `latency=1`; so does `--voice strong`'s limiter, the one other `alimiter` in the skill. The
-  limited sound starts on the input's own sample (measured, within 3 samples) and keeps its length.
-- **`audio.py` pads and trims to the sample** (#478). The sound was conformed to the source with
-  `apad,atrim=0:{seconds:.3f}`, rounded to the millisecond, so a `--replace` or `--music` result,
-  or a track beside a stream-copied picture, could be up to 24 samples (48 kHz) longer or shorter
-  than the source. It is now `apad=whole_len=N,atrim=end_sample=N`, N counted at the track's own
-  rate (pinned with `aformat`), as `join.py` has done since #455.
-- **A `.webm` output of an H.264/AAC encode is refused before anything runs** (#488).
-  `crop.py -o out.webm` failed in the muxer after the encode had started ("Nothing was written into
-  output file", `kind: ffmpeg`) while its dry run said completed. The cause is shared: every
-  re-encoding tool writes H.264 (or HEVC) and AAC, which WebM cannot hold, and the sweep of every
-  tool in `tests/sweep.py` with a `.webm` output failed the same way (24 of 25; `look` writes a
-  PNG). The one check every ffmpeg command passes now refuses it, real run and dry run alike, as
-  `kind: input` with reason `output_container_codecs` and the encoders in `details`; name a
-  `.mp4`/`.mov`/`.mkv` output instead. VP9/Opus lines (`--alpha-codec vp9`, `export.py --preset
-  vp9-alpha`) and stream copies are unchanged.
 
 ## 3.6.6
 
