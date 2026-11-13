@@ -275,6 +275,15 @@ def template_project(name: str, args) -> Dict[str, Any]:
                        ("--brand", args.brand), ("--chapters", args.chapters), ("--image", args.image)):
         if path and not os.path.isfile(path):
             die(f"{flag}: file not found: {path}")
+    audiogram = tpl.get("audiogram")
+    if isinstance(audiogram, dict) and "$IMAGE" in audiogram.values() and not args.image and not args.write_project:
+        # A89: without --image the whole audiogram block was dropped as an unfilled placeholder,
+        # so the dry run planned a render with no picture and the real one failed at the export
+        # ("input has no video stream"). --write-project still writes the project to edit.
+        die(f"--template {name} draws the sound over a still picture and needs --image FILE "
+            "(a local file: nothing is fetched and no cover art is invented)",
+            hint='for a plain colour behind the waveform, write the project with --write-project and give it '
+                 '"audiogram": {"background": COLOUR}')
     proj, _ = fill_template(tpl, values)
     if args.fit:
         proj.setdefault("frame", {})["fit"] = args.fit
@@ -364,6 +373,8 @@ def render_pack(names: List[str], args) -> int:
                             ("--intermediate-preset", args.intermediate_preset)):
             if value:
                 argv += option_args(flag, value)
+        if STATE.audit_log:
+            argv += option_args("--audit-log", STATE.audit_log)  # every destination's records, in the one file asked for
         info(f"→ pack: {name}")
         proc = run_tool(argv + child_args() + ["--json"])
         try:
@@ -461,6 +472,10 @@ def check_overlay(ov: Any, label: str) -> None:
         keyed = [k for k in ("chromakey", "chromakey_similarity", "chromakey_blend") if ov.get(k) is not None]
         if keyed:
             die(f"{label}: {keyed[0]} keys a colour out of a video layer and needs \"video\" (overlay.py --chromakey needs --video)")
+    if ov.get("video") and ov.get("fade"):
+        # A171: overlay.py --video has no fade; the layer was composited with a hard edge
+        die(f"{label}: fade fades an image, logo or text layer; a video layer is shown from start to end "
+            "without one (drop \"fade\" from this entry)", kind="input")
     if ov.get("chromakey") is None:
         tuned = [k for k in ("chromakey_similarity", "chromakey_blend") if ov.get(k) is not None]
         if tuned:
@@ -616,7 +631,28 @@ def validate_project(proj: Dict[str, Any], timeline: bool = False, stop_after: O
                 # the render reads a clip's snap only on a clip it cuts (in/out), the export never
                 if not timeline and (item.get("in") is not None or item.get("out") is not None):
                     require_object(item["snap"], f"clips[{i}].snap")
+                    # A93: only the project's own snap.to was checked, so a clip's "beat" (or an
+                    # unsupported grid) was read as "not beats" and the cut rendered unsnapped
+                    check_snap_to(item["snap"], f"clips[{i}].snap")
                 check_keys(item["snap"], "snap", f"clips[{i}].snap")
+    if not timeline and "audiogram" in read and proj.get("audiogram") and isinstance(clips, list) and len(clips) > 1:
+        # A92: the audiogram stage draws the first clip's sound and the render carries on from
+        # that one file: every other clip was cut and then left out of the output without a word
+        die(f"audiogram: an audiogram is drawn from one audio source, and this project has {len(clips)} clips "
+            "(only the first would be in the output); join them first (join.py) and name the joined file as the one clip")
+    chapters = proj.get("chapters")
+    if chapters is not None and not isinstance(chapters, (str, list)):
+        # A94: a number or an object was handed to metadata.py as a file name by the last stage,
+        # after the whole render ("chapters file not found: .../5")
+        die(f'chapters: must be a chapters file path or a list of {{"at": TIME, "title": STR}}, got '
+            f"{type(chapters).__name__} {chapters!r:.60}")
+
+
+def check_snap_to(snap: Any, label: str) -> None:
+    """Refuse a snap grid other than beats, for the project's `snap` and for a clip's own."""
+    if isinstance(snap, dict) and str(snap.get("to") or "") not in ("", "none", "beats"):
+        die(f'{label}.to: only "beats" (or "none") is a beat grid this skill can measure, got '
+            f'{snap.get("to")!r}', kind="input")
 
 
 _LAST_DOC: Dict[str, Any] = {}   # the JSON document the most recent sh() child printed
@@ -1298,6 +1334,13 @@ def main() -> int:
         if len(names) > 1:
             if args.write_project:
                 die("--write-project writes one project; name a single template")
+            # A85: a pack runs one full render per destination and handed none of these to them,
+            # so --stop-after did not stop, --cache was not read and --work/--keep kept nothing
+            for flag, value in (("--stop-after", args.stop_after), ("--cache", args.cache), ("--from", args.from_stage),
+                                ("--work", args.work), ("--keep", args.keep), ("--export-timeline", args.export_timeline)):
+                if value:
+                    die(f"{flag} applies to one render, and --template {args.template} is a pack of {len(names)} "
+                        f"({', '.join(names)}), each a full render of its own: name a single template to use {flag}")
             return render_pack(names, args)
         proj: Dict[str, Any] = template_project(names[0], args)
         base = Path.cwd()
@@ -1444,9 +1487,7 @@ def main() -> int:
     # so a project that does not name "snap" builds the command line 1.16 built.
     snap_spec = proj.get("snap") or {}
     snap_reports: List[Dict[str, Any]] = []
-    if snap_spec and str(snap_spec.get("to") or "") not in ("", "none", "beats"):
-        die(f'snap.to: only "beats" (or "none") is a beat grid this skill can measure, got '
-            f'{snap_spec.get("to")!r}', kind="input")
+    check_snap_to(snap_spec, "snap")
 
     # ---- clips
     # 2.2.1: every clip source is checked before the first one is cut, and every problem is named

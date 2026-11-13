@@ -163,6 +163,10 @@ def main() -> int:
         STATE.dry_run = False
         info("--dry-run is ignored by verify.py: its steps run and write their outputs")
 
+    if args.seconds <= 0:
+        # A190: every step was handed a cut of no length and failed, which read as the tools'
+        # fault ("9 of 11 verification steps failed") rather than the flag's
+        die(f"--seconds must be more than 0 (the length of the test cut), got {args.seconds:g}")
     files = collect(args.paths)
     tmp = None
     if args.out:

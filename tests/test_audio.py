@@ -25,6 +25,25 @@ class AudioTests(MediaFixtures):
     """Audio, loudness and waveform."""
 
     # ---------------------------------------------------------------- waveform
+    def test_voice_with_denoise_denoises_at_the_strength_asked(self):
+        """Audit A136: --voice light --denoise dropped the denoise, and --denoise-strength was not
+        read under any --voice (medium and strong kept their own nf=-25)."""
+        def chain(*flags):
+            doc = json.loads(script("audio.py", self.src, *flags, "-o", OUT / "voice_denoise.mp4", "--dry-run",
+                                    "--json").stdout)
+            last = doc["commands"][-1]
+            return last if isinstance(last, str) else " ".join(map(str, last))
+        self.assertIn("highpass=f=80,afftdn=nf=-25:tn=1,", chain("--voice", "light", "--denoise"))
+        self.assertIn("highpass=f=80,afftdn=nf=-40:tn=1,", chain("--voice", "light", "--denoise", "--denoise-strength", "40"))
+        for level in ("medium", "strong"):
+            with self.subTest(level):
+                strong = chain("--voice", level, "--denoise", "--denoise-strength", "40")
+                self.assertIn("afftdn=nf=-40:tn=1", strong)
+                self.assertEqual(strong.count("afftdn="), 1, "one denoise stage, at the strength asked")
+        # without --denoise, and with it at the default strength, the chains --voice always wrote
+        self.assertNotIn("afftdn", chain("--voice", "light"))
+        self.assertEqual(chain("--voice", "medium", "--denoise"), chain("--voice", "medium"))
+
     def test_waveform_style_default(self):
         out = OUT / "waveform1.mp4"
         script("waveform.py", self.src, "--width", "640", "--height", "360", "-o", out)

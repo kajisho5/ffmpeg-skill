@@ -81,6 +81,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)](#after-380--a-length-that-is-not-stated-and-sound-trimmed-to-the-sample-491-493)
 - [After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)](#after-381--a-length-or-a-silence-between-two-milliseconds-the-siblings-of-493)
 - [After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)](#after-383--the-millisecond-in-fitpy-brollpy-and-syncpy-and-where-it-changes-nothing-follow-ups-of-470)
+- [After 3.8.4 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-384--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
 <!-- contents:end -->
 
 ## Time limits
@@ -3743,3 +3744,54 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   stream-copied track, whose packets are kept whole (59244 of 59244 samples of PCM).
   All of it on FFmpeg 6.1.1, the only one measured. Test:
   `test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample`.
+
+## After 3.8.4 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)
+
+- **`--timeout` is 0 (no limit) or a number of seconds a run can wait for; anything else is
+  refused.** A negative `--timeout` used to be read as 0, which silently removed the limit, and a
+  value whose wait did not fit `poll()`'s C int of milliseconds (2147483 s; `1e8` and `1e300`
+  both did not) raised OverflowError once the child was running. The flag is a request, so it is
+  refused (`kind: input`); `FFMPEG_SKILL_TIMEOUT` is ambient, so a negative or too-long value
+  there keeps being read as 0 with the `timeout_env_invalid` warning. The bound is `MAX_TIMEOUT`,
+  500000 s (about 5.8 days), so that the outer ceiling of 4x plus 60 s a sibling run or an MCP
+  dispatch gets stays inside that wait; a job longer than that passes 0. Measured on Linux with
+  Python 3.11 only. `child_limit()` gives no ceiling for a
+  per-call value outside it (the MCP `timeout` key): the child refuses that `--timeout` itself.
+  Code: `_common.runner.MAX_TIMEOUT`, `apply_common()`, `_read_env_timeout()`, `child_limit()`.
+  Test: `test_a_timeout_no_run_can_wait_for_is_never_an_overflow`.
+- **A numeric flag's range is checked in the tool that owns the flag, with `die()` in prose.**
+  There is no shared range table: the bound is the filter's or the layout's, and the message
+  names it (`-I/--lufs must be -70..-5 LUFS (loudnorm's range), got 5`). Values that still mean
+  something are kept: `fit.py --aspect 0:9` is "no aspect" (decided under 2.1.0, above),
+  `graphics.py --from 0` counts down from 0, `silence.py --min-silence 0` and `caption.py --gap 0`
+  run. Not range-checked here, and left as found: `silence.py --threshold` and `scenes.py
+  --threshold/--ratio/--min-scene` with any sign, `overlay.py --margin` below 0, `sync.py
+  --step-ms/--fine-ms` of 0 or less, `metadata.py --scene-threshold` outside 0..100.
+  Test: `test_a_number_outside_its_range_is_refused_before_ffmpeg_runs`.
+- **A parameter of a switch that is off is refused by comparing it with its default.** This is
+  the rule `audio.py --duck-*` already had, extended to `--music-*`, `--effects-volume`,
+  `--denoise-strength`, `scenes.py --max-scene` and `waveform.py --color/--waveform-mode`. A
+  caller who passes the default value explicitly is not refused; argparse cannot tell the two
+  apart without a sentinel default, and the value asked for is then the value used.
+- **`audio.py --voice` and `--denoise` combine.** The synopsis listed them as alternatives and
+  the code let `--voice` win. `light` gets the denoise after its highpass; `medium` and `strong`
+  run their own stage at `--denoise-strength`. `--voice medium --denoise` at the default strength
+  writes the chain `--voice medium` writes. Code: `audio.voice_chain()`. Test:
+  `test_voice_with_denoise_denoises_at_the_strength_asked`.
+- **`overlay.py --video --fade` is refused, not implemented.** The image layer's fade is
+  `fade=alpha=1` on an RGBA still; the video layer is composited in YUV with its own conversion
+  rules (#333, #496), and a fade there is a feature with its own colour tests, not a fix. The same
+  holds for a `render.py` overlay entry with `video` and `fade`.
+- **A template pack refuses the flags of one render and forwards `--audit-log`.** `--stop-after`,
+  `--cache`, `--from`, `--work`, `--keep` and `--export-timeline` name one render's stages, work
+  folder or timeline; a pack is several full renders, and sharing them was never built.
+- **In a multi-track `--mode mux`, `--offset` is every track's and the layout is the first
+  track's.** An offset corrects the sync of the file, so it shifts each added `--srt`; wrapping,
+  `--max-lines` and `--min-duration` are computed for the first track (its language, the burn-in
+  size fit), so the others keep their own lines and the result says so in a note. Test:
+  `test_offset_shifts_every_track_of_a_multi_track_mux`.
+- **`cropdetect.py --limit 1` is written as the top pixel code of the source's bit depth**, since
+  FFmpeg reads a limit of 1 or more as a code. Test: `test_cropdetect_limit_1_is_the_top_of_its_range`.
+- **A `batch.py` recipe's unknown key is refused**, as `render.py` refuses a project's
+  (`check_keys()`): a recipe has no comment key. Test:
+  `test_a_project_or_recipe_value_no_stage_reads_as_written_is_refused`.

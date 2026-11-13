@@ -464,6 +464,12 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    # A165: a peak of 0 or below and a negative desaturation reached zscale/tonemap, which refused
+    # them as an ffmpeg failure (kind ffmpeg, as if the build were at fault)
+    if args.peak <= 0:
+        die(f"--peak must be more than 0 nits, got {args.peak:g}")
+    if args.desat < 0:
+        die(f"--desat must be 0 or more, got {args.desat:g}")
 
     meta = probe(args.input)
     if not meta.get("video"):

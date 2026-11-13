@@ -10,9 +10,10 @@ generated fresh, there is no source picture involved.
 --style waveform draws the amplitude over time; --style spectrum draws a
 frequency-over-time heatmap instead, which reads more information out of
 dense mixes at the cost of being less immediately readable to a general
-audience. Both accept --width/--height and --color; waveform additionally
-takes --waveform-mode (how each sample is drawn) and --split-channels
-(stereo drawn as two separate lanes instead of summed to one).
+audience. Both accept --width/--height and --split-channels (stereo drawn as
+two separate lanes instead of summed to one); waveform additionally takes
+--color and --waveform-mode (how each sample is drawn). The spectrum is drawn
+in showspectrum's own colour map, so --color with --style spectrum is refused.
 
 Examples:
   python3 waveform.py podcast.wav -o waveform.mp4
@@ -54,7 +55,7 @@ def main() -> int:
     ap.add_argument("--width", type=int, default=1920, help="output width in px, must be even (default 1920)")
     ap.add_argument("--height", type=int, default=1080, help="output height in px, must be even (default 1080)")
     ap.add_argument("--fps", type=float, default=25.0, help="output frame rate (default 25)")
-    ap.add_argument("--color", default="lime", help="channel colour(s), pipe-separated per channel, e.g. 'lime' or 'cyan|magenta' (default lime)")
+    ap.add_argument("--color", default="lime", help="--style waveform only: channel colour(s), pipe-separated per channel, e.g. 'lime' or 'cyan|magenta' (default lime)")
     ap.add_argument("--background", default="black", help="background colour (default black)")
     ap.add_argument("--waveform-mode", choices=WAVEFORM_MODES, default="line", help="--style waveform only: how each sample is drawn (default line)")
     ap.add_argument("--split-channels", action="store_true", help="draw each channel in its own lane instead of summing to one")
@@ -97,6 +98,14 @@ def main() -> int:
         args.width, args.height = frame["w"], frame["h"]
         args.fps = float(PLATFORMS[args.platform].get("fps") or args.fps)
         info(f"--platform {args.platform}: {args.width}x{args.height} @ {args.fps:g}fps")
+    if args.style == "spectrum" and args.color != ap.get_default("color"):
+        # A144: showspectrum takes no colour, so the flag was accepted and the heatmap drawn in
+        # its own colour map (a brand's primary colour is a default and is not refused)
+        die(f"--color {args.color} colours the waveform's channels; --style spectrum is drawn in showspectrum's own "
+            "colour map and takes no colour", hint="drop --color, or use --style waveform")
+    if args.style == "spectrum" and args.waveform_mode != ap.get_default("waveform_mode"):
+        die(f"--waveform-mode {args.waveform_mode} is how --style waveform draws each sample; --style spectrum has no "
+            "such mode", hint="drop --waveform-mode, or use --style waveform")
     brand = load_brand(args.brand) if args.brand else None
     if brand:
         bc = brand.get("colors") or {}

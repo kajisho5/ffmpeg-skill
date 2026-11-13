@@ -70,6 +70,14 @@ DEFAULT_TIMEOUT = 1800.0
 
 PROBE_TIMEOUT = 120.0
 
+# The largest per-call limit a run accepts (A8). subprocess's communicate() waits in poll(), whose
+# timeout is a C int of milliseconds: past 2147483.647 s (24.8 days) it raised OverflowError after
+# the child had started, so the tool died with a traceback while its ffmpeg ran on (measured on
+# Linux with Python 3.11: `--timeout 1e8` and `1e300` both did). The outer ceiling a run_tool()
+# child gets is 4x the per-call limit plus 60 s (child_limit()), so the per-call limit stops well
+# below a quarter of that: 500000 s, about 5.8 days. 0 is "no limit" and is what a longer job passes.
+MAX_TIMEOUT = 500000.0
+
 
 def _env_timeout() -> float:
     return _read_env_timeout()[0]
@@ -91,6 +99,11 @@ def _read_env_timeout() -> "Tuple[float, Optional[str]]":
         return DEFAULT_TIMEOUT, f"FFMPEG_SKILL_TIMEOUT={raw!r} is not a number of seconds; using the default {DEFAULT_TIMEOUT:g} s"
     if value < 0:
         return 0.0, f"FFMPEG_SKILL_TIMEOUT={raw!r} is negative; read as 0, which means no time limit"
+    if value > MAX_TIMEOUT:
+        # inf, 1e300: longer than a wait can be on this platform, which was an OverflowError
+        # traceback once the first child had started
+        return 0.0, (f"FFMPEG_SKILL_TIMEOUT={raw!r} is longer than a run can wait for here ({MAX_TIMEOUT:.0f} s); "
+                     "read as 0, which means no time limit")
     return value, None
 
 
@@ -500,7 +513,13 @@ def apply_common(args: "argparse.Namespace") -> None:
         out = getattr(args, "output", None)
         guard_sidecar(STATE.plan, *inputs, siblings=(out,) if isinstance(out, str) else ())
     if getattr(args, "timeout", None) is not None:
-        STATE.timeout = max(0.0, float(args.timeout))
+        # a negative --timeout used to be read as 0 without a word, which removed every limit the
+        # caller thought it had tightened, and one past MAX_TIMEOUT was an OverflowError traceback
+        # after ffmpeg had started (the MCP call reported a failure while the tool wrote its output)
+        if not 0 <= float(args.timeout) <= MAX_TIMEOUT:
+            die(f"--timeout must be 0 (no limit) or a number of seconds up to {MAX_TIMEOUT:.0f}, got {float(args.timeout):g}",
+                hint="--timeout 0 runs without a time limit")
+        STATE.timeout = float(args.timeout)
     else:
         env_limit, env_problem = _read_env_timeout()
         if env_problem:
@@ -2012,7 +2031,12 @@ def child_limit(per_call: Optional[float] = None) -> Optional[float]:
     fires first on a healthy run, and it is the only thing that ends a child hung for a reason
     that is not ffmpeg (a stuck import, a wedged pipe). None when the per-call limit is 0."""
     limit = STATE.timeout if per_call is None else per_call
-    return (limit * 4 + 60) if limit else None
+    if not limit or limit != limit or limit > MAX_TIMEOUT:
+        # 0 is "no limit". A per-call value no run can wait for (nan, inf, 1e300 from an MCP
+        # `timeout`) has no ceiling either: the child refuses that --timeout itself, at once, and
+        # communicate(timeout=4e300) would raise OverflowError with the child already running
+        return None
+    return limit * 4 + 60
 
 
 def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,

@@ -96,6 +96,23 @@ class AnalysisTests(MediaFixtures):
         self.assertLess(result["crop"]["height"], 480)
         self.assertGreater(result["crop"]["y"], 0)
 
+    def test_cropdetect_limit_1_is_the_top_of_its_range(self):
+        """Audit A164: FFmpeg's cropdetect reads a limit of 1 or more as a pixel code, so --limit 1,
+        the top of the documented 0..1 range, was code 1 (nearly nothing black) while 0.999 is
+        nearly everything. It is now written as the top code of the source's bit depth."""
+        bars = OUT / "cropdetect_limit_bars.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+           "-i", "color=c=gray:s=100x50:d=1:r=10,pad=160:90:30:20:black", "-pix_fmt", "yuv420p", bars)
+
+        def run(*extra):
+            return json.loads(script("cropdetect.py", bars, "--samples", "1", *extra, "--json").stdout)
+        default = run()["crop"]
+        self.assertIsNotNone(default, "the fixture has bars to find at the default limit")
+        # 0.999 counts nearly every pixel as black, so cropdetect reports nothing; code 1 counted
+        # almost none and reported a frame-sized crop
+        self.assertEqual(run("--limit", "1")["crop"], run("--limit", "0.999")["crop"])
+        self.assertNotEqual(run("--limit", "1")["crop"], run("--limit", "0")["crop"])
+
     def test_cropdetect_reports_the_displayed_frame_of_a_rotated_source(self):
         """cropdetect runs after ffmpeg applies rotation. The stored 1280x720 phone file is
         720x1280 on screen, and a rectangle reported against the stored size is taller than

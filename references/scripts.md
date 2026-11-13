@@ -359,7 +359,9 @@ scope-ratio film in a 16:9 frame) "detects" the same way as accidental
 bars; look at the frame before cropping it away. `windows` / `windows_failed`
 say how many windows were sampled and how many ffmpeg could not decode (those
 are skipped, with a `cropdetect_windows_failed` warning; all of them failing is
-a `kind: ffmpeg` failure).
+a `kind: ffmpeg` failure). `--limit` is a fraction of the top pixel code, 0..1;
+`--limit 1` is written to FFmpeg as that top code (255 for an 8-bit source), since
+FFmpeg reads a bare `1` as code 1.
 
 `--motion-centre` (1.18) reports the motion centroid once per second, sampled
 across the same windows: `motion_centre: [{time, x, y, x_frac, y_frac, motion}]`,
@@ -1103,7 +1105,9 @@ render result carries the caption stage's own block as `caption`.
 
 Under `--dry-run` a pack prints every child's planned commands and its table reads `planned`
 with no size or duration: nothing was encoded, so nothing is reported as verified. `--chapters`
-reaches a pack's audio destination like it does the single-template form.
+reaches a pack's audio destination like it does the single-template form. `--stop-after`,
+`--cache`, `--from`, `--work`, `--keep` and `--export-timeline` apply to one render and are
+refused with a pack; `--audit-log` is handed to every destination.
 
 Each template's frame, duration limit, loudness target and safe zones come from the one delivery
 table (`scripts/_platforms.py`). Safe zones are the fraction of the frame the app's own UI covers;
@@ -1134,13 +1138,15 @@ whose destinations did not all pass exits non-zero with the per-destination rows
 `audiogram` (1.16) is the one-call form of the podcast-to-video job: an `audiogram` stage runs
 **first** (it makes the picture the rest of the chain works on, through `waveform.py --image`),
 then captions, loudness, export and check. It needs `--image` (a local file) or a `background`
-colour in the project — this skill fetches nothing and invents no cover art — and it is
+colour in the project — this skill fetches nothing and invents no cover art; `--template
+audiogram` without `--image` is refused before anything runs, and a project with an `audiogram`
+and more than one clip is refused (it is drawn from one audio source) — and it is
 deliberately **not** part of `--template all`, whose destinations all assume a source that
 already has a picture.
 
 ### scenes.py — scene changes and highlight candidates
 ```
-scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15]] [--edl picks.txt] [--sheet scenes.png] [--json]
+scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15] [--edl picks.txt]] [--sheet scenes.png] [--json]
 scenes.py INPUT --beats [--beat-step 0.01] [--beat-range 60-200] [--min-confidence 0.5] [--json]   # INPUT may be audio-only
 scenes.py INPUT [--shots] [--audio-peaks] [--speech] [--json]
 ```
@@ -1326,7 +1332,9 @@ batch.py FOLDER --recipe batch.json [--force] [--watch SECONDS] [--jobs N|auto] 
 `batch.json` holds either `steps` (a list of script argv with `{in}`/`{out}`
 placeholders, chained) or `project` (a render project applied per file).
 Outputs land in `output_dir` with `suffix`; a content-hash cache skips files
-already done with the same recipe. Use `--dry-run` to preview the plan.
+already done with the same recipe. Use `--dry-run` to preview the plan. The recipe's
+keys are `glob`, `steps`, `project`, `clip_key`, `output_dir`, `suffix` and `ext`; any
+other key is refused before an item runs, with the nearest valid name.
 A recipe that runs `cut.py` rolls its calls up: each of those `results` rows carries
 `cut_reencoded` (each call's `reencoded`) and `cut_reencode_reasons` (each
 `reencode_reason` its calls named, once per call),
@@ -1807,7 +1815,9 @@ toggleable streams and copies the video and audio bit for bit. The suffix splits
 on the last colon, and only when the tail is a BCP-47-shaped code *and* the whole
 token is not itself a file on disk, so `C:\subs\en.srt` and a file named
 `a:b.srt` are never mangled; a single `--srt` with no suffix still takes
-`--language`. `--track-title` names a track (repeated in `--srt` order;
+`--language`. `--offset` shifts every added track (each later one as a
+`<output>_trackN.srt` copy); `--max-lines` and `--min-duration` lay out the first
+`--srt` only, and a note says so when they changed it. `--track-title` names a track (repeated in `--srt` order;
 otherwise a frozen display-name table, and a code the table does not know gets
 the code itself — never a guessed or translated name), `--default-track LANG`
 marks one for auto-selection. Every other new track is explicitly marked *not*
@@ -2049,7 +2059,7 @@ completing with the old tags.
 
 ### audio.py — clean-up, music, ducking, layout
 ```
-audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25]] [--gain dB]
+audio.py INPUT [--voice [light|medium|strong]] [--denoise [--denoise-strength 25]] [--gain dB]
          [--music FILE [--music-volume -14] [--duck [--duck-amount 12] [--duck-threshold -26.02]
           [--duck-attack 20] [--duck-release 400]] [--music-loop]]
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
@@ -2076,6 +2086,13 @@ alone), `medium` for a normal talking head, `strong` for phone/laptop audio.
 stop at −1 dBFS: `medium` (the default, and the chain a bare `--voice` gets) can
 clip a hot source, since its make-up gain has nothing above it — normalise
 afterwards with `loudness.py`, or use `strong`, which measures quieter and safer.
+`--voice` with `--denoise` runs the level's chain with `afftdn=nf=-N:tn=1` at
+`--denoise-strength`: `light`, which has no denoise of its own, gets it after the
+highpass, and `medium`/`strong` run their own denoise stage at that strength
+(25 by default, the chain they have without `--denoise`). A parameter of a switch
+that is off is refused, as the `--duck-*` flags are: `--denoise-strength` without
+`--denoise`, `--music-volume`, `--music-fade-out` or `--music-loop` without `--music`,
+`--effects-volume` without `--effects` (a value equal to the default is not seen as given).
 `--duck` uses a sidechain compressor keyed by the speech so music dips under
 dialogue and swells in pauses:
 `sidechaincompress=threshold=0.05:ratio=<amount/3, min 2>:attack=20:release=400:makeup=1`

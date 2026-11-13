@@ -1151,6 +1151,14 @@ def main() -> int:
              f"clear of the app's own UI)")
     if args.margin is None:
         args.margin = 30
+    if args.ass and (args.animate not in (None, "none") or args.karaoke):
+        # A74: both are drawn by the ASS this tool writes from cues; a caller's own --ass is burned
+        # as it stands, so the flag was accepted and nothing moved (a brand's caption.animate or
+        # caption.karaoke is a default for generated captions and is not a request here)
+        asked = "--animate " + args.animate if args.animate not in (None, "none") else "--karaoke"
+        die(f"{asked} is drawn by the ASS this tool generates from --srt, --text or --transcribe; --ass burns "
+            "the file as it is, with the animation and karaoke its own tags give it",
+            hint=f"drop {asked.split()[0]}, or pass the cues as --srt/--text and let this tool write the ASS")
     # a brand's caption.animate is a burn-in default; over --mode mux (soft subtitles) it used
     # to be applied anyway and then refused as "animation is burn only" -- ignore it there
     args.animate = args.animate or (bcap.get("animate", "none") if args.brand and args.mode != "mux" else "none")
@@ -1183,6 +1191,10 @@ def main() -> int:
             "above the size it is a floor for", kind="input")
     if args.min_duration < 0:
         die("--min-duration cannot be negative")
+    if args.gap < 0:
+        # A72: each auto-timed cue started before the one above it ended, and the first start
+        # below 0 was clamped: the cues overlapped on screen
+        die(f"--gap must be 0 or more seconds, got {args.gap:g}")
 
     meta = None
     if args.input:
@@ -1340,6 +1352,14 @@ def main() -> int:
     if missing_srt and not STATE.dry_run:
         die(f"{len(missing_srt)} SRT file(s) not found: " + ", ".join(m["path"] for m in missing_srt),
             kind="input", problems=missing_srt)
+    if args.offset and args.mode == "mux":
+        # --offset shifts every --srt track (A61); one it would leave with no cue is refused here,
+        # before the first file of this run is written (the first track's empty copy used to reach
+        # ffmpeg, which failed on it as kind ffmpeg and left the copy behind)
+        for p, _l in srt_tracks:
+            if os.path.exists(p) and not any(e + args.offset > 0 for _s, e, _t in parse_srt(p)):
+                die(f"--offset {args.offset:+g} moves every cue of {p} before 0: the track would be empty",
+                    kind="input")
     srt_path = args.srt
     if args.transcribe and not args.input:
         die("--transcribe needs the input video")
@@ -1540,7 +1560,24 @@ def main() -> int:
                 die(f"SRT file not found: {path}")
         for n in range(1, len(added)):
             path, lang = added[n]
-            if os.path.exists(path) and not srt_timings_shared_grammar(path):
+            if not os.path.exists(path):
+                continue  # a dry run's pending track: an earlier step writes it
+            if args.offset:
+                # A61: --offset moved the first --srt only, so the other languages stayed where
+                # they were against the sound. Every added track is shifted by the same rule
+                # (a cue that ends at or before 0 is dropped, a start below 0 is clamped)
+                moved = [(max(0.0, s + args.offset), e + args.offset, t) for s, e, t in parse_srt(path)
+                         if e + args.offset > 0]  # never empty: refused before the first write, above
+                copy = f"{os.path.splitext(output)[0]}_track{n}.srt"
+                claim([(copy, f"shifted SRT {n}")])
+                if not STATE.dry_run:
+                    write_srt(moved, copy)
+                    info(f"wrote {copy} ({len(moved)} cues of {os.path.basename(path)} shifted by {args.offset:+g} s)")
+                side_notes.append(f"subtitle track {n} is {copy}, a copy of {os.path.basename(path)} shifted by "
+                                  f"--offset {args.offset:+g} s like the first track"
+                                  + ("; re-run this command without --dry-run to produce it" if STATE.dry_run else ""))
+                added[n] = (copy, lang)
+            elif not srt_timings_shared_grammar(path):
                 # the same rule as the first track (#414): ffmpeg is given what parse_srt() reads
                 copy = f"{os.path.splitext(output)[0]}_track{n}.srt"
                 claim([(copy, f"normalised SRT {n}")])
@@ -1550,6 +1587,11 @@ def main() -> int:
                 side_notes.append(f"subtitle track {n} is {copy}, a copy of {os.path.basename(path)} with its timings "
                                   "rewritten as hh:mm:ss,mmm, which ffmpeg reads as this tool does")
                 added[n] = (copy, lang)
+        if len(added) > 1 and any(caption_stats.get(k) for k in ("wrapped", "split", "extended")):
+            # --max-lines and --min-duration lay out the first --srt, the track the size fit is
+            # made for; the others keep their own line breaks and durations, and the result says so
+            side_notes.append(f"--max-lines/--min-duration laid out the first --srt only: the other {len(added) - 1} "
+                              "added track(s) keep the line breaks and cue lengths of their own files")
         titles = list(args.track_title or [])
         mp4_family = Path(output).suffix.lower() in (".mp4", ".m4v", ".mov")
         dropped_titles: List[str] = []

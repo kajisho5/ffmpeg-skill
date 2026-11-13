@@ -402,6 +402,18 @@ def main() -> int:
             hint="give a --start inside the clip")
     if not 0 <= args.opacity <= 1:
         die("--opacity must be within 0..1")
+    # A190: a size of 0 or below drew nothing (--font-size -10 completed, verified: true, with no
+    # text in the picture; --scale -1 is ffmpeg's "keep the size") and a negative fade was no fade
+    if args.font_size < 1:
+        die(f"--font-size must be at least 1 px, got {args.font_size}")
+    if args.scale is not None and args.scale < 1:
+        die(f"--scale must be a positive width in px, got {args.scale}")
+    if args.scale_percent is not None and args.scale_percent <= 0:
+        die(f"--scale-percent must be more than 0, got {args.scale_percent:g}")
+    if args.fade < 0:
+        die(f"--fade must be 0 or more seconds, got {args.fade:g}")
+    if args.border < 0:
+        die(f"--border must be 0 or more px, got {args.border}")
     if args.chromakey and not args.video:
         die("--chromakey needs --video")
     if args.chromakey:
@@ -417,6 +429,11 @@ def main() -> int:
         die("--place needs --video")
     if args.place and (args.start or args.end or args.fade):
         die("--place sets when each piece shows: drop --start / --end / --fade")
+    if args.video and args.fade:
+        # A171: the fade is built for an image, logo or text layer; a video layer was composited
+        # with a hard edge and the result said nothing
+        die(f"--fade {args.fade:g} fades an image, logo or text layer; a video layer (--video) is shown "
+            "from --start to --end without a fade", hint="drop --fade for the video layer")
 
     output = args.output or default_output(args.input, "overlay", default_ext(alpha_codec) if alpha_codec else None)
     enable = enable_expr(start, end)

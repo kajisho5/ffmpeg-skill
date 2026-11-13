@@ -688,7 +688,9 @@ class OrchestrationTests(MediaFixtures):
             "overlays": [{"image": logo.name, "position": "bottom-right", "opacity": 0.5, "scale": 80},
                          {"logo": True, "start": 0, "end": 1},
                          {"text": "txt", "font_size": 24, "margin": 12, "box": True}],
-            "audio": {"replace": "long_ref.wav", "music_volume": -12, "gain": 1, "music_loop": True, "stereo": True, "denoise": True},
+            # "music" is here since audit A141: its volume and loop without a bed are refused, not ignored
+            "audio": {"replace": "long_ref.wav", "music": "long_ref.wav", "music_volume": -12, "gain": 1, "music_loop": True,
+                      "stereo": True, "denoise": True},
             "loudness": {"lufs": -16},
             "export": {"preset": "youtube", "fit": "pad", "crf": 20},
         }

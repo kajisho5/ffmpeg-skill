@@ -2886,7 +2886,7 @@ class ContractTests(unittest.TestCase):
             "color#correct": [self.src, "--correct", "--exposure", "0.2", "-o", outdir / "colc.mp4"],
             "caption#transcribe": [self.src, "--transcribe", "-o", outdir / "capt.mp4"],
             "export": [self.src, "--preset", "x", "-o", outdir / "exp.mp4"],
-            "scenes": [self.src, "--sheet", outdir / "sc.png", "--edl", outdir / "sc.txt"],
+            "scenes": [self.src, "--highlights", "1", "--sheet", outdir / "sc.png", "--edl", outdir / "sc.txt"],
             "look": [self.src, "-o", outdir / "look.png"],
             "report": ["--after", self.src, "-o", outdir / "rep.html"],
             "cropdetect": [self.src, "--seconds", "1", "--samples", "1"],
@@ -4175,11 +4175,17 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(victim.read_bytes(), before)
         # a run that does not write the side file is not refused for it
         old.write_text("keep me\n", encoding="utf-8")
-        for name, args in (("scenes", [self.src, "--edl", old]),
-                           ("metadata", [self.src, "--title", "t", "--chapters-out", old, "-o", work / "t.mp4"])):
+        for name, args in (("metadata", [self.src, "--title", "t", "--chapters-out", old, "-o", work / "t.mp4"]),):
             proc = tool(name, *args, "--json", check=False)
             self.assertEqual(proc.returncode, 0, (name, proc.stdout[-400:], proc.stderr[-400:]))
             self.assertEqual(old.read_text(encoding="utf-8"), "keep me\n", name)
+        # scenes.py --edl without --highlights writes no EDL, and since the audit's A145 says so
+        # instead of completing: refused for the missing --highlights, not as output_exists
+        proc = tool("scenes", self.src, "--edl", old, "--json", check=False)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual((err["kind"], err.get("reason")), ("input", None), err)
+        self.assertIn("--highlights", err["message"])
+        self.assertEqual(old.read_text(encoding="utf-8"), "keep me\n")
         # nor a side file the media output the run writes by default (no -o)
         clip = work / "clip.mp4"; shutil.copy(self.src, clip)
         proc = tool("silence", clip, "--edl", work / "clip_tight.mp4", "--overwrite", "--json", check=False)
@@ -9787,6 +9793,227 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
     @staticmethod
     def contract_tools():
         return {t["name"]: t for t in json.loads(tool("_contract", "--json").stdout)["tools"]}
+
+
+class FlagValueTests(unittest.TestCase):
+    """A flag or project value the tool cannot honour is refused, one test per class (audit
+    #457-#465: A8, A21, A50, A52, A72, A74, A85, A89, A92, A93, A94, A104, A109, A124, A141,
+    A144, A145, A165, A171, A176, A185, A188, A190). Before the change each case completed with
+    something other than what was asked, failed inside ffmpeg as kind ffmpeg, or was a traceback.
+    The fixes that make a flag do what it says (A61, A136, A164) are tested beside their tool, in
+    test_picture.py, test_audio.py and test_analysis.py."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=3",
+               "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+        cls.wav = w / "tone.wav"
+        ffmpeg("-f", "lavfi", "-i", "sine=f=330:duration=3", str(cls.wav))
+        cls.still = w / "still.png"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=32x32:d=1", "-frames:v", "1", str(cls.still))
+        (w / "seq").mkdir()
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=32x32:rate=5:d=1", str(w / "seq" / "f_%03d.png"))
+        (w / "cues.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (w / "own.ass").write_text(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 160\nPlayResY: 90\n\n[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+            "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
+            "MarginV, Encoding\nStyle: Default,DejaVu Sans,12,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,"
+            "1,1,0,2,4,4,4,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            "Dialogue: 0,0:00:00.20,0:00:01.50,Default,,0,0,0,,hello\n", encoding="utf-8")
+        (w / "media").mkdir()
+        shutil.copy(cls.clip, w / "media" / "a.mp4")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def refused(self, label, name, argv, expect=(), wrote=()):
+        """Run `name` for real: exit 1, a kind-input failure document that names what `expect`
+        lists, no traceback, and none of the `wrote` files in the work folder (removed first, so a
+        case that ran on the old code does not turn the next one into an output_exists refusal)."""
+        for name_ in wrote:
+            target = self.work / name_
+            shutil.rmtree(target) if target.is_dir() else target.unlink(missing_ok=True)
+        proc = tool(name, *argv, "--json", check=False, cwd=self.work)
+        self.assertNotIn("Traceback", proc.stderr, label)
+        self.assertEqual(proc.returncode, 1, (label, proc.stdout[-300:], proc.stderr[-300:]))
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"), (label, doc.get("error")))
+        for word in expect:
+            self.assertIn(word, doc["error"]["message"], label)
+        for name_ in wrote:
+            self.assertFalse((self.work / name_).exists(), f"{label}: {name_} was written")
+        return doc
+
+    def test_a_number_outside_its_range_is_refused_before_ffmpeg_runs(self):
+        clip, wav, still = str(self.clip), str(self.wav), str(self.still)
+        seq = ["--dir", "seq", "--pattern", "f_%03d.png", "--start-number", "1"]
+        cut = [clip, "--start", "0", "--end", "1"]
+        cases = [
+            ("caption --gap", "caption", [clip, "--text", "cues.txt", "--gap=-1"], ("--gap", "-1")),
+            ("sequence --width 0", "sequence", seq + ["--width", "0"], ("--width", "0")),
+            ("sequence --height -4", "sequence", seq + ["--height=-4"], ("--height", "-4")),
+            ("fit --width -100", "fit", [clip, "--width=-100"], ("--width", "-100")),
+            ("fit --width 0", "fit", [clip, "--width", "0", "--height", "64"], ("--width", "0")),
+            ("fit --height -64", "fit", [clip, "--width", "64", "--height=-64"], ("--height", "-64")),
+            ("fit --aspect -1:1", "fit", [clip, "--aspect=-1:1"], ("-1:1",)),
+            ("fit --aspect 16:-9", "fit", [clip, "--aspect", "16:-9"], ("16:-9",)),
+            ("color --peak 0", "color", [clip, "--to-sdr", "--force", "--peak", "0"], ("--peak", "0")),
+            ("color --peak -5", "color", [clip, "--to-sdr", "--force", "--peak=-5"], ("--peak", "-5")),
+            ("color --desat -5", "color", [clip, "--to-sdr", "--force", "--desat=-5"], ("--desat", "-5")),
+            ("graphics --from -1", "graphics", [clip, "--template", "countdown", "--from=-1"], ("--from", "-1")),
+            ("graphics --from -3", "graphics", [clip, "--template", "countdown", "--from=-3"], ("--from", "-3")),
+            ("graphics --scale 0", "graphics", [clip, "--template", "lower-third", "--name", "N", "--scale", "0"], ("--scale", "0")),
+            ("graphics --scale -2", "graphics", [clip, "--template", "lower-third", "--name", "N", "--scale=-2"], ("--scale", "-2")),
+            ("look --tiles 0x2", "look", [clip, "--tiles", "0x2"], ("--tiles", "0x2")),
+            ("look --tiles 2x0", "look", [clip, "--tiles", "2x0"], ("--tiles", "2x0")),
+            ("look --tiles -2x2", "look", [clip, "--tiles=-2x2"], ("--tiles", "-2x2")),
+            ("look --width 0", "look", [clip, "--width", "0"], ("--width", "0")),
+            ("loudness -I 5", "loudness", [clip, "-I", "5"], ("--lufs", "-70..-5", "5")),
+            ("loudness -I -80", "loudness", [clip, "--lufs=-80"], ("--lufs", "-80")),
+            ("loudness --tp 3", "loudness", [clip, "--tp", "3"], ("--tp", "-9..0", "3")),
+            ("loudness --lra 80", "loudness", [clip, "--lra", "80"], ("--lra", "1..50", "80")),
+            ("loudness --measure-only -I 5", "loudness", [clip, "--measure-only", "-I", "5"], ("--lufs",)),
+            ("silence --min-silence", "silence", [clip, "--min-silence=-1"], ("--min-silence", "-1")),
+            ("metadata --silence-min", "metadata", [clip, "--auto-chapters", "--silence-min=-1"], ("--silence-min", "-1")),
+            ("overlay --font-size -10", "overlay", [clip, "--image", still, "--font-size=-10"], ("--font-size", "-10")),
+            ("overlay --font-size 0", "overlay", [clip, "--image", still, "--font-size", "0"], ("--font-size", "0")),
+            ("overlay --scale -1", "overlay", [clip, "--image", still, "--scale=-1"], ("--scale", "-1")),
+            ("overlay --scale-percent 0", "overlay", [clip, "--image", still, "--scale-percent", "0"], ("--scale-percent",)),
+            ("overlay --fade -1", "overlay", [clip, "--image", still, "--fade=-1"], ("--fade", "-1")),
+            ("sync --max-offset -1", "sync", [clip, wav, "--max-offset=-1"], ("--max-offset", "-1")),
+            ("sync --max-offset 0", "sync", [clip, wav, "--max-offset", "0"], ("--max-offset", "0")),
+            ("sync --analyze-seconds -1", "sync", [clip, wav, "--analyze-seconds=-1"], ("--analyze-seconds", "-1")),
+            ("verify --seconds -1", "verify", [clip, "--seconds=-1"], ("--seconds", "-1")),
+            ("verify --seconds 0", "verify", [clip, "--seconds", "0"], ("--seconds", "0")),
+            ("audio --fade-in -1", "audio", [clip, "--fade-in=-1"], ("--fade-in", "-1")),
+            ("--timeout -5", "cut", cut + ["--timeout=-5"], ("--timeout", "-5", "0 (no limit)")),
+            ("--timeout 1e300", "cut", cut + ["--timeout", "1e300"], ("--timeout", "1e+300")),
+            ("--timeout 1e8", "cut", cut + ["--timeout", "1e8"], ("--timeout", "500000")),
+        ]
+        for label, name, argv, expect in cases:
+            with self.subTest(label):
+                out = "refused.png" if name == "look" else "refused.mp4"
+                takes_output = name not in ("sync", "verify") and "--measure-only" not in argv
+                self.refused(label, name, argv + (["-o", out] if takes_output else []), expect, wrote=(out,))
+        # the values at the edge of each range still run (a dry run: only the refusal is under test)
+        for label, name, argv in (("--timeout 0", "cut", cut + ["--timeout", "0", "-o", "edge.mp4"]),
+                                  ("caption --gap 0", "caption", [clip, "--text", "cues.txt", "--gap", "0", "-o", "edge.mp4"]),
+                                  ("graphics --from 0", "graphics", [clip, "--template", "countdown", "--from", "0", "-o", "edge.mp4"]),
+                                  ("loudness -I -5 --tp 0 --lra 1", "loudness", [clip, "-I=-5", "--tp", "0", "--lra", "1", "-o", "edge.mp4"]),
+                                  ("fit --aspect 0:9", "fit", [clip, "--aspect", "0:9", "--width", "64", "-o", "edge.mp4"])):
+            with self.subTest(label):
+                doc = json.loads(tool(name, *argv, "--dry-run", "--json", cwd=self.work).stdout)
+                self.assertEqual(doc["status"], "completed", label)
+
+    def test_a_timeout_no_run_can_wait_for_is_never_an_overflow(self):
+        """A8/A188: 1e300 s (or inf) reached select() as an OverflowError after the child had
+        started, so the MCP call failed while the tool kept running and wrote its output."""
+        from _common.runner import MAX_TIMEOUT
+        for per_call in (1e300, float("inf"), float("nan"), MAX_TIMEOUT * 2):
+            self.assertIsNone(_common.child_limit(per_call), per_call)
+        self.assertEqual(_common.child_limit(30.0), 180.0)
+        self.assertIsNone(_common.child_limit(0.0))
+        self.assertEqual(_common.child_limit(MAX_TIMEOUT), MAX_TIMEOUT * 4 + 60)
+        # the MCP call returns the child's own refusal; it used to raise out of communicate()
+        result = mcp_server.call_tool("cut", {"input": str(self.clip), "start": "0", "end": "1",
+                                              "output": str(self.work / "mcp.mp4"), "timeout": 1e300})
+        self.assertTrue(result.get("isError"), result)
+        self.assertFalse((self.work / "mcp.mp4").exists(), "the tool ran on after the call had failed")
+        self.assertEqual(result["structuredContent"]["error"]["kind"], "input")
+        self.assertIn("--timeout", result["structuredContent"]["error"]["message"])
+        # the variable is ambient, so it is read as "no limit" with a recorded warning, as a
+        # negative one always was
+        for value in ("1e300", "inf"):
+            env = dict(os.environ, FFMPEG_SKILL_TIMEOUT=value)
+            doc = json.loads(tool("cut", self.clip, "--start", "0", "--end", "1", "-o", self.work / "env.mp4", "--dry-run",
+                                  "--json", env=env).stdout)
+            self.assertEqual([(x["code"], x["value"], x["timeout"]) for x in doc["diagnostics"]["warnings"]],
+                             [("timeout_env_invalid", value, 0.0)])
+
+    def test_a_flag_the_chosen_mode_does_not_read_is_refused(self):
+        clip, wav = str(self.clip), str(self.wav)
+        pack = [clip, "--template", "tiktok,x", "-o", "pack.mp4", "--dry-run"]
+        cases = [
+            ("caption --ass --animate", "caption", [clip, "--ass", "own.ass", "--animate", "pop", "-o", "o.mp4"], ("--animate pop", "--ass")),
+            ("caption --ass --karaoke", "caption", [clip, "--ass", "own.ass", "--karaoke", "-o", "o.mp4"], ("--karaoke", "--ass")),
+            ("audio --music-fade-out", "audio", [clip, "--music-fade-out", "2", "-o", "o.mp4"], ("--music-fade-out", "--music FILE")),
+            ("audio --music-loop", "audio", [clip, "--music-loop", "-o", "o.mp4"], ("--music-loop", "--music FILE")),
+            ("audio --music-volume", "audio", [clip, "--music-volume=-20", "-o", "o.mp4"], ("--music-volume", "--music FILE")),
+            ("audio --effects-volume", "audio", [clip, "--effects-volume=-20", "-o", "o.mp4"], ("--effects-volume", "--effects FILE")),
+            ("audio --denoise-strength", "audio", [clip, "--denoise-strength", "40", "-o", "o.mp4"], ("--denoise-strength", "--denoise")),
+            ("audio --voice --denoise-strength", "audio", [clip, "--voice", "medium", "--denoise-strength", "40", "-o", "o.mp4"],
+             ("--denoise-strength", "add --denoise")),
+            ("waveform spectrum --color", "waveform", [wav, "--style", "spectrum", "--color", "red", "--width", "160",
+                                                       "--height", "90", "-o", "o.mp4"], ("--color red", "spectrum")),
+            ("waveform spectrum --waveform-mode", "waveform", [wav, "--style", "spectrum", "--waveform-mode", "point", "--width", "160",
+                                                               "--height", "90", "-o", "o.mp4"], ("--waveform-mode point", "spectrum")),
+            ("scenes --edl", "scenes", [clip, "--edl", "o.edl"], ("--edl", "--highlights")),
+            ("scenes --target", "scenes", [clip, "--target", "5"], ("--target", "--highlights")),
+            ("scenes --max-scene", "scenes", [clip, "--max-scene", "5"], ("--max-scene", "--highlights")),
+            ("cut --segments --start", "cut", [clip, "--segments", "0-0.5,1-1.5", "--start", "0.2", "-o", "o.mp4"], ("--segments", "--start")),
+            ("cut --segments --duration", "cut", [clip, "--segments", "0-0.5,1-1.5", "--duration", "1", "-o", "o.mp4"], ("--segments", "--duration")),
+            ("overlay --video --fade", "overlay", [clip, "--video", clip, "--fade", "0.5", "-o", "o.mp4"], ("--fade 0.5", "--video")),
+            ("pack --stop-after", "render", pack + ["--stop-after", "clips"], ("--stop-after", "tiktok, x")),
+            ("pack --cache", "render", pack + ["--cache", "cache"], ("--cache",)),
+            ("pack --from", "render", pack + ["--cache", "cache", "--from", "export"], ("--cache",)),
+            ("pack --work", "render", pack + ["--work", "work"], ("--work",)),
+            ("pack --keep", "render", pack + ["--keep"], ("--keep",)),
+            ("pack --export-timeline", "render", pack + ["--export-timeline", "t.edl"], ("--export-timeline",)),
+        ]
+        for label, name, argv, expect in cases:
+            with self.subTest(label):
+                self.refused(label, name, argv, expect, wrote=("o.mp4", "o.edl", "clip_pack.md", "t.edl", "cache", "work"))
+        # the same flags beside the switch that reads them still run
+        for label, name, argv in (
+                ("audio bed flags with --music", "audio", [clip, "--music", wav, "--music-fade-out", "1", "--music-loop", "--music-volume=-20",
+                                                           "--effects", wav, "--effects-volume=-20", "-o", "ok.mp4"]),
+                ("waveform --color", "waveform", [wav, "--color", "red", "--waveform-mode", "point", "--width", "160", "--height", "90", "-o", "ok.mp4"]),
+                ("caption --ass", "caption", [clip, "--ass", "own.ass", "--animate", "none", "-o", "ok.mp4"]),
+                ("cut --segments", "cut", [clip, "--segments", "0-0.5,1-1.5", "-o", "ok.mp4"])):
+            with self.subTest(label):
+                doc = json.loads(tool(name, *argv, "--dry-run", "--json", cwd=self.work).stdout)
+                self.assertEqual(doc["status"], "completed", label)
+
+    def test_a_project_or_recipe_value_no_stage_reads_as_written_is_refused(self):
+        clip, wav = str(self.clip), str(self.wav)
+        render = ["p.json", "-o", "proj.mp4", "--dry-run"]
+        cases = [
+            ("clip snap.to typo", "render", render, {"clips": [{"src": clip, "in": 0.2, "out": 1.0, "snap": {"to": "beat"}}]},
+             ("clips[0].snap.to", "'beat'")),
+            ("clip snap.to grid", "render", render, {"clips": [{"src": clip, "in": 0.2, "out": 1.0, "snap": {"to": "frames"}}]},
+             ("clips[0].snap.to", "'frames'")),
+            ("chapters number", "render", render, {"clips": [{"src": clip}], "chapters": 5}, ("chapters: must be", "int 5")),
+            ("chapters object", "render", render, {"clips": [{"src": clip}], "chapters": {"at": 0, "title": "x"}}, ("chapters: must be", "dict")),
+            ("audiogram of two clips", "render", render, {"clips": [{"src": wav}, {"src": wav}], "audiogram": {"background": "black"}},
+             ("audiogram", "2 clips")),
+            ("video layer fade", "render", render, {"clips": [{"src": clip}], "overlays": [{"video": clip, "fade": 0.5}]},
+             ("overlays[0]", "fade")),
+            ("audiogram template without --image", "render", [wav, "--template", "audiogram", "-o", "proj.mp4", "--dry-run"], None,
+             ("--template audiogram", "--image")),
+            ("recipe key typo", "batch", ["media", "--recipe", "p.json", "--dry-run"],
+             {"glob": "*.mp4", "ouput_dir": "elsewhere", "steps": [["probe.py", "{in}"]]}, ("'ouput_dir'", "'output_dir'")),
+            ("recipe key unknown", "batch", ["media", "--recipe", "p.json", "--dry-run"],
+             {"glob": "*.mp4", "comment": "x", "steps": [["probe.py", "{in}"]]}, ("'comment'", "valid keys")),
+        ]
+        for label, name, argv, body, expect in cases:
+            with self.subTest(label):
+                if body is not None:
+                    (self.work / "p.json").write_text(json.dumps(body), encoding="utf-8")
+                self.refused(label, name, argv, expect, wrote=("proj.mp4",))
+        # a clip's own "beats", a chapters list and a one-clip audiogram are still planned
+        for label, body in (("clip snap beats", {"clips": [{"src": clip, "in": 0.2, "out": 1.0, "snap": {"to": "none"}}]}),
+                            ("chapters list", {"clips": [{"src": clip}], "chapters": [{"at": 0, "title": "Start"}]}),
+                            ("one-clip audiogram", {"clips": [{"src": wav}], "audiogram": {"background": "black"}})):
+            with self.subTest(label):
+                (self.work / "p.json").write_text(json.dumps(body), encoding="utf-8")
+                doc = json.loads(tool("render", *render, "--json", cwd=self.work).stdout)
+                self.assertEqual(doc["status"], "completed", label)
 
 
 if __name__ == "__main__":

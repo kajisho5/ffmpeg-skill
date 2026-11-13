@@ -984,7 +984,8 @@ row or column), `non_av_streams_dropped` (with the
 first attempt's error beside `dropped_non_av_streams`), `measurement_input_pending` (skipped: a
 dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ffmpeg -encoders` or
 `-bsfs` could not be read; what needed it names the read failure, not a missing encoder) and
-`timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, or is negative);
+`timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, is negative, or is above 500000 s;
+read as 0, no limit; a negative or too-long `--timeout` is refused instead, `kind: input`);
 `av1_encoder_libaom` and `crf_clamped`; `font_substituted` (with `font_used`); `drift_correction_skipped`
 (with `drift_skipped_reason`); `cropdetect_windows_failed` (with `windows_failed`);
 `ass_lines_unshifted` / `ass_lines_malformed`; `timeline_parse_failed`; and every `warning:` line a

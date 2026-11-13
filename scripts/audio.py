@@ -34,7 +34,8 @@ from _common.decision import conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
-VOICE_CHAIN = "highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
+VOICE_DENOISE = "afftdn=nf=-25:tn=1"  # the denoise stage of the medium and strong chains
+VOICE_CHAIN = f"highpass=f=80,deesser=i=0.4,{VOICE_DENOISE},acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
 
 # --voice [light|medium|strong] (1.13). "medium" is the chain --voice has always produced, so a
 # bare --voice (and every existing call and MCP request) is byte-identical to before. "light"
@@ -47,6 +48,23 @@ VOICE_LEVELS = {
     "medium": VOICE_CHAIN,
     "strong": VOICE_CHAIN + ",deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled:latency=1",
 }
+
+
+
+def voice_chain(level: str, denoise_strength: "float | None") -> str:
+    """The --voice chain, with --denoise in it when asked (A136). `light` has no denoise of its
+    own, so --voice light --denoise used to drop the denoise without a word: it goes after the
+    highpass, where the other levels have theirs. `medium` and `strong` already denoise at
+    nf=-25; with --denoise that stage runs at --denoise-strength (25 by default, so the chain
+    --voice medium --denoise has always produced is unchanged)."""
+    chain = VOICE_LEVELS[level]
+    if denoise_strength is None:
+        return chain
+    stage = f"afftdn=nf=-{denoise_strength:g}:tn=1"
+    if VOICE_DENOISE in chain:
+        return chain.replace(VOICE_DENOISE, stage)
+    return chain.replace("highpass=f=80,", f"highpass=f=80,{stage},", 1)
+
 
 # The sidechain threshold the music bed has used since 1.4 is the linear 0.05 that ffmpeg's
 # sidechaincompress takes; -26.0206 dBFS is that same number in the unit the flag speaks, so the
@@ -349,6 +367,24 @@ def main() -> int:
         die(f"--duck is off but {duck_params[0]} was given; add --duck")
     if args.duck and not args.music:
         die("--duck ducks the music bed under the main track, but no --music was given; add --music FILE")
+    # A141: the same rule for the other parameters of a switch that is off. Each was accepted and
+    # did nothing: --music-fade-out 2 without --music faded nothing, --denoise-strength 40 without
+    # --denoise (also under --voice, whose own denoise stayed at 25) removed nothing more
+    bed_params = [flag for flag, name in (("--music-volume", "music_volume"), ("--music-fade-out", "music_fade_out"))
+                  if getattr(args, name) != ap.get_default(name)] + (["--music-loop"] if args.music_loop else [])
+    if not args.music and bed_params:
+        die(f"--music is off but {bed_params[0]} was given; add --music FILE")
+    if not args.effects and args.effects_volume != ap.get_default("effects_volume"):
+        die("--effects is off but --effects-volume was given; add --effects FILE")
+    if not args.denoise and args.denoise_strength != ap.get_default("denoise_strength"):
+        die("--denoise is off but --denoise-strength was given; add --denoise"
+            + (f" (--voice {args.voice} then denoises at that strength)" if args.voice else ""))
+    # afftdn's nf accepts -80..-20 only; 10..19.99 used to pass here and then fail inside ffmpeg.
+    if args.denoise and not 20 <= args.denoise_strength <= 60:
+        die(f"--denoise-strength must be 20..60 (afftdn noise floor in dB below full scale), got {args.denoise_strength:g}")
+    for flag, value in (("--fade-in", args.fade_in), ("--fade-out", args.fade_out), ("--music-fade-out", args.music_fade_out)):
+        if value < 0:  # a negative length reached afade, which refused it (kind ffmpeg)
+            die(f"{flag} must be 0 or more seconds, got {value:g}")
 
     for flag, value, lo, hi in (("--duck-amount", args.duck_amount, 0.0, 60.0),
                                 ("--duck-threshold", args.duck_threshold, -60.0, 0.0),
@@ -451,11 +487,8 @@ def main() -> int:
         # 5.1 while the run said verified.
         fx.append(DOWNMIX_PAN)
     if args.voice:
-        fx.append(VOICE_LEVELS[args.voice])
+        fx.append(voice_chain(args.voice, args.denoise_strength if args.denoise else None))
     elif args.denoise:
-        # afftdn's nf accepts -80..-20 only; 10..19.99 used to pass here and then fail inside ffmpeg.
-        if not 20 <= args.denoise_strength <= 60:
-            die(f"--denoise-strength must be 20..60 (afftdn noise floor in dB below full scale), got {args.denoise_strength:g}")
         fx.append(f"afftdn=nf=-{args.denoise_strength:g}:tn=1")
     if args.gain:
         fx.append(f"volume={args.gain:g}dB")
