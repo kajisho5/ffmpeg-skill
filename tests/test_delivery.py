@@ -242,9 +242,14 @@ class DeliveryTests(MediaFixtures):
                         self.assertTrue(doc["verified"], doc["verification"])
                         for passed_back in ("-colorspace gbr", "colorspace=gbr"):
                             self.assertNotIn(passed_back, " ".join(doc["commands"]))
-                        # the tags reported are the ones written: an RGB line says gbr, a YUV one nothing
-                        self.assertEqual(doc["probe"]["video"]["color_space"], probe(str(out))["video"]["color_space"])
-                        self.assertEqual(doc["probe"]["video"]["color_space"], "gbr" if codec == "png" else None)
+                        # the tags reported are the ones written: an RGB line says gbr, and a YUV one
+                        # never does (6.1 leaves it untagged; FFmpeg 8 writes the matrix it converted with)
+                        written = doc["probe"]["video"]["color_space"]
+                        self.assertEqual(written, probe(str(out))["video"]["color_space"])
+                        if codec == "png":
+                            self.assertEqual(written, "gbr")
+                        else:
+                            self.assertNotIn(written, ("gbr", "rgb"))
         ref = OUT / "alpha_gbr_untagged_graded.mov"
         script("color.py", untagged, "--correct", "--exposure", "0.5", "--keep-alpha", "-o", ref)
         for x, y in ((20, 20), (120, 48)):
