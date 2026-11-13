@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 from _common.emit import input_length
 
@@ -73,7 +73,7 @@ def main() -> int:
         vf = f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
-            cmd += ["-map", "0:a:0?", "-af", f"apad=pad_dur={args.hold:.3f}"]
+            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), tail=args.hold)]
     elif at == 0 or cut_at <= v0 + 1e-6:
         # A freeze at the very start has no preceding "head" segment to hold on to (the
         # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
@@ -82,7 +82,7 @@ def main() -> int:
         vf = f"tpad=start_mode=clone:start_duration={args.hold:.3f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
-            cmd += ["-map", "0:a:0?", "-af", f"adelay={int(args.hold * 1000)}:all=1"]
+            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), lead=args.hold)]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
         # resuming the rest of the clip: split the timeline at `at` and hold the remainder's

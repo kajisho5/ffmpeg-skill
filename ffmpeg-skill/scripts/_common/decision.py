@@ -456,6 +456,62 @@ def conform_output_t(length: float, rate: int) -> str:
     return f"{length + 0.5 / rate:.6f}"
 
 
+def length_output_t(length: float, rate: Optional[int], runs_on: bool = False) -> str:
+    """The output `-t` of a tool that leaves the sound's end to it (overlay.py, waveform.py,
+    loop.py, sync.py --replace-audio): the millisecond text they always wrote unless it cuts
+    samples off the track at `rate` (`-t 1.234` wrote 59244 samples at 48 kHz as 59232), and then
+    the length to the microsecond, which FFmpeg rounds to the nearest sample. `runs_on` is for
+    sound that goes on past the length (an endless apad, a loop's next repeat): there the
+    millisecond text is also left when it rounds up (`-t 1.235` wrote 59261 as 59280). No half
+    sample of slack as in conform_output_t(): this `-t` ends the picture too, and with the slack a
+    layer's frame that starts exactly at the end came through on a 1/60000 or 1/90000 time base
+    (FFmpeg 6.1.1). A rate of 0 or None (no sound, a dry run's pending input) keeps the
+    millisecond text."""
+    text = f"{length:.3f}"
+    if rate:
+        def names(micro: int) -> int:
+            # the samples FFmpeg makes of a -t of `micro` microseconds: a rescale that rounds a
+            # half up, where Python's round() takes it to the even count (0.005 s at 44.1 kHz is
+            # 220.5 samples: 221 written, round() says 220)
+            return (micro * rate + 500_000) // 1_000_000
+        written, asked = names(round(float(text) * 1_000_000)), round(length * rate)
+        if written < asked or (runs_on and written != asked):
+            # the microsecond text is a rounding too (2.00001042 s is 96001 samples at 48 kHz and
+            # "2.000010" names 96000): the microsecond nearest the length, moved by whole
+            # microseconds until it names the count asked. A microsecond is a twentieth of a
+            # sample at 48 kHz, so this is a step or two, not conform_output_t()'s half sample
+            micro = round(length * 1_000_000)
+            while names(micro) < asked:
+                micro += 1
+            while names(micro) > asked:
+                micro -= 1
+            return f"{micro // 1_000_000}.{micro % 1_000_000:06d}"
+    return text
+
+
+def silence_filter(rate: Optional[int], lead: Optional[float] = None, tail: Optional[float] = None) -> str:
+    """Silence of `lead` seconds ahead of a track and/or `tail` seconds after it (pad.py,
+    freeze.py). An amount in whole milliseconds is written as it always was (`adelay=MS:all=1`,
+    `apad=pad_dur=S.mmm`), the millisecond rounded, not cut: int(1.001 * 1000) is 1000. One that
+    is not is counted in samples at `rate`, pinned by an aformat as in conform_filter():
+    `adelay=234` and `apad=pad_dur=0.234` for 0.23425 s left the sound 12 samples short at 48 kHz.
+    A rate of 0 or None (a dry run's pending input) keeps the millisecond form."""
+    amounts = [v for v in (lead, tail) if v is not None]
+    if rate and any(round(v * rate) != round(round(v, 3) * rate) for v in amounts):
+        parts = [f"aformat=sample_rates={rate}"]
+        if lead:
+            parts.append(f"adelay={round(lead * rate)}S:all=1")
+        if tail:
+            parts.append(f"apad=pad_len={round(tail * rate)}")
+        return ",".join(parts)
+    parts = []
+    if lead is not None:
+        parts.append(f"adelay={round(lead * 1000)}:all=1")
+    if tail is not None:
+        parts.append(f"apad=pad_dur={tail:.3f}")
+    return ",".join(parts)
+
+
 def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
     """The one length a clip holds once both streams start at its first frame (av_trim from the
     video's start): the video's, or where the sound ends when it runs more than a frame past the
