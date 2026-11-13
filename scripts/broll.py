@@ -21,11 +21,14 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, conform_output_t, conform_to_length, frame_rate, grid_at_or_after, stream_starts
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.emit import input_length
+
+
+MIX_RATE = 48000  # every layer of a b/mix sound is resampled to it before the mix
 
 
 def main() -> int:
@@ -162,7 +165,11 @@ def main() -> int:
                 parts.append(f"[{i + 1}:a:0]{av_trim(first, first + c['length'])[1]},"
                              f"aformat=sample_rates=48000:channel_layouts=stereo,adelay={int(c['at'] * 1000)}|{int(c['at'] * 1000)}[ab{i}]")
                 layers.append(f"[ab{i}]")
-            parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,atrim=duration={dur_a:.3f}[aout]")
+            # the mix ends with the A-roll, to the sample (#493): every layer is 48 kHz, so the count
+            # is in that rate. `atrim=duration={:.3f}` and `-t {:.3f}` cut it to the millisecond. A
+            # dry run's pending A-roll has no length to count, and keeps the old filter.
+            tail = conform_to_length(dur_a, MIX_RATE) if dur_a > 0 else f"atrim=duration={dur_a:.3f}"
+            parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,{tail}[aout]")
             aout = "[aout]"
 
     cmd += ["-filter_complex", ";".join(parts), "-map", vout]
@@ -175,7 +182,7 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    cmd += ["-t", f"{dur_a:.3f}", output]
+    cmd += ["-t", conform_output_t(dur_a, MIX_RATE) if aout == "[aout]" and dur_a > 0 else f"{dur_a:.3f}", output]
     run(cmd)
 
     result = probe(output, role="output")

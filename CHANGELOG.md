@@ -18,6 +18,16 @@
   `input_length()`, which refuses as `kind: input` ("the length of FILE could not be read") with
   the hint to remux (`export.py INPUT --preset copy`). A tool that does not need the length runs
   on the file as before.
+- **`grid.py`, `broll.py` and `multicam.py` end their sound to the sample** (#493). They trimmed
+  it with `atrim=duration={:.3f}` / `atrim=0:{:.3f}` and the output's `-t {:.3f}`, to the
+  millisecond, so a length of 59244 samples (48 kHz) was written as 59232. They share
+  `audio.py`'s conform now (`conform_to_length()` in `_common`: `apad=whole_len=N,
+  atrim=end_sample=N` at a pinned rate, then a trim on the timestamp so sound that starts late
+  still ends with the picture); `audio.py`'s own filter strings are unchanged. The sound is
+  padded with silence when it ends before the picture, and `grid.py` conforms every
+  `--audio-from` track, not only a padded one. A dry run's pending input keeps the old filter.
+  An MP4's stated stream duration is still a whole millisecond (its edit list is in 1/1000 s);
+  the track holds the samples.
 
 ## 3.8.0
 

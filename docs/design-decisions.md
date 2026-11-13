@@ -3581,3 +3581,19 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `cut.py` treats an unknown total as no upper bound, and `loudness.py` and `check.py` report the
   length as not measured (2.20, A113). Code: `emit.input_length()`, `decision.av_clip_length()`.
   Test: `test_an_unread_length_is_refused_by_every_tool_that_computes_with_it`.
+- **grid.py, broll.py and multicam.py end their sound to the sample, with audio.py's conform.**
+  They ended it with `atrim=duration={:.3f}` / `atrim=0:{:.3f}` and the output's `-t {:.3f}`, as
+  `audio.py` did before #478: a length of 59244 samples at 48 kHz was written as 59232.
+  `decision.conform_to_length(length, rate)` is the one filter now (`aformat` pinning the rate,
+  `apad=whole_len=N,atrim=end_sample=N`, then `atrim=end=length + half a sample` so sound that
+  starts late still ends with the picture), and `audio.py` emits the same string it did. The
+  sound is padded with silence as well as trimmed, so in `grid.py` every `--audio-from` track
+  goes through it (the longer clip's sound was cut by `-t` alone), and a `broll.py` mix or a
+  `multicam.py` track that ends early is as long as the picture. The output's `-t` sits half a
+  sample past the last one (`conform_output_t`): at `{:.3f}` it would cut the sound back, and a
+  frame is far longer than the difference. A dry run's pending input has no rate or length to
+  count in and keeps the old filter. The count is of the track's samples: an MP4 edit list is in
+  1/1000 s, so the stream's *stated* duration stays a whole millisecond, and the test reads the
+  packets with the edit list ignored. Code: `decision.conform_filter()`,
+  `decision.conform_to_length()`, `decision.conform_output_t()`. Test:
+  `test_grid_broll_and_multicam_end_their_sound_to_the_sample`.

@@ -431,6 +431,30 @@ def av_trim(start: float, end: Optional[float], rate: float = 0.0, fill_gaps: bo
             f"atrim=start={start:.6f}{aend},asetpts=PTS-{start:.6f}/TB,{pad}")
 
 
+def conform_filter(samples: int, rate: int) -> str:
+    """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
+    seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
+    aformat pins the rate the count is in, so a resampler FFmpeg inserts sits ahead of the count."""
+    head = f"aformat=sample_rates={rate}," if rate else ""
+    return f"{head}apad=whole_len={samples},atrim=end_sample={samples}"
+
+
+def conform_to_length(length: float, rate: int) -> str:
+    """Pad with silence or trim a track to `length` seconds of a timeline that starts at 0, to the
+    sample (#478, #493). The count is of samples, and sound that starts after 0 keeps its start
+    (apad and atrim=end_sample do not move timestamps): N samples from 0.3 s end 0.3 s past
+    `length`. The trim on the timestamp ends it there; half a sample of slack keeps the Nth sample
+    of a track that starts at 0. audio.py, grid.py, broll.py and multicam.py end their sound with
+    this; `atrim=duration={length:.3f}` cut 59244 samples (48 kHz) to 59232."""
+    return conform_filter(round(length * rate), rate) + f",atrim=end={length + 0.5 / rate:.6f}"
+
+
+def conform_output_t(length: float, rate: int) -> str:
+    """The output `-t` beside conform_to_length(): `-t {length:.3f}` would cut the conformed sound
+    back to the millisecond, so the limit sits half a sample past the last one."""
+    return f"{length + 0.5 / rate:.6f}"
+
+
 def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
     """The one length a clip holds once both streams start at its first frame (av_trim from the
     video's start): the video's, or where the sound ends when it runs more than a frame past the

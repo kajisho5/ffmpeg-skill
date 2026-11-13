@@ -34,7 +34,7 @@ from typing import Dict, List, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
-from _common.decision import av_trim, rebase_project_paths
+from _common.decision import av_trim, conform_output_t, conform_to_length, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.emit import input_length
 from sync import measure_offset
@@ -340,12 +340,17 @@ def main() -> int:
         afx += [f"asetrate={sr * ratios[a]:.6f}", f"aresample={sr}"]
     if offsets[a] > 0:
         afx.append(f"adelay={int(round(offsets[a] * 1000))}:all=1")
-    afx += [f"atrim=0:{ref_dur:.3f}", "aformat=sample_rates=48000:channel_layouts=stereo"]
+    # the sound ends with the reference, to the sample (#493), counted at the 48 kHz it is written
+    # in; `atrim=0:{:.3f}` and `-t {:.3f}` cut it to the millisecond. A dry run's pending reference
+    # has no length to count, and keeps the old filter.
+    conformed = ref_dur > 0
+    afx += [conform_to_length(ref_dur, 48000) if conformed else f"atrim=0:{ref_dur:.3f}",
+            "aformat=sample_rates=48000:channel_layouts=stereo"]
     parts.append(f"[{a}:a]{','.join(afx)}[aout]")
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    cmd += video_args(metas[0], args.crf, args.preset, convert_matrix=False) + aac_args() + ["-t", f"{ref_dur:.3f}", output]
+    cmd += video_args(metas[0], args.crf, args.preset, convert_matrix=False) + aac_args() + ["-t", conform_output_t(ref_dur, 48000) if conformed else f"{ref_dur:.3f}", output]
 
     if args.write_project:
         # Same cut decision as the combined render above (project_clips was built alongside the
