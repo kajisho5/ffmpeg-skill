@@ -4,7 +4,69 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A number outside a flag's range is refused before ffmpeg runs** (`kind: input`, naming the
+  flag and the value; audit A21, A52, A72, A109, A124, A165, A176, A185, A190). Each of these
+  completed with something other than what was asked, failed inside ffmpeg as `kind: ffmpeg`, or
+  was a traceback: `caption.py --gap` below 0 (overlapping cues); `sequence.py` and `fit.py
+  --width/--height` of 0 or less (0 was read as "not given"); `fit.py --aspect` with a negative
+  side (`0:9` stays "no aspect", as decided; the same rule reaches a `render.py` project's
+  `frame.aspect`); `color.py --peak` of 0 or less and `--desat` below 0; `graphics.py --from`
+  below 0 (`--from -1` divided by zero) and `--scale` of 0 or less; `look.py --tiles` with a side
+  below 1 (`0x2` divided by zero) and `--width` below 2; `loudness.py -I/--tp/--lra` outside
+  loudnorm's -70..-5 / -9..0 / 1..50 (the ranges `--versions` already checked) and
+  `--sample-rate` of 0 or less; `silence.py --min-silence` and `metadata.py --silence-min` below
+  0; `overlay.py --font-size` below 1 (`-10` drew nothing and reported `verified: true`),
+  `--scale` below 1, `--scale-percent` of 0 or less, `--fade` and `--border` below 0; `sync.py
+  --max-offset` and `--analyze-seconds` of 0 or less (`--max-offset -1` reported an offset it
+  never searched for); `verify.py --seconds` of 0 or less (every step failed and the tools were
+  blamed); `audio.py --fade-in/--fade-out/--music-fade-out` below 0; `scenes.py --highlights`
+  below 0 and, with `--highlights`, `--target`/`--max-scene` of 0 or less. `join.py --duration`
+  below 0 (A52, A185) was already refused. Other numeric flags were not swept here and keep
+  their behaviour (docs/design-decisions.md lists the ones looked at and left).
+- **`--timeout` below 0 or above 500000 s is refused** (A188, A8). A negative value was read as 0
+  without a word, which removed every limit; a value whose outer ceiling (4x plus 60 s) did not
+  fit the millisecond wait of `poll()` (`1e8`, `1e300`) raised OverflowError after the child had
+  started, so an MCP call reported a failure while the tool ran on and wrote its output.
+  `FFMPEG_SKILL_TIMEOUT` above 500000 is read as 0 (no limit) with the `timeout_env_invalid`
+  warning, as a negative one already was. Measured on Linux only.
+- **`cropdetect.py --limit 1` is the top of its range** (A164). FFmpeg reads a limit of 1 or more
+  as a pixel code, so the documented top of 0..1 was read as code 1, the opposite end from 0.999;
+  it is now written as the top code of the source's bit depth (255 for 8-bit; the 10-bit value
+  is computed the same way and was not run).
+- **A flag the chosen mode does not read is refused instead of ignored** (A50, A74, A85, A141,
+  A144, A145, A171): `caption.py --ass` with `--animate` or `--karaoke`; `audio.py`
+  `--music-volume`, `--music-fade-out` or `--music-loop` without `--music`, `--effects-volume`
+  without `--effects`, `--denoise-strength` without `--denoise` (a `render.py` project's
+  `audio` block with these and no `music` is refused by its audio stage, not before the first
+  stage); `waveform.py --style spectrum` with `--color` or `--waveform-mode`; `scenes.py --edl`,
+  `--target` or `--max-scene` without `--highlights`; `cut.py --segments` with `--start`, `--end`
+  or `--duration`; `overlay.py --video` with `--fade` (and a `render.py` video layer's `fade`, in a run that
+  reaches the overlays: not a timeline export, not one stopped before them);
+  a `render.py` template pack with `--stop-after`, `--cache`, `--from`, `--work`, `--keep` or
+  `--export-timeline` (`--audit-log` is now handed to each destination). A flag recognised by
+  comparing it with its default (`--music-volume`, `--music-fade-out`, `--effects-volume`,
+  `--denoise-strength`, `--max-scene`, `--color`, `--waveform-mode`) is not refused when the
+  default value itself is passed.
+- **`audio.py --voice` with `--denoise` denoises at `--denoise-strength`** (A136). `--voice light
+  --denoise` dropped the denoise, and the strength was not read under any `--voice`; `--voice
+  medium --denoise` at the default strength writes the chain it wrote before.
+- **`caption.py --mode mux --offset` shifts every `--srt` track, not only the first** (A61); an
+  offset that would leave any track with no cue is refused before a file is written (the first
+  track's empty copy used to fail inside ffmpeg and stay behind). `--max-lines` and
+  `--min-duration` still lay out the first track only; a note now says so when they changed it.
+  `--text` cues that `--offset` moves before 0, all of them, are refused the same way (an empty
+  SRT, or an IndexError when the video's frame rate was known), and a dry run plans a track an
+  earlier step has yet to write under its shifted copy's name.
+- **A project or recipe value no stage reads as written is refused before the first stage** (A89,
+  A92, A93, A94, A104): a clip's own `snap.to` other than `beats`/`none` on a clip the render
+  cuts (it rendered unsnapped); `chapters` that is neither a file path nor a list (`false` and `0` stay "no chapters"); an `audiogram`
+  with more than one clip in a render (not in `--export-timeline`; only the first clip was
+  rendered); `render.py --template audiogram` without `--image`, unless `--write-project` (the
+  dry run completed and the real run failed at the export); an unknown key in a `batch.py`
+  recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default; the refusal names
+  the nearest valid key when one is close, else lists them).
 
 ## 3.8.5
 

@@ -220,6 +220,9 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    if args.width < 2:
+        # a width of 0 or below wrote a sheet two pixels a tile, or a still at the source's size
+        die(f"--width must be at least 2 px, got {args.width}")
     dur = meta.get("duration") or 0.0
     stem = Path(args.input).stem
     outdir = str(Path(args.output).parent) if args.output else str(Path(args.input).parent)
@@ -363,6 +366,10 @@ def main() -> int:
             cols, rows = (int(x) for x in args.tiles.lower().split("x"))
         except ValueError:
             die("--tiles must look like 4x3")
+        if cols < 1 or rows < 1:
+            # A21: 0 columns or rows divided the length by zero (a traceback, no JSON) and a
+            # negative count reached ffmpeg's tile filter (kind ffmpeg)
+            die(f"--tiles must be COLSxROWS with both at least 1 (like 4x3), got {args.tiles}")
         n = cols * rows
         dur = input_length(meta)  # the sheet is spread over the length: none stated is refused with the way out (#491)
         if not dur:

@@ -627,6 +627,9 @@ def main() -> int:
     if not math.isfinite(args.margin) or args.margin < 0:
         # nan made inside_margin() drop every silence and re-encode the whole file unchanged
         die(f"--margin must be a finite number of seconds, 0 or more (got {args.margin:g})", kind="input")
+    if args.min_silence < 0:
+        # A52: a negative length reached silencedetect, which refused it (kind ffmpeg)
+        die(f"--min-silence must be 0 or more seconds, got {args.min_silence:g}", kind="input")
     for flag, value in (("--margin-lead", args.margin_lead), ("--margin-tail", args.margin_tail)):
         if value is not None and (not math.isfinite(value) or value < 0):
             die(f"{flag} must be a finite number of seconds, 0 or more (got {value:g})", kind="input")

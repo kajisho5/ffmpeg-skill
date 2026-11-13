@@ -23,6 +23,7 @@ Examples:
   python3 batch.py ~/Footage --recipe batch.json --watch 30     # poll the folder every 30 s
 """
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -237,12 +238,21 @@ def intermediate_ext(src: Path) -> str:
 
 # the recipe keys the run reads as a string: a path, a glob, a file-name part
 RECIPE_STRINGS = ("glob", "project", "output_dir", "suffix", "ext")
+# every key a recipe may carry; anything else is refused, as render.py refuses a project's
+RECIPE_KEYS = RECIPE_STRINGS + ("clip_key", "steps")
 
 
 def check_recipe_types(recipe: Dict[str, Any]) -> None:
     """Refuse a recipe value of the wrong JSON type before anything runs (A18): a number where a
     path or glob goes, an absolute glob (pathlib refuses it), a step that is not a list. Each was
     a traceback, or a failure of every item naming the step's first character."""
+    for key in recipe:
+        # A104: a misspelled key ("ouput_dir", "sufix", "globs") was not read, so the batch ran
+        # with that key's default: other files, another folder, another name
+        if key not in RECIPE_KEYS:
+            near = difflib.get_close_matches(str(key), RECIPE_KEYS, n=1, cutoff=0.6)
+            die(f"recipe: unknown key {key!r}" + (f" (did you mean {near[0]!r}?)" if near
+                else f" (valid keys: {', '.join(sorted(RECIPE_KEYS))})"), kind="input")
     for key in RECIPE_STRINGS:
         value = recipe.get(key)
         if value is not None and not isinstance(value, str):

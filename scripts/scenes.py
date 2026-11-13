@@ -146,6 +146,20 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.highlights < 0:
+        die(f"--highlights must be 0 or more (the number of ranges to propose), got {args.highlights}")
+    if not args.highlights:
+        # A145: these shape or write the --highlights picks; without it they were accepted and
+        # nothing was written (--edl FILE completed with no file)
+        for flag, given in (("--edl", args.edl is not None), ("--target", args.target is not None),
+                            ("--max-scene", args.max_scene != ap.get_default("max_scene"))):
+            if given:
+                die(f"{flag} applies to the ranges --highlights proposes, and --highlights was not given; "
+                    "add --highlights N")
+    if args.target is not None and args.target <= 0:
+        die(f"--target must be more than 0 seconds, got {args.target:g}")
+    if args.max_scene <= 0:
+        die(f"--max-scene must be more than 0 seconds, got {args.max_scene:g}")
     if args.highlights:  # the EDL is written only with --highlights
         guard_sidecar(args.edl, args.input, siblings=(args.sheet,))
 

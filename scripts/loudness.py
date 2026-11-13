@@ -288,6 +288,14 @@ def main() -> int:
     # parsed before anything is measured, and an explicitly empty --versions ('' or ',') is refused
     # by parse_versions rather than read as "not given", which wrote one default file instead
     plan = parse_versions(args.versions) if args.versions is not None else None
+    # A124/A185: loudnorm's own ranges, checked here as --versions checks its items. Outside them
+    # the measurement pass failed inside ffmpeg (kind ffmpeg, with a page of stderr)
+    for flag, value, lo, hi, unit in (("-I/--lufs", args.lufs, -70.0, -5.0, "LUFS"), ("--tp", args.tp, -9.0, 0.0, "dBTP"),
+                                      ("--lra", args.lra, 1.0, 50.0, "LU")):
+        if not lo <= value <= hi:
+            die(f"{flag} must be {lo:g}..{hi:g} {unit} (loudnorm's range), got {value:g}")
+    if args.sample_rate is not None and args.sample_rate <= 0:
+        die(f"--sample-rate must be a positive number of Hz, got {args.sample_rate}")
     if plan is not None and args.output:
         die("--versions writes one file per target, named <name>_loudnorm_<target>.<ext>; it does not take -o")
 

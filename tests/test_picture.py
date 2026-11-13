@@ -1087,6 +1087,62 @@ class PictureTests(MediaFixtures):
         for code in ("en", "ja", "es"):
             self.assertIn(code, subs_row[0]["value"])
 
+    def test_offset_shifts_every_track_of_a_multi_track_mux(self):
+        """Audit A61: --offset moved the first --srt of a multi-track mux and left the other
+        languages where they were; the layout flags are the first track's, and a note says so."""
+        files = {}
+        for lang, words in (("en", ("hello", "world")), ("ja", ("konnichiwa", "sekai"))):
+            f = files[lang] = OUT / f"offset_mux_{lang}.srt"
+            f.write_text(f"1\n00:00:00,200 --> 00:00:00,900\n{words[0]}\n\n2\n00:00:01,000 --> 00:00:02,000\n{words[1]}\n",
+                         encoding="utf-8")
+        out = OUT / "offset_mux.mkv"
+        doc = json.loads(script("caption.py", self.src, "--mode", "mux", "--srt", f"{files['en']}:en",
+                                "--srt", f"{files['ja']}:ja", "--offset", "0.5", "-o", out, "--json").stdout)
+
+        def first_cue(stream):
+            return float(sh("ffprobe", "-v", "error", "-select_streams", f"s:{stream}", "-show_entries",
+                            "packet=pts_time", "-of", "csv=p=0", out).stdout.split()[0])
+        # both files' first cue is at 0.2 s; each track's is now 0.5 s later, the same for both
+        self.assertAlmostEqual(first_cue(1), first_cue(0), places=2)
+        self.assertGreater(first_cue(1), 0.65)
+        self.assertTrue(any("offset_mux_ja.srt shifted by --offset +0.5" in n for n in doc["notes"]), doc["notes"])
+        self.assertTrue(any("first --srt only" in n for n in doc["notes"]), doc["notes"])
+        # an offset that would leave a track with no cue is refused before a file is written
+        empty = OUT / "offset_mux_empty.mkv"
+        for p in (empty, OUT / "offset_mux_empty_adjusted.srt", OUT / "offset_mux_empty_track1.srt"):
+            p.unlink(missing_ok=True)
+        for srts in ([f"{files['en']}:en", f"{files['ja']}:ja"], [str(files["en"])]):
+            with self.subTest(tracks=len(srts)):
+                argv = [a for f in srts for a in ("--srt", f)]
+                proc = script("caption.py", self.src, "--mode", "mux", *argv, "--offset=-30", "-o", empty, "--json",
+                              expect_fail=True)
+                self.assertEqual(proc.returncode, 1)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input", err)
+                self.assertIn("offset_mux_en.srt before 0", err["message"])
+                self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
+        # text cues are a cue source too: every one moved before 0 is the same refusal, not an
+        # empty SRT (or, with a frame rate to report in, an IndexError)
+        cue_file = OUT / "offset_mux_cues.txt"
+        cue_file.write_text("0:00-0:01 hello\n", encoding="utf-8")
+        proc = script("caption.py", self.src, "--mode", "mux", "--text", cue_file, "--offset=-30", "-o", empty,
+                      "--json", expect_fail=True)
+        self.assertNotIn("Traceback", proc.stderr)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input", err)
+        self.assertIn("offset_mux_cues.txt before 0", err["message"])
+        self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
+        # a dry run plans an added track an earlier step has not written yet under the name the
+        # real run reads: the shifted copy, not the unshifted source
+        pending = OUT / "offset_mux_pending.srt"
+        pending.unlink(missing_ok=True)
+        plan = json.loads(script("caption.py", self.src, "--mode", "mux", "--srt", f"{files['en']}:en", "--srt",
+                                 f"{pending}:ja", "--offset", "0.5", "-o", OUT / "offset_mux_plan.mkv", "--dry-run",
+                                 "--json").stdout)
+        planned = " ".join(" ".join(c) if isinstance(c, list) else str(c) for c in plan["commands"])
+        self.assertIn("offset_mux_plan_track1.srt", planned)
+        self.assertNotIn("offset_mux_pending.srt", planned)
+
     def test_mux_without_default_track_leaves_every_matroska_track_off(self):
         """Given two or more new subtitle streams and no --default-track, ffmpeg flags the first
         one `default` by itself -- the opposite of what the flag promises, and `tracks[].default`

@@ -477,7 +477,7 @@ DIAGNOSTIC_CODES = {
     "measurement_input_pending": ("skipped", "--dry-run: a measurement skipped because its input is an earlier stage's output that does not exist yet; {path}"),
     "non_av_streams_dropped": ("fallbacks", "the subtitle/data streams could not be copied, so the encode ran again without them (dropped_non_av_streams: true); {output, returncode, error: the first attempt's last stderr lines}; export.py adds dropped: the stream types this retry leaves out (data alone first, then subtitle too)"),
     "ffmpeg_list_unreadable": ("warnings", "`ffmpeg -encoders` / `-bsfs` could not be read; what needs the list says so instead of 'the build lacks it'; {list, tool, error}"),
-    "timeout_env_invalid": ("warnings", "FFMPEG_SKILL_TIMEOUT was not a number (the default was used) or was negative (read as 0, no limit); {value, timeout}"),
+    "timeout_env_invalid": ("warnings", "FFMPEG_SKILL_TIMEOUT was not a number (the default was used), or was negative or above 500000 s (read as 0, no limit); {value, timeout}"),
     # encoder decisions
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),

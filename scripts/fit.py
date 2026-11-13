@@ -109,6 +109,11 @@ def main() -> int:
 
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
+    for flag, value in (("--width", args.width), ("--height", args.height)):
+        # A165: 0 read as "not given" (the side was sized from the other one, or the run was
+        # "nothing to do") and a negative size reached ffmpeg's pad as kind ffmpeg
+        if value is not None and value < 1:
+            die(f"{flag} must be a positive number of pixels, got {value}")
     if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip:
         die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:

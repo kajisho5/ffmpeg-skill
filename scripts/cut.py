@@ -1518,6 +1518,11 @@ def main() -> int:
             die(f"--remove needs the input's duration, which {args.input} does not report"
                 + (" yet (it is an earlier step's output)" if dry_run_input_pending(args.input) else ""))
         args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(parse_segments(args.remove, fps, clamp=True), total, fps))
+    elif args.segments and (args.end or args.duration or args.start is not None):
+        # A50: the single-range flags were accepted beside --segments and not read, where --remove
+        # refuses the same combination
+        die("--segments names every range to keep: it does not combine with --start, --end or --duration "
+            "(give the one range as --segments A-B, or drop --segments)")
     if args.segments:
         segments = parse_segments(args.segments, fps)
     else:

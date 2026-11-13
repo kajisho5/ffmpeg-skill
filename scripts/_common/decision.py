@@ -70,9 +70,14 @@ def aspect_ratio(value: Any) -> Optional[Fraction]:
     if len(parts) != 2:
         return None
     try:
-        return Fraction(int(parts[0]), int(parts[1]))
+        w, h = int(parts[0]), int(parts[1])
+        ratio = Fraction(w, h)
     except (ValueError, ZeroDivisionError):
         return None
+    # a negative side (`-16:9`, `16:-9`) is no aspect anyone means: frame_size() made a negative
+    # frame of it, which fit.py's pad refused inside ffmpeg (kind ffmpeg) and the timeline wrote.
+    # Each side is looked at, not the ratio: `-16:-9` is a positive fraction
+    return None if w < 0 or h < 0 else ratio
 
 
 def _even(n: float) -> int:
