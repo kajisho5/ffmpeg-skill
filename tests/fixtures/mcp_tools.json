@@ -36,6 +36,7 @@
    "gate_threshold",
    "input",
    "json_brief",
+   "length_samples",
    "limit",
    "limit_attack",
    "limit_ceiling",
@@ -53,6 +54,7 @@
    "silence_threshold",
    "stereo",
    "stereo_widen",
+   "tempo",
    "timeout",
    "voice"
   ],

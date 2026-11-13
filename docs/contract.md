@@ -675,7 +675,13 @@ Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — t
 `--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
 `--music` the `music_volume` plus a `duck` object naming the threshold (dB and
 linear), ratio, attack and release actually used, or `null` when `--duck` was not
-given. `loudness.py` reports `measured` (the input's loudnorm measurement,
+given. Since #486 `audio.py` also reports `timing`, `{tempo, atempo, length_samples, sample_rate}`:
+the `--tempo` factor and the atempo stages (each 0.5..2.0) it was built from, `--length-samples`,
+and the rate that count is in (`null` before a pending input is measured); with
+`--length-samples` a `length_samples` verification step decodes the written track and counts its
+samples (`expected`, `measured`, `tolerance_samples`: 0 for PCM/FLAC/ALAC, one codec frame for a
+lossy codec; `reason: not_measured` and `ok: false` when the count cannot be read).
+`loudness.py` reports `measured` (the input's loudnorm measurement,
 including `input_lra`) and `targets` (the requested lufs / tp / lra).
 `check.py --platform podcast` adds two informational rows to `checks`,
 `channels` and `chapters`.

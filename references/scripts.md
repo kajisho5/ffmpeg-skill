@@ -2038,7 +2038,8 @@ audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25
          [--music FILE [--music-volume -14] [--duck [--duck-amount 12] [--duck-threshold -26.02]
           [--duck-attack 20] [--duck-release 400]] [--music-loop]]
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
-         [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE] [-o OUT]
+         [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE]
+         [--tempo FACTOR] [--length-samples N] [-o OUT]
 ```
 `--denoise` is `afftdn=nf=-N:tn=1`, where N is `--denoise-strength`, the noise
 floor in dB below full scale (20..60, default 25). It is the starting floor that
@@ -2095,6 +2096,15 @@ look-ahead is compensated, so the limited sound starts on the input's own sample
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
 so it is exact to the sample, not to the millisecond (#478).
+`--tempo FACTOR` (0.1..10) changes the main track's tempo and keeps its pitch: `atempo` stages of
+0.5..2.0 whose product is the factor (3 is `atempo=2,atempo=1.5`, 0.3 is `atempo=0.5,atempo=0.6`).
+atempo's own output length is close to, not exactly, the input's divided by the factor, so
+`--length-samples N` pads with silence or trims the output to exactly N samples per channel at the
+track's rate; the result's `length_samples` verification step decodes the written track and counts
+them (exact for PCM/FLAC/ALAC, within one codec frame for a lossy codec). Both need an audio output,
+or for `--tempo` a `--replace` track beside the picture: the input's own sound beside its
+stream-copied picture would drift from it (`fit.py --method speed` retimes both). `timing` reports
+`{tempo, atempo, length_samples, sample_rate}`.
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation

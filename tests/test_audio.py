@@ -519,6 +519,54 @@ class AudioTests(MediaFixtures):
                     self.assertEqual(self._samples(out)[2], samples)
                     self.assertEqual(len(self._pcm(out)), samples)
 
+    @staticmethod
+    def _frequency(pcm, rate, lo, hi):
+        """The frequency of a pure tone over samples lo..hi, from its zero crossings."""
+        part = pcm[lo:hi]
+        crossings = sum(1 for a, b in zip(part, part[1:]) if (a < 0) != (b < 0))
+        return crossings / 2 / ((hi - lo) / rate)
+
+    def test_audio_tempo_keeps_the_pitch_and_length_samples_is_exact(self):
+        """#486: --tempo changes the tempo with atempo, chained in 0.5..2.0 stages outside that
+        range, and --length-samples pads or trims to an exact sample count. The output has the
+        asked-for length to the sample, and a 440 Hz tone measures 440 Hz after it."""
+        src = OUT / "tempo_440.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=2",
+           "-c:a", "pcm_s16le", src)
+        ref = self._pcm(src)
+        self.assertAlmostEqual(self._frequency(ref, 48000, 4800, 86400), 440, delta=2)
+        for factor, steps in ((1.5, [1.5]), (0.3, [0.5, 0.6]), (3.0, [2.0, 1.5]), (0.8, [0.8])):
+            with self.subTest(tempo=factor):
+                n = round(96000 / factor) + 17  # a little past what atempo gives: the tail is padded
+                out = OUT / "tempo_out.wav"
+                doc = json.loads(script("audio.py", src, "--tempo", str(factor), "--length-samples", str(n),
+                                        "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual(doc["timing"]["atempo"], steps)
+                self.assertAlmostEqual(math.prod(doc["timing"]["atempo"]), factor, places=9)
+                step = next(s for s in doc["verification"] if s["step"] == "length_samples")
+                self.assertEqual((step["measured"], step["expected"], step["tolerance_samples"]), (n, n, 0))
+                got = self._pcm(out)
+                self.assertEqual(len(got), n)
+                self.assertEqual(self._samples(out)[2], n)
+                self.assertAlmostEqual(self._frequency(got, 48000, n // 10, n * 8 // 10), 440, delta=4.4,
+                                       msg="the pitch is unchanged (within 1 %)")
+        # trimmed as well as padded, without --tempo
+        out = OUT / "tempo_trim.wav"
+        doc = json.loads(script("audio.py", src, "--length-samples", "48001", "-o", out, "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(len(self._pcm(out)), 48001)
+        # refusals: the input's own sound beside a copied picture, an exact length beside one, a range
+        for argv, needle in ((("--tempo", "1.2", "-o", OUT / "tempo_x.mp4"), "stream-copied"),
+                             (("--length-samples", "1000", "-o", OUT / "tempo_x.mp4"), "audio output"),
+                             (("--tempo", "20", "-o", OUT / "tempo_x.wav"), "0.1..10"),
+                             (("--length-samples", "0", "-o", OUT / "tempo_x.wav"), "positive")):
+            with self.subTest(argv=argv[:2]):
+                proc = script("audio.py", self.src, *argv, "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(needle, err["message"])
+
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the
         accepted 20..60 produce a file, and 12 (once accepted, then exit 222 inside ffmpeg) is refused first."""

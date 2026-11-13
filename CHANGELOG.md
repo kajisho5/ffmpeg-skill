@@ -98,6 +98,16 @@ _Automated release: version and notes generated from pull requests merged since 
   longer claims every ffmpeg command line.
 - fix: a measurement that did not happen is reported as not measured (#490)
 - chore: tests, CI, installer, evals and docs findings from the audit (#489)
+### Added
+
+- **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
+  the main track and keeps its pitch, with `atempo` stages of 0.5–2.0 chained for a factor outside
+  that range (0.1–10); `--length-samples` pads with silence or trims the output to exactly N
+  samples per channel, and a `length_samples` verification step decodes the written track and
+  counts them. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
+  need an audio output (`--tempo` also takes a `--replace` track beside the picture): the input's
+  own sound beside its stream-copied picture would drift from it, and is refused.
+
 ### Fixed
 
 - **A source tagged colour space `gbr` can be graded with `--keep-alpha`** (#454). FFmpeg's PNG
