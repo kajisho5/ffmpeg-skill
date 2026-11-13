@@ -391,7 +391,8 @@ def render_pack(names: List[str], args) -> int:
         size = os.path.getsize(out) if os.path.exists(out) else 0
         rows.append({"platform": name, "file": os.path.basename(out), "path": out,
                      "size_bytes": size, "duration": probe_doc.get("duration"),
-                     "check": ("pass" if chk.get("ok") else ("%d FAIL" % chk["failed"]) if chk.get("failed") else ("pass" if ok else "failed")),
+                     # a destination whose check did not run is "not checked", not "pass" (the class of A113)
+                     "check": ("pass" if chk.get("ok") else ("%d FAIL" % chk["failed"]) if chk.get("failed") else ("not checked" if ok else "failed")),
                      "ok": bool(ok)})
         outputs.append(out)
         if not ok:
@@ -421,7 +422,8 @@ def render_pack(names: List[str], args) -> int:
             code=stopped[0]["exit_code"] if stopped else 1, kind=stopped[0]["kind"] if stopped else "verification",
             output=pack, dry_run=STATE.dry_run, pack=rows, outputs=outputs)
     emit(pack, pack=rows, outputs=outputs, stages=["pack"],
-         verification=[{"step": "check", "ok": r["ok"], "platform": r["platform"]} for r in rows])
+         # a destination whose check did not run has no check step: "not checked" is not ok: true
+         verification=[{"step": "check", "ok": True, "platform": r["platform"]} for r in rows if r["check"] == "pass"])
     return 0
 
 
@@ -1186,6 +1188,31 @@ def _has_sound(current: str, proj: Dict[str, Any], rel: Any) -> bool:
     return False
 
 
+def planned_clip_length(clip: Dict[str, Any], src: str, index: int) -> float:
+    """A dry run's length of clip `index` before its speed stage: the source's measured length,
+    or its in..out range of it (the cut a real run measures does not exist yet). Only when neither
+    can be read is the speed planned on a stand-in 10 s, and that is recorded (A97): a plan that
+    gave no sign its fit.py --duration came from an invented number read as a measured one."""
+    from _common.decision import parse_time
+    length = fps = None
+    if os.path.isfile(src):
+        meta = probe(src)
+        length = meta.get("duration") or None
+        # hh:mm:ss:ff needs the source's rate, which the real cut reads from the same place
+        fps = (meta.get("video") or {}).get("fps") or None
+    try:
+        start = parse_time(str(clip["in"]), fps) if clip.get("in") is not None else 0.0
+        end = parse_time(str(clip["out"]), fps) if clip.get("out") is not None else length
+    except ValueError:
+        start, end = 0.0, None
+    if end is not None and end - start > 0:
+        return end - start
+    record_skip(f"[dry-run] clip {index}: its length could not be read before the cut exists, so the speed stage is "
+                "planned on a stand-in 10 s; a real run measures the cut", "speed_length_placeholder",
+                stage="clips", clip=index, path=src, placeholder_seconds=10.0)
+    return 10.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -1474,7 +1501,7 @@ def main() -> int:
             if not (spd > 0) or spd != spd or spd == float("inf"):
                 die(f"clip {i}: speed must be a positive number, got {c['speed']!r}")
             if abs(spd - 1.0) > 1e-6:  # speed 1.0 used to cost a full re-encode for nothing
-                dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else 10.0
+                dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else planned_clip_length(c, src, i)
                 fitted = str(work / f"clip{i:02d}_speed{mid}")
                 sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted, stage="clips")
                 part = fitted

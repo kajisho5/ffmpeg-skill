@@ -101,7 +101,10 @@ exists. When a decision changes, edit the entry in the same PR.
   `multicam`, `scenes`, `cropdetect`, `report`, `silence`, `loudness` and `stabilize` run
   ffmpeg/ffprobe to measure, because a plan built on a fake measurement is not a plan. So does
   `overlay` for a multi-line `--text` on FFmpeg 8.0, 8.0.1 and 8.1.0 (one drawtext on a generated
-  frame; see "a multi-line `overlay.py --text`" below). The contract lists them as
+  frame; see "a multi-line `overlay.py --text`" below), `metadata --auto-chapters`, `cut --snap
+  beats`, and `render`/`batch`, whose stages run as their own dry runs (audit A236/A193: the
+  contract said `none` for these four; a test now derives the list from what each dry run
+  decodes, `test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis`). The contract lists them as
   `analysis_only`, except `probe`, which is `none` with the note that ffprobe still runs (it writes
   nothing either way); every other tool runs nothing. Code:
   `_contract.DRY_RUN_ANALYSIS`. Tests: `test_dry_run_never_runs_ffmpeg_and_writes_nothing`,
@@ -151,7 +154,9 @@ exists. When a decision changes, edit the entry in the same PR.
   (the join adds silence for it on purpose), and an unmeasurable level is left to the join.
   Code: `join.find_silent()`, `join.main()`. Test: `test_join_on_silent_names_a_silent_segment`.
 - **`verify` accepts `--dry-run` and ignores it.** Its job is to run the tools for real.
-  Contract: `_contract.DRY_RUN_NOTES["verify"]`.
+  Contract: `_contract.DRY_RUN_NOTES["verify"]`. Since the flag is ignored, the document says
+  `dry_run: false` and a `notes` line says the flag was ignored (audit A240: it said `dry_run: true`
+  over outputs it had written). Test: `test_verify_ignores_dry_run_and_says_so`.
 
 ## Colour
 

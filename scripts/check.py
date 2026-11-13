@@ -48,6 +48,7 @@ from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity
 from _common.probe import PROBED_AUDIO
+from _common.probe import display_size as shown_size, shorter_than_a_loudness_block
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
@@ -459,8 +460,17 @@ def main() -> int:
                      "reason": reason if status != "PASS" else "",
                      "kind": "judgement" if name in JUDGEMENT else "format"})
 
-    dur = meta.get("duration") or 0.0
-    if spec["max_duration"]:
+    # A113: a length ffprobe did not report is not a length of 0 s that fits under every limit.
+    # The row says it was not measured (FAIL under a length limit, WARN without one), and the
+    # --content rows that are shares of the running time say so too instead of disappearing.
+    dur_read = meta.get("duration")
+    dur = dur_read or 0.0
+    if dur_read is None:
+        row("duration", "FAIL" if spec["max_duration"] else "WARN", "could not measure",
+            f"<= {spec['max_duration']:g}s" if spec["max_duration"] else "any",
+            "remux the file (export.py --preset copy) so the container states its length, then check again",
+            reason="the file does not state its length, so whether it is within the limit is unknown")
+    elif spec["max_duration"]:
         row("duration", "PASS" if dur <= spec["max_duration"] else "FAIL", f"{dur:.2f}s", f"<= {spec['max_duration']:g}s", "decide with the user: cut.py keeps quality but drops content; fit.py --duration speeds up (audio pitch-preserved, motion faster)")
     else:
         row("duration", "PASS", f"{dur:.2f}s", "any")
@@ -469,7 +479,9 @@ def main() -> int:
         w, h = v["width"], v["height"]
         if v.get("rotation") in (90, -90, 270, -270):
             w, h = h, w
-        asp = aspect_name(w, h)
+        # A114: the aspect a viewer sees is the displayed frame's (rotation and SAR applied), not
+        # the stored grid's: 1440x1080 at SAR 4:3 is a 16:9 picture
+        asp = aspect_name(*shown_size(v)) if all(shown_size(v)) else aspect_name(w, h)
         if spec["aspects"]:
             row("aspect", "PASS" if asp in spec["aspects"] else "FAIL", asp, "/".join(spec["aspects"]), f"fit.py --aspect {spec['aspects'][0]} --fit pad (keeps everything, adds bars) or crop (fills the frame, loses the edges: check the subject with look.py)")
         else:
@@ -478,7 +490,11 @@ def main() -> int:
         if spec["min_height"]:
             row("resolution", "PASS" if short >= spec["min_height"] else "WARN", f"{w}x{h}", f"short side >= {spec['min_height']}", "upscaling will not add detail; re-export from the master")
         fps = v.get("fps") or 0
-        if spec["fps_max"]:
+        if spec["fps_max"] and not fps:
+            # a rate ffprobe did not report is not 0 fps under every limit (the class of A113)
+            row("fps", "WARN", "could not measure", f"<= {spec['fps_max']}", "re-encode at a fixed rate (fit.py --fps N)",
+                reason="the stream states no frame rate, so whether it is within the limit is unknown")
+        elif spec["fps_max"]:
             row("fps", "PASS" if fps <= spec["fps_max"] + 0.01 else "FAIL", f"{fps:g}", f"<= {spec['fps_max']}", "fit.py --fps 30 (drops half the frames of 60 fps motion; fine for talking heads, visible on sports/gaming)")
         row("vfr", "PASS" if not v.get("variable_frame_rate_suspected") else "WARN", "variable" if v.get("variable_frame_rate_suspected") else "constant", "constant", "fit.py --fps N (any re-encode conforms it)")
         if spec["codecs"]:
@@ -517,7 +533,10 @@ def main() -> int:
         row("video", "FAIL", "none", "video stream", "")
 
     size = meta.get("size_bytes") or 0
-    if spec["max_bytes"]:
+    if spec["max_bytes"] and meta.get("size_bytes") is None:
+        row("file size", "FAIL", "could not measure", f"<= {spec['max_bytes'] / 1024 / 1024:.0f} MB", "",
+            reason="the file's size could not be read, so whether it is within the limit is unknown")
+    elif spec["max_bytes"]:
         row("file size", "PASS" if size <= spec["max_bytes"] else "FAIL", f"{size / 1024 / 1024:.1f} MB", f"<= {spec['max_bytes'] / 1024 / 1024:.0f} MB", "export.py --crf 24 or lower resolution")
 
     if a:
@@ -569,12 +588,30 @@ def main() -> int:
         loudness_ran = False
         if a.get("sample_rate") and a["sample_rate"] not in (44100, 48000):
             row("sample rate", "WARN", a["sample_rate"], "44100 or 48000", "loudness.py --sample-rate 48000")
-        if not args.no_loudness and spec["lufs"] is not None:
+        # A117: --tp alone (custom has no loudness target) asks for the true-peak row, which
+        # needs the same measurement pass; without it the run reported 0 failed having measured nothing
+        tp_only = spec["lufs"] is None and args.tp is not None
+        if not args.no_loudness and (spec["lufs"] is not None or tp_only):
             lm = measure_loudness(args.input)
             loudness_ran = bool(lm)
             if lm and lm["tp"] <= SILENT_PEAK_DBFS:
                 silent_audio(lm["tp"])
-            if lm:
+            if lm and tp_only:
+                row("true peak", "PASS" if lm["tp"] <= spec["tp"] + TP_TOLERANCE_DB else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP (+{TP_TOLERANCE_DB:g} dB tolerance)", f"loudness.py --tp {spec['tp']:g}")
+            elif not lm and tp_only:
+                row("true peak", "WARN", "could not measure", f"<= {spec['tp']:g} dBTP", "re-run check.py, or verify true peak manually",
+                    reason="ffmpeg's loudness measurement didn't produce a readable result -- this was not actually checked")
+            elif (lm and lm["lufs"] == float("-inf") and lm["tp"] > SILENT_PEAK_DBFS
+                  and shorter_than_a_loudness_block(a.get("duration") or a.get("tagged_duration") or dur_read)):
+                # A257: shorter than one 400 ms gating block: a true peak but no integrated
+                # loudness. Not silence, and not a -inf LUFS that FAILs the target. Decided on
+                # the sound's length: a longer track whose every block is under the gate reads
+                # -inf too, and that one still FAILs the target below
+                row("loudness", "WARN", "could not measure (shorter than one 400 ms loudness block)",
+                    f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", "",
+                    reason="integrated loudness is gated over 400 ms blocks; a clip this short has none")
+                row("true peak", "PASS" if lm["tp"] <= spec["tp"] + TP_TOLERANCE_DB else "FAIL", f"{lm['tp']:.1f} dBTP", f"<= {spec['tp']:g} dBTP (+{TP_TOLERANCE_DB:g} dB tolerance)", f"loudness.py --tp {spec['tp']:g}")
+            elif lm:
                 diff = abs(lm["lufs"] - spec["lufs"])
                 row("loudness", "PASS" if diff <= spec["lufs_tol"] else "FAIL", f"{lm['lufs']:.1f} LUFS", f"{spec['lufs']:g} ± {spec['lufs_tol']:g} LUFS", f"loudness.py -I {spec['lufs']:g} for speech or music; leave ambience/near-silence (<= -40 LUFS) alone and say so",
                     reason="the platform will auto-normalise it to its own target anyway, which can pump or duck the mix in ways you did not choose")
@@ -600,6 +637,14 @@ def main() -> int:
     if args.content:
         cd = detect_content(args.input, dur, video=bool(v), audio=bool(a))
         span = dur if dur > 0 else 0.0
+        if not span and not dry_run_input_pending(args.input):
+            # A113: black, frozen and silence are shares of the running time; with no length
+            # read there is nothing to divide by, and dropping the rows read as nothing to report
+            for name, stream in (("black", v), ("frozen", v), ("silence", a)):
+                if stream:
+                    row(name, "WARN", "could not measure", "a share of the running time",
+                        "remux the file (export.py --preset copy) so the container states its length, then check again",
+                        reason="the file does not state its length, so this share of it could not be worked out")
         if "black" in cd and span:
             share = _span_total(cd["black"]) / span
             row("black", "FAIL" if share >= BLACK_FAIL else ("WARN" if share > BLACK_WARN else "PASS"),

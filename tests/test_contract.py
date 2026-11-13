@@ -1381,7 +1381,8 @@ class ContractTests(unittest.TestCase):
         silently drifting out of sync with _contract.py again (issue #82). README's FAQ states
         the same list."""
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
-        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay"},
+        self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay",
+                                          "metadata", "cut", "render", "batch"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
         # "the name appears somewhere in the file" was too weak: every tool name is in SKILL.md's
         # request table anyway, so the list drifted twice (#176 -> #179) with this test green.
@@ -2894,7 +2895,9 @@ class ContractTests(unittest.TestCase):
             name = name.split("#")[0]
             spec = self.tools[name]
             self.assertTrue(spec["supports_dry_run"], name)
-            strict = spec["dry_run"]["ffmpeg_execution"] == "none"
+            # cut and metadata measure only with --snap beats / --auto-chapters, which these cases
+            # do not pass: without them they run no ffmpeg, and that stays checked strictly
+            strict = spec["dry_run"]["ffmpeg_execution"] == "none" or name in ("cut", "metadata")
             # tools whose measurement needs ffmpeg (sync, multicam, scenes, report) run with the real ffmpeg
             proc = tool(name, *args, "--dry-run", "--json", env=env if strict else None, check=False)
             self.assertEqual(proc.returncode, 0, f"{name} --dry-run failed:\n{proc.stderr}")
@@ -2906,7 +2909,8 @@ class ContractTests(unittest.TestCase):
             if strict:
                 self.assertFalse(marker.exists(), f"{name} --dry-run invoked ffmpeg")
         self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"},
-                         {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay"})
+                         {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay",
+                          "metadata", "cut", "render", "batch"})
         # the read-only tools keep working under --dry-run (ffprobe still runs)
         self.assertEqual(tool("probe", self.src, "--dry-run", env=env).returncode, 0)
         self.assertEqual(tool("check", self.src, "--platform", "x", "--no-loudness", "--dry-run", env=env).returncode, 0)
@@ -9239,6 +9243,371 @@ class TextAndJsonReaderTests(unittest.TestCase):
         proc = sh(sys.executable, SCRIPTS / "metadata.py", self.clip, "--chapters", "chapters.txt", "--dry-run", "--json",
                   check=False, cwd=self.work)
         self.assertEqual(json.loads(proc.stdout)["status"], "completed", proc.stdout[-500:])
+
+
+
+class NotMeasuredIsNotAValueTests(unittest.TestCase):
+    """A measurement that did not happen is reported as not measured (null, a "could not measure"
+    row, a skip reason), never as a value or a pass (#457-#465: A60, A67, A76, A97, A111, A113,
+    A114, A117, A131, A172, A182, A193, A236, A237, A239, A240, A241, A257). Each test fails on
+    the code before this change."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=6",
+               "-t", "6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+        # a Matroska written to a pipe states no duration anywhere
+        cls.nolength = w / "nolength.mkv"
+        with open(cls.nolength, "wb") as fh:
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:d=2",
+                            "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                            "-f", "matroska", "pipe:1"], stdout=fh, check=True)
+        # 288x216 stored at SAR 4:3 is a 384x216 (16:9) picture
+        cls.anamorphic = w / "anamorphic.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=288x216:rate=10:d=1", "-vf", "setsar=4/3", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", str(cls.anamorphic))
+        cls.loud = w / "loud.wav"  # a sine at about -2 dBTP
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:duration=3,volume=16dB", str(cls.loud))
+        cls.short = w / "short.wav"  # one 400 ms gating block is longer than this
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:duration=0.3", str(cls.short))
+        cls.short_av = w / "short_av.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:d=0.3", "-f", "lavfi", "-i", "sine=duration=0.3",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.short_av))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def doc(self, name, *args, ok_codes=(0,)):
+        proc = tool(name, *map(str, args), "--json", check=False, cwd=self.work)
+        self.assertIn(proc.returncode, ok_codes, proc.stderr[-1500:])
+        return json.loads(proc.stdout), proc
+
+    @staticmethod
+    def rows(doc):
+        return {r["check"]: r for r in doc["checks"]}
+
+    def test_check_an_unread_duration_is_not_a_pass(self):
+        """A113: a file that states no length read as 0.00 s and PASSed every length limit, and
+        --content dropped its black/frozen/silence rows without a word."""
+        self.assertIsNone(json.loads(tool("probe", self.nolength, "--json").stdout)["duration"])  # the fixture
+        doc, _ = self.doc("check", self.nolength, "--platform", "tiktok", "--content", ok_codes=(0, 1))
+        rows = self.rows(doc)
+        self.assertEqual((rows["duration"]["status"], rows["duration"]["value"]), ("FAIL", "could not measure"))
+        for name in ("black", "frozen", "silence"):
+            self.assertEqual((rows[name]["status"], rows[name]["value"]), ("WARN", "could not measure"), name)
+
+    def test_check_aspect_is_the_displayed_frames(self):
+        """A114: the aspect row read the stored grid, so a 16:9 anamorphic file FAILed as 4:3."""
+        doc, _ = self.doc("check", self.anamorphic, "--platform", "youtube", "--aspect", "16:9", "--no-loudness")
+        self.assertEqual((self.rows(doc)["aspect"]["status"], self.rows(doc)["aspect"]["value"]), ("PASS", "16:9"))
+
+    def test_check_tp_without_lufs_measures_the_true_peak(self):
+        """A117: --platform custom --tp N never measured the true peak and reported 0 failed."""
+        doc, _ = self.doc("check", self.loud, "--platform", "custom", "--tp", "-6", ok_codes=(1,))
+        row = self.rows(doc)["true peak"]
+        self.assertEqual(row["status"], "FAIL", row)
+        self.assertTrue(row["value"].endswith("dBTP"), row)
+        self.assertNotIn("true peak", self.rows(self.doc("check", self.loud, "--platform", "custom")[0]))
+
+    def test_multicam_reports_an_unmeasured_drift_as_null_with_its_reason(self):
+        """A131: a camera whose drift --fix-drift could not measure was reported drift_ppm 0.0;
+        sync.py says null and drift_correction_skipped for the same case."""
+        other = self.work / "cam_b.mp4"
+        shutil.copy(self.clip, other)
+        doc, _ = self.doc("multicam", self.clip, other, "--fix-drift", "--offsets-only")
+        self.assertEqual(doc["drift_ppm"], [0.0, None])
+        self.assertEqual(doc["drift_skipped_reason"], [None, "too_short"])
+        self.assertIn("drift_correction_skipped", [s["code"] for s in doc["diagnostics"]["skipped"]])
+
+    def test_caption_size_used_is_null_until_a_fit_runs(self):
+        """A76: a --transcribe --dry-run fitted nothing (there are no cues yet) and reported the
+        requested size as size_used; a stated --size is still the size used."""
+        doc, _ = self.doc("caption", self.clip, "--transcribe", "--dry-run", "-o", "t.mp4")
+        self.assertIsNone(doc["caption"]["size_used"])
+        doc, _ = self.doc("caption", self.clip, "--transcribe", "--size", "20", "--dry-run", "-o", "t.mp4")
+        self.assertEqual(doc["caption"]["size_used"], 20)
+
+    def test_caption_cue_fit_scope_on_the_plain_burn_is_reported_as_file(self):
+        """A67: --fit-size-scope cue does nothing on the plain SRT burn (one FontSize), and the
+        result said fit_scope: cue."""
+        cues = self.work / "cues.txt"
+        cues.write_text("0-2 A short cue\n2-4 " + "a much longer cue that needs a smaller size " * 3 + "\n", encoding="utf-8")
+        doc, _ = self.doc("caption", self.clip, "--text", cues, "--fit-size-scope", "cue", "--dry-run", "-o", "c.mp4")
+        self.assertEqual(doc["caption"]["fit_scope"], "file")
+        self.assertTrue(any("--fit-size-scope cue" in n for n in doc.get("notes") or []), doc.get("notes"))
+        doc, _ = self.doc("caption", self.clip, "--text", cues, "--fit-size-scope", "cue", "--animate", "fade",
+                          "--dry-run", "-o", "c.mp4")
+        self.assertEqual(doc["caption"]["fit_scope"], "cue")
+
+    def test_caption_mux_reports_a_kept_tracks_own_default(self):
+        """A60: a subtitle track kept from the input was reported default: false whatever the
+        file said, and --default-track on a new track left two defaults."""
+        srt = self.work / "en.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+        subbed = self.work / "subbed.mkv"
+        ffmpeg("-i", self.clip, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt",
+               "-metadata:s:s:0", "language=eng", "-disposition:s:0", "default", subbed)
+        self.assertTrue(json.loads(tool("probe", subbed, "--json").stdout)["subtitle_stream_details"][0]["default"])
+        fr = self.work / "fr.srt"
+        fr.write_text("1\n00:00:00,000 --> 00:00:01,000\nBonjour\n", encoding="utf-8")
+        doc, _ = self.doc("caption", subbed, "--mode", "mux", "--srt", f"{fr}:fr", "-o", "m1.mkv")
+        self.assertEqual([t["default"] for t in doc["tracks"]], [True, False])
+        doc, _ = self.doc("caption", subbed, "--mode", "mux", "--srt", f"{fr}:fr", "--default-track", "fr", "-o", "m2.mkv")
+        self.assertEqual([t["default"] for t in doc["tracks"]], [False, True])
+        written = json.loads(tool("probe", self.work / "m2.mkv", "--json").stdout)["subtitle_stream_details"]
+        self.assertEqual([s["default"] for s in written], [False, True])
+        # the language is asked of the tracks this run adds: the input's own default does not
+        # make --default-track de true when nothing added is tagged de
+        doc, _ = self.doc("caption", subbed, "--mode", "mux", "--srt", f"{fr}:fr", "--default-track", "de", "-o", "m3.mkv", ok_codes=(1,))
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertFalse((self.work / "m3.mkv").exists())
+        # clearing a kept track's default leaves its other flags (forced) as the input had them
+        forced = self.work / "forced.mkv"
+        ffmpeg("-i", self.clip, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt",
+               "-disposition:s:0", "default+forced", forced)
+        self.doc("caption", forced, "--mode", "mux", "--srt", f"{fr}:fr", "--default-track", "fr", "-o", "m4.mkv")
+        flags = json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "s:0", "-show_entries", "stream_disposition=default,forced",
+             "-of", "json", str(self.work / "m4.mkv")], capture_output=True, text=True, check=True).stdout)["streams"][0]["disposition"]
+        self.assertEqual((flags["default"], flags["forced"]), (0, 1))
+
+    def test_render_dry_run_plans_a_speed_on_the_clips_length(self):
+        """A97: under --dry-run a clip's speed stage was planned from an invented 10 s; it is now the
+        clip's in..out, and a length that cannot be read is a recorded placeholder."""
+        proj = self.work / "speed.json"
+        proj.write_text(json.dumps({"clips": [{"src": str(self.clip), "in": 1, "out": 5, "speed": 2}]}), encoding="utf-8")
+        doc, proc = self.doc("render", proj, "-o", "speed.mp4", "--dry-run")
+        self.assertIn("--duration 2.000", proc.stderr)
+        proj.write_text(json.dumps({"clips": [{"src": str(self.nolength), "speed": 2}]}), encoding="utf-8")
+        doc, proc = self.doc("render", proj, "-o", "speed.mp4", "--dry-run")
+        self.assertIn("speed_length_placeholder", [s["code"] for s in doc["diagnostics"]["skipped"]])
+
+    def test_loudness_too_short_is_not_silent(self):
+        """A257: a clip shorter than one 400 ms gating block was called silent: loudness.py told the
+        caller to replace the audio, and export.py said output_audio_silent beside a measured peak."""
+        doc, _ = self.doc("loudness", self.short, "--measure-only")
+        self.assertEqual((doc["measured"]["silent"], doc["measured"]["too_short"], doc["measured"]["input_i"]), (False, True, None))
+        doc, _ = self.doc("loudness", self.short, "-o", "n.wav", ok_codes=(1,))
+        self.assertEqual(doc["error"]["reason"], "audio_too_short")
+        doc, _ = self.doc("export", self.short_av, "--preset", "x", "-o", "x.mp4")
+        codes = [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])]
+        self.assertNotIn("output_audio_silent", codes)
+        self.assertIn("loudness_not_measured", codes)
+        self.assertEqual((doc["loudness"]["lufs"], doc["loudness"]["too_short"]), (None, True))
+        self.assertIsInstance(doc["loudness"]["tp"], float)
+        self.assertFalse(doc["verified"])
+        doc, _ = self.doc("check", self.short_av, "--platform", "x")
+        self.assertEqual(self.rows(doc)["loudness"]["status"], "WARN")
+
+    def test_a_long_track_under_the_loudness_gate_is_not_called_too_short(self):
+        """Review of #490: -inf integrated loudness beside a finite peak was read as "shorter than
+        one 400 ms block". A long, very quiet track gives the same two numbers (every block is
+        under the absolute gate), so the length decides: it keeps the answers it had before."""
+        # 3 s of silence after a 1 ms tick at -45 dBFS: a true peak above SILENT_PEAK_DBFS, and
+        # every 400 ms block under the absolute gate (sine's own level is -18 dBFS, so -27 dB)
+        quiet = self.work / "quiet.wav"
+        ffmpeg("-f", "lavfi", "-i", "sine=f=2000:duration=0.001,volume=-27dB,apad=whole_dur=3", quiet)
+        doc, _ = self.doc("check", quiet, "--platform", "x", ok_codes=(0, 1))
+        rows = self.rows(doc)
+        # the two numbers the wrong branch keyed on, read back before the result is judged
+        self.assertGreater(float(rows["true peak"]["value"].split()[0]), -50.0)
+        self.assertEqual(rows["loudness"]["value"], "-inf LUFS")
+        self.assertEqual(rows["loudness"]["status"], "FAIL")
+        doc, _ = self.doc("loudness", quiet, "--measure-only")
+        self.assertEqual((doc["measured"]["silent"], doc["measured"].get("too_short", False)), (True, False))
+        quiet_av = self.work / "quiet_av.mov"
+        ffmpeg("-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-i", quiet, "-t", "3", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", quiet_av)
+        doc, _ = self.doc("export", quiet_av, "--preset", "x", "-o", "quiet_x.mp4")
+        self.assertFalse((doc.get("loudness") or {}).get("too_short", False))
+
+    def test_caption_with_the_callers_ass_claims_no_fit_scope(self):
+        """Review of #490: with the caller's own --ass the sizes are the file's (styles, per-cue
+        overrides), so --fit-size-scope cue is neither applied nor reported as file-scoped."""
+        ass = self.work / "own.ass"
+        ass.write_text("[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 240\n\n[V4+ Styles]\n"
+                       "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+                       "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
+                       "MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,"
+                       "10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                       "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\\fs30}Hello\n", encoding="utf-8")
+        doc, _ = self.doc("caption", self.clip, "--ass", ass, "--fit-size-scope", "cue", "-o", "own_ass.mp4")
+        self.assertIsNone(doc["caption"]["fit_scope"])
+        self.assertTrue(any("--fit-size-scope cue was not applied" in n for n in doc.get("notes", [])), doc.get("notes"))
+
+    def test_loudnorm_mode_matches_what_ffmpeg_reports_and_the_note_names_it(self):
+        """A111: the shortfall note always blamed encoder overshoot, also on a lossless output where
+        loudnorm had fallen back to dynamic mode. loudnorm_mode() is loudnorm's own rule; it is
+        compared here with the normalization_type this ffmpeg prints."""
+        sys.path.insert(0, str(SCRIPTS))
+        import loudness as _loudness
+        src = self.work / "tone6.wav"
+        ffmpeg("-f", "lavfi", "-i", "sine=f=440:duration=6", str(src))
+        for stats in ({"input_i": "-21", "input_tp": "-18", "input_lra": "0", "input_thresh": "-31"},
+                      {"input_i": "-21", "input_tp": "-18", "input_lra": "1", "input_thresh": "-31"},
+                      {"input_i": "-21", "input_tp": "-3", "input_lra": "1", "input_thresh": "-31"},
+                      {"input_i": "-21", "input_tp": "-18", "input_lra": "15", "input_thresh": "-31"}):
+            af = (f"loudnorm=I=-14:TP=-1:LRA=11:measured_I={stats['input_i']}:measured_TP={stats['input_tp']}"
+                  f":measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}:offset=0:linear=true"
+                  ":print_format=json")
+            err = sh("ffmpeg", "-hide_banner", "-nostdin", "-i", src, "-af", af, "-f", "null", "-").stderr
+            said = re.search(r'"normalization_type"\s*:\s*"(\w+)"', err).group(1)
+            self.assertEqual(_loudness.loudnorm_mode(stats, -14, -1, 11), said, stats)
+        spiky = self.work / "spiky.wav"
+        ffmpeg("-f", "lavfi", "-i", "anoisesrc=d=8:a=0.02,volume='if(lt(mod(t,1),0.05),30,1)':eval=frame", "-ar", "48000", str(spiky))
+        doc, _ = self.doc("loudness", spiky, "-o", "spiky_n.wav")
+        self.assertEqual(doc["result"]["loudnorm_mode"], "dynamic")
+        self.assertIn("dynamic mode", doc["result"].get("note", ""))
+        self.assertNotIn("overshoot", doc["result"].get("note", ""))
+
+    def test_a_start_past_the_end_is_refused(self):
+        """A172: overlay.py and graphics.py completed verified: true with nothing drawn when --start
+        was past the clip's end (overlay --place already refused the same case)."""
+        for name, args in (("overlay", ["--text", "hi"]), ("graphics", ["--template", "title", "--title", "T"])):
+            doc, _ = self.doc(name, self.clip, *args, "--start", "9", "-o", f"{name}_late.mp4", "--dry-run", ok_codes=(1,))
+            self.assertEqual(doc["error"]["kind"], "input", name)
+            self.assertIn("end of the video", doc["error"]["message"], name)
+
+    def test_pad_records_the_even_scale_it_adds(self):
+        """A239: pad.py scaled an odd-sized source with sound to even without recording it."""
+        odd = self.work / "odd.mkv"
+        # testsrc2 rounds its size to even, so the odd frame is scaled to and stored as 4:4:4
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:d=1", "-f", "lavfi", "-i", "sine=duration=1",
+               "-vf", "scale=161:91,format=yuv444p", "-c:v", "ffv1", "-c:a", "flac", "-shortest", str(odd))
+        v = json.loads(tool("probe", odd, "--json").stdout)["video"]
+        self.assertEqual((v["width"], v["height"]), (161, 91))
+        doc, _ = self.doc("pad", odd, "--end", "0.5", "-o", "odd_pad.mp4", "--dry-run")
+        self.assertIn("odd_dimensions_scaled_even", [f["code"] for f in doc["diagnostics"]["fallbacks"]])
+
+    def test_a_stop_says_nothing_was_written_only_when_nothing_is_on_disk(self):
+        """A182: every tool but export and render said "nothing was written" when stopped after it
+        had written its output."""
+        runner = sys.modules["_common.runner"]
+        saved = (list(_common.STATE.delivered), set(_common.STATE.written))
+        try:
+            _common.STATE.delivered = []
+            _common.STATE.written = set()
+            self.assertEqual(runner.kept_clause(), "nothing was written")
+            _common.STATE.written = {os.path.realpath(self.clip), os.path.realpath(self.work / "gone.mp4")}
+            clause = runner.kept_clause()
+            self.assertNotIn("nothing was written", clause)
+            self.assertIn(os.path.realpath(self.clip), clause)
+            self.assertNotIn("gone.mp4", clause)
+        finally:
+            _common.STATE.delivered, _common.STATE.written = saved
+
+    def test_verify_ignores_dry_run_and_says_so(self):
+        """A240: verify.py --dry-run ran every step and wrote its outputs, and said dry_run: true."""
+        doc, _ = self.doc("verify", self.clip, "--quick", "--out", self.work / "verify_out", "--dry-run", ok_codes=(0, 1))
+        self.assertFalse(doc["dry_run"])
+        self.assertTrue(any("--dry-run is ignored" in n for n in doc.get("notes") or []), doc.get("notes"))
+
+    def test_contract_dry_run_and_commands_claims_are_as_narrow_as_the_code(self):
+        """A237: report's dry-run note said contact-sheet measurements run (report draws no sheet
+        and records the skip). A241: `commands` was "every ffmpeg command line planned or run",
+        but measurement passes and batch's steps are not listed."""
+        note = _contract.DRY_RUN_ANALYSIS["report"]
+        self.assertNotIn("contact-sheet measurements run", note)
+        self.assertIn("report_section_dry_run", note)
+        base = _contract.output_schema("cut", {})["properties"]["commands"]["description"]
+        self.assertFalse(base.startswith("every"), base)
+        self.assertIn("batch.py lists none", base)
+
+    @unittest.skipIf(platform.system() == "Windows", "the ffmpeg wrapper is a #!/bin/sh shim on a POSIX-only PATH")
+    def test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis(self):
+        """A236/A193: metadata --auto-chapters, cut --snap beats, render and batch ran ffmpeg
+        decodes under --dry-run while the contract said ffmpeg_execution "none". The list is now
+        derived from what each tool does: an ffmpeg first on PATH logs every call that reads an
+        input (-i) and runs the real one, every tool with --dry-run runs a case (a tool with no case
+        fails the test), and a tool that decoded must be in DRY_RUN_ANALYSIS (probe: its note)."""
+        real = shutil.which("ffmpeg")
+        shim = self.work / "decode_shim"
+        shim.mkdir(exist_ok=True)
+        log = self.work / "decodes.log"
+        (shim / "ffmpeg").write_text('#!/bin/sh\nfor a in "$@"; do if [ "$a" = "-i" ]; then echo "$FFSKILL_CASE" >> '
+                                     f'"{log}"; break; fi; done\nexec "{real}" "$@"\n')
+        (shim / "ffmpeg").chmod(0o755)
+        w, c = self.work, self.clip
+        b = w / "dry_b.mp4"
+        shutil.copy(c, b)
+        logo = w / "dry_logo.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(logo))
+        cues = w / "dry_cues.txt"
+        cues.write_text("0-2 Hello\n2-4 World\n", encoding="utf-8")
+        proj = w / "dry_project.json"
+        proj.write_text(json.dumps({"clips": [{"src": str(w / "beat.mp4"), "in": 1.1, "out": 3.2}], "snap": {"to": "beats"}}), encoding="utf-8")
+        batch_in = w / "dry_batch_in"
+        batch_in.mkdir(exist_ok=True)
+        shutil.copy(c, batch_in / "a.mp4")
+        recipe = w / "dry_recipe.json"
+        recipe.write_text(json.dumps({"steps": [["loudness.py", "{in}", "-o", "{out}"]], "output_dir": str(w / "dry_batch_out")}),
+                          encoding="utf-8")
+        o = lambda ext="mp4": ["-o", str(w / "dry_out" / f"x.{ext}")]  # noqa: E731
+        # a click every 0.5 s: --snap beats refuses a clip with no beat grid, and a refused case
+        # decodes but is not the tool's completed dry run
+        beat = w / "beat.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi",
+               "-i", "aevalsrc='sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.05)':d=8", "-t", "8",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", beat)
+        cases = {
+            "probe": [c], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
+            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
+            "metadata": [c, "--title", "t", *o()], "metadata --auto-chapters": [c, "--auto-chapters", *o()],
+            "caption": [c, "--text", cues, *o()], "overlay": [c, "--image", logo, *o()],
+            "graphics": [c, "--template", "title", "--title", "T", *o()], "audio": [c, "--voice", "light", *o()],
+            "loudness": [c, *o()], "silence": [c, *o()], "join": [c, b, *o()], "export": [c, "--preset", "x", *o()],
+            "scenes": [c], "look": [c, *o("png")], "report": ["--after", c, *o("html")],
+            "cropdetect": [c, "--seconds", "1", "--samples", "1"],
+            "crop": [c, "--x", "0", "--y", "0", "--width", "100", "--height", "60", *o()], "deinterlace": [c, *o()],
+            "denoise": [c, *o()], "freeze": [c, "--at", "1", "--hold", "1", *o()], "loop": [c, "--times", "2", *o()],
+            "pad": [c, "--end", "1", *o()], "proxy": [c, *o()],
+            "redact": [c, "--x", "0", "--y", "0", "--width", "100", "--height", "60", *o()], "reverse": [c, *o()],
+            "speedramp": [c, "--segment", "0-6:2", *o()], "stabilize": [c, *o()], "straighten": [c, "--degrees", "2", *o()],
+            "sync": [c, b], "multicam": [c, b, "--switch", "0-2:0,2-4:1", *o()],
+            "broll": [c, "--insert", b, "--at", "1", "--duration", "1", *o()], "waveform": [c, *o()],
+            "grid": [c, b, "--cols", "2", "--rows", "1", *o()], "insert": [logo, "--duration", "1", *o()],
+            "color": [c, "--correct", "--contrast", "1.1", *o()], "sphere": [c, *o()],
+            "background": ["--duration", "1", "--width", "320", "--height", "240", *o()],
+            "render": [proj, *o()], "batch": [batch_in, "--recipe", recipe],
+        }
+        frames = w / "dry_frames"
+        frames.mkdir(exist_ok=True)
+        for i in range(3):
+            shutil.copy(logo, frames / f"f{i:03d}.png")
+        cases["sequence"] = ["--dir", frames, "--pattern", "f%03d.png", *o()]
+        tools_with_dry_run = {n for n, s in self.contract_tools().items() if s["supports_dry_run"]}
+        self.assertEqual(tools_with_dry_run - {k.split()[0] for k in cases}, set(), "a tool with --dry-run has no case here")
+        decoded = set()
+        for label, args in cases.items():
+            name = label.split()[0]
+            shutil.rmtree(w / "dry_out", ignore_errors=True)
+            (w / "dry_out").mkdir()
+            if log.exists():
+                log.unlink()
+            env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", FFSKILL_CASE=label)
+            proc = tool(name, *map(str, args), "--dry-run", "--json", env=env, check=False, cwd=w)
+            self.assertFalse(proc.stdout.strip() == "", f"{label}: no document\n{proc.stderr[-800:]}")
+            self.assertEqual(sorted(p.name for p in (w / "dry_out").iterdir()), [], f"{label} --dry-run wrote files")
+            self.assertFalse((w / "dry_batch_out").exists(), f"{label} --dry-run made batch's output_dir")
+            # a refused case writes nothing and decodes nothing either: it would count as coverage.
+            # A completed check whose rows FAIL is a verification result, not a refusal.
+            kind = (json.loads(proc.stdout).get("error") or {}).get("kind")
+            self.assertIn(kind, (None, "verification"), f"{label}: the dry run was refused or failed\n{proc.stdout[-800:]}")
+            if log.exists():
+                decoded.add(name)
+        allowed = set(_contract.DRY_RUN_ANALYSIS) | {"probe"}
+        self.assertEqual(decoded - allowed, set(), "tools that decode under --dry-run but are not in DRY_RUN_ANALYSIS")
+        # and the four the audit named do decode in the modes their notes name
+        self.assertTrue({"metadata", "cut", "render", "batch"} <= decoded, decoded)
+
+    @staticmethod
+    def contract_tools():
+        return {t["name"]: t for t in json.loads(tool("_contract", "--json").stdout)["tools"]}
 
 
 if __name__ == "__main__":
