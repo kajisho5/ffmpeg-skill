@@ -19,7 +19,8 @@ prompt in PROMPTS_JSON (default evals/agent_prompts_25.json):
   must_not_write a file that must not appear in .after (a refused/handoff run renders nothing)
   record_only    routing is recorded, verdict 'recorded' instead of pass/fail
 
-A missing run directory is MISSING, never a crash.
+A missing run directory is MISSING, never a crash. A run whose log holds no command, no tool
+output and no report is NOT_RUN: the agent never started, which says nothing about routing.
 """
 import json
 import re
@@ -30,8 +31,15 @@ W = Path(__file__).resolve().parent
 
 
 def load_run(d: Path):
-    """(commands, tool_outputs, final_report) from a run folder."""
+    """(commands, tool_outputs, final_report, paired) from a run folder.
+
+    `paired` is the tool output of each command, in the commands' order (None where the log holds
+    no result for one), matched by the tool_use id; or None when the log carries no ids (a plain
+    transcript.txt). Counting was not enough: `tool_outputs` holds every tool's result, so one
+    Read or Write call made the two lists differ in length and a result_expect check read
+    whichever tool printed a document last."""
     cmds, outs, final = [], [], ""
+    ids, by_id = [], {}
     jl = d / "transcript.jsonl"
     if jl.exists():
         for line in jl.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -47,20 +55,23 @@ def load_run(d: Path):
             for c in content:
                 if c.get("type") == "tool_use" and c.get("name") == "Bash":
                     cmds.append((c.get("input") or {}).get("command", ""))
+                    ids.append(c.get("id"))
                 elif c.get("type") == "tool_result":
                     body = c.get("content")
                     if isinstance(body, list):
                         body = "\n".join(x.get("text", "") for x in body if isinstance(x, dict))
                     outs.append(body or "")
+                    if c.get("tool_use_id"):
+                        by_id[c["tool_use_id"]] = body or ""
                 elif c.get("type") == "text" and ev.get("type") == "assistant":
                     final = c.get("text") or final
-        return cmds, outs, final
+        return cmds, outs, final, ([by_id.get(i) for i in ids] if all(ids) else None)
     tx = d / "transcript.txt"
     if tx.exists():
         text = tx.read_text(encoding="utf-8", errors="replace")
         cmds = [m.group(1) for m in re.finditer(r"^\$ (.+)$", text, re.M)]
         rep = text.split("\n## Report\n", 1)
-        return cmds, [rep[0]], rep[1] if len(rep) > 1 else ""
+        return cmds, [rep[0]], rep[1] if len(rep) > 1 else "", None
     return None
 
 
@@ -94,7 +105,11 @@ def grade(p, d: Path):
     run = load_run(d)
     if run is None:
         return {"id": p["id"], "verdict": "MISSING"}
-    cmds, outs, final = run
+    cmds, outs, final, paired = run
+    if not cmds and not final and not any(outs):
+        # A log with nothing in it is an agent that never started (a refused sandbox, a missing
+        # CLI), not an agent that routed wrongly: no pass, no fail, and no 'recorded' either.
+        return {"id": p["id"], "verdict": "NOT_RUN"}
     cmdtext = "\n".join(cmds)
     alltext = "\n".join([cmdtext, *outs, final])
     fails = []
@@ -111,7 +126,10 @@ def grade(p, d: Path):
     doc = None
     if re_exp:
         tool = re_exp.get("tool")
-        tool_outs = [o for c, o in zip(cmds, outs) if tool + ".py" in c and "--json" in c] if len(cmds) == len(outs) else outs
+        if paired is not None:
+            tool_outs = [o for c, o in zip(cmds, paired) if o and tool + ".py" in c and "--json" in c]
+        else:
+            tool_outs = outs
         docs = result_docs(tool_outs)
         doc = docs[-1] if docs else None
         if doc is None:

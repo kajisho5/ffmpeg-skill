@@ -5,7 +5,7 @@ assume the skill is installed at `~/.claude/skills/ffmpeg-skill`; shorten with
 `S=~/.claude/skills/ffmpeg-skill/scripts`.
 
 Run `bash examples/make_demo.sh` to generate sample footage from nothing and
-push it through every script (outputs land in `examples/out/`).
+push it through 13 of the 42 scripts (outputs land in `examples/out/`; a second run replaces them).
 
 ---
 

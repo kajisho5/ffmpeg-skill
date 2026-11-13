@@ -7,10 +7,11 @@ Two kinds of eval live here:
 
 `tasks.json` + `run.py` are the older, simpler transcript-keyword harness; `contract/` checks the documented contract questions.
 
-## The 108-prompt agent set
+## The 110-prompt agent set
 
-`agent_prompts_24.json` (97 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
-108-prompt set: the original 50 (39 + 11), plus 18 multilingual prompts in nine more languages,
+`agent_prompts_24.json` (99 prompts) and `agent_prompts_exec.json` (11 prompts) together make the
+110-prompt set (108 until eval 23b added `kw1` and `ff1`): the original 50 (39 + 11), plus 18
+multilingual prompts in nine more languages,
 8 delivery/template prompts, 6 emoji/shaping prompts, the 8 long-form prompts 1.16 added, the
 13 prompts 1.17 added and the 8 prompts (`b1`–`b8`) 1.18 added — minus three retired duplicates
 (`th2`, `el2`, `it2`, the "download this
@@ -237,14 +238,18 @@ usable from any agent harness that can (a) hand the skill's prompts to an agent 
 `ffmpeg-skill` scripts on `PATH`/importable, and (b) save what the agent did to a text file.
 
 1. **Get the prompts.** `python3 evals/run.py --list` prints the 29-prompt routing set
-   (`tasks.json`); add `--prompts evals/agent_prompts_24.json` (97 prompts) or
+   (`tasks.json`); add `--prompts evals/agent_prompts_24.json` (99 prompts) or
    `--prompts evals/agent_prompts_exec.json` (11 prompts, real execution required) for the fuller
    sets. Each line is `<id>. <request>  -> <expected script(s)>`.
 2. **Run each prompt in your own harness.** Paste the `request`/`prompt` text to your Cursor or
    Codex session with `ffmpeg-skill` available the way that harness exposes local tools (MCP
    server, a `scripts/*.py` CLI on `PATH`, or however it drives shell commands) exactly as you
    normally would. Where a prompt says `OUTDIR`, substitute a real directory you created for the
-   run; where a prompt has a `fixtures` or `media_fixtures` key (see above), write those files
+   run. 80 of the 99 prompts in `agent_prompts_24.json`, and all 11 in `agent_prompts_exec.json`,
+   also name an input under `/home/user/ffmpeg-skill/tests/out/` (`source.mp4`, `lavmic.wav`,
+   `gappy.mp4`, `cues.txt`, ...): that is the maintainer's checkout. Those files are the test
+   suite's fixtures, so run `python3 tests/test_all.py` once in your checkout to create them, and
+   replace `/home/user/ffmpeg-skill` in the prompt text with your checkout's path. Where a prompt has a `fixtures` or `media_fixtures` key (see above), write those files
    into that directory first — `evals/write_fixtures.py OUTDIR <id>` does this from any Python
    environment, no agent needed.
 3. **Save the transcript.** Capture whatever your harness logs for that turn — the commands it
@@ -255,7 +260,7 @@ usable from any agent harness that can (a) hand the skill's prompts to an agent 
 
    ```bash
    python3 evals/run.py RESULTS                                              # tasks.json (default)
-   python3 evals/run.py RESULTS --prompts evals/agent_prompts_24.json        # the 97-prompt set
+   python3 evals/run.py RESULTS --prompts evals/agent_prompts_24.json        # the 99-prompt set
    python3 evals/run.py RESULTS/17.txt --task 17                             # one transcript
    python3 evals/run.py RESULTS --json > my-vendor-results.json              # machine-readable
    ```
