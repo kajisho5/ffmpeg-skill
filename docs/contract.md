@@ -878,7 +878,10 @@ An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 c
 (`_common.runner.FFMPEG_FAILURE_CLASSES`): `disk_full` ("No space left on device"),
 `encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
 get one that has it), `input_incomplete` ("moov atom not found": a cut-off recording or an
-unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. A tool that copies the
+unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. After 3.8.4 an encoder
+or a filter that the command names and the build's own list lacks is refused with that same
+`kind`, `reason` and `details.name` before ffmpeg runs, under `--dry-run` too
+(`_common.runner._check_build_components()`); a list that could not be read refuses nothing. A tool that copies the
 source's subtitle and data streams retried the whole encode without them after any failure; it
 now retries only when the source has such a stream and the failure is none of these.
 

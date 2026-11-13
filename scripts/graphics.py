@@ -34,6 +34,8 @@ import sys
 from typing import List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
+from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
+from _common.drawtext import shaping_refusal
 from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
@@ -288,8 +290,7 @@ def main(force_route: Optional[str] = None) -> int:
                 f"({support['detail']}), so they would come out as empty boxes -- pass --emoji-assets DIR "
                 "for colour, or --emoji none", kind="input")
     if args.text_render == "drawtext" and shaping:
-        die(f"{LANGUAGE_NAMES.get(_script, _script)} text cannot be shaped by drawtext on any ffmpeg "
-            "build (the marks are reordered by harfbuzz, which drawtext does not use): drop "
+        die(f"{LANGUAGE_NAMES.get(_script, _script)} text {shaping_refusal(_script)}: drop "
             "--text-render drawtext to render it through libass, or draw it with caption.py",
             kind="input")
     route = "ass" if (args.text_render == "ass" or
@@ -301,14 +302,23 @@ def main(force_route: Optional[str] = None) -> int:
     # mode "mono" from the drawtext route is a claim the frame does not keep. libass DOES have a
     # fallback chain, so an auto run routes there instead; a run that pinned --text-render
     # drawtext degrades to "none" (strip) and says so rather than drawing tofu.
-    if emoji_mode == "mono" and route == "drawtext":
+    # "color" as much as "mono" (#403): an auto run on a build whose libass draws colour reported
+    # mode color from the drawtext route, which drew the empty box.
+    emoji_count = len(emoji_clusters(all_text))
+    emoji_names = sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)})
+    not_drawn = None
+    if emoji_mode == "mono" and args.emoji == "mono" and support.get("libass_color"):
+        emoji_mode = "color"
+        warn(emoji_mono_on_colour_note(support), "emoji_mono_drawn_in_colour")
+    if emoji_mode in ("mono", "color") and route == "drawtext":
         if args.text_render == "auto":
             route = "ass"
         else:
             emoji_mode = "none"
-            info("emoji: --text-render drawtext has no font fallback chain, so the cluster would "
-                 "be drawn as an empty box -- stripped from the text instead "
-                 "(--text-render auto renders it monochrome through libass)")
+            not_drawn = "--text-render drawtext has no font fallback chain, so each would be an empty box (--text-render auto draws them through libass)"
+    elif emoji_mode == "none" and args.emoji == "auto":
+        not_drawn = ("libass draws no emoji glyph on this build (an empty box at best)"
+                     if support.get("libass_glyph") is False else "no face here draws them")
     if emoji_mode == "mono":
         warn("emoji rendered monochrome (no colour path on this ffmpeg; "
              "--emoji-assets DIR for colour). " + support["detail"], "emoji_monochrome")
@@ -329,7 +339,13 @@ def main(force_route: Optional[str] = None) -> int:
             setattr(args, _attr, _strip_emoji(getattr(args, _attr, None)))
         all_text = " ".join(t for t in (args.name, args.title, args.subtitle, args.text,
                                         args.top, args.bottom) if t)
-        info("emoji: stripped from the drawn text (--emoji none)")
+        if not_drawn:
+            # an auto or rerouted run did not get --emoji none: it says what it left out and why,
+            # as caption.py does (emoji_not_drawn), and counts what it left out
+            warn(f"emoji: {emoji_count} left out of the drawn text: {not_drawn} -- pass --emoji-assets DIR to draw them as PNGs",
+                 "emoji_not_drawn", count=emoji_count, reason=support.get("detail"))
+        else:
+            info("emoji: stripped from the drawn text (--emoji none)")
     elements: List[dict] = []
 
     def ass_font_family() -> "Optional[str]":
@@ -712,10 +728,10 @@ def main(force_route: Optional[str] = None) -> int:
                 f"(limit {_max}, --emoji-max raises it); ffmpeg's filter graph and the "
                 "per-frame cost both grow linearly -- split the job, or use --emoji none", kind="input")
         if missing:
-            warn("no PNG in the assets directory for " + ", ".join(missing), "emoji_assets_missing", missing=list(missing))
+            warn(emoji_missing_asset_note(list(missing), support), "emoji_assets_missing", missing=list(missing))
         if emoji_mode:
-            emoji_result = {"mode": emoji_mode, "count": len(emoji_clusters(all_text)),
-                            "clusters": sorted(seen) or sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)}),
+            emoji_result = {"mode": emoji_mode, "count": emoji_count,
+                            "clusters": sorted(seen) or emoji_names,
                             "assets": emoji_assets, "missing": missing,
                             "overlays": len(emoji_overlays)}
         ass_path = args.write_ass or os.path.splitext(output)[0] + "_gfx.ass"
@@ -730,8 +746,8 @@ def main(force_route: Optional[str] = None) -> int:
             text_overlay_ass(elements, play_w=W, play_h=H, path=ass_path, fonts_dir=ass_fonts_dir())
             info(f"wrote {ass_path} ({len(elements)} text elements, rendered through libass)")
     elif emoji_mode:
-        emoji_result = {"mode": emoji_mode, "count": len(emoji_clusters(all_text)),
-                        "clusters": sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)}),
+        emoji_result = {"mode": emoji_mode, "count": emoji_count,
+                        "clusters": emoji_names,
                         "assets": emoji_assets, "missing": [], "overlays": 0}
 
     # The boxes with chroma (layers) go under the text, and the picture they and a converted colour

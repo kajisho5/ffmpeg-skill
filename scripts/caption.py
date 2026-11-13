@@ -46,6 +46,7 @@ from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_unit
 from _ass_overlay import (EMOJI_SENTINEL, emoji_placeholder, ass_escape, ass_escape_markup,
                           strip_srt_markup, reinsert_srt_markup, carry_srt_markup, srt_alignment)
 from _common.emit import refuse  # noqa: E402
+from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
 from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, ADVANCE_EM, LATIN_EM, NO_SPACE_SCRIPTS, _char_em, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, label_chain, layer_base_chain, load_brand, overlay_format, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_srt_time, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, x264_args, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
@@ -103,6 +104,31 @@ def cue_times_match(line: str) -> "Optional[re.Match[str]]":
 # an SRT timing line: the times alone, the cue text on the lines after it
 DROP_FRAME_RE = re.compile(r"^\s*\d+:\d{2}:\d{2};\d+")
 SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[,.]\d+\s*$")
+# the same line as WebVTT may write it, without the hours: `00:01.000 --> 00:02.000`
+TIMING_ONLY_RE = re.compile(r"^\s*(?:\d+:)?\d{1,2}:\d{2}[,.]\d+\s*-->\s*(?:\d+:)?\d{1,2}:\d{2}[,.]\d+\s*$")
+ASS_SECTIONS = ("[script info]", "[v4+ styles]", "[v4 styles]", "[events]")
+
+
+def refuse_not_a_cue_file(path: str, lines: List[str]) -> None:
+    """--text given a file in another format (#404): read as a cue file, a WebVTT header, an ASS
+    section or a JSON document was burned in line by line, auto-timed 3 s apart. Named by what the
+    file starts with; the SRT timing-line check below catches a file with no such header."""
+    head = next((ln.strip() for ln in lines if ln.strip()), "")
+    cue_shape = "A cue file has one cue per line: `START-END text` (or text alone, timed --auto-seconds apart)"
+    if head.upper().startswith("WEBVTT"):
+        die(f"--text: {path} is a WebVTT subtitle file (it starts with {head[:20]!r}); pass it as --srt, which reads "
+            f"WebVTT (render.py: --srt, not --cues). {cue_shape}", kind="input")
+    if head.lower() in ASS_SECTIONS or head.startswith("Dialogue:"):
+        die(f"--text: {path} is an ASS/SSA subtitle file (it starts with {head[:20]!r}); pass it as --srt, which reads "
+            f"ASS (render.py: --srt, not --cues). {cue_shape}", kind="input")
+    if head[:1] in "{[":
+        try:
+            doc = json.loads("\n".join(lines))
+        except ValueError:
+            doc = None
+        if isinstance(doc, dict) or (isinstance(doc, list) and doc and isinstance(doc[0], (dict, list))):
+            die(f"--text: {path} is a JSON document, not a cue file. {cue_shape}. A whisper JSON is a transcript: "
+                "caption.py --transcribe writes the cues from the audio", kind="input")
 
 
 def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[float] = None) -> List[Tuple[float, float, str]]:
@@ -111,7 +137,12 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
     # split at "\n" only: splitlines() also breaks a cue at U+2028, U+0085, \v and \f, which
     # made the rest of the line an auto-timed cue of its own
     lines = read_text_or_die(path, "--text").split("\n")
+    refuse_not_a_cue_file(path, lines)
     for n, raw in enumerate(lines, 1):
+        if TIMING_ONLY_RE.match(raw) and not SRT_TIMING_RE.match(raw):
+            # WebVTT's short form (no hours), in a file without the WEBVTT header
+            die(f"--text: {path} is a subtitle file, not a cue file (line {n} is a timing line with no text: "
+                f"'{raw.strip()}'); pass it as --srt (render.py: --srt, not --cues)", kind="input")
         if SRT_TIMING_RE.match(raw):
             # a cue file puts the text on the line with its times; this line has the times alone, so
             # the file is an SRT. Read as a cue file, its numbers and timing lines would be burned in
@@ -257,6 +288,9 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
         die(f"--emoji mono: this ffmpeg draws no emoji glyph through libass ({support['detail']}), so "
             f"{len(clusters_all)} emoji would come out as empty boxes -- pass --emoji-assets DIR for colour, "
             "or --emoji none to leave them out of the drawn text", kind="input")
+    if want == "mono" and support.get("libass_color"):
+        mode = "color"
+        warn(emoji_mono_on_colour_note(support), "emoji_mono_drawn_in_colour")
     plan = {"mode": mode, "count": len(clusters_all),
             "clusters": sorted({emoji_codepoint_name(cl) for cl in clusters_all}),
             "assets": assets, "missing": [], "overlays": []}
@@ -354,8 +388,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
             "--emoji-max raises it); ffmpeg's filter graph and the per-frame cost both grow "
             "linearly -- split the job, or use --emoji none", kind="input")
     if plan["missing"]:
-        warn("no PNG in the assets directory for " + ", ".join(plan["missing"]) +
-             " -- those clusters are drawn by the text font instead", "emoji_assets_missing", missing=list(plan["missing"]))
+        warn(emoji_missing_asset_note(plan["missing"], support), "emoji_assets_missing", missing=list(plan["missing"]))
     plan["box_px"] = int(round(box_px))
     return out_cues, plan
 
@@ -1934,7 +1967,9 @@ def main() -> int:
             notes.append("emoji rendered monochrome (no colour path on this ffmpeg; "
                          "--emoji-assets DIR for colour)")
         if emoji_plan["mode"] == "none":
-            notes.append("emoji stripped from the drawn text (--emoji none)")
+            # --emoji none was asked for only when it was: an auto run that can draw none says that
+            notes.append("emoji stripped from the drawn text (--emoji none)" if getattr(args, "emoji", "auto") == "none" else
+                         "emoji left out of the drawn text: nothing here draws them (--emoji auto; the emoji_not_drawn warning says why)")
         if emoji_plan["missing"]:
             notes.append("no PNG asset for " + ", ".join(emoji_plan["missing"]))
         if notes:

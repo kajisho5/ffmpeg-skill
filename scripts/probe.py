@@ -73,6 +73,14 @@ def main() -> int:
         for r in results:
             if r.get("video"):
                 r["levels"] = analyze_levels(r["file"])
+                transfer = r["video"].get("color_transfer")
+                if r["video"].get("hdr") and "error" not in r["levels"]:
+                    # the guess is "flat and desaturated, yet tagged SDR": a PQ/HLG stream is not
+                    # tagged SDR, and its code values were read as if they were (#403)
+                    r["levels"]["looks_like_log"] = None
+                    r["levels"]["reason"] = "not_measured: the stream is tagged HDR (%s), and the Log guess is made for an SDR-tagged picture" % (transfer or r["video"].get("hdr_format") or "HDR")
+                    r["levels"]["note"] = ("the stream is tagged HDR (%s): these are its code values on an 8-bit scale, not display-referred SDR levels, "
+                                           "and whether it looks like Log was not judged" % (transfer or r["video"].get("hdr_format") or "HDR"))
 
     if args.field:
         for r in results:

@@ -84,6 +84,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.5 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-385--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
 - [After 3.8.6 — the contract says what a dry run decodes, and a pending input has no length (#466)](#after-386--the-contract-says-what-a-dry-run-decodes-and-a-pending-input-has-no-length-466)
 - [After 3.8.7 — render.py, batch.py and sequence.py, the audit's remaining findings (#458)](#after-387--renderpy-batchpy-and-sequencepy-the-audits-remaining-findings-458)
+- [After 3.8.8 — four old grouped issues, item by item (#402, #403, #404, #429)](#after-388--four-old-grouped-issues-item-by-item-402-403-404-429)
 <!-- contents:end -->
 
 ## Time limits
@@ -3904,3 +3905,68 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   value is dropped whole (A90). A pack writes into the directory of `-o`, which the reference now
   says (A86), and the reference lists the ten presets that turn `normalize` on and no `--codec`
   (A103); `examples/brand.json` lost a `loudness` block no tool reads (A107).
+
+## After 3.8.8 — four old grouped issues, item by item (#402, #403, #404, #429)
+
+- **A command that names an encoder or a filter the build lacks is refused in `run()`, not tool
+  by tool.** #402 listed some twenty tools; the cause they share is that nothing looked at the
+  command before ffmpeg did, so the dry run completed. `_check_build_components()` reads each
+  ffmpeg command as built: `-c:v`/`-c:a`/`-c:s` values after the last `-i` (one before an input
+  picks a decoder), and the filter names of `-vf`, `-af`, `-filter:v`, `-filter:a`,
+  `-filter_complex` and `-lavfi` (`graph_filter_names()`: split at `,` and `;` outside quotes and
+  escapes, labels dropped). It is `kind: ffmpeg` with `reason: encoder_missing` /
+  `filter_missing` and `details: {name}`, what the failed run already carried, so a caller keyed
+  on those sees the same refusal earlier; `--codec av1`/`prores` keep their own `missing_tool`
+  refusal, which is decided before a command exists. Left out on purpose: a `*_videotoolbox`
+  encoder (`--hw` has its own platform check and CPU retry), `copy`, a lavfi input and a
+  `-filter_complex_script`, every `run_analysis()` measurement (several callers take a failed
+  reading as "no reading": cropdetect's windows, `probe.py --analyze`; the others now carry the
+  cause through `ffmpeg_failure_extra()`), and any list that could not be read (an empty list
+  proves nothing; the read for this check is quiet and records no `ffmpeg_list_unreadable`).
+  `stabilize.py` asks for its two filters with `require_filter()` because its first pass is a
+  measurement. Not done: `render.py` still finds a missing drawtext at the stage that needs it,
+  after the earlier stages ran (its `--dry-run` finds it); `look.py` has no fallback for an HDR
+  source without zscale, so `report.py` has no HDR sheet there; `caption.py --mode mux` is still
+  listed as needing the subtitles filter and libx264, because `required` describes the default
+  mode and moving them would make doctor call a build usable on which the default fails. Tests:
+  `BuildComponentPreflightTests`.
+- **`audio_tracks_dropped` stays unreported under `--dry-run` outside `cut.py`.** It is the
+  comparison of the first input with the written file ("Not compared: ... a dry run", above);
+  `cut.py` reports its own from the plan.
+- **Under `--dry-run`, `probe(role="output")` is the stub whether or not a file is at the path.**
+  With `--overwrite` and an earlier run's file there, a dry run read that file as its result. `cut.py`'s `output_duration` is `null` in a dry run, as the contract said. Not done:
+  `cut.py --dry-run` still plans `mode: copy` for a copy the real run re-encodes when it lands
+  past `--tolerance`; where a copy lands is only known by making it. Tests: `DryRunOutputTests`.
+- **`cropdetect.py` measures at `round=2` and rounds a detected crop itself** (`round_rect()`,
+  the filter's own arithmetic, `--round 1` read as 16 and an odd value doubled as the filter
+  reads them), so a picture that reaches every edge is the frame, unrounded.
+  Test: `test_cropdetect_reports_a_bar_free_frame_as_the_frame_whatever_round_is`.
+- **`probe.py --analyze` makes no Log guess about an HDR stream**: `looks_like_log: null`,
+  `reason: not_measured: ...`; the numbers stay. Test:
+  `test_probe_analyze_does_not_call_an_hdr_stream_sdr`.
+- **A verification step with no expected value carries no `provenance`.** The field says where an
+  expected value came from; the `decode` step (does every stream decode) and export's
+  `key_fill_pair` (the two written files against each other) have none, and wrote `measurement`
+  and `output_measurement`, values the schema's enum does not have. Dropping the field, not adding
+  a value, keeps the enum's meaning. Test: `test_every_provenance_a_tool_writes_is_one_the_schema_lists`.
+- **`--emoji mono` on a build whose libass draws colour reports `mode: color`.** `mono` and
+  `color` build the same text, so nothing makes the glyph monochrome there; the result says what
+  is drawn and warns (`emoji_mono_drawn_in_colour`). `graphics.py` sends `color` through libass
+  as it sent `mono`. Tests: `EmojiClaimTests`.
+- **`caption.py --text` refuses a file that starts as WebVTT, ASS or JSON.** A first line in
+  brackets that is not JSON (`[Music]`) is still a cue. `metadata.py --chapters` drops one
+  separator (`-`, a dash, `|`, `:`) followed by a space from the start of a title. `join.py
+  --list` refuses concat directives rather than applying them: a trim is `cut.py`'s job, and a
+  list that trims would otherwise join untrimmed files. `color.py --lut` checks a `.cube` for
+  what lut3d needs (`LUT_3D_SIZE`, size^3 rows starting with three numbers) and leaves the other
+  LUT formats to ffmpeg. `--image` (overlay, waveform) takes what the image demuxers read; a
+  video or a GIF (one frame or many) is refused, as `-loop 1` always refused it, and `waveform.py` reads the plate under `--dry-run` too. `silence.py --words`
+  warns about timings past the input rather than refusing: a transcript longer than a trimmed
+  input is a caller's choice. Tests: `WrongFormatFileTests`, `WordsFileTests`.
+- **Seen, verified and left for their own change:** `broll.py --insert` with a still shows it for
+  one frame (the input has no `-loop 1`); `--font-file` given a file that is not a font draws a
+  fontconfig fallback with `font_used.substituted: false` (FFmpeg 6.1.1); unknown keys in a
+  `--brand` file are ignored; `report.py --pack` takes any Markdown with a table;
+  `independent_measurement` is in the provenance enum and no step writes it; and the four items of #429 (a step that writes without `{out}`, caption sidecars in
+  a batch, placeholder side inputs in the cache key, Ctrl-C during a render stage), each of
+  which changes the contract.

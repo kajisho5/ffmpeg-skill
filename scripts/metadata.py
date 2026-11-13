@@ -24,6 +24,7 @@ chapters.txt:
   1:03:00 Outro
 """
 import argparse
+import re
 import os
 import sys
 import tempfile
@@ -49,9 +50,18 @@ def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
         if not line or line.startswith("#"):
             continue
         parts = line.split(None, 1)
+        vtt_header = not entries and line.upper().startswith("WEBVTT")
+        if vtt_header or (len(parts) > 1 and parts[1].startswith("-->")):
+            # a WebVTT header or an SRT/WebVTT timing line: read as chapters, its cue numbers and
+            # times became chapter starts and the run failed on their order, never naming the file (#404)
+            what = "a WebVTT header" if vtt_header else "a subtitle timing line"
+            die(f"{path}:{n}: `{line[:60]}` is {what}, so this is an SRT/WebVTT subtitle file, "
+                "not a chapter list (one chapter per line: `0:00 Intro`)", kind="input")
         # chapter files carry no fps, so hh:mm:ss:ff needs its @fps suffix; time_arg() says so
         start = time_arg(parts[0], f"{path}:{n}")
-        title = parts[1].strip() if len(parts) > 1 else f"Chapter {len(entries) + 1}"
+        # `0:00 - Intro` (the form YouTube descriptions use): the separator is not part of the title
+        title = re.sub(r"^[-\u2013\u2014|:]\s+", "", parts[1].strip()) if len(parts) > 1 else ""
+        title = title or f"Chapter {len(entries) + 1}"
         if "\x00" in title:
             # FFmpeg ends a metadata value at NUL: "A\x00B" was written as "A", verified (the
             # sibling of A260 in render.py's inline chapters)

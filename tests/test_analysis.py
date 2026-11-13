@@ -4,6 +4,7 @@
     python3 tests/test_analysis.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import collections
 import json
 import os
 import re
@@ -1034,6 +1035,18 @@ class AnalysisTests(MediaFixtures):
         again = json.loads(script("sync.py", self.long_ref, out, "--fix-drift", "--json").stdout)
         self.assertClose(again["offset_seconds"], 0.0, 0.01)
         self.assertClose(again["drift"]["drift_ppm"], 0.0, 40.0)
+
+    def test_sync_drift_meaning_says_what_this_run_does(self):
+        """#403: `drift.meaning` ended "it will be resampled to match" in a run that only measures
+        (--fix-drift without --replace-audio or --trim-second writes nothing)."""
+        data = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--json").stdout)
+        self.assertIsNone(data["output"])
+        self.assertNotIn("will be resampled", data["drift"]["meaning"])
+        self.assertIn("nothing is resampled", data["drift"]["meaning"])
+        out = OUT / "drift_meaning.wav"
+        wrote = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--trim-second", "-o", out, "--json").stdout)
+        self.assertIn("is resampled to match", wrote["drift"]["meaning"])
+        self.assertNotIn("nothing is resampled", wrote["drift"]["meaning"])
 
     # ---------------------------------------------------------------- v0.3: look / silence / join / agent flags
     def test_look_contact_sheet_and_frames(self):
@@ -2108,6 +2121,64 @@ class GeometryAuditAnalysisTests(unittest.TestCase):
         green = self._rgb(OUT / "g411a_vfr_sheet.png", 2 + 2 * (tile_w + 2) + tile_w // 2, 60)
         self.assertGreater(green[1], 100, green)
         self.assertLess(green[2], 80, green)
+
+
+class NotMeasuredAnalysisTests(unittest.TestCase):
+    """#403: a result says what was measured. A picture that fills its frame is not a crop, and a
+    guess made for SDR-tagged pictures is not made about an HDR one."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "not_measured"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+
+    def clip(self, name, source, *extra):
+        p = self.dir / name
+        if not p.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", source, *extra, "-c:v", "libx264", "-pix_fmt", "yuv420p", p)
+        return p
+
+    def test_cropdetect_reports_a_bar_free_frame_as_the_frame_whatever_round_is(self):
+        """180 and 1080 are not multiples of 16: the filter's own rounding made a bar-free frame
+        read 320x176 (1920x1072), and the no-bars branch compared that with the source's size."""
+        full = self.clip("full_320x180.mp4", "testsrc2=s=320x180:r=30:d=2")
+        for extra in ([], ["--round", "16"], ["--round", "2"], ["--round", "32"]):
+            with self.subTest(round=extra):
+                data = json.loads(script("cropdetect.py", full, "--seconds", "1", "--samples", "2", "--json", *extra).stdout)
+                self.assertEqual(data["crop"], {"width": 320, "height": 180, "x": 0, "y": 0})
+                self.assertEqual((data["source_width"], data["source_height"]), (320, 180))
+        # a real bar is still rounded as the filter's round option rounds it: compared with the
+        # filter's own reading at that round, not with numbers pinned here
+        bars = self.clip("bars_320x180.mp4", "testsrc2=s=320x140:r=30:d=2", "-vf", "pad=320:180:0:20:black")
+        for rnd in (16, 4, 3, 1):  # the filter takes 1 as 16 and doubles an odd value
+            with self.subTest(bars_round=rnd):
+                data = json.loads(script("cropdetect.py", bars, "--seconds", "1", "--samples", "1", "--round", str(rnd), "--json").stdout)
+                proc = sh("ffmpeg", "-hide_banner", "-nostdin", "-t", "1", "-i", bars, "-vf", f"cropdetect=round={rnd}:reset=1", "-f", "null", "-")
+                w, h, x, y = collections.Counter(re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", proc.stderr)).most_common(1)[0][0]
+                self.assertEqual(data["crop"], {"width": int(w), "height": int(h), "x": int(x), "y": int(y)})
+                self.assertLess(data["crop"]["height"], 180)
+
+    def test_probe_analyze_does_not_call_an_hdr_stream_sdr(self):
+        if "libx265" not in sh("ffmpeg", "-hide_banner", "-encoders").stdout:
+            self.skipTest("this build has no libx265 to make the PQ input with")
+        pq = self.dir / "pq.mp4"
+        if not pq.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=2", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
+               "-tag:v", "hvc1", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+               "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error", pq)
+        levels = json.loads(script("probe.py", pq, "--analyze").stdout)["levels"]
+        self.assertIsNone(levels["looks_like_log"])
+        self.assertTrue(levels["reason"].startswith("not_measured:"), levels)
+        self.assertIn("tagged HDR", levels["note"])
+        self.assertNotIn("normal display-referred SDR", levels["note"])
+        self.assertIn("y_avg", levels, "the numbers are still the measurement")
+        self.assertNotIn("[Log?]", script("probe.py", pq, "--analyze", "--compact").stdout)
+        sdr = self.clip("full_320x180.mp4", "testsrc2=s=320x180:r=30:d=2")
+        levels = json.loads(script("probe.py", sdr, "--analyze").stdout)["levels"]
+        self.assertIs(levels["looks_like_log"], False)
+        self.assertNotIn("reason", levels)
 
 
 if __name__ == "__main__":

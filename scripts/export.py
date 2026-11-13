@@ -256,8 +256,9 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     # than the picture, and the key has none
     pair["duration"] = [round(v.get("duration") or v.get("tagged_duration") or 0, 3) for v in (fv, kv)]
     same = all(a == b and a not in (None, 0) for a, b in pair.values())
-    steps = [{"step": "key_fill_pair", "property": "frames_size_rate_length", "ok": same, "measured": pair,
-              "provenance": "output_measurement"}]
+    # the two written files against each other: no expected value, so no provenance (#403: it said
+    # "output_measurement", which is not one of the contract's values)
+    steps = [{"step": "key_fill_pair", "property": "frames_size_rate_length", "ok": same, "measured": pair}]
     key_level = _luma_stats(key)
     level = _alpha_compare(key_level, source_alpha)
     steps.append({"step": "key_level", "property": "key_mean_vs_source_alpha", "ok": level["ok"], "comparison": level,

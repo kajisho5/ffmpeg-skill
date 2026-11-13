@@ -278,10 +278,17 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     return 0
 
 
+# ffmpeg concat-demuxer directives other than `file`: they change what a `file` line plays
+CONCAT_DIRECTIVES = frozenset({"inpoint", "outpoint", "duration", "stream", "exact_stream_id", "file_packet_metadata",
+                               "file_packet_meta", "option", "stream_meta", "stream_codec", "stream_extradata", "chapter"})
+
+
 def read_list(path: str) -> List[str]:
     """--list FILE: one segment per line, in order, relative to the list file's own folder.
     Blank lines and # comments are ignored, and ffmpeg's concat-demuxer spelling
-    (`file 'part 01.wav'`) is accepted, so a list written for `ffmpeg -f concat` works as is."""
+    (`file 'part 01.wav'`, the `ffconcat version` header) is accepted, so a list written for
+    `ffmpeg -f concat` works as is unless it trims: `inpoint`, `outpoint`, `duration` and the other
+    directives are refused by name, since nothing here applies them."""
     # the shared reader: a BOM, CRLF and a file that is not UTF-8 are read or refused as every
     # other text input is, and a line ends at "\n" only
     text = read_text_or_die(path, "--list")
@@ -295,6 +302,15 @@ def read_list(path: str) -> List[str]:
             line = line[5:].strip()
             if len(line) >= 2 and line[0] == line[-1] and line[0] in "'\"":
                 line = line[1:-1].replace("'\\''", "'")
+        elif line.split()[0] == "ffconcat" and line.split()[1:2] == ["version"]:
+            continue  # the concat demuxer's header line names no file
+        elif line.split()[0] in CONCAT_DIRECTIVES and len(line.split()) > 1 and not os.path.exists(os.path.join(base, line)):
+            # only `file` lines are read: a directive was taken for a path, reported as a missing
+            # (or, under --dry-run, pending) input, and with --on-missing skip its trim was lost
+            die(f"--list {path}: `{line}` is an ffmpeg concat directive, which join.py does not apply: the list is "
+                "read for its `file` lines only", kind="input",
+                hint="trim a clip with cut.py first and list the cut file (inpoint/outpoint/duration), "
+                     "or remove the line")
         entries.append(line if os.path.isabs(line) else os.path.join(base, line))
     if not entries:
         # the failure this exists for: an upstream step produced nothing, and the join must
@@ -585,7 +601,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="*", help="two or more clips in order (or --list FILE)")
     ap.add_argument("--list", metavar="FILE", help="read the clips from FILE, one per line in order (paths relative to FILE; "
-                                                   "ffmpeg concat lines `file 'x.wav'` also accepted); an empty list is refused")
+                                                   "ffmpeg concat lines `file 'x.wav'` also accepted, other concat directives refused); an empty list is refused")
     ap.add_argument("--on-missing", choices=["fail", "skip"], default="fail",
                     help="a missing, empty or unreadable input: fail (default; every problem named at once) or skip "
                          "(join the rest; each skipped input is reported under `skipped`)")

@@ -4004,5 +4004,51 @@ class GeometryAuditTests(unittest.TestCase):
         self.assertLess(rgb[0], 80, rgb)
 
 
+class WordsFileTests(unittest.TestCase):
+    """#404: silence.py --words. The whisper.cpp document its own refusals tell a caller to make is
+    read, and word timings that lie past the input (milliseconds, another file's transcript) are said."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "words_file"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.src = cls.dir / "talk.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=4", "-f", "lavfi", "-i", "sine=f=300:d=4",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.src)
+
+    def run_filler(self, name, doc):
+        words = self.dir / name
+        words.write_text(json.dumps(doc), encoding="utf-8")
+        out = self.dir / (name + ".mp4")
+        out.unlink(missing_ok=True)
+        result = json.loads(script("silence.py", self.src, "--filler", "--filler-lang", "en", "--words", words, "-o", out,
+                                   "--dry-run", "--json").stdout)
+        self.assertFalse(out.exists())
+        return result
+
+    def test_a_whisper_cpp_document_is_read_and_timings_past_the_input_are_said(self):
+        tok = lambda text, a, b: {"text": text, "offsets": {"from": a, "to": b}}  # noqa: E731
+        cpp = {"result": {"language": "en"},
+               "transcription": [{"offsets": {"from": 0, "to": 3000}, "text": " hello um world",
+                                  "tokens": [tok("[_BEG_]", 0, 0), tok(" hello", 500, 900), tok(" um", 1500, 1900), tok(" world", 2500, 2900)]}]}
+        same = {"words": [{"word": "hello", "start": 0.5, "end": 0.9}, {"word": "um", "start": 1.5, "end": 1.9},
+                          {"word": "world", "start": 2.5, "end": 2.9}]}
+        got, want = self.run_filler("cpp.json", cpp), self.run_filler("words.json", same)
+        self.assertEqual(got["status"], "completed")
+        self.assertEqual(got["filler"]["removed"], want["filler"]["removed"])
+        self.assertEqual(len(want["filler"]["removed"]), 1, want["filler"])
+        self.assertNotIn("words_outside_input", [w["code"] for w in (got.get("diagnostics") or {}).get("warnings", [])])
+        # the same words in milliseconds: every one is past the 4 s input, which is said
+        ms = {"words": [{"word": w["word"], "start": w["start"] * 1000, "end": w["end"] * 1000} for w in same["words"]]}
+        late = self.run_filler("ms.json", ms)
+        warn = [w for w in late["diagnostics"]["warnings"] if w["code"] == "words_outside_input"]
+        self.assertEqual([(w["count"], w["words"]) for w in warn], [(3, 3)])
+        self.assertIn("milliseconds", warn[0]["message"])
+        self.assertIn("ms.json", warn[0]["message"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

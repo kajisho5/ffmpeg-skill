@@ -420,6 +420,41 @@ def legalize_report(standard: str, output: str) -> "tuple":
               "worst_frame": worst, "tolerance_pct": LEGALIZE_TOLERANCE_PCT}])
 
 
+def refuse_bad_cube(path: str) -> None:
+    """--lut given a .cube that holds no complete 3D LUT (#404): lut3d failed on it with "Invalid
+    data found when processing input", which reads as an unreadable video and got that hint. Only
+    .cube is checked (lut3d's other formats are left to it), by what lut3d itself needs: a
+    LUT_3D_SIZE line and size^3 rows that start with three numbers."""
+    if os.path.splitext(path)[1].lower() != ".cube":
+        return
+    size = rows = 0
+    one_d = False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                words = line.split()
+                if not words or words[0].startswith("#"):
+                    continue
+                if words[0] == "LUT_3D_SIZE" and len(words) > 1 and words[1].isdigit():
+                    size = int(words[1])
+                elif words[0] == "LUT_1D_SIZE":
+                    one_d = True
+                elif len(words) >= 3:
+                    try:
+                        [float(w) for w in words[:3]]
+                        rows += 1
+                    except ValueError:
+                        pass
+    except OSError as e:
+        die(f"--lut: cannot read {path}: {e.strerror}", kind="input")
+    if size < 2 or rows < size ** 3:
+        what = ("it is a 1D LUT (LUT_1D_SIZE), and --lut applies a 3D one" if one_d and size < 2
+                else "it has no LUT_3D_SIZE line" if size < 2
+                else f"it has {rows} rows of three numbers, and a LUT_3D_SIZE {size} table has {size ** 3}")
+        die(f"--lut {path} is not a complete 3D .cube LUT: {what}", kind="input",
+            hint="a .cube file is plain text with a LUT_3D_SIZE line and size^3 rows of three numbers; export it again from the grading tool")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -565,6 +600,7 @@ def main() -> int:
                 f"tagged BT.709 (sweep F10). Run --to-sdr first (or chain it), or --force if the LUT expects HDR input")
         if not os.path.exists(args.lut):
             die(f"LUT not found: {args.lut}")
+        refuse_bad_cube(args.lut)
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
         lut = f"lut3d=file={escape_filter_path(args.lut)}:interp=tetrahedral"

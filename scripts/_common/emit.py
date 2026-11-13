@@ -778,8 +778,10 @@ def decode_step(path: str, meta: Dict[str, Any], kinds: Sequence[str], window: f
             # (bounded, so a failing hour-long stream is not decoded whole)
             frames[kind]["tail"] = tail_frames(max(0.0, end - origin - window - DECODE_LONG_GOP_SECONDS))
     bad = [k for k in kinds if not all(frames[k].values())]
+    # no provenance: it says where an expected value came from, and this step has none (#403: it
+    # said "measurement", which is not one of the contract's values)
     step: Dict[str, Any] = {"step": "decode", "property": "decodable", "frames": frames, "window": window,
-                            "provenance": "measurement", "ok": not bad}
+                            "ok": not bad}
     if bad:
         step["undecodable"] = [k for k in bad if k not in unmeasured]
     if unmeasured:

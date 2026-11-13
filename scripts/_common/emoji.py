@@ -214,11 +214,33 @@ def emoji_asset_for(cluster: str, assets_dir: "Optional[str]") -> "Optional[str]
     if not assets_dir or not os.path.isdir(assets_dir):
         return None
     for name in _emoji_name_candidates(cluster):
-        for ext in (".png", ".PNG"):
-            candidate = os.path.join(assets_dir, name + ext)
-            if os.path.isfile(candidate):
-                return candidate
+        # Twemoji's name (1f469-200d-1f4bb.png), then Noto Emoji's (emoji_u1f469_200d_1f4bb.png):
+        # the hint names noto-emoji/png/128, whose files were never found (#404)
+        for stem in (name, "emoji_u" + name.replace("-", "_")):
+            for ext in (".png", ".PNG"):
+                candidate = os.path.join(assets_dir, stem + ext)
+                if os.path.isfile(candidate):
+                    return candidate
     return None
+
+
+def emoji_mono_on_colour_note(support: "Dict[str, Any]") -> str:
+    """--emoji mono on a build whose libass draws the emoji face in colour: nothing here makes that
+    glyph monochrome (mono and color build the same text), so the result says color (#403: the
+    warning said "no colour path" beside a detail saying it renders in colour)."""
+    return ("--emoji mono: libass draws the emoji face in colour on this build and nothing here makes it "
+            "monochrome, so the emoji are drawn in colour (mode: color). " + str(support.get("detail") or ""))
+
+
+def emoji_missing_asset_note(missing: "List[str]", support: "Dict[str, Any]") -> str:
+    """What happens to the clusters --emoji-assets has no PNG for: they stay in the text for libass,
+    which is said as measured (libass_glyph), not as "drawn by the text font" (#403)."""
+    names = ", ".join(missing)
+    if support.get("libass_glyph") is False:
+        return (f"no PNG in the assets directory for {names} -- those clusters stay in the text, and libass draws no "
+                "emoji glyph on this build: an empty box at best")
+    return (f"no PNG in the assets directory for {names} -- those clusters stay in the text for libass to draw "
+            "with an installed face" + ("" if support.get("libass_glyph") else " (whether one has the glyph was not measured)"))
 
 
 EMOJI_ASSET_HINT = (

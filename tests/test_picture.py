@@ -6137,9 +6137,6 @@ class HdrLevelsAndDepthTests(unittest.TestCase):
                 self.assertLessEqual(max(abs(a - b) for a, b in zip(got, want)), 1, f"{tool}: {got} vs {want}")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class LeanBuildTests(unittest.TestCase):
     """#393-#396: what a build without libass/drawtext, or a file handed to the wrong flag, says.
@@ -6391,3 +6388,382 @@ class EmojiGlyphProbeTests(unittest.TestCase):
         self.assertEqual(cues[0][2], "Emoji")
         self.assertEqual(warned, ["emoji_not_drawn"])
         self.assertIsNotNone(self._plan_refusal("mono", None))
+
+
+class BuildComponentPreflightTests(unittest.TestCase):
+    """#402: an encoder or a filter the command names and this ffmpeg build lacks is refused before
+    ffmpeg runs, dry runs included, with the kind and reason ffmpeg's own failure got. The lean
+    build is a mocked list (every runner has the components), as in LeanBuildTests."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.sdr = OUT / "pre_sdr.mp4"
+        cls.hevc = OUT / "pre_hevc.mp4"
+        cls.hdr = OUT / "pre_hdr.mp4"
+        base = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=2", "-f", "lavfi", "-i", "sine=f=440:d=2"]
+        if not cls.sdr.exists():
+            sh(*base, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.sdr)
+        cls.x265 = "libx265" in sh("ffmpeg", "-hide_banner", "-encoders").stdout
+        if cls.x265 and not cls.hevc.exists():
+            sh(*base, "-c:v", "libx265", "-x265-params", "log-level=error", "-pix_fmt", "yuv420p", "-tag:v", "hvc1",
+               "-c:a", "aac", "-shortest", cls.hevc)
+        if cls.x265 and not cls.hdr.exists():
+            sh(*base, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-color_primaries", "bt2020",
+               "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+               "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
+               "-c:a", "aac", "-shortest", cls.hdr)
+
+    def setUp(self):
+        from _common import runner
+        self.runner = runner
+        self.saved = (runner._FILTERS, runner._ENCODERS)
+        runner._FILTERS = runner._ENCODERS = None
+        self.filters, self.encoders = set(runner.ffmpeg_filters()), set(runner.ffmpeg_encoders())
+
+    def tearDown(self):
+        self.runner._FILTERS, self.runner._ENCODERS = self.saved
+
+    def _run(self, module, argv):
+        """(exit code, the --json document) of one tool's main(), in this process."""
+        from _common import STATE
+        mod = __import__(module)
+        out, code = io.StringIO(), 0
+        try:
+            with unittest.mock.patch.object(sys, "argv", [module + ".py"] + [str(a) for a in argv]), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    code = mod.main() or 0
+                except SystemExit as e:
+                    code = e.code or 0
+        finally:
+            STATE.reset()
+        return code, json.loads(out.getvalue())
+
+    def test_a_missing_encoder_or_filter_is_refused_before_ffmpeg_runs_dry_runs_included(self):
+        cases = [  # tool, arguments, the hidden component, its list, the reason, needs libx265 to build the input
+            ("overlay", [self.sdr, "--text", "Hello"], "drawtext", "filters", "filter_missing", False),
+            ("reverse", [self.sdr, "--codec", "hevc"], "libx265", "encoders", "encoder_missing", False),
+            ("crop", [self.hdr, "--x", "0", "--y", "0", "--width", "80", "--height", "44"], "libx265", "encoders", "encoder_missing", True),
+            ("export", [self.hdr, "--preset", "youtube-hdr"], "libx265", "encoders", "encoder_missing", True),
+            ("cut", [self.hevc, "--start", "0.5", "--end", "1.5", "--accurate"], "libx265", "encoders", "encoder_missing", True),
+            ("color", [self.hdr, "--to-sdr"], "zscale", "filters", "filter_missing", True),
+            ("stabilize", [self.sdr], "vidstabdetect", "filters", "filter_missing", False),
+        ]
+        for tool, args, name, which, reason, needs_x265 in cases:
+            for dry in (["--dry-run"], []):
+                with self.subTest(tool=tool, dry_run=bool(dry)):
+                    if needs_x265 and not self.x265:
+                        self.skipTest("this build has no libx265 to make the HEVC input with")
+                    if name not in (self.filters if which == "filters" else self.encoders):
+                        self.skipTest(f"this build has no {name} to hide")
+                    self.runner._FILTERS = self.filters - ({name} if which == "filters" else set())
+                    self.runner._ENCODERS = self.encoders - ({name} if which == "encoders" else set())
+                    out = OUT / f"pre_{tool}_{'dry' if dry else 'real'}.mp4"
+                    out.unlink(missing_ok=True)
+                    code, doc = self._run(tool, args + ["-o", out, "--json"] + dry)
+                    self.assertEqual((code, doc["status"]), (1, "failed"), doc)
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"], err["details"]), ("ffmpeg", reason, {"name": name}), err)
+                    self.assertIn("doctor", err["hint"])
+                    self.assertFalse(out.exists(), "a refused run writes nothing")
+
+    def test_only_what_the_build_list_lacks_is_refused(self):
+        """A decoder named before an input, a stream copy, a VideoToolbox encoder (left to --hw's
+        checks) and a list that could not be read refuse nothing; text inside a quoted or escaped
+        filter option is not a filter name."""
+        r = self.runner
+        names = r.graph_filter_names
+        self.assertEqual(names("[0:v]scale=2:2,drawtext=text='a,zscale=1;b':x=1[v];[v]null[o]"), ["scale", "drawtext", "null"])
+        self.assertEqual(names("sws_flags=bicubic;[0:v]format=yuv420p,select=gt(scene\\,0.3),fps=30"), ["format", "select", "fps"])
+        self.assertEqual(names("subtitles=filename=/a/b\\,c.srt:force_style='FontName=X,Bold=1'"), ["subtitles"])
+        self.assertEqual(names("[1:v]setpts=PTS-STARTPTS[b0];[a][b0]overlay=0:0:enable='between(t,1,2)'"), ["setpts", "overlay"])
+        r._ENCODERS, r._FILTERS = {"aac"}, {"scale"}
+        r._check_build_components(["ffmpeg", "-c:v", "libvpx-vp9", "-i", "a.webm", "-vf", "scale=2:2", "-c:v", "h264_videotoolbox",
+                                   "-c:a", "copy", "out.mp4"])
+        r._ENCODERS, r._FILTERS = set(), set()
+        saved = dict(r._PREFLIGHT_LISTS)
+        r._PREFLIGHT_LISTS.clear()
+        try:
+            with unittest.mock.patch.object(r, "_read_ff_list", return_value=set()):
+                r._ENCODERS = r._FILTERS = None  # nothing read yet, and the quiet read finds nothing
+                r._check_build_components(["ffmpeg", "-i", "a.mp4", "-vf", "nosuchfilter", "-c:v", "nosuchencoder", "out.mp4"])
+        finally:
+            r._PREFLIGHT_LISTS.clear()
+            r._PREFLIGHT_LISTS.update(saved)
+
+    def test_a_tool_that_writes_its_own_failure_message_keeps_the_cause(self):
+        """cut.py's re-encode and the measurement passes die with their own message; the reason,
+        details and hint of the cause ffmpeg named ride along (ffmpeg_failure_extra()), and
+        waveform.py passes its stage's on."""
+        r = self.runner
+        calls = []
+
+        def fake_die(msg, code=1, kind="input", **extra):
+            calls.append((msg, kind, extra))
+            raise SystemExit(code)
+
+        for stderr, reason, details in (("x\nUnknown encoder 'libx265'\n", "encoder_missing", {"name": "libx265"}),
+                                        ("[out#0] Error writing trailer: No space left on device\n", "disk_full", {}),
+                                        ("something else\n", None, None)):
+            with self.subTest(stderr=stderr):
+                extra = r.ffmpeg_failure_extra(stderr)
+                self.assertEqual(extra.get("error_extra"), {"reason": reason, "details": details} if reason else None)
+                self.assertEqual(bool(extra.get("hint")), bool(reason))
+        # the wiring: each pass that writes its own message dies through its own module's die()
+        import loudness
+        probe_mod = sys.modules["_common.probe"]
+        missing = "[AVFilterGraph @ 0x1] No such filter: 'silencedetect'\n"
+        passes = (("silencedetect", probe_mod, lambda: probe_mod.detect_silences("in.mp4", -30.0, 0.5), False),
+                  ("content", probe_mod, lambda: probe_mod.detect_content("in.mp4", 3.0, video=False), False),
+                  ("dropouts", probe_mod, lambda: probe_mod._detect_dropouts("in.mp4", 3.0), False),
+                  ("decode pcm", probe_mod, lambda: probe_mod.decode_pcm_mono("in.mp4", 22050, check=True), True),
+                  ("loudness", loudness, lambda: loudness.measure("in.mp4", -16.0, -1.0, 11.0), False))
+        for label, module, call, binary in passes:
+            with self.subTest(measurement=label):
+                calls.clear()
+                failed = subprocess.CompletedProcess(["ffmpeg"], 1, b"" if binary else "",
+                                                     missing.encode() if binary else missing)
+                with unittest.mock.patch.object(module, "run_analysis", return_value=failed), \
+                        unittest.mock.patch.object(module, "die", fake_die), self.assertRaises(SystemExit):
+                    call()
+                msg, kind, extra = calls[-1]
+                self.assertEqual((kind, extra.get("error_extra")),
+                                 ("ffmpeg", {"reason": "filter_missing", "details": {"name": "silencedetect"}}), msg)
+        import waveform
+        child = {"status": "failed", "exit_code": 1, "commands": [],
+                 "error": {"kind": "ffmpeg", "message": "this ffmpeg build has no drawtext filter", "hint": "see doctor",
+                           "reason": "filter_missing", "details": {"name": "drawtext"}}}
+        proc = subprocess.CompletedProcess(["graphics.py"], 1, json.dumps(child), "")
+        calls.clear()
+        with unittest.mock.patch.object(waveform, "run_tool", return_value=proc), \
+                unittest.mock.patch.object(waveform, "die", fake_die), contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            waveform._child("graphics.py", ["in.mp4"])
+        msg, kind, extra = calls[-1]
+        self.assertEqual((kind, extra["error_extra"], extra["hint"]),
+                         ("ffmpeg", {"reason": "filter_missing", "details": {"name": "drawtext"}}, "see doctor"))
+
+    def test_arabic_and_hebrew_are_refused_for_this_build_not_for_every_build(self):
+        """#402: without fribidi, drawtext cannot order or join Arabic and Hebrew; a build with it
+        can, so the refusal names this build. The harfbuzz scripts stay "any ffmpeg build"."""
+        from _common import STATE, drawtext
+        self.assertIn("any ffmpeg build", drawtext.shaping_refusal("hi"))
+        saved = dict(drawtext._SHAPING_BUILD_CACHE)
+        drawtext._SHAPING_BUILD_CACHE.clear()
+        drawtext._SHAPING_BUILD_CACHE.update({"fribidi": False, "harfbuzz": False})
+        try:
+            for tool, args in (("overlay", [self.sdr, "--text", "مرحبا"]),
+                               ("graphics", [self.sdr, "--template", "title", "--title", "שלום", "--text-render", "drawtext"])):
+                with self.subTest(tool=tool):
+                    out = OUT / f"pre_bidi_{tool}.mp4"
+                    out.unlink(missing_ok=True)
+                    code, doc = self._run(tool, args + ["-o", out, "--json", "--dry-run"])
+                    self.assertEqual((code, doc["error"]["kind"]), (1, "input"), doc)
+                    self.assertIn("on this ffmpeg build", doc["error"]["message"])
+                    self.assertIn("libfribidi", doc["error"]["message"])
+                    self.assertNotIn("any ffmpeg build", doc["error"]["message"])
+                    self.assertFalse(out.exists())
+        finally:
+            drawtext._SHAPING_BUILD_CACHE.clear()
+            drawtext._SHAPING_BUILD_CACHE.update(saved)
+            STATE.reset()
+
+
+class WrongFormatFileTests(unittest.TestCase):
+    """#404: a file in another format than the flag reads is refused by name, saying what it is
+    and what takes it, instead of being read as something else or failing inside ffmpeg."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "wrong_format"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.src = cls.dir / "src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=3", "-f", "lavfi", "-i", "sine=f=440:d=3",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.src)
+        cls.gif = cls.dir / "one_frame.gif"
+        if not cls.gif.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=red:s=64x64", "-frames:v", "1", cls.gif)
+
+    def write(self, name, text):
+        p = self.dir / name
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def test_a_file_in_the_wrong_format_is_refused_by_name(self):
+        srt = self.write("subs.srt", "1\n00:00:00,500 --> 00:00:01,500\nHello\n")
+        cases = [  # label, tool, arguments, the file the message must name, words it must hold
+            ("WebVTT without hours as cues", "caption.py", ["--text", self.write("mmss.vtt", "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n")], "mmss.vtt", ["WebVTT", "--srt"]),
+            ("WebVTT with cue settings as cues", "caption.py",
+             ["--text", self.write("set.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000 align:start position:0%\nHello\n")], "set.vtt", ["WebVTT", "--srt"]),
+            ("headerless mm:ss timing lines as cues", "caption.py", ["--text", self.write("bare.txt", "00:01.000 --> 00:02.000\nHello\n")], "bare.txt", ["subtitle file", "--srt"]),
+            ("ASS as cues", "caption.py", ["--text", self.write("x.ass", "[Script Info]\nScriptType: v4.00+\n\n[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi\n")], "x.ass", ["ASS", "--srt"]),
+            ("JSON as cues", "caption.py", ["--text", self.write("cues.json", '[{"start": 1.0, "end": 2.0, "text": "Hello"}]\n')], "cues.json", ["JSON"]),
+            ("SRT as chapters", "metadata.py", [self.src, "--chapters", srt], "subs.srt", ["subtitle", "chapter list"]),
+            ("WebVTT as chapters", "metadata.py", [self.src, "--chapters", self.write("ch.vtt", "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n")],
+             "ch.vtt", ["WebVTT header", "chapter list"]),
+            ("a concat directive in a list", "join.py", ["--list", self.write("parts.ffconcat", f"ffconcat version 1.0\nfile '{self.src}'\ninpoint 1\nfile '{self.src}'\n")], "parts.ffconcat", ["inpoint 1", "directive"]),
+            ("a .cube with no LUT", "color.py", [self.src, "--lut", self.write("bad.cube", "not a cube\n")], "bad.cube", ["LUT_3D_SIZE"]),
+            ("a .cube cut short", "color.py", [self.src, "--lut", self.write("short.cube", "LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")], "short.cube", ["2 rows", "has 8"]),
+            ("a 1D .cube", "color.py", [self.src, "--lut", self.write("one.cube", "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n")], "one.cube", ["1D"]),
+            ("text as a beat source", "cut.py", [self.src, "--start", "1", "--end", "2", "--snap", "beats", "--snap-source", srt], "subs.srt", ["no audio could be decoded"]),
+            ("a JSON list as a beat source", "cut.py", [self.src, "--start", "1", "--end", "2", "--snap", "beats", "--snap-source", self.write("list.json", "[1, 2]\n")], "list.json", ["not a scenes.py document"]),
+            ("a video as an overlay image", "overlay.py", [self.src, "--image", self.src], "src.mp4", ["not a still image", "--image"]),
+            ("a video as a waveform plate", "waveform.py", [self.src, "--image", self.src], "src.mp4", ["not a still image", "--image"]),
+            ("a video as a waveform plate, dry run", "waveform.py", [self.src, "--image", self.src, "--dry-run"], "src.mp4", ["not a still image"]),
+            ("a GIF as an overlay image", "overlay.py", [self.src, "--image", self.gif], "one_frame.gif", ["GIF", "PNG"]),
+            ("a GIF as a waveform plate", "waveform.py", [self.src, "--image", self.gif], "one_frame.gif", ["GIF", "PNG"]),
+        ]
+        for label, tool, args, named, words in cases:
+            with self.subTest(case=label):
+                out = self.dir / ("out_" + re.sub(r"\W+", "_", label) + (".srt" if tool == "caption.py" else ".mp4"))
+                out.unlink(missing_ok=True)
+                flag = "--write-srt" if tool == "caption.py" else "-o"
+                proc = script(tool, *args, flag, out, "--json", expect_fail=True)
+                doc = json.loads(proc.stdout)
+                self.assertEqual((proc.returncode, doc["status"], doc["error"]["kind"]), (1, "failed", "input"), doc)
+                for word in [named] + words:
+                    self.assertIn(word, doc["error"]["message"])
+                self.assertNotEqual(doc["error"].get("reason"), "input_unreadable", "the video was not the unreadable file")
+                self.assertFalse(out.exists(), "a refused run writes nothing")
+
+    def test_what_these_flags_do_read_is_still_read(self):
+        """The refusals above are narrow: a cue file whose first cue is in brackets, a concat list
+        with its header, a 3D .cube and a chapter list are read as before; a chapter title's
+        `- ` separator, a WebVTT file's inline tags and Noto's asset names are no longer text."""
+        cues = self.write("ok_cues.txt", "[Music]\n0:03-0:05 World\n")
+        out = self.dir / "ok_cues.srt"
+        script("caption.py", "--text", cues, "--write-srt", out)
+        self.assertIn("[Music]", out.read_text(encoding="utf-8"))
+        lst = self.write("ok.ffconcat", f"ffconcat version 1.0\n# two parts\nfile '{self.src}'\nfile '{self.src}'\n")
+        doc = json.loads(script("join.py", "--list", lst, "-o", self.dir / "ok_join.mp4", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertEqual((doc.get("diagnostics") or {}).get("skipped", []), [])
+        cube = self.write("ok.cube", "LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        graded = self.dir / "ok_lut.mp4"
+        self.assertTrue(json.loads(script("color.py", self.src, "--lut", cube, "-o", graded, "--json").stdout)["verified"])
+        ch = self.write("ok_ch.txt", "0:00 - Intro\n0:01 – Part two\n0:02 Plain - kept\n")
+        tagged = self.dir / "ok_ch.mp4"
+        script("metadata.py", self.src, "--chapters", ch, "-o", tagged)
+        self.assertEqual([c["title"] for c in probe(str(tagged))["chapters"]], ["Intro", "Part two", "Plain - kept"])
+        from _common import asr, emoji
+        vtt = self.write("yt.vtt", "WEBVTT\nKind: captions\n\n00:00:01.000 --> 00:00:03.000 align:start position:0%\n"
+                                   "hello<00:00:01.500><c> world</c> <i>kept</i>\n")
+        self.assertEqual(asr.parse_srt(str(vtt)), [(1.0, 3.0, "hello world <i>kept</i>")])
+        plain = self.write("tags.srt", "1\n00:00:01,000 --> 00:00:03,000\na <c>b</c>\n")
+        self.assertEqual(asr.parse_srt(str(plain))[0][2], "a <c>b</c>", "an SRT's text is not WebVTT")
+        noto = self.dir / "noto"
+        noto.mkdir(exist_ok=True)
+        for name in ("emoji_u1f600.png", "emoji_u1f469_200d_1f4bb.png"):
+            (noto / name).write_bytes(b"png")
+        self.assertEqual(os.path.basename(emoji.emoji_asset_for("\U0001F600", str(noto))), "emoji_u1f600.png")
+        self.assertEqual(os.path.basename(emoji.emoji_asset_for("\U0001F469‍\U0001F4BB", str(noto))), "emoji_u1f469_200d_1f4bb.png")
+
+
+class EmojiClaimTests(unittest.TestCase):
+    """#403: what an emoji diagnostic and the result's emoji block say is what the route draws."""
+
+    def _support(self, **over):
+        base = {"mode": "mono", "libass_color": False, "libass_glyph": True, "detail": "the probe's detail", "assets": None,
+                "color_font": "Noto Color Emoji", "color_font_file": None, "fix": ""}
+        base.update(over)
+        return base
+
+    def _plan(self, want, support, assets=None, text="Emoji \U0001F3AC"):
+        import caption
+        warned = []
+        args = argparse.Namespace(emoji=want, emoji_assets=assets, fonts_dir=None, size=14, margin=20, position="bottom",
+                                  animate="none", emoji_scale=1.0, emoji_max=None)
+        with unittest.mock.patch.object(caption, "emoji_support", return_value=support), \
+                unittest.mock.patch.object(caption, "resolve_emoji_assets", return_value=assets), \
+                unittest.mock.patch.object(caption, "warn", lambda msg, code, **k: warned.append((code, msg))), \
+                contextlib.redirect_stderr(io.StringIO()):
+            _cues, plan = caption.plan_emoji([(0.0, 2.0, text)], args, 640, 360)
+        return plan, warned
+
+    def test_caption_mono_on_a_colour_build_says_colour(self):
+        plan, warned = self._plan("mono", self._support(mode="color", libass_color=True))
+        self.assertEqual(plan["mode"], "color")
+        self.assertEqual([c for c, _m in warned], ["emoji_mono_drawn_in_colour"])
+        self.assertNotIn("no colour path", warned[0][1])
+        plan, warned = self._plan("mono", self._support())
+        self.assertEqual((plan["mode"], [c for c, _m in warned]), ("mono", ["emoji_monochrome"]))
+
+    def test_a_cluster_with_no_png_is_not_said_to_be_drawn_when_libass_draws_no_glyph(self):
+        assets = OUT / "emoji_claim_assets"
+        assets.mkdir(parents=True, exist_ok=True)
+        for glyph, words in ((False, "empty box"), (True, "for libass to draw")):
+            with self.subTest(libass_glyph=glyph):
+                plan, warned = self._plan("png", self._support(mode="png", libass_glyph=glyph, assets=str(assets)), assets=str(assets))
+                self.assertEqual(plan["missing"], ["1f3ac"])
+                msg = dict(warned)["emoji_assets_missing"]
+                self.assertIn(words, msg)
+                self.assertNotIn("drawn by the text font", msg)
+
+    def _graphics(self, support, *extra):
+        import graphics
+        from _common import STATE
+        src = OUT / "emoji_claim_src.mp4"
+        if not src.exists():
+            OUT.mkdir(parents=True, exist_ok=True)
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", src)
+        out = io.StringIO()
+        argv = ["graphics.py", str(src), "--template", "title", "--title", "Party \U0001F389", "-o", str(OUT / "emoji_claim_out.mp4"),
+                "--overwrite", "--dry-run", "--json", *extra]
+        try:
+            with unittest.mock.patch.object(graphics, "emoji_support", return_value=support), \
+                    unittest.mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    graphics.main()
+                except SystemExit as e:
+                    self.assertEqual(e.code or 0, 0, out.getvalue()[-600:])
+        finally:
+            STATE.reset()
+        return json.loads(out.getvalue())
+
+    def test_graphics_reports_the_route_that_draws_the_emoji(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        # a colour-capable libass: the text goes through libass, not the drawtext route that draws a box
+        doc = self._graphics(self._support(mode="color", libass_color=True))
+        self.assertEqual(doc["emoji"]["mode"], "color")
+        self.assertNotIn("drawtext=", " ".join(doc["commands"]))
+        # drawtext pinned: nothing draws the emoji, which is said, and counted before it is removed
+        doc = self._graphics(self._support(mode="color", libass_color=True), "--text-render", "drawtext")
+        self.assertEqual((doc["emoji"]["mode"], doc["emoji"]["count"], doc["emoji"]["clusters"]), ("none", 1, ["1f389"]))
+        self.assertIn("emoji_not_drawn", [w["code"] for w in doc["diagnostics"]["warnings"]])
+        # auto on a machine that draws none: the same record, not "(--emoji none)"
+        doc = self._graphics(self._support(mode="none", libass_glyph=False))
+        self.assertEqual((doc["emoji"]["mode"], doc["emoji"]["count"]), ("none", 1))
+        warn = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "emoji_not_drawn"]
+        self.assertEqual([w["count"] for w in warn], [1])
+        # --emoji none asked for: no warning
+        doc = self._graphics(self._support(mode="mono"), "--emoji", "none")
+        self.assertNotIn("emoji_not_drawn", [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])])
+        # --emoji mono on a colour build is drawn in colour, and says so
+        doc = self._graphics(self._support(mode="color", libass_color=True), "--emoji", "mono")
+        self.assertEqual(doc["emoji"]["mode"], "color")
+        self.assertIn("emoji_mono_drawn_in_colour", [w["code"] for w in doc["diagnostics"]["warnings"]])
+
+    def test_overlay_says_drawtext_has_one_font_and_no_fallback(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg not on PATH")
+        src = OUT / "emoji_claim_src.mp4"
+        if not src.exists():
+            OUT.mkdir(parents=True, exist_ok=True)
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", src)
+        doc = json.loads(script("overlay.py", src, "--text", "Hi \U0001F389", "-o", OUT / "emoji_claim_ov.mp4", "--dry-run", "--json").stdout)
+        msg = [w["message"] for w in doc["diagnostics"]["warnings"] if w["code"] == "emoji_monochrome"][0]
+        self.assertIn("no fallback", msg)
+        self.assertIn("empty box", msg)
+        self.assertNotIn("drawn by the text font", msg)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

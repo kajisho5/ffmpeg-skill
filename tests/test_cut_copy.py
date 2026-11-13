@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2379,9 +2380,6 @@ class ProbedStreamTests(unittest.TestCase):
             self.assertProbedStreams(out)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class DroppedAudioTrackTests(unittest.TestCase):
     """#397: cut writes one audio track, on a stream copy as on a re-encode; a source with more
@@ -2434,3 +2432,51 @@ class DroppedAudioTrackTests(unittest.TestCase):
         d = cut_json(str(src), "--start", "1", "--end", "4", "-o", str(DIR / "one_part.mp4"), "--overwrite")
         self.assertEqual(d["dropped_audio_streams"], 0)
         self.assertNotIn("audio_tracks_dropped", [w["code"] for w in (d.get("diagnostics") or {}).get("warnings", [])])
+
+
+class DryRunOutputTests(unittest.TestCase):
+    """#403: a dry run wrote nothing, so what is at the output path is not its result. With a file
+    already there (--overwrite), probe(role="output") read that file, and cut.py reported its
+    length as `output_duration` (0.0 without one; the contract says null)."""
+
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.src = DIR / "dry_out_src.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s={W}x{H}:r={FPS}:d=6", "-f", "lavfi", "-i", "sine=f=440:d=6",
+               "-c:v", "libx264", "-g", str(FPS), "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.src)
+
+    def test_a_dry_run_does_not_report_the_file_already_at_the_output_path(self):
+        for label, existing in (("no file there", False), ("an earlier run's file there", True)):
+            with self.subTest(case=label):
+                out = DIR / f"dry_out_{int(existing)}.mp4"
+                out.unlink(missing_ok=True)
+                if existing:
+                    shutil.copy(self.src, out)  # 6 s, where the plan below is 2 s
+                before = out.read_bytes() if existing else None
+                d = json.loads(script("cut.py", self.src, "--start", "1", "--end", "3", "-o", out, "--overwrite", "--dry-run", "--json").stdout)
+                self.assertTrue(d["dry_run"])
+                self.assertIsNone(d["output_duration"])
+                self.assertIsNone(d["duration_delta_seconds"])
+                self.assertEqual(d["expected_duration"], 2.0)
+                self.assertEqual(out.read_bytes() if existing else None, before, "a dry run writes nothing")
+
+    def test_probe_of_an_output_under_dry_run_is_the_stub_whether_or_not_a_file_is_there(self):
+        import _common
+        from _common import STATE
+        self.assertFalse(STATE.dry_run)
+        real = _common.probe(str(self.src), role="output")
+        self.assertGreater(real["duration"], 5)
+        STATE.dry_run = True
+        try:
+            planned = _common.probe(str(self.src), role="output")
+            self.assertEqual((planned.get("dry_run"), planned["duration"], planned["video"]["width"]), (True, 0.0, 0))
+            # an input is still read under --dry-run: a plan measures what it is given
+            self.assertGreater(_common.probe(str(self.src))["duration"], 5)
+        finally:
+            STATE.dry_run = False
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
