@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.2
+
+_Automated release: version and notes generated from pull requests merged since 3.8.1._
+
 ### Fixed
 
 - **`--keep-alpha` on an RGB source wrote BT.601 YUV with no colour tag** (#496). A qtrle or
@@ -26,6 +32,7 @@
   its YUV line, as before.
   The grade of an RGB source names no matrix on its way in to RGB (with one, FFmpeg 7.1 wrote
   BT.601 samples on the ProRes 4444/VP9 line).
+- fix(color): an RGB source's YUV alpha line is BT.709 and tagged so (#498)
 
 ## 3.8.1
 
