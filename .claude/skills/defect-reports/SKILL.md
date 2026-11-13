@@ -215,7 +215,7 @@ render succeeded") was true at one layer and silently false at the layer a
 caller actually reads results from — exactly the "genuine internal oddity
 promoted one layer too far" pattern this skill describes, just discovered
 after shipping rather than before. When investigating a new claim about this
-codebase, reproduce it with real media via `tests/test_all.py`'s fixtures
+codebase, reproduce it with real media via the test fixtures (`tests/_fixtures.py`)
 before reporting it, the same way `test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta`
 measured an actual 1.24s divergence rather than assuming one.
 

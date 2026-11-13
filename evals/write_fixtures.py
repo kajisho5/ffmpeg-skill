@@ -113,6 +113,14 @@ def build_media_fixture(name: str, target: Path) -> None:
         for n in ("_shots_a.mp4", "_shots_b.mp4", "_shots_c.mp4"):
             (target.parent / n).unlink(missing_ok=True)
         list_file.unlink(missing_ok=True)
+    elif name == "source.mp4":
+        # kw1 and ff1 name OUTDIR/source.mp4 and nothing built it, so staging either one (and
+        # `--all`, partway) stopped at "no media fixture builder". A plain 8 s 1280x720 30 fps
+        # clip with a tone: both prompts are graded on the commands and the report, not on a
+        # measured property of this file.
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+               "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "8",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", target)
     elif name == "speech_breaths.m4a":
         # 11.0s: speech bursts with three 0.30s in-sentence breaths (1.2-1.5, 2.6-2.9, 6.7-7.0)
         # and two 1.50s sentence-boundary pauses (4.0-5.5, 8.2-9.7). silence.py --speech-aware

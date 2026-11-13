@@ -55,8 +55,11 @@ as success. Do not reintroduce that shape.
 ## Dry run
 
 - Measurement passes run under `--dry-run`; only writes are skipped. `analysis_only`
-  tools: `probe`, `check`, `sync`, `multicam`, `scenes`, `cropdetect`, `report`,
-  `silence`, `loudness`, `stabilize` (`_contract.DRY_RUN_ANALYSIS`).
+  tools are the keys of `_contract.DRY_RUN_ANALYSIS`: at 3.6.6 `sync`, `multicam`,
+  `scenes`, `report`, `cropdetect`, `silence`, `loudness`, `check`, `stabilize` and
+  `overlay`. `probe` is not one of them (the contract gives it `ffmpeg_execution: none`).
+  Read the dict, not this list, before relying on it: it changes when a tool gains a
+  measurement.
 - `info()` rewrites `wrote X` to `[dry-run] would write X` — a tool must not claim
   a write under dry-run.
 - A measured input that is an intermediate an earlier dry-run stage would have

@@ -744,8 +744,9 @@ Each item is recorded here so it is not re-proposed from scratch.
   or `FFMPEG_SKILL_MCP_FULL=1`. The contract still describes all 42 — the surface does not shrink,
   only the default listing.
 - **The roadmap read as though planned work had shipped.** Fixed: `docs/roadmap.md` now marks
-  every version shipped + evaluated (naming the iteration), shipped with eval pending, or
-  planned, and the reconciliation is against `CHANGELOG.md` and `evals/results/`.
+  every version up to 2.0.0 shipped + evaluated (naming the iteration), shipped with eval pending, or
+  planned, and the reconciliation is against `CHANGELOG.md` and `evals/results/`. It has no entry
+  for a release after 2.0.0; `CHANGELOG.md` is the record of those.
 - **The README over-claimed platform coverage.** Issue #143 (the full real-device corpus on
   Windows, and an install reproduced by someone other than the maintainer) is still open. The
   README now says what is actually covered: the contract and test suite on Linux, macOS and

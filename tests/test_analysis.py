@@ -1175,7 +1175,7 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual((data["status"], data["failed"]), ("completed", 0), data)
 
     def test_check_compliance(self):
-        reels = OUT / "export_reels.mp4"
+        reels = OUT / "analysis_reels_crop.mp4"   # its own name: test_delivery writes export_reels.mp4 with --fit pad
         if not reels.exists():
             script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
         data = json.loads(script("check.py", reels, "--platform", "reels", "--json", expect_fail=True).stdout)
@@ -1401,7 +1401,7 @@ class AnalysisTests(MediaFixtures):
         self.assertIn(f"{v['width']}x{v['height']}", wide.stderr)
 
     def test_report_html(self):
-        reels = OUT / "export_reels.mp4"
+        reels = OUT / "analysis_reels_crop.mp4"   # its own name: test_delivery writes export_reels.mp4 with --fit pad
         if not reels.exists():
             script("export.py", self.src, "--preset", "reels", "--fit", "crop", "-o", reels)
         cmds = OUT / "cmds.txt"

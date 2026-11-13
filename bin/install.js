@@ -2,7 +2,8 @@
 /**
  * ffmpeg-skill installer.
  *
- * Copies SKILL.md and scripts/ into the skills directory of one or more
+ * Copies the skill (SKILL.md, scripts/, templates/, mcp/, the shipped references and
+ * docs/contract.md, package.json, LICENSE) into the skills directory of one or more
  * coding agents. Default target is Claude Code (~/.claude/skills/ffmpeg-skill).
  *
  *   npx ffmpeg-skill                 # Claude Code
@@ -28,7 +29,43 @@ const { spawnSync } = require('child_process');
 
 const SKILL_NAME = 'ffmpeg-skill';
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD = ['SKILL.md', 'scripts', 'templates', 'references', 'docs', 'mcp', 'package.json'];
+const PAYLOAD = ['SKILL.md', 'scripts', 'templates', 'references', 'docs', 'mcp', 'package.json', 'LICENSE'];
+
+// What of each PAYLOAD item is copied. package.json's "files" is the allow-list of what ships: it
+// names whole directories (scripts/, templates/, mcp/) and, for references/ and docs/, single
+// files. In the npm package those two directories hold nothing else, but in a git checkout docs/
+// also holds the demo gallery and references/ the maintainer diary (17 MB against 2.5 MB), so a
+// directory that "files" lists file by file is copied file by file.
+function payloadPaths(root) {
+  let files = [];
+  try {
+    files = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).files || [];
+  } catch (_) { /* no readable package.json: copy the items whole, as before */ }
+  const out = [];
+  for (const item of PAYLOAD) {
+    const listed = files.filter((f) => f.startsWith(`${item}/`) && f.length > item.length + 1);
+    out.push(...(listed.length ? listed : [item]));
+  }
+  return out;
+}
+
+// The installer's own flags. Anything else is refused before a file is touched: an unknown flag
+// used to be ignored, so `--uninstall --cursr` (a typo) or `--uninstall --dir` with no value fell
+// through to the default target and removed the Claude Code install with exit 0.
+const FLAGS = ['--claude', '--cursor', '--codex', '--all', '--dir', '--project', '--uninstall', '--help', '-h'];
+
+// null when the arguments are ones the installer knows, else the line to print.
+function argumentError(argv) {
+  const dirAt = argv.indexOf('--dir');
+  if (dirAt !== -1 && (!argv[dirAt + 1] || argv[dirAt + 1].startsWith('-'))) {
+    return 'error: --dir needs a directory (for one whose name starts with "-", write ./-name)';
+  }
+  const unknown = argv.filter((a, i) => !FLAGS.includes(a) && !(dirAt !== -1 && i === dirAt + 1));
+  if (unknown.length) {
+    return `error: unknown argument${unknown.length > 1 ? 's' : ''} ${unknown.join(' ')} (known: ${FLAGS.join(', ')}; or the commands contract, doctor, mcp). Nothing was installed or removed.`;
+  }
+  return null;
+}
 
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);
@@ -118,6 +155,12 @@ if (args[0] === 'mcp') {
   process.exit(py.error ? 127 : (py.status == null ? 1 : py.status));
 }
 
+const badArgs = argumentError(args);
+if (badArgs) {
+  console.error(badArgs);
+  process.exit(2);
+}
+
 const home = os.homedir();
 const targets = [];
 const want = { claude: has('--claude'), cursor: has('--cursor'), codex: has('--codex') };
@@ -145,6 +188,7 @@ function copyRecursive(src, dst) {
       copyRecursive(path.join(src, entry), path.join(dst, entry));
     }
   } else {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
     if (src.endsWith('.py')) fs.chmodSync(dst, 0o755);
   }
@@ -168,12 +212,39 @@ function checkFfmpeg() {
   return true;
 }
 
+// Scratch directories an install that was killed (or that failed before this was cleaned up in
+// the catch below) left next to the target: <name>.tmp-<pid>, each a partial copy with a SKILL.md.
+function staleScratchDirs(dir) {
+  const parent = path.dirname(dir);
+  const prefix = `${path.basename(dir)}.tmp-`;
+  let entries = [];
+  try { entries = fs.readdirSync(parent); } catch (_) { return []; }
+  return entries
+    .filter((e) => e.startsWith(prefix) && /^\d+$/.test(e.slice(prefix.length)))
+    .filter((e) => !processIsRunning(Number(e.slice(prefix.length))))
+    .map((e) => path.join(parent, e));
+}
+
+// The number after ".tmp-" is the pid of the install that made the directory. One whose process
+// is still running is that install's work in progress, not a leftover: removing it lets the
+// install recreate the directory with only the files it had not copied yet and then rename that
+// into place as a finished install. Signal 0 asks without signalling: ESRCH is "no such
+// process"; EPERM is a live process this user may not signal, so it counts as running.
+function processIsRunning(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
+}
+
 let failed = false;
 for (const t of targets) {
+  let tmpDir = null;
   try {
     if (has('--uninstall')) {
       fs.rmSync(t.dir, { recursive: true, force: true });
       console.log(`removed ${t.label}: ${t.dir}`);
+      for (const stale of staleScratchDirs(t.dir)) {
+        fs.rmSync(stale, { recursive: true, force: true });
+        console.log(`removed ${t.label} (left by an interrupted install): ${stale}`);
+      }
       // A copy left by the installer's earlier, wrong guess at this agent's directory (see the
       // Codex target above) would otherwise survive every uninstall from here on.
       if (t.legacy && fs.existsSync(t.legacy)) {
@@ -188,10 +259,10 @@ for (const t of targets) {
     // empty or half-populated; now it leaves the previous install untouched (first run: no
     // previous install to preserve, so an interruption here still leaves nothing, same as
     // before -- the guarantee is specifically for an upgrade of an existing install).
-    const tmpDir = `${t.dir}.tmp-${process.pid}`;
+    tmpDir = `${t.dir}.tmp-${process.pid}`;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.mkdirSync(tmpDir, { recursive: true });
-    for (const item of PAYLOAD) {
+    for (const item of payloadPaths(ROOT)) {
       const src = path.join(ROOT, item);
       if (!fs.existsSync(src)) { if (item !== 'SKILL.md' && item !== 'scripts') continue; throw new Error(`missing ${item} in package`); }
       copyRecursive(src, path.join(tmpDir, item));
@@ -214,6 +285,9 @@ for (const t of targets) {
   } catch (err) {
     failed = true;
     console.error(`failed for ${t.label} (${t.dir}): ${err.message}`);
+    // The partial copy is of no use to anyone and holds a SKILL.md, so an agent scanning the
+    // skills folder would find a second, broken skill there. Nothing else ever removed it.
+    if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* reported above */ } }
   }
 }
 
@@ -229,4 +303,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { pythonCandidates, runWithPython, findPython, warnMissingPython, ffmpegUnsupported, FFMPEG_UNSUPPORTED, PYTHON_PROBE };
+module.exports = { argumentError, payloadPaths, PAYLOAD, FLAGS, pythonCandidates, runWithPython, findPython, warnMissingPython, ffmpegUnsupported, FFMPEG_UNSUPPORTED, PYTHON_PROBE };

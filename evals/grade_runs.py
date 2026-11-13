@@ -3,7 +3,7 @@
 import json, re, sys
 from pathlib import Path
 W = Path(__file__).resolve().parent
-prompts = {p["id"]: p for p in json.loads((W / "prompts.json").read_text())}
+prompts = {p["id"]: p for p in json.loads((W / "agent_prompts.json").read_text())}
 it = W / sys.argv[1] if len(sys.argv) > 1 else W / "iteration-1"
 rows = []
 for d in sorted(it.iterdir()):

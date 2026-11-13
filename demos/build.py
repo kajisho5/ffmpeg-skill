@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the before/after demo gallery: synthetic footage in, previews out.
 
-Everything here except one demo is generated from nothing -- ffmpeg's own synthetic sources
+Everything here except three demos is generated from nothing -- ffmpeg's own synthetic sources
 (testsrc2, mandelbrot, life, aevalsrc) make the footage; reframe_talk reads demos/footage/ai_talk.mp4,
-and filler_en demos/footage/ai_talk_en.mp4: AI-generated clips (no real person), and every "after" file is produced by running
+and filler_en and pauses_en demos/footage/ai_talk_en.mp4: AI-generated clips (no real person), and every "after" file is produced by running
 this repo's own scripts, so a demo that renders is also a smoke test of the tool behind it.
 
     python3 demos/build.py                 # build every demo
@@ -22,6 +22,7 @@ second run of --only is fast. Python 3.9 standard library only.
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -142,7 +143,9 @@ def _short(arg) -> str:
             continue
         text = (prefix + "/" + str(rel).replace("\\", "/")).lstrip("/")
         break
-    return "'%s'" % text if " " in text and not text.startswith("'") else text
+    # shlex.quote, not a test for a space: an unquoted '#' colour made the rest of a pasted line
+    # a comment (two gallery commands), and '|', ';' or '(' would do worse
+    return text if text.startswith("'") else shlex.quote(text)
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -672,7 +675,7 @@ def demo_reframe_crop(ctx):
     return before, after
 
 
-FOOTAGE = ROOT / "demos" / "footage"   # the one non-synthetic source: AI-generated footage (see demos/footage/README.md)
+FOOTAGE = ROOT / "demos" / "footage"   # the only non-synthetic sources: two AI-generated clips, used by three demos (see demos/footage/README.md)
 
 
 def demo_reframe_talk(ctx):

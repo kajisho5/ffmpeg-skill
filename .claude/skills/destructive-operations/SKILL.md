@@ -197,12 +197,18 @@ integration test asserts on `result["error"]`, not on `pytest.raises`.
 This repo's actual exposure is much narrower than the examples above — there is
 no `--rebuild`/`--purge`-shaped command, no history rewriting, and "Keep
 originals" is already a stated design principle (`README.md` design principle
-#9: no tool overwrites its input; a test hashes every input after every run,
-see `tests/test_all.py`/`tests/test_contract.py`'s input-hash checks). The
+#10: no tool overwrites its input; a test hashes every input after every run,
+see `tests/test_contract.py`'s input-hash checks). The
 closest analogue is `-o`/output-path handling: every tool takes a
-caller-supplied output path and `ffmpeg_base()` always passes `-y` (overwrite
-without prompting) — there is no confirmation step before an existing file at
-that path is silently replaced. Since this is a local CLI a human or agent
+caller-supplied output path. Since 2.0.0 an existing output is refused before
+any ffmpeg runs unless the caller passes `--overwrite`
+(`_common._check_existing_output()`, `kind: input`, reason `output_exists`);
+the refusal is that Python guard, not an ffmpeg option (`ffmpeg_base()` passes
+`-y` either way). With `--overwrite`, an output that already exists is written
+through a hidden sibling temp file that replaces it only on success
+(`_stage_existing_output()`); a new output is written straight to its path, so
+a partial file can be seen there while the run is in progress. (Before 2.0 every tool passed `-y` and replaced an existing file
+without a word, which is what this note used to report.) Since this is a local CLI a human or agent
 invokes directly (not a server resolving untrusted network input against a
 base directory), the "boundary escape" half of this skill is low-stakes here;
 the "refuse before the first mutation" and "existing input-hash tests still

@@ -5,7 +5,7 @@ Usage:
   python3 evals/run.py transcript.txt --task 5        # did the transcript for task 5 call the expected script(s)?
   python3 evals/run.py --list                          # print the prompts (paste them to the agent one by one)
   python3 evals/run.py results/                         # folder of <id>.txt transcripts -> pass rate
-  python3 evals/run.py results/ --prompts evals/agent_prompts_24.json   # the 108-prompt set
+  python3 evals/run.py results/ --prompts evals/agent_prompts_24.json   # 99 of the 110-prompt set (agent_prompts_exec.json holds the other 11)
 
 A transcript "passes" when:
   - every expected script name (or `a|b` alternation slot) appears in it, and

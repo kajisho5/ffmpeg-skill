@@ -53,9 +53,11 @@ whether each field is something the tool *measured*.
 | `error.retryable` | must stay `false`; a `true` here invites a blind retry loop |
 
 `--dry-run` claims matter too: `info()` rewrites `wrote X` to `[dry-run] would
-write X`, and `analysis_only` tools (`probe`, `check`, `sync`, `multicam`,
-`scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`) do run
-FFmpeg to measure. A change that makes a writing tool print a write claim under
+write X`, and `analysis_only` tools (`check`, `sync`, `multicam`, `scenes`,
+`cropdetect`, `report`, `silence`, `loudness`, `stabilize`) do run FFmpeg to
+measure. `overlay` is one only for a multi-line `--text` on FFmpeg 8.0, 8.0.1
+or 8.1.0 (it measures each line on a generated frame); otherwise its dry run
+runs no ffmpeg. `probe` is not one of them (`ffmpeg_execution: none`). A change that makes a writing tool print a write claim under
 dry-run is a defect.
 
 See `references/result-honesty.md` for the code pointers and the exact test names
@@ -110,7 +112,7 @@ applicable rule against the tree:
 ## Run the gate, then read it honestly
 
 ```bash
-npm test                              # tests/test_all.py + tests/test_contract.py
+npm test                              # tests/run_parallel.py: test_all.py's nine modules + tests/test_contract.py
 npm run release-check                 # packaging + installer + MCP + doctor + full suite
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```

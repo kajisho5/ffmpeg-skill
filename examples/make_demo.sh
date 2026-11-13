@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Generate demo footage from nothing (ffmpeg testsrc2 + synthesized audio),
-# run every script in scripts/ on it, and build assets/demo.gif (before/after).
+# run 13 of the 42 scripts in scripts/ on it (probe, cut, fit, caption, overlay, sync, silence,
+# join, audio, loudness, color, look, export), and build assets/demo.gif (before/after).
+# Every tool call passes --overwrite, so a second run replaces the first run's files in OUT.
+# assets/demo.gif is a tracked file that no page links to any more: a run rewrites it, so
+# `git checkout assets/demo.gif` afterwards unless the new one is meant to be committed.
 #
-# This is the single end-to-end pipeline run (one clip through every script). For the
+# This is the single end-to-end pipeline run (one clip through those scripts). For the
 # per-feature before/after gallery in docs/demos.md, use demos/build.py instead --
 # that is what `npm run demo` runs now; this script is `npm run demo:pipeline`.
 #
@@ -52,46 +56,46 @@ step "2/10 probe.py"
 "$PY" "$SCRIPTS/probe.py" "$OUT/source.mp4" --compact
 
 step "3/10 cut.py  (two segments, lossless copy + concat)"
-"$PY" "$SCRIPTS/cut.py" "$OUT/source.mp4" --segments 1-4,7-10 -o "$OUT/01_cut.mp4"
+"$PY" "$SCRIPTS/cut.py" "$OUT/source.mp4" --segments 1-4,7-10 -o "$OUT/01_cut.mp4" --overwrite
 
 step "4/10 fit.py  (retime to 8 s, pad to 9:16 at 720 px wide)"
-"$PY" "$SCRIPTS/fit.py" "$OUT/source.mp4" --duration 8 --aspect 9:16 --fit pad --width 720 -o "$OUT/02_fit.mp4"
+"$PY" "$SCRIPTS/fit.py" "$OUT/source.mp4" --duration 8 --aspect 9:16 --fit pad --width 720 -o "$OUT/02_fit.mp4" --overwrite
 
 step "5/10 caption.py (text cues -> animated ASS with word highlight -> burn in)"
 "$PY" "$SCRIPTS/caption.py" "$OUT/source.mp4" --text "$OUT/cues.txt" --write-srt "$OUT/cues.srt" \
-  --size 26 --bold --position bottom --margin 40 --animate pop --karaoke -o "$OUT/03_captioned.mp4"
+  --size 26 --bold --position bottom --margin 40 --animate pop --karaoke -o "$OUT/03_captioned.mp4" --overwrite
 
 step "6/10 overlay.py (logo top-right with fade, plus a title)"
 "$PY" "$SCRIPTS/overlay.py" "$OUT/03_captioned.mp4" --image "$OUT/logo.png" --position top-right \
-  --scale 200 --opacity 0.9 --start 0.5 --end 11.5 --fade 0.5 -o "$OUT/04_logo.mp4"
+  --scale 200 --opacity 0.9 --start 0.5 --end 11.5 --fade 0.5 -o "$OUT/04_logo.mp4" --overwrite
 "$PY" "$SCRIPTS/overlay.py" "$OUT/04_logo.mp4" --text "ffmpeg-skill demo" --position top-left \
-  --font-size 40 --box --start 0.5 --end 4 --fade 0.4 -o "$OUT/05_titled.mp4"
+  --font-size 40 --box --start 0.5 --end 4 --fade 0.4 -o "$OUT/05_titled.mp4" --overwrite
 
 step "7/10 sync.py (detect the 2.5 s lav-mic offset, replace camera audio)"
 "$PY" "$SCRIPTS/sync.py" "$OUT/source.mp4" "$OUT/lavmic.wav" --json | tee "$OUT/sync.json"
-"$PY" "$SCRIPTS/sync.py" "$OUT/05_titled.mp4" "$OUT/lavmic.wav" --replace-audio -o "$OUT/06_synced.mp4"
+"$PY" "$SCRIPTS/sync.py" "$OUT/05_titled.mp4" "$OUT/lavmic.wav" --replace-audio -o "$OUT/06_synced.mp4" --overwrite
 
 step "7b/10 silence.py (remove dead air) and join.py (crossfade the intro onto it)"
-"$PY" "$SCRIPTS/silence.py" "$OUT/06_synced.mp4" --threshold -35 --min-silence 0.4 --preset veryfast -o "$OUT/06a_tight.mp4"
-"$PY" "$SCRIPTS/join.py" "$OUT/02_fit.mp4" "$OUT/06a_tight.mp4" --transition fade --duration 0.5 --preset veryfast -o "$OUT/06c_joined.mp4"
+"$PY" "$SCRIPTS/silence.py" "$OUT/06_synced.mp4" --threshold -35 --min-silence 0.4 --preset veryfast -o "$OUT/06a_tight.mp4" --overwrite
+"$PY" "$SCRIPTS/join.py" "$OUT/02_fit.mp4" "$OUT/06a_tight.mp4" --transition fade --duration 0.5 --preset veryfast -o "$OUT/06c_joined.mp4" --overwrite
 
 step "8/10 audio.py (voice clean-up + ducked music bed) and loudness.py (-14 LUFS, two-pass)"
 ffmpeg -y -hide_banner -loglevel error -f lavfi -i "aevalsrc='0.3*sin(2*PI*110*t)+0.2*sin(2*PI*165*t)*gt(sin(2*PI*2*t)\,0)':s=48000" -t 12 -c:a aac "$OUT/music.m4a"
-"$PY" "$SCRIPTS/audio.py" "$OUT/06_synced.mp4" --voice --music "$OUT/music.m4a" --duck --fade-out 2 -o "$OUT/06b_audio.mp4"
-"$PY" "$SCRIPTS/loudness.py" "$OUT/06b_audio.mp4" -o "$OUT/07_loudnorm.mp4"
+"$PY" "$SCRIPTS/audio.py" "$OUT/06_synced.mp4" --voice --music "$OUT/music.m4a" --duck --fade-out 2 -o "$OUT/06b_audio.mp4" --overwrite
+"$PY" "$SCRIPTS/loudness.py" "$OUT/06b_audio.mp4" -o "$OUT/07_loudnorm.mp4" --overwrite
 
 step "8b/10 color.py (HDR10 -> SDR BT.709 tone mapping)"
-"$PY" "$SCRIPTS/color.py" "$OUT/hdr10.mp4" --to-sdr --preset veryfast -o "$OUT/07b_sdr.mp4"
+"$PY" "$SCRIPTS/color.py" "$OUT/hdr10.mp4" --to-sdr --preset veryfast -o "$OUT/07b_sdr.mp4" --overwrite
 
 step "8c/10 look.py (contact sheet for a visual check)"
-"$PY" "$SCRIPTS/look.py" "$OUT/07_loudnorm.mp4" -o "$OUT/07_loudnorm_sheet.png"
+"$PY" "$SCRIPTS/look.py" "$OUT/07_loudnorm.mp4" -o "$OUT/07_loudnorm_sheet.png" --overwrite
 
 step "9/10 export.py (YouTube, Reels, X, ProRes, H.265)"
-"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset youtube -o "$OUT/08_youtube.mp4"
-"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset reels --fit crop -o "$OUT/08_reels.mp4"
-"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset x -o "$OUT/08_x.mp4"
-"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset prores -o "$OUT/08_prores.mov"
-"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset h265 -o "$OUT/08_h265.mp4"
+"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset youtube -o "$OUT/08_youtube.mp4" --overwrite
+"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset reels --fit crop -o "$OUT/08_reels.mp4" --overwrite
+"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset x -o "$OUT/08_x.mp4" --overwrite
+"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset prores -o "$OUT/08_prores.mov" --overwrite
+"$PY" "$SCRIPTS/export.py" "$OUT/07_loudnorm.mp4" --preset h265 -o "$OUT/08_h265.mp4" --overwrite
 
 step "10/10 before/after GIF -> assets/demo.gif"
 ffmpeg -y -hide_banner -loglevel error -i "$OUT/source.mp4" -i "$OUT/07_loudnorm.mp4" -filter_complex \
@@ -104,4 +108,4 @@ step "summary"
 "$PY" "$SCRIPTS/probe.py" "$OUT"/0*.mp4 "$OUT"/0*.mov --compact
 ls -la "$ROOT/assets/demo.gif"
 echo
-echo "all scripts ran successfully. outputs in $OUT"
+echo "all 13 scripts ran successfully. outputs in $OUT"

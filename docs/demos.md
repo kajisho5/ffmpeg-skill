@@ -112,7 +112,7 @@ python3 scripts/caption.py demos/out/fixtures/motion.mp4 --text demos/out/fixtur
 ![Animated pop captions with karaoke](demos/captions_pop_karaoke.gif)
 
 ```bash
-python3 scripts/caption.py demos/out/fixtures/motion.mp4 --text demos/out/fixtures/cues_pop.txt --size 30 --bold --position bottom --margin 40 --animate pop --karaoke --highlight-color #39ff88 -o demos/out/captions_pop_karaoke_after.mp4
+python3 scripts/caption.py demos/out/fixtures/motion.mp4 --text demos/out/fixtures/cues_pop.txt --size 30 --bold --position bottom --margin 40 --animate pop --karaoke --highlight-color '#39ff88' -o demos/out/captions_pop_karaoke_after.mp4
 ```
 
 **Look for:** Each cue scales in, and the highlight colour walks word by word across the line.
@@ -133,7 +133,7 @@ python3 scripts/caption.py demos/out/fixtures/motion.mp4 --text demos/out/fixtur
 ![Hindi lower third, shaped](demos/lower_third_hindi.gif)
 
 ```bash
-python3 scripts/graphics.py demos/out/fixtures/motion.mp4 --template lower-third --name 'प्रिया शर्मा' --title निर्देशक --start 0.5 --end 5 --text-render ass -o demos/out/lower_third_hindi_after.mp4
+python3 scripts/graphics.py demos/out/fixtures/motion.mp4 --template lower-third --name 'प्रिया शर्मा' --title 'निर्देशक' --start 0.5 --end 5 --text-render ass -o demos/out/lower_third_hindi_after.mp4
 ```
 
 **Look for:** Left: the same text through drawtext -- the i-matra is not reordered and the final matra is dropped. Right: graphics.py routing Devanagari through libass automatically. drawtext does not use harfbuzz on any build.
@@ -684,7 +684,7 @@ python3 scripts/waveform.py demos/out/fixtures/music.m4a --style waveform --widt
 ![Audio episode as a shareable audiogram](demos/audiogram.gif)
 
 ```bash
-python3 scripts/background.py --width 960 --height 540 --gradient #101014:#2a1846 --duration 1 -o demos/out/audiogram_plate.mp4
+python3 scripts/background.py --width 960 --height 540 --gradient '#101014:#2a1846' --duration 1 -o demos/out/audiogram_plate.mp4
 python3 scripts/waveform.py demos/out/fixtures/music.m4a --image demos/out/audiogram_plate.png --width 960 --height 540 --position strip --vis-height 0.3 --color 0x39ff88 --title 'Episode 12' --text demos/out/audiogram_cues.txt --preset veryfast -o demos/out/audiogram_after.mp4
 ```
 

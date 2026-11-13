@@ -4376,7 +4376,7 @@ class ShapingTests(unittest.TestCase):
                 raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
             raise unittest.SkipTest("ffmpeg not on PATH")
         OUT.mkdir(parents=True, exist_ok=True)
-        cls.src = OUT / "emoji_src.mp4"
+        cls.src = OUT / "text_src_silent.mp4"   # video only; emoji_src.mp4 is EmojiTests' clip, which has sound
         if not cls.src.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4",
@@ -4466,7 +4466,7 @@ class ApostropheAndPercentTests(unittest.TestCase):
                 raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
             raise unittest.SkipTest("ffmpeg not on PATH")
         OUT.mkdir(parents=True, exist_ok=True)
-        cls.src = OUT / "emoji_src.mp4"
+        cls.src = OUT / "text_src_silent.mp4"   # video only; emoji_src.mp4 is EmojiTests' clip, which has sound
         if not cls.src.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "4",
