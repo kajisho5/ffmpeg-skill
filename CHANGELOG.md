@@ -4,7 +4,13 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- `caption.py --karaoke` finds the caller's word-timing sidecar after layout rewrites
+  the SRT, including minimum-duration extensions and offsets (#502). Both karaoke
+  styles use the original absolute word timings when they cover the adjusted cue,
+  and retain the existing fallback when coverage is incomplete. `--text` and
+  `--transcribe` keep their own timing source when also passed `--srt`.
 
 ## 3.8.4
 
