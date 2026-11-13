@@ -136,8 +136,9 @@ def timeout_from_call(args: Dict[str, Any]) -> float:
 
     Structured `timeout` is the canonical key. A raw `argv` list ignores every other key, so
     `--timeout` has to be read from that list: `--timeout 0` otherwise left the ceiling at 4x
-    the 1800 s default while the child itself ran with no limit. A negative value is 0, matching
-    apply_common (0 means no limit)."""
+    the 1800 s default while the child itself ran with no limit. A negative value is 0 here (no
+    outer ceiling): the child refuses a negative --timeout itself, at once, as it refuses one too
+    long to wait for, which child_limit() gives no ceiling either."""
     if isinstance(args.get("argv"), list):
         parsed = _timeout_in_argv([str(a) for a in args["argv"]])
         if parsed is None:

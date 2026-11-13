@@ -299,6 +299,12 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    # A190: with a search range of 0 or below no lag is tried, and the run reported an offset
+    # (0.012 s at confidence 0) for a correlation it never made
+    if args.max_offset <= 0:
+        die(f"--max-offset must be more than 0 seconds (the largest offset searched), got {args.max_offset:g}")
+    if args.analyze_seconds <= 0:
+        die(f"--analyze-seconds must be more than 0 seconds, got {args.analyze_seconds:g}")
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
     args.sources = [args.second] + list(args.more_sources)

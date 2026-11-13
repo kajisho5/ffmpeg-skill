@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.8.5`) | any release |
+| `skill.version` | the npm / package.json version (`3.8.6`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.8.5", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.8.6", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -984,7 +984,8 @@ row or column), `non_av_streams_dropped` (with the
 first attempt's error beside `dropped_non_av_streams`), `measurement_input_pending` (skipped: a
 dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ffmpeg -encoders` or
 `-bsfs` could not be read; what needed it names the read failure, not a missing encoder) and
-`timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, or is negative);
+`timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, read as the 1800 s default, or is
+negative or above 500000 s, read as 0, no limit; a negative or too-long `--timeout` is refused instead, `kind: input`);
 `av1_encoder_libaom` and `crf_clamped`; `font_substituted` (with `font_used`); `drift_correction_skipped`
 (with `drift_skipped_reason`); `cropdetect_windows_failed` (with `windows_failed`);
 `ass_lines_unshifted` / `ass_lines_malformed`; `timeline_parse_failed`; and every `warning:` line a

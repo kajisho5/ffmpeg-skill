@@ -137,6 +137,12 @@ def main(force_route: Optional[str] = None) -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    # A176: --from -1 divided by zero (a traceback, no JSON); --from -3 built an empty filter
+    # graph and --scale 0 or below a 0-px or negative box, both refused by ffmpeg (kind ffmpeg)
+    if args.count_from < 0:
+        die(f"--from must be 0 or more (the number the countdown starts at), got {args.count_from}")
+    if args.scale <= 0:
+        die(f"--scale must be more than 0 (a size multiplier; 1 is the template's own size), got {args.scale:g}")
     # 2.2.6: whitespace-only text is no text -- stripped before the "needs --title" checks, which
     # used to pass on "  " and burn an empty bar
     for _attr in ("name", "title", "subtitle", "text", "top", "bottom"):

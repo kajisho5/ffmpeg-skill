@@ -9,7 +9,7 @@ Scripts live in `scripts/` next to SKILL.md; run them with `python3 <skill-dir>/
 
 ## Shared flags
 
-Shared flags (every script): `--dry-run`; `--json` (output path, its probe, the commands run); `--json-brief` (status/output/verified + a `summary`); `--fast` (preview quality); `--progress` (%/ETA); `--timeout SECONDS` (`kind: timeout`, default 1800; `0` for hour-long encodes); `--overwrite` (step 7); `--plan FILE` (a dry run `render.py FILE` runs later; refuses a changed input). Re-encoding tools also take `--hw` (Apple Silicon GPU, big files; `FFMPEG_SKILL_HW=1` = default, not export), `--codec h264|hevc|av1|prores` and `--quality N`: unset, SDR is x264 (`cut.py`: HEVC source stays HEVC, `--no-keep-hevc` x264), HDR is x265 Main10; `prores` needs `-o NAME.mov`, `h264` refuses HDR (`color.py --to-sdr` first).
+Shared flags (every script): `--dry-run`; `--json` (output path, its probe, the commands run); `--json-brief` (status/output/verified + a `summary`); `--fast` (preview quality); `--progress` (%/ETA); `--timeout SECONDS` (`kind: timeout`, default 1800; `0` for hour-long encodes; below 0 or above 500000 is refused); `--overwrite` (step 7); `--plan FILE` (a dry run `render.py FILE` runs later; refuses a changed input). Re-encoding tools also take `--hw` (Apple Silicon GPU, big files; `FFMPEG_SKILL_HW=1` = default, not export), `--codec h264|hevc|av1|prores` and `--quality N`: unset, SDR is x264 (`cut.py`: HEVC source stays HEVC, `--no-keep-hevc` x264), HDR is x265 Main10; `prores` needs `-o NAME.mov`, `h264` refuses HDR (`color.py --to-sdr` first).
 
 ## What `--dry-run` runs
 

@@ -215,6 +215,9 @@ def main() -> int:
         die(f"--min-chapter must be > 0, got {args.min_chapter:g}")
     if args.max_chapters < 0:
         die(f"--max-chapters must be >= 0 (0 = no cap), got {args.max_chapters}")
+    if args.silence_min < 0:
+        # A185: a negative length reached silencedetect, which refused it (kind ffmpeg)
+        die(f"--silence-min must be 0 or more seconds, got {args.silence_min:g}")
     tags = {k: getattr(args, k) for k in TAG_KEYS if getattr(args, k) is not None}
     if not args.chapters and not args.clear_chapters and not args.auto_chapters and not tags:
         die("nothing to write: give --chapters FILE, --auto-chapters, --clear-chapters and/or --title/--artist/...")

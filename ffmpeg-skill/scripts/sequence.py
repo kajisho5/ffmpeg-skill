@@ -96,6 +96,10 @@ def main() -> int:
 
     if args.fps <= 0:
         die("--fps must be > 0")
+    for flag, value in (("--width", args.width), ("--height", args.height)):
+        # A109: 0 read as "not given" and a negative size reached ffmpeg (kind ffmpeg)
+        if value is not None and value < 1:
+            die(f"{flag} must be a positive number of pixels, got {value}")
     try:
         rate = exact_rate(args.fps)  # 29.97 is 30000/1001, as every other tool reads it
     except TimelineError as exc:

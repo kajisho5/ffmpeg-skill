@@ -156,7 +156,12 @@ def main() -> int:
     duration = meta.get("duration") or 0.0
 
     failed: List[Dict] = []
-    rects = detect(args.input, args.seconds, args.samples, args.limit, args.round_to, duration, failed,
+    # A164: cropdetect reads a limit below 1 as a fraction of the top code and 1 or more as the
+    # code itself, so --limit 1, the top of the documented 0..1 range, was read as code 1 (nearly
+    # nothing is black) where 0.999 reads as nearly everything. The top of the range is written
+    # as the top code of the source's bit depth (255 for 8 bits, 1023 for 10).
+    limit = args.limit if args.limit < 1 else float((1 << int(meta["video"].get("bit_depth") or 8)) - 1)
+    rects = detect(args.input, args.seconds, args.samples, limit, args.round_to, duration, failed,
                    square_pixels(meta["video"]))
     # windows_failed: a window ffmpeg could not decode was skipped without a word, so a
     # crop measured on one window of five read as well-founded as one measured on all five
