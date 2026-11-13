@@ -393,6 +393,9 @@ def render_pack(names: List[str], args) -> int:
                      "size_bytes": size, "duration": probe_doc.get("duration"),
                      # a destination whose check did not run is "not checked", not "pass" (the class of A113)
                      "check": ("pass" if chk.get("ok") else ("%d FAIL" % chk["failed"]) if chk.get("failed") else ("not checked" if ok else "failed")),
+                     # #485: a destination over the table's upload limit passes its check with a
+                     # WARN; the pack keeps which, so the row is not a bare "pass"
+                     "guidance": guidance_warns(chk),
                      "ok": bool(ok)})
         outputs.append(out)
         if not ok:
@@ -406,7 +409,8 @@ def render_pack(names: List[str], args) -> int:
     for r in rows:
         dur = f"{r['duration']:.2f} s" if r.get("duration") else "-"
         mb = f"{r['size_bytes'] / 1024 / 1024:.1f} MB" if r.get("size_bytes") else "-"
-        lines.append(f"| {r['platform']} | {r['file']} | {mb} | {dur} | {r['check']} |")
+        verdict = r["check"] + (f" (upload-limit guidance: {'; '.join(r['guidance'])})" if r.get("guidance") else "")
+        lines.append(f"| {r['platform']} | {r['file']} | {mb} | {dur} | {verdict} |")
     lines += ["", f"{len(rows)} destinations from one edit ({os.path.basename(args.input)}).",
               "Rendered by ffmpeg-skill; `report.py --pack` turns this table into an HTML report."]
     if not STATE.dry_run:
@@ -1090,7 +1094,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
         info(f"plan done: {output}, but the {check_result.get('platform') or 'content'} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""))
     else:
-        info(f"plan done: {output}")
+        advised = guidance_warns(check_result)
+        info(f"plan done: {output}" + (" — upload-limit guidance, the uploader checks the current limit: "
+                                       + "; ".join(advised) if advised else ""))
     # the tool's own steps (export's loudness, ...) come in through absorb_stage() above, tagged
     # with `stage`, so `verified` is theirs and the check's together
     emit(output, plan=path, plan_sha256=digest, unbound_inputs=unbound, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc,
@@ -1186,6 +1192,14 @@ def _has_sound(current: str, proj: Dict[str, Any], rel: Any) -> bool:
         if not src or not os.path.exists(src) or (probe(src).get("audio") or {}).get("codec"):
             return True
     return False
+
+
+def guidance_warns(check_doc: Optional[Dict[str, Any]]) -> List[str]:
+    """The rows of a check result that are over the platform table's upload limit (#485): WARN,
+    `basis: guidance`. The check passes with them, so each place that says a check passed names
+    them, with the limit, for whoever uploads to compare with the platform's current one."""
+    return [f"{r['check']}={r['value']} (expected {r['expected']})" for r in (check_doc or {}).get("checks", [])
+            if r.get("basis") == "guidance" and r.get("status") == "WARN"]
 
 
 def planned_clip_length(clip: Dict[str, Any], src: str, index: int) -> float:
@@ -1820,7 +1834,10 @@ def main() -> int:
             info(f"check: could not run check.py — {err.get('message') if isinstance(err, dict) else err}")
             exit_code = 1
         else:
-            info(f"check: OK for {check_label}")
+            # #485: over the table's upload limit is a WARN the check passes with; say it here too
+            advised = guidance_warns(check_result)
+            info(f"check: OK for {check_label}" + (" — upload-limit guidance, the uploader checks the current limit: "
+                                                   + "; ".join(advised) if advised else ""))
         stages_done.append("check")
     elif "check" in proj:
         record_skip('the check stage names neither "platform" nor "content": true, so nothing was checked',
