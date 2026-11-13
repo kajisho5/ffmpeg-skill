@@ -81,7 +81,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)](#after-380--a-length-that-is-not-stated-and-sound-trimmed-to-the-sample-491-493)
 - [After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)](#after-381--a-length-or-a-silence-between-two-milliseconds-the-siblings-of-493)
 - [After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)](#after-383--the-millisecond-in-fitpy-brollpy-and-syncpy-and-where-it-changes-nothing-follow-ups-of-470)
-- [After 3.8.4 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-384--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
+- [After 3.8.5 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-385--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
 <!-- contents:end -->
 
 ## Time limits
@@ -3745,7 +3745,7 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   All of it on FFmpeg 6.1.1, the only one measured. Test:
   `test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample`.
 
-## After 3.8.4 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)
+## After 3.8.5 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)
 
 - **`--timeout` is 0 (no limit) or a number of seconds a run can wait for; anything else is
   refused.** A negative `--timeout` used to be read as 0, which silently removed the limit, and a
