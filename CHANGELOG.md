@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.6.7
+
+_Automated release: version and notes generated from pull requests merged since 3.6.6._
+
 ### Changed
 
 - **Tests no longer depend on the order they run in** (#467: A227, A228, A229, and the `gappy.mp4`
@@ -90,6 +96,8 @@
   `batch` as `analysis_only` under `--dry-run`, which a test now derives from what each tool's dry
   run decodes; `report`'s note no longer claims contact sheets are measured, and `commands` no
   longer claims every ffmpeg command line.
+- fix: a measurement that did not happen is reported as not measured (#490)
+- chore: tests, CI, installer, evals and docs findings from the audit (#489)
 
 ## 3.6.6
 
