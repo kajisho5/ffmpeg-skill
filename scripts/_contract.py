@@ -171,6 +171,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                         {"capability": "filter:acompressor", "when": "--compress / --voice"}, {"capability": "filter:alimiter", "when": "--limit / --voice strong"}, {"capability": "filter:agate", "when": "--gate"},
                                         {"capability": "filter:deesser", "when": "--voice medium (the default) / --voice strong"},
                                         {"capability": "filter:extrastereo", "when": "--stereo-widen"},
+                                        {"capability": "filter:atempo", "when": "--tempo"},
                                         {"capability": AAC, "when": "output extension isn't .mp3/.opus/.ogg/.flac (audio_codec_for()'s default)"}] + AUDIO_OUT,
                   video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video stream-copied)"],
@@ -438,6 +439,7 @@ ERROR_REASONS = {
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
+    "output_container_codecs": "a .webm output whose command encodes video or sound WebM cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
     "output_locked": "another run holds the output's lock; details: {lock, output, pid, pid_alive, deadline, why}",
     "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed; details: {plan, plan_sha256, checked_at, "
@@ -797,7 +799,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "dynamics": {"type": "array", "items": {"enum": ["agate", "acompressor", "alimiter"]}, "description": "typed dynamics filters applied, in graph order"},
                  "silent": {"type": "array", "description": "--on-silent warn (default), only when a track was silent: [{flag, path, peak_db}] for each --music/--replace/--effects file, or under --duck the voice (flag \"input\"), whose whole-file peak is at or below --silence-threshold (default -50 dBFS); it was mixed anyway. --on-silent fail refuses instead, reason \"silent (peak X dBFS)\" in problems"},
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present with `silent`: which tracks were silent and how to refuse them"},
-                 "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
+                 "timing": {"type": "object", "description": "#486: {tempo, atempo, length_samples, sample_rate}: the --tempo factor (null without it), the atempo stages (each 0.5..2.0, [] at tempo 1) whose product it is, --length-samples (null without it) and the sample rate that count is in (null when not measured yet); with --length-samples a length_samples verification step counts the written track's decoded samples (exact for PCM/FLAC/ALAC, within tolerance_samples, one codec frame, for a lossy codec)"},
+                 "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, channel (--channel N, the 0-based channel kept, else null), sample_rate (--sample-rate, else null; both are read back from the output as the channels / sample_rate verification steps), effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
     if name in ("overlay", "graphics", "caption", "grid"):
         extra["font_used"] = FONT_USED_SCHEMA
     if name in ALPHA_LINE_TOOLS:

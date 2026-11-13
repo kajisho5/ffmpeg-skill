@@ -146,10 +146,13 @@ class AudioTests(MediaFixtures):
         a different word in the help is worse than no preset."""
         out = OUT / "voice_level.mp4"
         bare, _ = self._audio_filters(self.src, "--voice", "-o", out)
+        n = round(probe(str(self.src))["duration"] * 48000)
+        end = probe(str(self.src))["duration"] + 0.5 / 48000
         self.assertEqual(bare, "[0:a:0]highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,"
                                "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2[main];"
-                               "[main]apad,atrim=0:12.000[out]",
-                         "a bare --voice is the 1.12 chain, unchanged")
+                               f"[main]aformat=sample_rates=48000,apad=whole_len={n},atrim=end_sample={n},atrim=end={end:.6f}[out]",
+                         "a bare --voice is the 1.12 chain, unchanged (conformed to the picture in samples since #478, "
+                         "and ended with it on the timestamp for sound that starts late)")
         chains = {}
         for level in ("light", "medium", "strong"):
             chains[level], data = self._audio_filters(self.src, "--voice", level, "-o", out)
@@ -450,6 +453,214 @@ class AudioTests(MediaFixtures):
         self.assertIsNotNone(data["probe"]["video"])
         self.assertLessEqual(self._peak_rms(mp4)[0], -1.0 + 0.3)
 
+
+    @staticmethod
+    def _pcm(path):
+        """The first audio track's first channel as signed 16-bit samples at its own rate."""
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:a:0",
+                              "-af", "pan=mono|c0=c0", "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        import array
+        pcm = array.array("h")
+        pcm.frombytes(raw[:len(raw) // 2 * 2])
+        if sys.byteorder == "big":
+            pcm.byteswap()
+        return pcm
+
+    @staticmethod
+    def _onset(pcm, level=1000):
+        return next(i for i, s in enumerate(pcm) if abs(s) > level)
+
+    def test_audio_limiter_does_not_delay_the_sound(self):
+        """#476: alimiter without latency=1 delays its output by the look-ahead (--limit-attack,
+        5 ms: 240 samples at 48 kHz). With latency compensation the limited sound starts on the
+        input's own sample, at every attack, and --voice strong's limiter adds no delay over the
+        medium chain it extends."""
+        src = OUT / "limit_onset.wav"
+        # 0.5 s of silence, then a tone 0.9 of full scale (over every ceiling below)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "aevalsrc=if(gte(n\\,24000)\\,0.9*sin(2*PI*1000*(n-24000)/48000)\\,0):s=48000:d=1.5", "-c:a", "pcm_s16le", src)
+        ref = self._pcm(src)
+        self.assertEqual(self._onset(ref), 24001, "the fixture's tone starts at sample 24000 (sin 0 = 0)")
+        for extra in ((), ("--limit-attack", "20"), ("--limit-ceiling", "-6")):
+            with self.subTest(extra=extra):
+                out = OUT / "limit_onset_out.wav"
+                doc = json.loads(script("audio.py", src, "--limit", *extra, "-o", out, "--json").stdout)
+                got = self._pcm(out)
+                self.assertEqual(len(got), len(ref), "the length is kept")
+                self.assertLessEqual(abs(self._onset(got) - self._onset(ref)), 3, "the limited sound starts where the input's does")
+                self.assertIn("latency=1", doc["commands"][0])
+        onsets = {}
+        for level in ("medium", "strong"):
+            out = OUT / f"limit_onset_{level}.wav"
+            script("audio.py", src, "--voice", level, "-o", out)
+            onsets[level] = self._onset(self._pcm(out), level=300)
+        self.assertLessEqual(abs(onsets["strong"] - onsets["medium"]), 3, onsets)
+
+    def test_audio_pad_and_trim_are_exact_to_the_sample(self):
+        """#478: the sound was conformed with `atrim=0:{dur:.3f}`, to the millisecond, so a length
+        that is not a whole millisecond came out up to 24 samples (48 kHz) off. A replacement that
+        is shorter (padded), longer (trimmed), and a music bed now give the input's sample count,
+        at 48 kHz and at 44.1 kHz."""
+        for rate, samples in ((48000, 59244), (44100, 54433)):
+            src = OUT / f"exact_src_{rate}.wav"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"sine=f=440:sample_rate={rate}", "-af", f"atrim=end_sample={samples}", "-c:a", "pcm_s16le", src)
+            self.assertEqual(self._samples(src)[2], samples, "fixture")
+            self.assertNotEqual(round(round(samples / rate, 3) * rate), samples, "not a whole millisecond: the old rounding missed it")
+            beds = {}
+            for name, secs in (("short", 0.7), ("long", 2.0)):
+                beds[name] = OUT / f"exact_bed_{name}_{rate}.wav"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   f"sine=f=660:sample_rate={rate}:d={secs}", "-c:a", "pcm_s16le", beds[name])
+            for flags in (("--replace", beds["short"]), ("--replace", beds["long"]), ("--music", beds["long"])):
+                with self.subTest(rate=rate, flags=flags[0], bed=Path(flags[1]).stem):
+                    out = OUT / f"exact_out_{rate}.wav"
+                    script("audio.py", src, *flags, "-o", out)
+                    self.assertEqual(self._samples(out)[1], rate)
+                    self.assertEqual(self._samples(out)[2], samples)
+                    self.assertEqual(len(self._pcm(out)), samples)
+
+    def test_audio_that_starts_after_the_picture_still_ends_with_it(self):
+        """Review of #492: the sample count that replaced the millisecond trim (#478) does not move
+        timestamps, so sound that starts 0.3 s into the picture was padded to the picture's length
+        in samples and ran 0.3 s past it. It ends with the picture, as it did before."""
+        base = OUT / "late_base.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=d=2:s=160x120:r=25",
+           "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", base)
+        late = OUT / "late_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-itsoffset", "0.3", "-i", base,
+           "-map", "0:v", "-map", "1:a", "-c", "copy", "-t", "2", late)
+        self.assertGreater(float(probe(str(late))["audio"].get("start_time") or 0), 0.2, "fixture: the sound starts late")
+        out = OUT / "late_out.mp4"
+        script("audio.py", late, "--voice", "light", "-o", out)
+        ends = json.loads(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=start_time,duration", "-of", "json",
+             str(out)], capture_output=True, text=True, check=True).stdout)["streams"][0]
+        self.assertLess(float(ends["start_time"]) + float(ends["duration"]), 2.0 + 0.05)
+
+    @staticmethod
+    def _frequency(pcm, rate, lo, hi):
+        """The frequency of a pure tone over samples lo..hi, from its zero crossings."""
+        part = pcm[lo:hi]
+        crossings = sum(1 for a, b in zip(part, part[1:]) if (a < 0) != (b < 0))
+        return crossings / 2 / ((hi - lo) / rate)
+
+    def test_audio_tempo_keeps_the_pitch_and_length_samples_is_exact(self):
+        """#486: --tempo changes the tempo with atempo, chained in 0.5..2.0 stages outside that
+        range, and --length-samples pads or trims to an exact sample count. The output has the
+        asked-for length to the sample, and a 440 Hz tone measures 440 Hz after it."""
+        src = OUT / "tempo_440.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=2",
+           "-c:a", "pcm_s16le", src)
+        ref = self._pcm(src)
+        self.assertAlmostEqual(self._frequency(ref, 48000, 4800, 86400), 440, delta=2)
+        for factor, steps in ((1.5, [1.5]), (0.3, [0.5, 0.6]), (3.0, [2.0, 1.5]), (0.8, [0.8])):
+            with self.subTest(tempo=factor):
+                n = round(96000 / factor) + 17  # a little past what atempo gives: the tail is padded
+                out = OUT / "tempo_out.wav"
+                doc = json.loads(script("audio.py", src, "--tempo", str(factor), "--length-samples", str(n),
+                                        "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual(doc["timing"]["atempo"], steps)
+                self.assertAlmostEqual(math.prod(doc["timing"]["atempo"]), factor, places=9)
+                step = next(s for s in doc["verification"] if s["step"] == "length_samples")
+                self.assertEqual((step["measured"], step["expected"], step["tolerance_samples"]), (n, n, 0))
+                got = self._pcm(out)
+                self.assertEqual(len(got), n)
+                self.assertEqual(self._samples(out)[2], n)
+                self.assertAlmostEqual(self._frequency(got, 48000, n // 10, n * 8 // 10), 440, delta=4.4,
+                                       msg="the pitch is unchanged (within 1 %)")
+        # trimmed as well as padded, without --tempo
+        out = OUT / "tempo_trim.wav"
+        doc = json.loads(script("audio.py", src, "--length-samples", "48001", "-o", out, "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(len(self._pcm(out)), 48001)
+        # An Opus file of a 44.1 kHz track is written at 48 kHz, so N samples at 44.1 kHz is not
+        # the file's count: refused with the way out, and exact once the rate is one Opus has
+        src441 = OUT / "tempo_441.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:sample_rate=44100:d=2",
+           "-c:a", "pcm_s16le", src441)
+        (OUT / "len.opus").unlink(missing_ok=True)
+        proc = script("audio.py", src441, "--length-samples", "44100", "-o", OUT / "len.opus", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("--sample-rate 48000", json.dumps(err))
+        self.assertFalse((OUT / "len.opus").exists())
+        # a rate Opus codes at is not the rate it decodes at: 16 kHz in is 48 kHz out
+        proc = script("audio.py", src441, "--sample-rate", "16000", "--length-samples", "16000", "-o", OUT / "len.opus",
+                      "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        self.assertFalse((OUT / "len.opus").exists())
+        doc = json.loads(script("audio.py", src441, "--sample-rate", "48000", "--length-samples", "48000",
+                                "-o", OUT / "len.opus", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        # without --length-samples nothing is refused
+        script("audio.py", src441, "-o", OUT / "plain.opus")
+        # a fade-out ends where the output ends: timed on the 2 s source it sat past the 1 s trim
+        # and was never heard (review of #492)
+        out = OUT / "tempo_trim_fade.wav"
+        script("audio.py", src, "--length-samples", "48000", "--fade-out", "0.5", "-o", out)
+        faded = self._pcm(out)
+        self.assertEqual(len(faded), 48000)
+        peak = lambda lo, hi: max(abs(v) for v in faded[lo:hi])  # noqa: E731
+        self.assertLess(peak(47000, 48000), 0.1 * peak(12000, 24000), "the last 20 ms are faded down")
+        self.assertGreater(peak(23000, 24000), 0.9 * peak(12000, 13000), "and the fade starts at 0.5 s, not before")
+        # refusals: the input's own sound beside a copied picture, an exact length beside one, a range
+        for argv, needle in ((("--tempo", "1.2", "-o", OUT / "tempo_x.mp4"), "stream-copied"),
+                             (("--length-samples", "1000", "-o", OUT / "tempo_x.mp4"), "audio output"),
+                             (("--tempo", "20", "-o", OUT / "tempo_x.wav"), "0.1..10"),
+                             (("--length-samples", "0", "-o", OUT / "tempo_x.wav"), "positive")):
+            with self.subTest(argv=argv[:2]):
+                proc = script("audio.py", self.src, *argv, "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(needle, err["message"])
+
+    def test_audio_sample_rate_and_channel_are_checked_on_the_output(self):
+        """#487: --sample-rate resamples, --channel N keeps one channel by index; both are read
+        back from the output with probe as verification steps, and the kept channel is the one
+        asked for (each channel of the fixture is its own tone)."""
+        tones = (200, 300, 500, 700)
+        src = OUT / "quad_tones.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           *[a for f in tones for a in ("-f", "lavfi", "-i", f"sine=f={f}:sample_rate=48000:d=1")],
+           "-filter_complex", "[0][1][2][3]amerge=inputs=4", "-c:a", "pcm_s16le", src)
+        self.assertEqual(probe(str(src))["audio"]["channels"], 4, "fixture")
+        for index, rate in ((0, 44100), (2, 16000), (3, None)):
+            with self.subTest(channel=index, rate=rate):
+                out = OUT / "quad_pick.wav"
+                doc = json.loads(script("audio.py", src, "--channel", str(index),
+                                        *(("--sample-rate", str(rate)) if rate else ()), "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                steps = {s["step"]: s for s in doc["verification"]}
+                self.assertEqual((steps["channels"]["expected"], steps["channels"]["measured"]), (1, 1))
+                a = probe(str(out))["audio"]
+                self.assertEqual(a["channels"], 1)
+                self.assertEqual(int(a["sample_rate"]), rate or 48000)
+                if rate:
+                    self.assertEqual((steps["sample_rate"]["expected"], steps["sample_rate"]["measured"]), (rate, rate))
+                else:
+                    self.assertNotIn("sample_rate", steps)
+                got = self._pcm(out)
+                self.assertAlmostEqual(self._frequency(got, rate or 48000, len(got) // 10, len(got) * 9 // 10),
+                                       tones[index], delta=tones[index] * 0.01)
+        # --stereo duplicates the kept channel; a rate alone resamples a kept picture's sound too
+        doc = json.loads(script("audio.py", src, "--channel", "1", "--stereo", "-o", OUT / "quad_pick_st.wav", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(probe(str(OUT / "quad_pick_st.wav"))["audio"]["channels"], 2)
+        mp4 = OUT / "rate_video.mp4"
+        doc = json.loads(script("audio.py", self.src, "--sample-rate", "44100", "-o", mp4, "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertEqual(int(probe(str(mp4))["audio"]["sample_rate"]), 44100)
+        self.assertIsNotNone(probe(str(mp4))["video"])
+        for argv, needle in ((("--channel", "4"), "0..3"), (("--channel", "0", "--downmix"), "contradict"),
+                             (("--sample-rate", "10"), "1000..768000")):
+            with self.subTest(argv=argv):
+                proc = script("audio.py", src, *argv, "-o", OUT / "quad_x.wav", "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn(needle, err["message"])
 
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the

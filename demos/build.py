@@ -793,6 +793,16 @@ def demo_bgm_ducking(ctx):
     return before, after
 
 
+def demo_tempo_exact_length(ctx):
+    """The music bed 1.25x faster at the same pitch, resampled to 44.1 kHz and ended on an exact
+    sample count (4 s at that rate); the output is PCM so the count is the file's own."""
+    before = FIX / "music.m4a"
+    after = ctx.path("after.wav")
+    ctx.script("audio.py", before, "--tempo", "1.25", "--sample-rate", "44100", "--length-samples", "176400",
+               "-o", after)
+    return before, after
+
+
 def demo_export_reels(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
@@ -1707,6 +1717,10 @@ _ROWS = [
     ("bgm_ducking", AUDIO, "Music bed with ducking",
      "The bed drops by 12 dB whenever the speech-like track is active and comes back up in the pauses.",
      demo_bgm_ducking, "wave", None),
+    ("tempo_exact_length", AUDIO, "Faster at the same pitch, to an exact length",
+     "The bed plays 1.25x faster without its pitch moving, resampled to 44.1 kHz, and is cut at sample 176400 (4 s): "
+     "the right-hand plot holds more of the bed's pulses in half the time. The result's length_samples step counts the written samples.",
+     demo_tempo_exact_length, "wave", None),
 
     ("export_reels", DELIVERY, "Reels export, then checked",
      "One command produces the 1080x1920 deliverable; check.py then reports the spec row by row and exits non-zero on a FAIL.",

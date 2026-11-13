@@ -2029,7 +2029,8 @@ it) or the copy fails, the video is re-encoded with the tags on its frames
 `verification`'s `color_tags` step. Tags that are still wrong after the
 re-encode fail the run with `kind: verification`. The re-encode is H.264
 unless `--codec` says otherwise, so an output container that cannot hold it
-(`.webm`) fails with `kind: ffmpeg` instead of completing with the old tags.
+(`.webm`) is refused before it runs (`kind: input`, reason `output_container_codecs`) instead of
+completing with the old tags.
 
 ### audio.py — clean-up, music, ducking, layout
 ```
@@ -2037,7 +2038,8 @@ audio.py INPUT [--voice [light|medium|strong] | --denoise [--denoise-strength 25
          [--music FILE [--music-volume -14] [--duck [--duck-amount 12] [--duck-threshold -26.02]
           [--duck-attack 20] [--duck-release 400]] [--music-loop]]
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
-         [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE] [-o OUT]
+         [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE]
+         [--tempo FACTOR] [--length-samples N] [--channel N] [--sample-rate HZ] [-o OUT]
 ```
 `--denoise` is `afftdn=nf=-N:tn=1`, where N is `--denoise-strength`, the noise
 floor in dB below full scale (20..60, default 25). It is the starting floor that
@@ -2051,7 +2053,7 @@ produced. The exact filter chains:
 | --- | --- |
 | `light` | `highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1` |
 | `medium` | `highpass=f=80,deesser=i=0.4,afftdn=nf=-25:tn=1,acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2` |
-| `strong` | the `medium` chain, then `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled` |
+| `strong` | the `medium` chain, then `deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled:latency=1` |
 
 `light` for a good room (rumble and level only, noise floor and sibilance left
 alone), `medium` for a normal talking head, `strong` for phone/laptop audio.
@@ -2088,6 +2090,29 @@ alone comes out 7.7 dB lower than it went in (9.9 dB on 7.1; follow with `loudne
 leaves a 1-channel input untouched and downmixes >2 channels through
 swresample. Video is always stream-copied, and so is a subtitle/data track
 when the container can hold it (`dropped_non_av_streams` says when it could not).
+`--limit` (and `--voice strong`'s limiter) is `alimiter` with `level=disabled:latency=1`: the
+look-ahead is compensated, so the limited sound starts on the input's own sample instead of
+`--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476).
+With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
+source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
+so it is exact to the sample, not to the millisecond (#478). Sound that starts after the picture
+keeps its start and still ends with the picture (a trim on the timestamp follows the count).
+A fade-out ends where the output ends, which is `--length-samples` when that is given.
+`--tempo FACTOR` (0.1..10) changes the main track's tempo and keeps its pitch: `atempo` stages of
+0.5..2.0 whose product is the factor (3 is `atempo=2,atempo=1.5`, 0.3 is `atempo=0.5,atempo=0.6`).
+atempo's own output length is close to, not exactly, the input's divided by the factor, so
+`--length-samples N` pads with silence or trims the output to exactly N samples per channel at the
+track's rate; the result's `length_samples` verification step decodes the written track and counts
+them (exact for PCM/FLAC/ALAC, within one codec frame for a lossy codec). Both need an audio output,
+or for `--tempo` a `--replace` track beside the picture: the input's own sound beside its
+stream-copied picture would drift from it (`fit.py --method speed` retimes both). `timing` reports
+`{tempo, atempo, length_samples, sample_rate}`.
+`--channel N` keeps channel N of the track (0-based, `pan=mono|c0=cN`, first in the chain) as a
+1-channel output, or both sides of a stereo one with `--stereo`; an index past the track's channels
+and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the output (`aresample`,
+after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
+output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
+the `audio` block reports `channel` and `sample_rate`.
 Run `loudness.py` after this for final levels.
 
 ### loudness.py — EBU R128 normalisation

@@ -215,6 +215,81 @@ class DeliveryTests(MediaFixtures):
         for sc, pc in zip(self._rgba_at(straight, 120, 48)[:3], self._rgba_at(pm, 120, 48)[:3]):
             self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
 
+    def test_color_keep_alpha_grades_an_rgb_source_tagged_gbr(self):
+        """#454: FFmpeg's PNG encoder tags its stream colorspace `gbr` in .mov/.mkv, and the alpha
+        line passed that back as `-colorspace gbr`, which the option parser refuses, so every grade
+        of a PNG alpha source failed. `gbr` is now left out (the PNG line tags itself), and the
+        grade is the one an untagged RGB source of the same pixels gets."""
+        png = OUT / "alpha_gbr_src.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x96:r=25:d=1,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,80),255,64)'",
+           "-c:v", "png", png)
+        mkv, untagged = OUT / "alpha_gbr_src.mkv", OUT / "alpha_gbr_untagged.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", png, "-c", "copy", mkv)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", png, "-c:v", "qtrle", untagged)
+        for src in (png, mkv):
+            self.assertEqual(probe(str(src))["video"]["color_space"], "gbr", "the fixture is the reported one")
+        lut = OUT / "alpha_gbr_identity.cube"
+        lut.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        for src in (png, mkv):
+            for grade in (("--lut", lut), ("--correct", "--exposure", "0.5")):
+                for codec, ext in (("prores4444", "mov"), ("png", "mkv")):
+                    with self.subTest(src=src.suffix, grade=grade[0], codec=codec):
+                        out = OUT / f"alpha_gbr_{src.suffix[1:]}_{grade[0][2:]}_{codec}.{ext}"
+                        doc = json.loads(script("color.py", src, *grade, "--keep-alpha", "--alpha-codec", codec,
+                                                "--json", "-o", out).stdout)
+                        self.assertEqual(doc["status"], "completed")
+                        self.assertTrue(doc["verified"], doc["verification"])
+                        for passed_back in ("-colorspace gbr", "colorspace=gbr"):
+                            self.assertNotIn(passed_back, " ".join(doc["commands"]))
+                        # the tags reported are the ones written: an RGB line says gbr, and a YUV one
+                        # never does (6.1 leaves it untagged; FFmpeg 8 writes the matrix it converted with)
+                        written = doc["probe"]["video"]["color_space"]
+                        self.assertEqual(written, probe(str(out))["video"]["color_space"])
+                        if codec == "png":
+                            self.assertEqual(written, "gbr")
+                        else:
+                            self.assertNotIn(written, ("gbr", "rgb"))
+        ref = OUT / "alpha_gbr_untagged_graded.mov"
+        script("color.py", untagged, "--correct", "--exposure", "0.5", "--keep-alpha", "-o", ref)
+        for x, y in ((20, 20), (120, 48)):
+            self.assertEqual(self._rgba_at(OUT / "alpha_gbr_mov_correct_prores4444.mov", x, y), self._rgba_at(ref, x, y))
+
+    def test_every_probed_colour_tag_is_spelled_the_way_its_destination_takes_it(self):
+        """#454's class: a probed tag passed back to FFmpeg. ffprobe's names are setparams' names;
+        the -colorspace/-color_primaries/-color_trc options refuse three of them (gbr, and the
+        transfers bt470m/bt470bg, which they call gamma22/gamma28). Every name ffprobe prints is
+        tried in both places, through the helper every such caller uses."""
+        from _common.color import carried_tag
+        names = {
+            "colorspace": ("gbr", "bt709", "fcc", "bt470bg", "smpte170m", "smpte240m", "ycgco", "bt2020nc", "bt2020c",
+                           "smpte2085", "chroma-derived-nc", "chroma-derived-c", "ictcp"),
+            "color_primaries": ("bt709", "bt470m", "bt470bg", "smpte170m", "smpte240m", "film", "bt2020", "smpte428",
+                                "smpte431", "smpte432", "ebu3213"),
+            "color_trc": ("bt709", "bt470m", "bt470bg", "smpte170m", "smpte240m", "linear", "log100", "log316",
+                          "iec61966-2-4", "bt1361e", "iec61966-2-1", "bt2020-10", "bt2020-12", "smpte2084", "smpte428",
+                          "arib-std-b67"),
+        }
+        head = ("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi")
+        tail = ("-frames:v", "1", "-f", "null", "-")
+        for kind, values in names.items():
+            for name in values:
+                with self.subTest(kind=kind, name=name):
+                    opt, label = carried_tag(kind, name, "option"), carried_tag(kind, name, "setparams")
+                    self.assertEqual(opt is None, name == "gbr")
+                    if opt:
+                        # The frames already carry the tag the option names, as a carried tag's
+                        # do: FFmpeg 8 converts to an output option's colour space when the
+                        # input's differs, and swscale has no path to several of these (ictcp,
+                        # ycgco, ...), which is a refusal of the conversion, not of the name.
+                        sh(*head, "-i", f"color=s=16x16:d=0.04,setparams={kind}={label}", f"-{kind}", opt, *tail)
+                        sh(*head, "-i", "color=s=16x16:d=0.04", "-vf", f"setparams={kind}={label}", *tail)
+        # the smart cut's x264 line is one such caller: a PAL-tagged H.264 re-encoded part
+        import _smartcut
+        line = _smartcut.x264_line({"profile": "High", "pix_fmt": "yuv420p", "level": 30, "color_space": "bt470bg",
+                                    "color_primaries": "bt470bg", "color_transfer": "bt470bg"}, 18, "veryfast")
+        self.assertEqual(line[line.index("-color_trc") + 1], "gamma28")
+
     def test_color_on_an_alpha_source_without_keep_alpha_is_not_verified(self):
         """Regression: an H.264 grade of a ProRes 4444 clip dropped the alpha and still said
         verified: true. The `alpha` step now fails (alpha_dropped), --drop-alpha records the

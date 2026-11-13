@@ -34,6 +34,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, aac_args, concat_list_line, ffmpeg_base, require_tool, run
+from _common.color import carried_tag_args
 from _common.runner import fail_if_classified
 
 # the stream parameters a re-encoded part must share with the source (ffprobe -show_streams)
@@ -129,11 +130,12 @@ def x264_line(params: Dict[str, Any], crf: int, preset: str) -> List[str]:
             "-x264-params", f"{b}:open-gop=0"]
     if level:
         args += ["-level:v", f"{level // 10}.{level % 10}"]
-    for flag, field in (("-colorspace", "color_space"), ("-color_primaries", "color_primaries"),
-                        ("-color_trc", "color_transfer"), ("-color_range", "color_range")):
-        value = params.get(field)
-        if value and value != "unknown":
-            args += [flag, str(value)]
+    # spelled the way the output options take them (#454: ffprobe's bt470m/bt470bg transfer and
+    # gbr space are not their names)
+    args += carried_tag_args([("-colorspace", params.get("color_space")), ("-color_primaries", params.get("color_primaries")),
+                              ("-color_trc", params.get("color_transfer"))])
+    if params.get("color_range") and params.get("color_range") != "unknown":
+        args += ["-color_range", str(params["color_range"])]
     return args
 
 

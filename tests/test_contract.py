@@ -8647,6 +8647,68 @@ class Issue415Tests(unittest.TestCase):
                 self.assertEqual(doc["status"], "completed", doc.get("error"))
                 self.assertTrue((d / default).exists())
 
+    def test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs(self):
+        """#488: every re-encoding tool writes H.264 (or HEVC) and AAC, which WebM cannot hold, and
+        a named `-o x.webm` failed in the muxer after the encode had started (kind ffmpeg, "Nothing
+        was written into output file") while the dry run said completed. Swept over every tool of
+        tests/sweep.py: all of them, through the one check every ffmpeg command passes. Refused
+        now, real run and dry run alike, with nothing run and nothing written; .mkv still works."""
+        d = self.dir("webm_out")
+        mkv = d / "in.mkv"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", mkv)
+        for name, argv in (("crop", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]),
+                           ("cut", ["--start", "0.2", "--end", "1", "--accurate"]), ("loudness", []),
+                           ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, dry=bool(dry)):
+                    out = d / f"{name}.webm"
+                    proc = tool(name, mkv, *argv, *dry, "-o", out, "--json", check=False)
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual(doc["status"], "failed")
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                    self.assertIn("WebM", err["message"])
+                    self.assertTrue(err["details"]["encoders"])
+                    self.assertFalse(out.exists())
+        doc = json.loads(tool("crop", mkv, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                              "-o", d / "crop.mkv", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        # An encoder option for a stream the output will not have selects nothing: cut.py names
+        # -c:a aac for a silent source too, and a video-only VP9/AV1 WebM of it is a valid output
+        # (review of #492: the check refused it). With sound in the input the same line is refused.
+        from _common.runner import _check_container_codecs
+        silent = d / "silent.mkv"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", silent)
+        line = lambda src: ["ffmpeg", "-y", "-i", str(src), "-c:v", "libvpx-vp9", "-c:a", "aac", str(d / "v.webm")]  # noqa: E731
+        _check_container_codecs(line(silent))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(mkv))
+        # a read that stalls is reported as a timeout, under the probe's own ceiling, not taken
+        # for "the stream is there" (which would answer output_container_codecs instead)
+        import _common.runner as runner_mod
+        seen = {}
+
+        def stalled(cmd, **kw):
+            seen["timeout"] = kw.get("timeout")
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 0)
+        buf = io.StringIO()
+        with unittest.mock.patch.object(runner_mod.STATE, "timeout", 2.0), unittest.mock.patch.object(runner_mod.STATE, "json", True), \
+                unittest.mock.patch.object(runner_mod.subprocess, "run", stalled), \
+                contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(silent))
+        self.assertEqual(seen["timeout"], 2.0)
+        failure = json.loads(buf.getvalue())
+        self.assertEqual((failure["error"]["kind"], failure["exit_code"]), ("timeout", 124))
+        # --timeout 0 lifts the ceiling of an encode, never of a read
+        with unittest.mock.patch.object(runner_mod.STATE, "timeout", 0), unittest.mock.patch.object(runner_mod.subprocess, "run", stalled), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            _check_container_codecs(line(silent))
+        self.assertEqual((seen["timeout"], stop.exception.code), (runner_mod.PROBE_TIMEOUT, 124))
+        # an input that is not there yet (a dry run's planned file) counts as having the stream
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_container_codecs(line(d / "not_written_yet.mkv"))
+
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
         54 in the real run, and nothing said so."""

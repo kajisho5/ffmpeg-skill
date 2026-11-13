@@ -25,6 +25,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from _common import runner as _runner
+from _common.color import carried_tag
 from _common.runner import STATE, ffmpeg_encoders, require_tool, run
 
 # A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
@@ -284,10 +285,12 @@ _TAG_KEYS = (("colorspace", "color_space", "-colorspace"), ("color_primaries", "
              ("color_trc", "color_transfer", "-color_trc"))
 
 
-def _source_tags(meta: Optional[Dict[str, Any]]) -> List[tuple]:
+def _source_tags(meta: Optional[Dict[str, Any]], dest: str = "option") -> List[tuple]:
+    """(setparams name, value, output option) per source tag that is passed on, the value spelled
+    for `dest` (carried_tag: an RGB source's `gbr` is left out, #454)."""
     v = (meta or {}).get("video") or {}
-    return [(param, v.get(key), flag) for param, key, flag in _TAG_KEYS
-            if v.get(key) and v.get(key) not in ("unknown", "reserved", "unspecified")]
+    tags = [(param, carried_tag(param, v.get(key), dest), flag) for param, key, flag in _TAG_KEYS]
+    return [t for t in tags if t[1]]
 
 
 def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]] = None) -> str:
@@ -295,7 +298,7 @@ def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]]
     when asked, the source's colour tags put back on the frames (`setparams`: a grade's RGB legs
     and an RGB layer's conversion relabel them, BT.601 or unknown), then the line's own pixel
     format (so no later conversion can drop the plane)."""
-    tags = _source_tags(meta)
+    tags = _source_tags(meta, "setparams")
     label = ("setparams=" + ":".join(f"{p}={val}" for p, val, _ in tags) + ",") if tags else ""
     # premultiplied colour is colour x alpha in RGB: multiplied there (a YUV premultiply scales the
     # limited-range offsets too), after the tags are back so both conversions use the same matrix
