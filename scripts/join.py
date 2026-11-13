@@ -50,6 +50,7 @@ from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.timeline import exact_rate
+from _common.emit import input_length
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -704,6 +705,8 @@ def main() -> int:
             skipped=skipped)
     validate_color(args.pad_color, "--pad-color")
     metas = [probe(p) for p in args.inputs]
+    for p, m in zip(args.inputs, metas):
+        input_length(m, p)  # every clip is placed by its length: one that states none is refused, not 0 s (#491)
     # A pending input's probe is the dry-run stub, whose (0x0) video stream says nothing about the
     # file an earlier step will write. Its extension stands in: a step names its output for what
     # it holds, so an audio extension (.wav, .m4a, .aiff, ... -- every audio file this skill

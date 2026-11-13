@@ -25,6 +25,7 @@ from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
 from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note  # noqa: E402
+from _common.emit import input_length  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
 # Action and title safe are SMPTE ST 2046-1's 93 % and 90 % of a 16:9 picture; the 4:3 centre cut
@@ -363,6 +364,7 @@ def main() -> int:
         except ValueError:
             die("--tiles must look like 4x3")
         n = cols * rows
+        dur = input_length(meta)  # the sheet is spread over the length: none stated is refused with the way out (#491)
         if not dur:
             die("cannot build a contact sheet without a known duration")
         frames_avail = int((meta["video"].get("fps") or 0) * dur) or 1

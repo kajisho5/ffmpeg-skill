@@ -49,6 +49,7 @@ from _common.fonts import font_choice, record_font_choice
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 from _common import drawtext_fontfile  # noqa: E402
+from _common.emit import input_length  # noqa: E402
 
 # where the template's text chain goes in a filter_complex it builds (graphics.main fills it in)
 TEXT = "@TEXT@"
@@ -201,7 +202,7 @@ def main(force_route: Optional[str] = None) -> int:
         info(f"--platform {args.platform}: safe margins top {m_top} / bottom {m_bottom} / left {m_left} / right {m_right} px")
     fps = meta["video"].get("fps")
     s = time_arg(args.start, "--start", fps) if args.start else 0.0
-    e = time_arg(args.end, "--end", fps) if args.end else dur
+    e = time_arg(args.end, "--end", fps) if args.end else input_length(meta)  # no --end is the clip's end (#491)
     # the picture's own length first: sound that runs on keeps the container open past the last frame
     picture_len = meta["video"].get("duration") or dur
     if picture_len and s >= picture_len:

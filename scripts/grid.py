@@ -34,6 +34,8 @@ from _common.emit import note, record_fallback  # noqa: E402
 from _common.fonts import script_font_for_text  # noqa: E402
 from _common.probe import square_pixels  # noqa: E402
 from _common.wrap import text_width_em  # noqa: E402
+from _common.emit import input_length  # noqa: E402
+from _common.decision import conform_output_t, conform_to_length  # noqa: E402
 
 LABEL_MARGIN = 10
 
@@ -114,7 +116,7 @@ def main() -> int:
     if args.audio_from is not None and not metas[args.audio_from].get("audio"):
         die(f"--audio-from {args.audio_from}: {args.inputs[args.audio_from]} has no audio stream")
 
-    durations = [m.get("duration") or 0.0 for m in metas]
+    durations = [input_length(m) for m in metas]
     target_duration = max(durations) if args.pad else min(durations)
 
     # each label is drawn with a font that covers its own script, as every other text-drawing tool
@@ -188,12 +190,24 @@ def main() -> int:
     cw, ch = args.cell_width + args.gap, args.cell_height + args.gap
     layout = "|".join(f"{c * cw}_{r * ch}" for r in range(args.rows) for c in range(args.cols))
     parts.append("".join(f"[v{i}]" for i in range(n)) + f"xstack=inputs={n}:layout={layout}:fill={args.background}[out]")
-    if args.audio_from is not None and args.pad and durations[args.audio_from] < target_duration:
+    # The sound ends with the grid, to the sample (#493): padded when its clip is shorter than a
+    # --pad grid, trimmed when it is longer. `apad,atrim=duration={:.3f}` and the output's
+    # `-t {:.3f}` both cut it to the millisecond (59244 samples at 48 kHz came out as 59232). A dry
+    # run's pending input has no rate to count in yet, and keeps the old filter, as audio.py does.
+    audio_rate = (metas[args.audio_from]["audio"].get("sample_rate") or 0) if args.audio_from is not None else 0
+    conformed = bool(audio_rate and target_duration > 0)
+    audio_source = None
+    if conformed:
+        parts.append(f"[{args.audio_from}:a:0]{conform_to_length(target_duration, audio_rate)}[aout]")
+        audio_source = "[aout]"
+    elif args.audio_from is not None and args.pad and durations[args.audio_from] < target_duration:
         parts.append(f"[{args.audio_from}:a:0]apad,atrim=duration={target_duration:.3f}[aout]")
+        audio_source = "[aout]"
+    elif args.audio_from is not None:
+        audio_source = f"{args.audio_from}:a:0"
     cmd += ["-filter_complex", ";".join(parts), "-map", "[out]"]
 
-    if args.audio_from is not None:
-        audio_source = "[aout]" if (args.pad and durations[args.audio_from] < target_duration) else f"{args.audio_from}:a:0"
+    if audio_source:
         cmd += ["-map", audio_source]
     # A grid is an 8-bit SDR composite by design (a comparison/contact artefact, not a
     # deliverable); an HDR input is flattened like look.py's contact sheet flattens it. Say so
@@ -206,7 +220,7 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    cmd += ["-t", f"{target_duration:.3f}", output]
+    cmd += ["-t", conform_output_t(target_duration, audio_rate) if conformed else f"{target_duration:.3f}", output]
     run(cmd)
 
     result = probe(output, role="output")

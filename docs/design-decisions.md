@@ -78,6 +78,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
 - [After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)](#after-363--a-tagged-version-npm-never-got-is-finished-by-dispatch-on-its-tag-448)
 - [After 3.7.0 — a platform's upload limits are guidance (#485)](#after-370--a-platforms-upload-limits-are-guidance-485)
+- [After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)](#after-380--a-length-that-is-not-stated-and-sound-trimmed-to-the-sample-491-493)
 <!-- contents:end -->
 
 ## Time limits
@@ -3558,3 +3559,41 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   cuts is a larger decision than the label on a check row. The `notes` line now says the limit is
   the table's as of its date. The numbers themselves are not edited here (#464 A116, Reels 90 s):
   the uploader's table is the current one, and a second copy kept current here would drift again.
+
+## After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)
+
+- **A tool that computes with the input's length refuses an input that states none.** A Matroska
+  written to a pipe has no duration in its container or its streams, and `probe()` reports
+  `duration: null`. `meta.get("duration") or 0.0` read that as a clip 0 s long: `reverse.py`,
+  `grid.py` and `broll.py` ended in a traceback, `fit.py` refused a "speed factor 0.00x",
+  `freeze.py` and `speedramp.py` quoted a clip of `0..0.000`, `join.py` joined the clip as 0.04 s
+  with `verified: true`, and `fit.py --method trim`, `scenes.py` and `metadata.py --auto-chapters`
+  completed on a length of 0. `input_length()` is where these tools read the length now: `null`
+  is refused as `kind: input`, the message says the length could not be read and the hint names
+  the remux (`export.py --preset copy`), which writes a container that states it. The tool does
+  not measure the length itself: that is a full read of the file per tool, and the remux does it
+  once for every later step. A dry run's pending input (the probe stub), a stated 0 and a still
+  picture (an image demuxer states no length) pass as before; `fit.py --dry-run` does not refuse
+  either, because `render.py` plans a clip's speed stage on the source in place of a cut that
+  does not exist yet (A97). A tool that only uses the length when a flag needs it refuses only then: `fit.py`
+  without `--duration`, `graphics.py` with `--end`, `look.py --at`, `metadata.py` without
+  chapters, `export.py` without `--max-mb` and `reverse.py --no-audio` run on the file as it is;
+  `cut.py` treats an unknown total as no upper bound, and `loudness.py` and `check.py` report the
+  length as not measured (2.20, A113). Code: `emit.input_length()`, `decision.av_clip_length()`.
+  Test: `test_an_unread_length_is_refused_by_every_tool_that_computes_with_it`.
+- **grid.py, broll.py and multicam.py end their sound to the sample, with audio.py's conform.**
+  They ended it with `atrim=duration={:.3f}` / `atrim=0:{:.3f}` and the output's `-t {:.3f}`, as
+  `audio.py` did before #478: a length of 59244 samples at 48 kHz was written as 59232.
+  `decision.conform_to_length(length, rate)` is the one filter now (`aformat` pinning the rate,
+  `apad=whole_len=N,atrim=end_sample=N`, then `atrim=end=length + half a sample` so sound that
+  starts late still ends with the picture), and `audio.py` emits the same string it did. The
+  sound is padded with silence as well as trimmed, so in `grid.py` every `--audio-from` track
+  goes through it (the longer clip's sound was cut by `-t` alone), and a `broll.py` mix or a
+  `multicam.py` track that ends early is as long as the picture. The output's `-t` sits half a
+  sample past the last one (`conform_output_t`): at `{:.3f}` it would cut the sound back, and a
+  frame is far longer than the difference. A dry run's pending input has no rate or length to
+  count in and keeps the old filter. The count is of the track's samples: an MP4 edit list is in
+  1/1000 s, so the stream's *stated* duration stays a whole millisecond, and the test reads the
+  packets with the edit list ignored. Code: `decision.conform_filter()`,
+  `decision.conform_to_length()`, `decision.conform_output_t()`. Test:
+  `test_grid_broll_and_multicam_end_their_sound_to_the_sample`.

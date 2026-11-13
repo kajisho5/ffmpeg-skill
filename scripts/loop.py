@@ -36,6 +36,7 @@ from _common import STATE, concat_list_line, add_common, aac_args, apply_common,
 from _common.emit import warn
 from _common.decision import av_trim
 from _common.probe import decode_gray_frames, decode_pcm_mono
+from _common.emit import input_length
 
 
 # The loop filter's size is capped at 32767 frames, so one boomerang cycle (2N-2 frames) must fit.
@@ -248,7 +249,7 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    src_dur = meta.get("duration") or 0.0
+    src_dur = input_length(meta)  # no stated length: refused with the way out (#491)
     if src_dur <= 0:
         die("input has no measurable duration to loop")
     has_audio = bool(meta.get("audio")) and not args.boomerang

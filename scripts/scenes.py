@@ -32,6 +32,7 @@ from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter  # noqa: E402
 from _common.probe import PROBED_VIDEO, square_pixels  # noqa: E402
 from _common import dry_run_input_pending  # noqa: E402
+from _common.emit import input_length  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -176,7 +177,7 @@ def main() -> int:
             die("--beats needs an audio stream; this file has none", kind="input")
         if args.beat_step <= 0:
             die("--beat-step must be greater than 0", kind="input")
-    dur = meta.get("duration") or 0.0
+    dur = input_length(meta)
     cuts = [0.0] if (audio_only or pending) else detect_scenes(args.input, args.threshold, args.min_scene, dur, args.ratio)
     has_audio = bool(meta.get("audio")) and not pending
     bounds = cuts + [dur]
