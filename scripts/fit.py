@@ -42,6 +42,7 @@ from typing import List
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
+from _common.emit import input_length
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
 
@@ -157,6 +158,10 @@ def main() -> int:
         target = time_arg(args.duration, "--duration", meta["video"].get("fps") if meta.get("video") else None)
         if target <= 0:
             die("target duration must be > 0")
+        # speed and trim are both computed from the source's length: one that states none is refused
+        # (#491). Not under --dry-run, where render.py plans a clip's speed stage on the source in
+        # place of a cut that does not exist yet and records the stand-in itself (A97)
+        src_dur = (meta.get("duration") or 0.0) if STATE.dry_run else input_length(meta)
         if args.method == "speed":
             if src_dur <= 0 and STATE.dry_run:
                 src_dur = target  # planning against an intermediate that does not exist yet

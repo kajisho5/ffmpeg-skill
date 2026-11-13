@@ -25,6 +25,7 @@ from _common.decision import av_trim, frame_rate, grid_at_or_after, stream_start
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.emit import input_length
 
 
 def main() -> int:
@@ -57,7 +58,7 @@ def main() -> int:
     meta_a = probe(args.input)
     if not meta_a.get("video"):
         die("A-roll has no video stream")
-    dur_a = meta_a.get("duration") or 0.0
+    dur_a = input_length(meta_a)
     # the cutaway is scaled onto the frame ffmpeg has already rotated, not the stored one, and
     # onto a non-square-pixel A-roll squared at its display aspect (#411)
     w, h = display_size(meta_a["video"])
@@ -98,7 +99,7 @@ def main() -> int:
             die(f"cutaway {i + 1}: --at {at:g}s is past the end of the A-roll ({dur_a:.3f}s)")
         if dur_a and at + length > dur_a + 0.01:
             die(f"cutaway {i + 1}: {at:g}s + {length:g}s runs past the end of the A-roll ({dur_a:.3f}s)")
-        dur_b = meta_b.get("duration") or 0.0
+        dur_b = input_length(meta_b)
         if dur_b and start_b + length > dur_b + 0.01 and not STATE.dry_run:
             die(f"cutaway {i + 1}: {path} has only {dur_b - start_b:.3f}s from {start_b:g}s, {length:g}s asked for")
         if cutaways and at < cutaways[-1]["at"] + cutaways[-1]["length"]:

@@ -9425,6 +9425,61 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
             if value:
                 self.assertEqual(row["value"], value)
 
+    def test_an_unread_length_is_refused_by_every_tool_that_computes_with_it(self):
+        """#491: `meta.get("duration") or 0.0` read a file that states no length as a clip 0 s long.
+        reverse.py, grid.py and broll.py ended in a traceback with no JSON document; fit.py refused
+        a "speed factor 0.00x", freeze.py "--at 1 is outside the clip (0..0.000)", speedramp.py
+        "(0..0.000)", silence.py "nothing would be kept", join.py called the clip 0.04 s long;
+        fit.py --method trim, scenes.py and metadata.py --auto-chapters completed on a length of 0.
+        Every one refuses now, as kind input, saying the length could not be read and naming the
+        remux, and none quotes a 0 as measured."""
+        self.assertIsNone(json.loads(tool("probe", self.nolength, "--json").stdout)["duration"])  # the fixture
+        n, c = self.nolength, self.clip
+        cases = {
+            "fit speed": ("fit", n, "--duration", "1"),
+            "fit trim": ("fit", n, "--duration", "1", "--method", "trim"),
+            "freeze": ("freeze", n, "--at", "1", "--hold", "1"),
+            "speedramp": ("speedramp", n, "--segment", "0-2:2.0"),
+            "reverse": ("reverse", n),
+            "loop": ("loop", n, "--times", "2"),
+            "silence": ("silence", n),
+            "look sheet": ("look", n),
+            "graphics to the end": ("graphics", n, "--template", "title", "--title", "T"),
+            "scenes": ("scenes", n),
+            "metadata chapters": ("metadata", n, "--auto-chapters"),
+            "export size": ("export", n, "--preset", "youtube", "--max-mb", "5"),
+            "join": ("join", n, c, "--transition", "none"),
+            "join second": ("join", c, n),
+            "grid": ("grid", n, c, "--cols", "2", "--rows", "1"),
+            "broll under": ("broll", n, "--insert", c, "--at", "1", "--duration", "1"),
+            "broll cutaway": ("broll", c, "--insert", n, "--at", "1", "--duration", "1"),
+            "multicam": ("multicam", n, c, "--switch", "0-1:0,1-2:1"),
+        }
+        for label, (name, *args) in cases.items():
+            with self.subTest(tool=label):
+                out = self.work / ("unread_" + label.replace(" ", "_") + (".png" if name == "look" else ".mkv" if name == "metadata" else ".mp4"))
+                proc = tool(name, *map(str, args), *(() if name == "scenes" else ("-o", str(out))), "--json", check=False, cwd=self.work)
+                self.assertNotIn("Traceback", proc.stderr, proc.stderr[-800:])
+                self.assertEqual(proc.returncode, 1, proc.stderr[-800:])
+                doc = json.loads(proc.stdout)
+                err = doc["error"]
+                self.assertEqual((doc["status"], err["kind"]), ("failed", "input"), err)
+                self.assertIn("could not be read", err["message"])
+                self.assertIn(str(n), err["message"])  # which file, when a tool takes several
+                self.assertIn("export.py", err["hint"])
+                self.assertIn("--preset copy", err["hint"])
+                self.assertIsNone(re.search(r"(?<![\d.])0(\.0+)?\s?(s|x)?\b(?![\d.:])", err["message"].replace(str(n), "")), err["message"])
+                self.assertFalse(out.exists(), "a refusal writes nothing")
+        # the way out the hint names gives a file the same tools take
+        remux = self.work / "unread_remux.mkv"
+        self.doc("export", n, "--preset", "copy", "-o", remux)
+        self.assertGreater(json.loads(tool("probe", remux, "--json").stdout)["duration"], 1.9)
+        doc, _ = self.doc("fit", remux, "--duration", "1", "-o", self.work / "unread_fit.mp4")
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", True))
+        # a tool that does not compute with the length still runs on the file as it is
+        doc, _ = self.doc("fit", n, "--width", "80", "-o", self.work / "unread_scaled.mp4")
+        self.assertEqual(doc["status"], "completed")
+
     def test_check_aspect_is_the_displayed_frames(self):
         """A114: the aspect row read the stored grid, so a 16:9 anamorphic file FAILed as 4:3."""
         doc, _ = self.doc("check", self.anamorphic, "--platform", "youtube", "--aspect", "16:9", "--no-loudness")

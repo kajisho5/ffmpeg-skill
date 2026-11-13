@@ -63,7 +63,7 @@ from _common.runner import (
     STATE, _timed_out, _unwatch, _watch, X264_PRESETS
 )
 from _common.emit import (
-    absorb_stage, audit, _brief, _BRIEF_DROP, _brief_summary, _CURRENT_CTX, die, emit, info, note, _plan_at_exit, _plan_inputs,
+    absorb_stage, audit, _brief, input_length, _BRIEF_DROP, _brief_summary, _CURRENT_CTX, die, emit, info, note, _plan_at_exit, _plan_inputs,
     _plan_unbound_inputs, _PLAN_STRIP, PLAN_VERSION, print_json, record_fallback, record_skip, refuse, _set_current_ctx, warn,
     write_plan
 )

@@ -36,6 +36,7 @@ from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.decision import av_trim, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.emit import input_length
 from sync import measure_offset
 
 ENERGY_WINDOW_S = 0.25  # --switch energy: loudness measured over this window on the reference timeline
@@ -187,8 +188,8 @@ def main() -> int:
         ratio = 1.0
         skipped_reason = None
         if args.fix_drift:
-            ref_dur = metas[0]["duration"] or 0.0
-            sec_dur = probe(p)["duration"] or 0.0
+            ref_dur = input_length(metas[0])
+            sec_dur = input_length(probe(p))
             overlap_end = min(ref_dur, sec_dur + off)
             window = 60.0
             head_len = min(args.analyze_seconds, overlap_end)
@@ -242,7 +243,7 @@ def main() -> int:
 
     if args.min_shot <= 0:
         die(f"--min-shot must be positive, got {args.min_shot:g}")
-    ref_dur = metas[0]["duration"] or 0.0
+    ref_dur = input_length(metas[0])
     energy_mode = args.switch == "energy"
     if energy_mode:
         cuts = energy_switch(args.inputs, metas, offsets, ratios, ref_dur, args.min_shot)

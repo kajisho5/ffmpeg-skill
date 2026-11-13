@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
-from _common.emit import die, record_fallback, refuse, warn
+from _common.emit import die, input_length, record_fallback, refuse, warn
 from _common.runner import read_json
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -440,7 +440,7 @@ def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:
     v = (meta.get("video") or {}).get("duration")
     a = (meta.get("audio") or {}).get("duration")
     if not v:
-        return meta.get("duration") or 0.0
+        return input_length(meta)  # a file that states no length at all is refused, not 0 s long (#491)
     if a:
         v0, a0 = stream_starts(meta)
         a = a + a0 - v0  # where the sound ends, counted from the first frame

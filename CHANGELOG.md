@@ -4,7 +4,20 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **An input that states no length is refused, not read as 0 s long** (#491). A Matroska written
+  to a pipe has no duration in its container or its streams (`probe.py` reports `duration: null`).
+  `reverse.py`, `grid.py` and `broll.py` ended in a traceback with no JSON document; `fit.py`
+  refused a "speed factor 0.00x", `freeze.py` and `speedramp.py` a clip of `0..0.000`,
+  `silence.py` "nothing would be kept"; `join.py` joined the clip as 0.04 s and `fit.py --method
+  trim`, `scenes.py` and `metadata.py --auto-chapters` completed on a length of 0. The tools that
+  compute with the length (`fit --duration`, `freeze`, `speedramp`, `reverse`, `loop`, `silence`,
+  `scenes`, `look`'s sheet, `graphics` without `--end`, `metadata` chapters, `export --max-mb`,
+  `join`, `grid`, `broll`, `multicam`'s reference, `--fix-drift`) read it through one helper,
+  `input_length()`, which refuses as `kind: input` ("the length of FILE could not be read") with
+  the hint to remux (`export.py INPUT --preset copy`). A tool that does not need the length runs
+  on the file as before.
 
 ## 3.8.0
 

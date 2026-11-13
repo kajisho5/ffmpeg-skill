@@ -34,6 +34,7 @@ from _common.emit import note, record_fallback  # noqa: E402
 from _common.fonts import script_font_for_text  # noqa: E402
 from _common.probe import square_pixels  # noqa: E402
 from _common.wrap import text_width_em  # noqa: E402
+from _common.emit import input_length  # noqa: E402
 
 LABEL_MARGIN = 10
 
@@ -114,7 +115,7 @@ def main() -> int:
     if args.audio_from is not None and not metas[args.audio_from].get("audio"):
         die(f"--audio-from {args.audio_from}: {args.inputs[args.audio_from]} has no audio stream")
 
-    durations = [m.get("duration") or 0.0 for m in metas]
+    durations = [input_length(m) for m in metas]
     target_duration = max(durations) if args.pad else min(durations)
 
     # each label is drawn with a font that covers its own script, as every other text-drawing tool
