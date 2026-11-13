@@ -16,6 +16,8 @@ on:
       - ".github/scripts/build_pages.py"
       - ".github/scripts/pages_layout.html"
       - ".github/workflows/pages.yml"
+  # release.yml dispatches this after it has tagged a version: the bump commit carries [skip ci],
+  # so the push trigger above never fires for it and the site would keep the previous version.
   workflow_dispatch:
 
 permissions:

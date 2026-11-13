@@ -82,6 +82,7 @@ jobs:
       contents: write        # bump commit, tag, GitHub release, plugin branch
       pull-requests: read    # resolve_version.py reads merged PRs' labels through gh api
       id-token: write        # required for `npm publish --provenance`
+      actions: write         # dispatch pages.yml once the release commit is on main
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -242,10 +243,24 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json server.json .claude-plugin/plugin.json .cursor-plugin/plugin.json gemini-extension.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
-          # A merge that landed during this step would still make the push non-fast-forward;
-          # replay the bump on top of it (a conflict here is real and should fail the run).
-          git pull --rebase origin main
-          git push origin HEAD:main
+          # A merge that landed after this job's checkout makes the push non-fast-forward. The
+          # bump is not replayed on top of it: this used to `git pull --rebase` here, which put
+          # the newer merge under the release commit, so it shipped in the tag without its label
+          # being read or its line written into CHANGELOG.md, and its own release run then found
+          # nothing to release (#467, A25). Instead the bump is dropped and this run releases
+          # nothing: the newer merge's own run is queued behind this one in the `release`
+          # concurrency group, starts from main's tip, and resolves the version from every PR
+          # merged since the last tag, this run's included.
+          BASE=$(git rev-parse HEAD~1)
+          if ! git push origin HEAD:main; then
+            git fetch origin main
+            if [ "$(git rev-parse origin/main)" = "$BASE" ]; then
+              echo "::error::the bump commit was refused although main has not moved (a ruleset, or RELEASE_PUSH_TOKEN): nothing was released"
+              exit 1
+            fi
+            echo "::notice::main moved while ${NEW_VERSION} was being prepared; this run releases nothing and the run for the newer merge releases both"
+            git reset --hard origin/main
+          fi
 
       - name: Check whether this version is already released
         id: check
@@ -288,6 +303,20 @@ jobs:
           target_commitish: ${{ steps.check.outputs.sha }}
           body_path: release_notes.md
           generate_release_notes: true
+
+      # The site prints the released version and the changelog, and pages.yml's own push trigger
+      # never sees the bump commit: it carries [skip ci] (#467, A28: the live site named the
+      # previous version and showed the shipped notes under "Unreleased" until the next docs
+      # push). A workflow_dispatch is one of the two events GITHUB_TOKEN may raise, so this run
+      # asks for the build itself, on main, which by now holds the release commit. Like the plugin
+      # branch it must not hold the npm publish back: it may fail, and the job's end reports it.
+      - name: Rebuild GitHub Pages for the released version
+        id: pages_dispatch
+        if: steps.check.outputs.already_released == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.check.outputs.already_released == 'false'
@@ -473,6 +502,12 @@ jobs:
         if: always() && steps.plugin_branch.outcome == 'failure'
         run: |
           echo "::error::the plugin branch was not updated for this release (see the 'Publish the plugin branch' step); npm and the GitHub Release are unaffected. Run .github/scripts/publish_plugin_branch.sh from the release commit to publish it."
+          exit 1
+
+      - name: Fail the job when GitHub Pages was not asked to rebuild
+        if: always() && steps.pages_dispatch.outcome == 'failure'
+        run: |
+          echo "::error::pages.yml was not dispatched for this release, so the site still shows the previous version; npm and the GitHub Release are unaffected. Run: gh workflow run pages.yml --ref main"
           exit 1
 
   # Finishing a release that was tagged (GitHub Release included) but never reached npm (#448).
