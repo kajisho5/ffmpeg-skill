@@ -223,6 +223,73 @@ def tiny_clip(path, source, *extra, seconds=1, audio=False, pix_fmt="yuv420p"):
     return path
 
 
+# Clips that say which frame is on screen (#470): frame N of numbered_clip() has a mean luma of
+# 16 + 2 * N, stored losslessly, so a decode reads the frame's number back; plain_clip() is one
+# flat luma to lay such a clip over. Both end on their own frame count (trim=end_frame): with
+# -frames:v the muxer stopped the sound where the picture ended.
+def _counted_clip(path, picture, rate, frames, sound, late):
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    cmd += (["-itsoffset", str(late)] if late else []) + ["-f", "lavfi", "-i", f"{picture},trim=end_frame={frames}"]
+    if sound:
+        cmd += ["-f", "lavfi", "-i", sound]
+    cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-pix_fmt", "yuv420p"] + (["-c:a", "pcm_s16le"] if sound else [])
+    sh(*cmd, path)
+    return path
+
+
+def numbered_clip(path, rate, frames, sound=None, size="64x64", late=0):
+    """`frames` frames at `rate` whose frame N has a luma of 16 + 2 * N. `sound` is a lavfi audio
+    source with its own length; `late` starts the picture that many seconds after the sound."""
+    return _counted_clip(path, f"color=black:s={size}:r={rate},geq=lum='16+2*N':cb=128:cr=128", rate, frames, sound, late)
+
+
+def plain_clip(path, rate, frames, sound=None, size="64x64", luma=235, late=0):
+    """`frames` frames at `rate` of one flat luma."""
+    return _counted_clip(path, f"color=black:s={size}:r={rate},geq=lum={luma}:cb=128:cr=128", rate, frames, sound, late)
+
+
+def frame_lumas(path, crop=None):
+    """The mean luma of every frame of `path`'s picture in order (of the `crop` region if given)."""
+    vf = (f"crop={crop}," if crop else "") + "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+    out = sh("ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-vf", vf, "-f", "null", "-").stdout
+    return [float(line.split("=")[1]) for line in out.splitlines() if "YAVG=" in line]
+
+
+def frame_numbers(path):
+    """The numbers of the numbered_clip() frames `path` shows, in order."""
+    return [round((v - 16) / 2) for v in frame_lumas(path)]
+
+
+def stretches(values, test):
+    """[(first, last)] index ranges of `values` over which `test` holds."""
+    out, start = [], None
+    for i, v in enumerate(list(values) + [None]):
+        hit = v is not None and test(v)
+        if hit and start is None:
+            start = i
+        if not hit and start is not None:
+            out.append((start, i - 1))
+            start = None
+    return out
+
+
+def pcm_of(command, path, channels=1):
+    """The samples a result's last command writes, as one array of 16-bit values: the command is
+    run again with PCM in place of AAC (an AAC frame smears an edge over 1024 samples)."""
+    import array
+    import shlex
+    cmd = shlex.split(command)
+    at = cmd.index("aac")
+    assert (cmd[at - 1], cmd[at + 1]) == ("-c:a", "-b:a"), cmd
+    cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(path)
+    sh(*cmd)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", str(channels), "-f", "s16le", "-"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    pcm = array.array("h")
+    pcm.frombytes(raw)
+    return pcm
+
+
 # legal_range_clip(): the share of each plane's samples set to each code in the first half of the
 # frames (the rest of a frame, and every sample of the second half, is mid-grey 128). Luma: 10 and
 # 250 are out of both bt709 and ebu-r103; 15 and 240 are out of bt709 only. Chroma (Cb): 10 is out

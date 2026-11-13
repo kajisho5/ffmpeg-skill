@@ -39,7 +39,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, conform_to_length, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
@@ -66,6 +66,24 @@ def atempo_chain(factor: float) -> str:
         remaining /= 100.0
     parts.append(f"atempo={remaining:.6f}")
     return ",".join(parts)
+
+
+def picture_output_t(target: float, meta: dict) -> str:
+    """The output `-t` of a trim from the start that has no sound to end: `{target:.3f}` as it
+    always was, unless that text keeps another number of frames than `target` does. The frames
+    kept are those that start before `target`. 37 frames of a 30000/1001 picture are 1.2345667 s:
+    `-t 1.235` is past the 38th frame's start and wrote it, and `-t 1.001` for 1.0014 s stopped
+    before the 31st. The limit is then written half a frame before the first frame left out.
+    Without a frame grid (no rate: a dry run's pending input; a variable rate, which the output's
+    -r regrids) the millisecond text stays."""
+    text = f"{target:.3f}"
+    rate = frame_rate(meta)
+    if not rate or (meta.get("video") or {}).get("variable_frame_rate_suspected"):
+        return text
+    out = grid_at_or_after(target, stream_starts(meta)[0], rate)  # the first frame left out
+    if out - 1 / rate + 1e-6 < float(text) <= out + 1e-9:
+        return text
+    return f"{out - 0.5 / rate:.6f}"
 
 
 def main() -> int:
@@ -189,9 +207,20 @@ def main() -> int:
                     vf.append("tblend=all_mode=average")
                 if has_audio:
                     af.append(atempo_chain(factor))
-            # atempo's sound ends before the target (13 to 62 ms before it on FFmpeg 6.1.1), so the
-            # millisecond cuts nothing off a retimed track and stays
-            post += ["-t", f"{target:.3f}" if af else length_output_t(target, rate, runs_on=True)]
+                    if rate:
+                        # atempo's output is not the input's length over the factor: it is laid
+                        # down in overlapping windows placed by the content, and comes out some
+                        # milliseconds short or long (3 s at 2.43x: 58368 samples of bursts for
+                        # 59244; 3 s of a sine at 2x: 72317 for 72000; FFmpeg 6.1.1). The track is
+                        # padded with silence or cut to the target's samples, as audio.py's is
+                        af.append(conform_to_length(target, rate))
+            # A retimed track is ended by that filter and the -t names the same sample. Where the
+            # sound is not retimed (a factor within 1e-4 of 1) the source's runs on and the -t ends
+            # it. A picture without sound that is not retimed either is a trim, counted in frames;
+            # one that is retimed, or regridded by --fps, keeps the millisecond
+            retimed = abs(factor - 1.0) > 1e-4
+            post += ["-t", length_output_t(target, rate, runs_on=True) if rate
+                     else f"{target:.3f}" if retimed or args.fps or has_audio else picture_output_t(target, meta)]
             STATE.duration_hint = target
         else:
             if target < src_dur:
@@ -202,7 +231,12 @@ def main() -> int:
                 # picture would not be the one the start timecode below names
                 m = min(SEEK_MARGIN, round(start, 3))
                 pre_input += ["-ss", f"{start - m:.3f}"]
-                post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", length_output_t(target, rate, runs_on=True)]
+                # without sound the -t only counts frames (picture_output_t). Not from the centre:
+                # there the output's clock starts at the seek, between two frames, and the encoder
+                # rounds each frame to its own tick
+                keep = (picture_output_t(target, meta) if not rate and not args.fps and not args.from_center
+                        else length_output_t(target, rate, runs_on=True))
+                post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", keep]
                 # the output starts on the first frame at or after the seek (a seek before a
                 # picture that starts after the file's origin: on its first frame): its start
                 # timecode is that frame's, not the source's first frame's

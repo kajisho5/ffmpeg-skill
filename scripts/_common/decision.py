@@ -176,6 +176,16 @@ def fmt_secs(value: Optional[float]) -> str:
     return "?s" if value is None else f"{value:.3f}s"
 
 
+def ntsc_rate(fps: float) -> float:
+    """`fps` as the rate it is a rounding of: 23.976, 29.97, 47.952, 59.94 and 119.88 (what
+    probe() reports, and what a caller types after `@`) are N * 1000 / 1001. Any other rate is
+    returned as it is. timeline.exact_rate() reads the same five rates the same way."""
+    whole = round(fps * 1.001)
+    if whole in (24, 30, 48, 60, 120) and abs(fps - whole / 1.001) < 0.01 and abs(fps - whole) > 0.01:
+        return whole * 1000 / 1001
+    return fps
+
+
 def parse_time(value: str, fps: Optional[float] = None) -> float:
     """Accept seconds ('12.5'), mm:ss ('1:30'), hh:mm:ss(.ms) ('00:01:30.250'), SRT '00:01:30,250',
     or -- when `fps` is given -- SMPTE non-drop-frame timecode 'hh:mm:ss:ff' ('00:01:30:15')."""
@@ -212,7 +222,10 @@ def parse_time(value: str, fps: Optional[float] = None) -> float:
         # 3596.4 s of video). This is exactly what fmt_smpte_time() inverts; before, the two
         # disagreed by ~0.1 % on the fractional NTSC rates and drifted apart over long files.
         total_frames = (int(h) * 3600 + int(m) * 60 + int(s)) * whole_fps + frame
-        return total_frames / fps
+        # at the picture's exact rate: probe()'s `fps` is rounded to three decimals, and frame 37
+        # counted at 29.97 is 1.2345679 s, 1.2 microseconds past the frame at 37 * 1001 / 30000,
+        # so a start read from 00:00:01:07 was the frame after it (ntsc_rate)
+        return total_frames / ntsc_rate(fps)
     if len(parts) > 3:
         raise ValueError(f"bad time: {value}")
     total = 0.0
@@ -440,6 +453,56 @@ def grid_at_or_after(t: float, v0: float, rate: float) -> float:
     return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
 
 
+def frame_window(start: Optional[float], end: Optional[float], meta: Optional[Dict[str, Any]],
+                 half_open: bool = False) -> Optional[Tuple[Optional[float], Optional[float]]]:
+    """The two times a filter compares a frame's `t` with so that a window from `start` to `end`
+    seconds of `meta`'s picture holds the frames asked: half a frame before the first frame at or
+    after `start`, and half a frame after the last frame at or before `end` (`half_open`: half a
+    frame before the first frame at or after `end`, which is then outside). A bound written as
+    the time itself is compared with `t` on the frame it names: `{:.3f}` put frame 37 of a
+    30000/1001 picture (1.234567 s) after a start of "1.235", and `t` is a double (pts x time
+    base) that is not always the number the text reads as (the frame at 1.4 s of a 25 fps MP4 is
+    not `<= 1.400`; FFmpeg 6.1.1). The grid is the one grid_at_or_after() counts on. None when
+    there is no grid to count on (no rate: a dry run's pending input; a picture probe() suspects
+    of a variable rate): the caller keeps the text it had. A bound of None stays None."""
+    v = (meta or {}).get("video") or {}
+    rate = frame_rate(meta)
+    if not rate or v.get("variable_frame_rate_suspected"):
+        return None
+    v0, half = stream_starts(meta)[0], 0.5 / rate
+    lo = None if start is None else grid_at_or_after(start, v0, rate) - half
+    if end is None:
+        hi = None
+    elif half_open:
+        hi = grid_at_or_after(end, v0, rate) - half
+    else:
+        hi = v0 + math.floor((end - v0) * rate + 1e-6) / rate + half
+    return lo, hi
+
+
+def window_expr(start: Optional[float], end: Optional[float], meta: Optional[Dict[str, Any]],
+                half_open: bool = False) -> str:
+    """The expression that is true on the frames of frame_window(): `between(t,LO,HI)`, or
+    `gte(t,LO)` with no end. With no start the window opens at 0, as it always did. Without a
+    grid it is the millisecond text the tools wrote before."""
+    bounds = frame_window(start, end, meta, half_open)
+    if bounds is None:
+        lo = f"{start:.3f}" if start is not None else "0"
+        return f"gte(t,{lo})" if end is None else f"between(t,{lo},{end:.3f})"
+    lo = f"{bounds[0]:.6f}" if bounds[0] is not None else "0"
+    return f"gte(t,{lo})" if bounds[1] is None else f"between(t,{lo},{bounds[1]:.6f})"
+
+
+def windowed_overlay_x(x: Any, window: str) -> str:
+    """An `overlay` x that puts the layer at `x` on the frames `window` is true on and off the
+    picture on every other frame. overlay's `enable` is not the main picture's alone: FFmpeg
+    evaluates it on each frame either input hands over, the layer's next one included, so a still
+    looped at 25 fps over a 30000/1001 picture was drawn from the frame before the window's
+    first to the frame before its last (36-66 for 37-67; FFmpeg 6.1.1). The position is
+    evaluated once per output frame with the main picture's `t`."""
+    return f"'if({window},{x},-w)'"
+
+
 def av_trim(start: float, end: Optional[float], rate: float = 0.0, fill_gaps: bool = False) -> Tuple[str, str]:
     """The video and the audio filters that cut one segment [start, end) of the graph clock out of
     both streams and shift both by the same constant, so an offset between them survives; `end`
@@ -534,6 +597,28 @@ def silence_filter(rate: Optional[int], lead: Optional[float] = None, tail: Opti
     if tail is not None:
         parts.append(f"apad=pad_dur={tail:.3f}")
     return ",".join(parts)
+
+
+def tpad_length(seconds: float, meta: Optional[Dict[str, Any]]) -> float:
+    """How long the picture `tpad=start_duration={seconds:.3f}` puts ahead of `meta`'s clip is:
+    tpad adds whole frames, the nearest count to the text it is given (0.23425 s at 25 fps is
+    written "0.234" and becomes 6 frames, 0.240 s). A sound delayed by `seconds` itself would
+    start up to half a frame before or after the picture it belongs to; delayed by this length it
+    moves with it (both streams of a clip shift by one constant: #409). `seconds` as it is when
+    there is no rate to count frames at (a dry run's pending input) or probe() suspects a
+    variable one."""
+    v = (meta or {}).get("video") or {}
+    rate = frame_rate(meta)
+    if not rate or v.get("variable_frame_rate_suspected"):
+        return seconds
+    try:
+        exact = Fraction(str(v.get("r_frame_rate") or ""))
+    except (ValueError, ZeroDivisionError):
+        exact = None
+    if exact is None or abs(float(exact) - rate) > 1e-6:
+        exact = Fraction(rate).limit_denominator(1001)
+    frames = math.floor(Fraction(f"{seconds:.3f}") * exact + Fraction(1, 2))  # a half rounds up, as av_rescale does
+    return float(frames / exact)
 
 
 def av_clip_length(meta: Optional[Dict[str, Any]], fps: float) -> float:

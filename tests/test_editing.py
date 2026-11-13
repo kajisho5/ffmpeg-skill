@@ -20,7 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
 from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_tones_take, stream_spans  # noqa: E402
+from _fixtures import frame_lumas, frame_numbers, numbered_clip, pcm_of, plain_clip, stretches  # noqa: E402
 from _common import probe  # noqa: E402
+import _common  # noqa: E402
 
 
 class EditingTests(MediaFixtures):
@@ -961,7 +963,11 @@ class EditingTests(MediaFixtures):
         The follow-ups of #470 are the same class: fit.py --method trim ended on `-t {:.3f}` too
         (59232 for 59244), broll.py delayed a cutaway's sound by `int(at * 1000)` ms (--at 1.001:
         48000 for 48048) and sync.py --replace-audio by the offset rounded to the millisecond
-        (measured with --fine-ms 0.25: 11232 for 11246)."""
+        (measured with --fine-ms 0.25: 11232 for 11246).
+        After 3.8.4 a silence ahead of a clip is as long as the frames put ahead of its picture
+        (pad.py --start, freeze.py's hold at the first frame), and a cutaway's sound starts with
+        the first frame of its window: the expectations for an amount between two frames are the
+        frames' (test_a_start_a_gate_or_a_retimed_length_is_written_to_the_sample)."""
         burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
         ff = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
         x264 = ("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p")
@@ -1007,15 +1013,18 @@ class EditingTests(MediaFixtures):
             ("loop at 44.1 kHz", "loop.py", [down44, "--duration", "2.23425"], 44100, 98530, None, "-t 2.234250 "),
             ("loop: the next repeat runs on past a millisecond rounded up", "loop.py", [down48, "--duration", "2.2346"], 48000, 107261, None, "-t 2.234600 "),
             ("pad --end", "pad.py", [down48, "--end", "0.23425"], 48000, 59244 + 11244, 31, "aformat=sample_rates=48000,apad=pad_len=11244"),
-            ("pad --start at 44.1 kHz", "pad.py", [down44, "--start", "0.23425"], 44100, 54433 + 10330, 31, "aformat=sample_rates=44100,adelay=10330S:all=1"),
-            ("pad --start and --end", "pad.py", [down48, "--start", "0.23425", "--end", "0.5"], 48000, 59244 + 11244 + 24000, 44,
-             "aformat=sample_rates=48000,adelay=11244S:all=1,apad=pad_len=24000"),
-            ("pad: a whole millisecond is rounded, not cut", "pad.py", [down48, "--start", "1.001"], 48000, 59244 + 48048, 50, "adelay=1001:all=1,apad=pad_dur=0.000"),
+            # --start: 6 frames of black at 25 fps (0.240 s), and the sound waits as long
+            ("pad --start at 44.1 kHz", "pad.py", [down44, "--start", "0.23425"], 44100, 54433 + 10584, 31, "adelay=240:all=1,apad=pad_dur=0.000"),
+            ("pad --start and --end", "pad.py", [down48, "--start", "0.23425", "--end", "0.5"], 48000, 59244 + 11520 + 24000, 44,
+             "adelay=240:all=1,apad=pad_dur=0.500"),
+            ("pad --start and an --end between two milliseconds", "pad.py", [down48, "--start", "0.23425", "--end", "0.23425"], 48000, 59244 + 11520 + 11244, 37,
+             "aformat=sample_rates=48000,adelay=11520S:all=1,apad=pad_len=11244"),
+            ("pad: 1.001 s is 25 frames of black", "pad.py", [down48, "--start", "1.001"], 48000, 59244 + 48000, 50, "adelay=1000:all=1,apad=pad_dur=0.000"),
             ("freeze holds the end", "freeze.py", [down48, "--hold", "0.23425"], 48000, 59244 + 11244, 31, "aformat=sample_rates=48000,apad=pad_len=11244"),
-            ("freeze holds the start at 44.1 kHz", "freeze.py", [down44, "--at", "0", "--hold", "0.23425", "--mode", "insert"], 44100, 54433 + 10330, 31,
-             "aformat=sample_rates=44100,adelay=10330S:all=1"),
-            ("freeze: a whole millisecond is rounded, not cut", "freeze.py", [down48, "--at", "0", "--hold", "1.001", "--mode", "insert"], 48000, 59244 + 48048, 50,
-             "adelay=1001:all=1"),
+            ("freeze holds the start at 44.1 kHz", "freeze.py", [down44, "--at", "0", "--hold", "0.23425", "--mode", "insert"], 44100, 54433 + 10584, 31,
+             "adelay=240:all=1"),
+            ("freeze: 1.001 s is 25 held frames", "freeze.py", [down48, "--at", "0", "--hold", "1.001", "--mode", "insert"], 48000, 59244 + 48000, 50,
+             "adelay=1000:all=1"),
             ("fit --method trim", "fit.py", [two48, "--method", "trim", "--duration", "1.23425"], 48000, 59244, 31, "-t 1.234250 "),
             ("fit --method trim at 44.1 kHz", "fit.py", [two44, "--method", "trim", "--duration", "1.2343"], 44100, 54433, 31, "-t 1.234300 "),
             ("fit --method trim from the centre", "fit.py", [two48, "--method", "trim", "--duration", "1.23425", "--from-center"], 48000, 59244, 31, "-t 1.234250 "),
@@ -1060,9 +1069,11 @@ class EditingTests(MediaFixtures):
            "-af", "atrim=end_sample=96000", *x264, "-c:a", "pcm_s16le", aroll)
         sh(*ff, "-f", "lavfi", "-i", "testsrc2=d=1:s=160x120:r=25", "-f", "lavfi", "-i", "aevalsrc=0.5:s=48000:d=1",
            *x264, "-c:a", "pcm_s16le", cutaway)
-        for at, audio, start, text in (("1.001", "mix", 48048, "adelay=1001|1001["),  # int(1.001 * 1000) is 1000
-                                       ("1.2346", "mix", 59261, "aformat=sample_rates=48000,adelay=59261S:all=1["),  # was 1234 ms: 59232
-                                       ("0.23425", "b", 11244, "aformat=sample_rates=48000,adelay=11244S:all=1["),
+        # the sound starts with the cutaway's first frame, the A-roll's first at or after --at
+        # (25 fps: 1.04 s, 1.24 s, 0.24 s); an --at on a frame is the delay it always was
+        for at, audio, start, text in (("1.001", "mix", 49920, "adelay=1040|1040["),
+                                       ("1.2346", "mix", 59520, "adelay=1240|1240["),
+                                       ("0.23425", "b", 11520, "adelay=240|240["),
                                        ("1", "mix", 48000, "adelay=1000|1000[")):
             with self.subTest(broll_at=at, audio=audio):
                 out = OUT / "ms_broll_out.mp4"
@@ -1119,6 +1130,8 @@ class EditingTests(MediaFixtures):
         self.assertEqual(_common.silence_filter(44100, 0.29, 0.0), "adelay=290:all=1,apad=pad_dur=0.000")
         self.assertEqual(_common.silence_filter(48000, tail=2.0), "apad=pad_dur=2.000")
         self.assertEqual(_common.silence_filter(48000, lead=2.0), "adelay=2000:all=1")
+        self.assertEqual(_common.silence_filter(48000, lead=1.001), "adelay=1001:all=1")  # int(1.001 * 1000) is 1000
+        self.assertEqual(_common.silence_filter(44100, lead=0.23425), "aformat=sample_rates=44100,adelay=10330S:all=1")
         self.assertEqual(_common.silence_filter(0, 0.23425, 0.0), "adelay=234:all=1,apad=pad_dur=0.000")
         pending = OUT / "ms_not_written_yet.mp4"
         mute = OUT / "ms_no_sound.mp4"
@@ -1129,12 +1142,154 @@ class EditingTests(MediaFixtures):
                                          ("fit.py", pending, ["--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", mute, ["--method", "trim", "--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", two48, ["--method", "trim", "--duration", "1.2"], "-t 1.200 "),
-                                         # a retimed track ends before the target (atempo), so its -t cuts nothing and stays
-                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234 ")):
+                                         # a retimed track is ended on the target's sample by its own filter
+                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234250 ")):
             with self.subTest(pending=tool, source=source.name, args=args):
                 plan = json.loads(script(tool, source, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
                 self.assertIn(text, str(plan["commands"]))
                 self.assertNotIn("pad_len", str(plan["commands"]))
+
+    def test_a_window_or_a_length_on_a_frame_time_keeps_that_frame(self):
+        """#470's open items: a window, a start or a length that names a frame's own time took the
+        frame after it, or the layer's frames decided it. At 30000/1001 frame 37 starts at
+        1.2345667 s and `{:.3f}` writes 1.235, past it: broll.py put frames 39-68 of a cutaway on
+        frames 38-67 for 37-67, fit.py --method trim without sound wrote 38 frames for 37, and an
+        overlay.py window of frames 37-67 showed a 25 fps layer on 36 and 38-65 and 67 (overlay's
+        enable is evaluated on the layer's frames too). An SMPTE time was counted at probe()'s
+        29.97, so 00:00:01:07 was 1.2345679 s, 1.2 microseconds past frame 37. Measured from the
+        written file: frame N of the source has a luma of 16 + 2 * N (numbered_clip)."""
+        ntsc = "30000/1001"
+        f = lambda n: n * 1001 / 30000  # noqa: E731 -- frame n's time at 30000/1001
+        with self.subTest(parse_time="00:00:01:07"):
+            self.assertAlmostEqual(_common.parse_time("00:00:01:07", 29.97), f(37), places=9)
+            self.assertAlmostEqual(_common.parse_time("00:00:01:07@29.97"), f(37), places=9)
+            self.assertEqual(_common.parse_time("00:00:01:05", 25.0), 1.2)  # a whole rate is counted as it was
+        aroll = plain_clip(OUT / "fw_aroll.mp4", ntsc, 90)
+        cutaway = numbered_clip(OUT / "fw_cutaway.mp4", ntsc, 90)
+        numbered = numbered_clip(OUT / "fw_numbered.mp4", ntsc, 90)
+        main = plain_clip(OUT / "fw_main.mp4", ntsc, 90, size="128x128", luma=40)
+        layer25 = plain_clip(OUT / "fw_layer25.mp4", 25, 100, size="32x32")
+        white = OUT / "fw_white.png"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=32x32", "-frames:v", "1", white)
+        self.assertEqual(frame_numbers(cutaway), list(range(90)), "fixture")
+        out = OUT / "fw_out.mp4"
+        for times in (("1.2345666", "1.2345666", "1.0343666"), ("00:00:01:07", "00:00:01:07", "00:00:01:01")):
+            with self.subTest(tool="broll.py", times=times):
+                doc = json.loads(script("broll.py", aroll, "--insert", cutaway, "--at", times[0], "--from", times[1],
+                                        "--duration", times[2], "-o", out, "--json").stdout)
+                shown = frame_numbers(out)
+                self.assertEqual(stretches(shown, lambda n: n < 90), [(37, 67)], "the cutaway is on frames 37-67")
+                self.assertEqual(shown[37:68], list(range(37, 68)), "showing its own frames 37-67")
+                self.assertIn("overlay='if(between(t,1.217883,2.252250),0,-w)':0", " ".join(shlex.split(doc["commands"][-1])))
+        for duration, frames in (("1.2345666", 37), ("00:00:01:07", 37), ("1.0014", 31), ("1.001", 30)):
+            with self.subTest(tool="fit.py", duration=duration):
+                doc = json.loads(script("fit.py", numbered, "--method", "trim", "--duration", duration, "-o", out, "--json").stdout)
+                self.assertEqual(frame_numbers(out), list(range(frames)))
+                if duration == "1.001":
+                    self.assertIn("-t 1.001 ", doc["commands"][-1], "a millisecond that keeps the frames asked stays")
+        for layer in (["--image", white], ["--video", layer25], ["--text", "XX", "--font-size", "40", "--box"]):
+            for start, end, frames in (("1.2345666", "2.2356666", (37, 67)), ("00:00:01:07", "00:00:02:07", (37, 67)),
+                                       ("1.0343666", "2.002", (31, 60))):
+                with self.subTest(tool="overlay.py", layer=layer[0], start=start, end=end):
+                    script("overlay.py", main, *layer, "--position", "0,0", "--margin", "0", "--start", start, "--end", end, "-o", out)
+                    lumas = frame_lumas(out, crop="32:32:0:0")
+                    self.assertEqual(stretches(lumas, lambda v: v > 45), [frames])
+        with self.subTest(tool="graphics.py"):
+            doc = json.loads(script("graphics.py", main, "--template", "title", "--title", "Hi", "--start", "1.2345666",
+                                    "--end", "2.2356666", "-o", out, "--json").stdout)
+            lumas = frame_lumas(out)
+            self.assertEqual(stretches(lumas, lambda v: abs(v - lumas[0]) > 1), [(37, 67)])
+            self.assertIn("enable='between(t,1.217883,2.252250)'", " ".join(shlex.split(doc["commands"][-1])))
+
+    def test_a_start_a_gate_or_a_retimed_length_is_written_to_the_sample(self):
+        """#470's open items on the sound: broll.py --audio b muted the A-roll with
+        `volume=0:enable=...`, evaluated once per 1024-sample frame (48128-96255 for 48000-95999);
+        a cutaway's sound started at --at while its picture started on the A-roll's first frame
+        at or after it (--at 1.001 at 25 fps: sound from 1.001 s, picture from 1.04 s); sync.py
+        --trim-second delayed by `adelay=<ms>` (11232 for an offset of 0.2343 s); fit.py --method
+        speed left atempo's sound 13 to 62 ms short of the target; pad.py --start and freeze.py's
+        hold at the first frame put whole frames of picture (0.240 s for 0.23425 at 25 fps) ahead
+        of an exact 0.23425 s of silence. Read from the graph, the command run again with PCM in
+        place of AAC (pcm_of)."""
+        quiet, a_dc = "aevalsrc=0:s=48000:d=4", "aevalsrc=0.5:s=48000:d=4"
+        aroll = plain_clip(OUT / "fs_aroll.mov", 25, 100, sound=a_dc)
+        silent_aroll = plain_clip(OUT / "fs_aroll_silent.mov", 25, 100, sound=quiet)
+        cutaway = numbered_clip(OUT / "fs_cutaway.mov", 25, 100, sound=a_dc)
+        silent_cutaway = numbered_clip(OUT / "fs_cutaway_silent.mov", 25, 100, sound=quiet)
+        out, pcm = OUT / "fs_out.mp4", OUT / "fs_pcm.mov"
+
+        def run(*args):
+            return json.loads(script(*args, "-o", out, "--json").stdout)["commands"][-1]
+
+        def spans(samples, loud):
+            return [s for s in stretches(samples, (lambda v: abs(v) > 200) if loud else (lambda v: abs(v) < 200)) if s[1] - s[0] > 100]
+
+        # the window is the A-roll's frames from the first at or after --at to the last before the
+        # end (1.04-2.00 s for 1.001 s + 1 s; 1.24-1.72 s for 1.23425 + 0.5), 1920 samples each
+        for at, length, first, last in (("1", "1", 48000, 95999), ("1.001", "1", 49920, 97919), ("1.23425", "0.5", 59520, 84479)):
+            with self.subTest(tool="broll.py", at=at, audio="b"):
+                command = run("broll.py", aroll, "--insert", silent_cutaway, "--at", at, "--duration", length, "--audio", "b")
+                self.assertEqual(spans(pcm_of(command, pcm), loud=False), [(first, last)], "the A-roll is muted over the window")
+                self.assertIn(f"between(t,{(first - 0.5) / 48000:.9f},", command)
+                command = run("broll.py", silent_aroll, "--insert", cutaway, "--at", at, "--duration", length, "--audio", "b")
+                self.assertEqual(spans(pcm_of(command, pcm), loud=True), [(first, last)], "the cutaway sounds over the same samples")
+                shown = frame_numbers(pcm)
+                self.assertEqual(stretches(shown, lambda n: n < 100)[0][0] * 1920, first, "and starts with its first frame")
+        with self.subTest(tool="sync.py"):
+            noise = "anoisesrc=d=4:c=pink:r=48000:a=0.5:seed=7"
+            reference, late = OUT / "fs_sync_ref.mov", OUT / "fs_sync_late.mov"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=4:s=160x120:r=25", "-f", "lavfi", "-i", noise,
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "pcm_s16le", reference)
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=3:s=160x120:r=25", "-f", "lavfi", "-i", noise, "-af",
+               "atrim=start_sample=11244,asetpts=PTS-STARTPTS,atrim=end_sample=144000", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "pcm_s16le", late)
+            doc = json.loads(script("sync.py", reference, late, "--trim-second", "--fine-ms", "0.25", "-o", out, "--json").stdout)
+            written = round(doc["offset_seconds"] * 48000)
+            self.assertIn(f"aformat=sample_rates=48000,adelay={written}S:all=1", doc["commands"][-1])
+            self.assertEqual(next(k for k, v in enumerate(pcm_of(doc["commands"][-1], pcm)) if abs(v) > 200), written)
+            doc = json.loads(script("sync.py", reference, late, "--trim-second", "-o", out, "--json").stdout)
+            self.assertIn(f"adelay={round(doc['offset_seconds'] * 1000)}:all=1", doc["commands"][-1], "a whole millisecond is the text it was")
+        burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
+        bursts = numbered_clip(OUT / "fs_bursts.mov", 25, 75, sound=f"aevalsrc={burst}:s=48000:d=3")
+        sine = numbered_clip(OUT / "fs_sine.mov", 25, 75, sound="sine=f=440:sample_rate=48000:d=3")
+        for source, duration in ((bursts, "1.23425"), (bursts, "2.0"), (sine, "1.23425")):
+            with self.subTest(tool="fit.py", source=source.name, duration=duration):
+                command = run("fit.py", source, "--duration", duration)
+                self.assertEqual(len(pcm_of(command, pcm)), round(float(duration) * 48000))
+        sound = plain_clip(OUT / "fs_pad.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1", luma=200)
+        sound30 = plain_clip(OUT / "fs_pad30.mov", 30, 30, sound="aevalsrc=0.5:s=44100:d=1", luma=200)
+        for tool, source, args, first, rate in (("pad.py", sound, ["--start", "0.23425"], 0.24, 48000),
+                                                ("pad.py", sound30, ["--start", "0.05"], 2 / 30, 44100),
+                                                ("freeze.py", sound, ["--at", "0", "--hold", "0.23425", "--mode", "insert"], 0.24, 48000)):
+            with self.subTest(tool=tool, args=args):
+                command = run(tool, source, *args)
+                self.assertEqual(spans(pcm_of(command, pcm), loud=True)[0][0], round(first * rate), "the silence is the held frames' length")
+                if tool == "pad.py":
+                    lumas = frame_lumas(pcm)
+                    self.assertEqual(next(k for k, v in enumerate(lumas) if v > 150), round(first * {48000: 25, 44100: 30}[rate]))
+        from _common.decision import tpad_length
+        self.assertEqual(tpad_length(0.23425, probe(str(sound))), 0.24)
+        self.assertEqual(tpad_length(1.0, probe(str(sound))), 1.0)
+
+    def test_a_loop_whose_sound_outlasts_its_picture_repeats_the_last_frame_on_the_grid(self):
+        """#470: a 1 s 25 fps clip with 1.23425 s of sound starts each repeat 0.23425 s after its
+        last frame. What filled that gap was the output's frame-rate handling: FFmpeg 6.1.1 repeated
+        the last frame and showed the next repeat's first frame on 1.20 s and 1.24 s, a frame
+        before its time (FFmpeg 7.1 and 8 held the last frame instead). The graph ends on the
+        clip's rate now: frames 0-24, frame 24 until the repeat, and the repeat's frame 0 on
+        1.24 s, the first tick at or after its sound. The packet count is not pinned (the 7.1 and
+        8 behaviour is seen in CI only)."""
+        gap = numbered_clip(OUT / "fl_gap.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1.23425")
+        flush = numbered_clip(OUT / "fl_flush.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1")
+        out = OUT / "fl_out.mp4"
+        doc = json.loads(script("loop.py", gap, "--duration", "2.23425", "-o", out, "--json").stdout)
+        shown = frame_numbers(out)
+        self.assertEqual(shown[:31], list(range(25)) + [24] * 6)
+        self.assertEqual(shown[31:40], list(range(9)), "each frame of the next repeat once, from 1.24 s")
+        self.assertIn("setpts=PTS-0.000000/TB,fps=25/1[v]", doc["commands"][-1])
+        doc = json.loads(script("loop.py", flush, "--duration", "2.5", "-o", out, "--json").stdout)
+        self.assertNotIn(",fps=", doc["commands"][-1], "a clip whose repeats meet keeps the command it had")
+        self.assertEqual(frame_numbers(out)[20:30], [20, 21, 22, 23, 24, 0, 1, 2, 3, 4])
 
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
@@ -1351,7 +1506,7 @@ class EditingTests(MediaFixtures):
             sys.path.pop(0)
         self.assertAlmostEqual(c.parse_time("00:00:01:15@30"), 1.5)
         self.assertAlmostEqual(c.parse_time("00:00:01:15@30", fps=24), 1.5, msg="the suffix beats the fps a tool passed in")
-        self.assertAlmostEqual(c.parse_time("01:00:00:00@29.97"), 108000 / 29.97)
+        self.assertAlmostEqual(c.parse_time("01:00:00:00@29.97"), 108000 * 1001 / 30000)  # 29.97 is 30000/1001 (after 3.8.4)
         with self.assertRaises(ValueError):
             c.parse_time("12.5@30")
         with self.assertRaises(ValueError):

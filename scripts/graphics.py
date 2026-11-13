@@ -51,6 +51,7 @@ from _common.fonts import font_choice, record_font_choice
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 from _common import drawtext_fontfile  # noqa: E402
+from _common.decision import window_expr, windowed_overlay_x  # noqa: E402
 from _common.emit import input_length  # noqa: E402
 
 # where the template's text chain goes in a filter_complex it builds (graphics.main fills it in)
@@ -232,7 +233,9 @@ def main(force_route: Optional[str] = None) -> int:
             hint="give a --start inside the clip")
     if e <= s:
         die("--end must be after --start")
-    en = f"enable='between(t,{s:.3f},{e:.3f})'"
+    # the window's bounds sit half a frame from the frames they select (window_expr): `{:.3f}`
+    # put the frame at 1.234567 s of a 30000/1001 picture after a --start of "1.235"
+    en = f"enable='{window_expr(s, e, meta)}'"
     base = min(W, H) * args.scale  # scale everything from the short side
     filters: List[str] = []
     rate = f"{meta['video'].get('fps') or 30:g}"
@@ -252,6 +255,12 @@ def main(force_route: Optional[str] = None) -> int:
         of w x h at x, y (or at the per-frame `x_expr`) -- decided for all of a template's boxes."""
         filters.append(f"{BOX}{len(boxes)}")
         boxes.append((colour, alpha, drawbox_geo, x, y, w, h, enable, x_expr))
+
+    def layer_at(x, y, enable: str) -> str:
+        """An overlay's `x=...:y=...` for a layer shown inside `enable`'s window: the window is in
+        the layer's position, which is evaluated on the picture's frames, where overlay's own
+        enable is evaluated on the layer's frames too (windowed_overlay_x)."""
+        return f"x={windowed_overlay_x(str(x).strip(chr(39)), enable[len('enable='):].strip(chr(39)))}:y={y}"
 
     def layer_src(colour: str, alpha: float, w: int, h: int, left: int = 0, top: int = 0) -> str:
         """A colour source to overlay (a box, the lower-third bar, the progress fill), converted when it
@@ -450,8 +459,8 @@ def main(force_route: Optional[str] = None) -> int:
         x_expr = f"if(lt(t,{s:.3f}+0.4),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/0.4),if(gt(t,{e:.3f}-0.3),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/0.3),{m_left}))"
         fc.append(f"{layer_src(bg, 0.85, bar_w, bar_h)}[bar]")
         fc.append(f"{layer_src(primary, 1.0, int(base * 0.012), bar_h)}[acc]")
-        fc.append(f"[0:v][bar]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v1]")
-        fc.append(f"[v1][acc]overlay=x='{x_expr}':y={y0}:{en}:eof_action=pass[v2]")
+        fc.append(f"[0:v][bar]overlay={layer_at(x_expr, y0, en)}:eof_action=pass[v1]")
+        fc.append(f"[v1][acc]overlay={layer_at(x_expr, y0, en)}:eof_action=pass[v2]")
         tx = f"({x_expr})+{tx_pad}"
         x_rest, x_off = m_left + tx_pad, -bar_w + tx_pad
         draws = []
@@ -546,10 +555,10 @@ def main(force_route: Optional[str] = None) -> int:
             # a layer (overlay composites the alpha too; drawbox leaves it as it was, and takes a
             # 10-bit picture to 8 bits)
             fc.append(f"{layer_src(bg, 0.5, W, h, 0, (H - h) % 2)}[pbg]")
-            fc.append(f"[0:v][pbg]overlay=x=0:y={(H - h) // 2 * 2}:{en}:eof_action=pass[v1]")
+            fc.append(f"[0:v][pbg]overlay={layer_at(0, (H - h) // 2 * 2, en)}:eof_action=pass[v1]")
         else:
             fc.append(f"[0:v]drawbox=x=0:y=ih-{h}:w=iw:h={h}:color={ff_color(bg, 0.5)}:t=fill:{en}[v1]")
-        fc.append(f"[v1][pb]overlay=x='-w+w*min(1,max(0,(t-{s:.3f})/{e - s:.3f}))':y={H - h}:{en}:eof_action=pass[vout]")
+        fc.append(f"[v1][pb]overlay={layer_at(f'-w+w*min(1,max(0,(t-{s:.3f})/{e - s:.3f}))', H - h, en)}:eof_action=pass[vout]")
 
     elif args.template == "sticker":
         # A social sticker: a filled chip of text that pops in. drawtext's box gives the chip
@@ -593,7 +602,7 @@ def main(force_route: Optional[str] = None) -> int:
         if args.duration <= 0:
             die(f"--duration must be > 0, got {args.duration:g}")
         he = min(e, s + args.duration)
-        hen = f"enable='between(t,{s:.3f},{he:.3f})'"
+        hen = f"enable='{window_expr(s, he, meta)}'"
         h1 = int(base * 0.085)
         bar_h = max(3, int(base * 0.01))
         hook_title = wrapped(args.title, h1)
@@ -642,7 +651,7 @@ def main(force_route: Optional[str] = None) -> int:
             ke = ks + seg
             pulse = f"1-0.15*min(1,(t-{ks:.3f})/{seg * 0.5:.3f})"
             add_text(str(k),
-                     f"drawtext=text='{k}':{fo}:fontsize={fs}:fontcolor={ff_color(primary)}:borderw={max(2, fs // 40)}:bordercolor={ff_color(bg)}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='{pulse}':enable='between(t,{ks:.3f},{ke:.3f})'",
+                     f"drawtext=text='{k}':{fo}:fontsize={fs}:fontcolor={ff_color(primary)}:borderw={max(2, fs // 40)}:bordercolor={ff_color(bg)}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='{pulse}':enable='{window_expr(ks, ke, meta, half_open=k > 0)}'",
                      size=fs, color=primary, font=ass_font_family(), align=5, x=W / 2, y=H / 2,
                      outline=float(max(2, fs // 40)), outline_color=bg, start=ks, end=ke,
                      scale_t=(0, seg * 500, 115))
@@ -766,7 +775,7 @@ def main(force_route: Optional[str] = None) -> int:
     drawboxes = []
     for colour, alpha, geo, x, y, w, h, enable, x_expr in boxes:
         if as_layers:
-            layers.append((layer_src(colour, alpha, w, h, x % 2, y % 2), f"x={x_expr or x - x % 2}:y={y - y % 2}:{enable}"))
+            layers.append((layer_src(colour, alpha, w, h, x % 2, y % 2), layer_at(x_expr or x - x % 2, y - y % 2, enable)))
         drawboxes.append(f"drawbox={geo}:color={ff_color(colour, alpha)}:t=fill:{enable}")
     filters = [("" if as_layers else drawboxes[int(f[len(BOX):])]) if f.startswith(BOX) else f for f in filters]
     filters = [f for f in filters if f]

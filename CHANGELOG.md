@@ -4,7 +4,44 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A window or a length on the picture keeps the frame it names** (#470's open items).
+  `overlay.py --start/--end`, `graphics.py`'s windows, `broll.py`'s cutaway and `fit.py --method
+  trim` without sound wrote a frame's time to the millisecond, which at 30000/1001 is past the
+  frame (frame 37 at 1.2345667 s is "1.235"). `broll.py --at 1.2345666 --from 1.2345666
+  --duration 1.0343666` put B's frames 39-68 on frames 38-67 and puts 37-67 on 37-67; an
+  `overlay.py` window of frames 37-67 is on 37-67, where a 25 fps `--image`/`--video` layer was
+  on 36, 38-65 and 67 (overlay's `enable` is evaluated on the layer's frames too, so the window
+  is in the layer's x position now) and `--text` on 38-67; `fit.py --method trim --duration
+  1.2345666` writes the 37 frames asked, not 38. The bounds sit half a frame from the frames
+  they select, so these commands change for windows in whole milliseconds too. An SMPTE time at
+  23.976, 29.97, 47.952, 59.94 or 119.88 is counted at the exact N * 1000 / 1001 (`00:00:01:07` was
+  1.2345679 s, past frame 37). Not changed: the emoji PNGs `caption.py` and `graphics.py`'s ASS
+  route lay over a libass line, and `fit.py --method speed` without sound (38 frames for 37 on
+  FFmpeg 6.1.1).
+- **A cutaway's sound, `broll.py --audio b`'s mute, `sync.py --trim-second`'s delay and
+  `fit.py --method speed`'s retimed sound are placed to the sample.** `--audio b` muted the A-roll
+  per 1024-sample audio frame (48128-96255 for 48000-95999) and is evaluated per sample now. A
+  cutaway's sound starts with its first frame, the A-roll's first at or after `--at` (`--at 1.001`
+  at 25 fps: 1.040 s, where the sound started at 1.001 s and the picture at 1.04 s). `sync.py
+  --trim-second --fine-ms 0.25` started the second file's sound at sample 11232 for an offset of
+  0.2343 s and starts it at 11246; at the default `--fine-ms 1` without `--fix-drift` the command
+  is unchanged. `fit.py --method speed` pads or cuts `atempo`'s output to the target (58368
+  samples for 59244, 95360 for 96000, 59232 for 59244 before).
+- **`pad.py --start` and `freeze.py --at 0 --mode insert` delay the sound by the frames put ahead
+  of the picture.** The picture is padded by whole frames: `--start 0.23425` at 25 fps is 6
+  frames (0.240 s), and the sound was delayed by 0.23425 s, 5.75 ms ahead of its picture; it is
+  delayed by 0.240 s now (`--start 0.05` at 30 fps: 0.0667 s for 0.050 s). The silence after a
+  clip is unchanged.
+- **`loop.py` fills the gap a sound that outlasts the picture leaves before each repeat on the
+  clip's own rate.** On FFmpeg 6.1.1 the next repeat's first frame was shown twice, from a frame
+  before its sound; the graph now repeats the last frame and puts each repeat's frames on the
+  grid once, so the frames written no longer depend on FFmpeg's default frame-rate handling
+  (7.1 and 8 held the last frame instead; not measured locally). A clip without that gap writes
+  the command it did.
+
+All of it measured on FFmpeg 6.1.1 only (docs/design-decisions.md, "After 3.8.11").
 
 ## 3.8.11
 
