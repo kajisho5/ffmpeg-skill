@@ -390,7 +390,7 @@ exists. When a decision changes, edit the entry in the same PR.
   FFmpeg the 709 round trip through 8-bit 4:2:0 loses ~5 dB more than 601. Code:
   `color.py _rgb_stage()`. Test: `test_color_correct_identity_holds_on_a_bt709_tagged_source`.
   This is a YUV picture's working space: the pair cancels because the picture comes in as YUV (an
-  RGB source too on the H.264 line, which converts it to BT.709 first). An SDR RGB source on an alpha
+  RGB source too on the H.264 line, which converts it to BT.709 first). An RGB source (neither HDR nor BT.2020) on an alpha
   line (`--keep-alpha`) meets no matrix on the way in (and the way in names none: with
   `scale=in_color_matrix` on RGB frames, FFmpeg 7.1 wrote BT.601 samples whatever the way out
   asked for), so the way out decides what the file holds:
@@ -3146,7 +3146,7 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   output-option negotiation has nothing to convert. Code: `decision.keeps_source_tags()`,
   `alpha.finish_chain()`, `alpha.tag_args()`. Test:
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
-- **An SDR RGB source on a YUV alpha line is converted to BT.709 and tagged so (#496).** "It converts
+- **An RGB source that is neither HDR nor BT.2020 is converted to BT.709 on a YUV alpha line and tagged so (#496).** "It converts
   no matrix" above holds for a YUV source, which has one to keep. An SDR RGB source (qtrle, PNG in
   `.mov`/`.mkv`; one that probes HDR or BT.2020 is left as it was) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
   the tool does. Left to FFmpeg it was BT.601, with no tag on 6.1: a 1280x720 master read as
