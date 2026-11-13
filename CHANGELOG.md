@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.7
+
+_Automated release: version and notes generated from pull requests merged since 3.8.6._
+
 ### Fixed
 
 - **What the tools and the contract say, made to match what they do** (#466: A193, A194, A195,
@@ -37,6 +43,7 @@
   (it had 19 cases over 18 tools), the Windows skips are described without a count, and a push
   with nothing to release still asks the MCP Registry (release.yml's comment says the same).
   `docs/design-decisions.md`: color.py's merged alpha is 8-bit, not "kept as decoded".
+- fix: the contract, SKILL.md, references and README say what the code does (#466, 17 audit items) (#507)
 
 ## 3.8.6
 
