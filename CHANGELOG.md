@@ -9,6 +9,21 @@
 ## 3.6.7
 
 _Automated release: version and notes generated from pull requests merged since 3.6.6._
+### Added
+
+- **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
+  the main track and keeps its pitch, with `atempo` stages of 0.5–2.0 chained for a factor outside
+  that range (0.1–10); `--length-samples` pads with silence or trims the output to exactly N
+  samples per channel, and a `length_samples` verification step decodes the written track and
+  counts them. The result's `timing` reports `{tempo, atempo, length_samples, sample_rate}`. Both
+  need an audio output (`--tempo` also takes a `--replace` track beside the picture): the input's
+  own sound beside its stream-copied picture would drift from it, and is refused.
+- **`audio.py --sample-rate HZ` and `--channel N`** (#487). `--sample-rate` resamples the output
+  (`aresample`, after the mix); `--channel N` keeps one channel of the track by its 0-based index
+  as a 1-channel output (two identical sides with `--stereo`). Each is read back from the output by
+  probe, as the `sample_rate` and `channels` verification steps, and reported in the `audio` block.
+  An index past the track's channels, and `--channel` with `--downmix`, are refused before ffmpeg
+  runs.
 
 ### Changed
 
