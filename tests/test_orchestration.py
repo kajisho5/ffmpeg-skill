@@ -2698,6 +2698,9 @@ class Issue458Tests(MediaFixtures):
             recipe = {"project": str(proj)}
             first = batch.recipe_key(recipe)
             self.assertEqual(batch.recipe_key(recipe), first)
+            # a project of the wrong shape is the render's to refuse, per item: the key does not raise
+            bad = self._project("a80_bad.json", {"clips": 1})
+            self.assertIsInstance(batch.recipe_key({"project": str(bad)}), str)
             cues.write_text("0:00-0:01 Two\n", encoding="utf-8")
             self.assertNotEqual(batch.recipe_key(recipe), first)
         with self.subTest("A81: --watch reads the recipe's files again on every pass"):
@@ -2767,6 +2770,20 @@ class Issue458Tests(MediaFixtures):
             self.assertRefused(rc, doc, unwritten=[out])
             self.assertEqual((work / "clip00.mp4").read_bytes(), b"edited")
             shutil.rmtree(work)
+        with self.subTest("a cache hit does not replace a stage file the caller changed either"):
+            work, cache = self.d / "w98c", self.d / "w98c_cache"
+            for d in (work, cache):
+                shutil.rmtree(d, ignore_errors=True)
+            out.unlink(missing_ok=True)
+            rc, doc = self._run("render.py", proj, "--work", work, "--cache", cache)
+            self.assertEqual((rc, doc.get("status")), (0, "completed"), doc)
+            (work / "clip00.mp4").write_bytes(b"edited")
+            out.unlink()
+            rc, doc = self._run("render.py", proj, "--work", work, "--cache", cache)
+            self.assertRefused(rc, doc, unwritten=[out])
+            self.assertEqual((work / "clip00.mp4").read_bytes(), b"edited")
+            for d in (work, cache):
+                shutil.rmtree(d)
         with self.subTest("A99: a dry run writes nothing into --work and removes one it created"):
             work = self.d / "w99"
             shutil.rmtree(work, ignore_errors=True)
@@ -2935,6 +2952,12 @@ class Issue458Tests(MediaFixtures):
             doc = json.loads(script("batch.py", folder, "--recipe", recipe, "--json").stdout)
             self.assertEqual(doc["total"], 0)
             self.assertTrue(any("matches the recipe's glob" in n for n in doc.get("notes") or []), doc.get("notes"))
+            # a class's first member may be "[" or "]": the class still ends, and the letters after it fold
+            import fnmatch
+            import batch
+            for pattern, name in (("[[]take*.mp4", "[TAKE001.MP4"), ("[]a]x.mp4", "aX.MP4"), ("[!]a]x.mp4", "bX.Mp4")):
+                self.assertTrue(fnmatch.fnmatchcase(name, batch.caseless_glob(pattern)), (pattern, name))
+            self.assertFalse(fnmatch.fnmatchcase("AC.mp4", batch.caseless_glob("[ab]c.mp4")))  # a class keeps its case
         with self.subTest("A267: --export-timeline probes each file once"):
             proj = self._project("a267.json", {"output": "x.mp4", "clips": [{"src": str(self.clip), "in": i, "out": i + 0.5}
                                                                              for i in (0, 0.5, 1)], "transition": {"type": "none"}})
@@ -2949,6 +2972,8 @@ class Issue458Tests(MediaFixtures):
             doc = json.loads(script("render.py", "--list-templates", "--json").stdout)
             self.assertEqual(doc["status"], "completed")
             self.assertIn("audiogram", [t["template"] for t in doc["templates"]])
+            for t in doc["templates"]:  # the four edges are always there, 0 where a destination has none
+                self.assertEqual(sorted(t["safe"]), ["bottom", "left", "right", "top"], t)
             init = self.d / "a102_init.json"
             init.unlink(missing_ok=True)
             doc = json.loads(script("render.py", "--init", init, "--json").stdout)

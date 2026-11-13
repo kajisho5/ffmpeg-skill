@@ -20,7 +20,9 @@
   for every run (`<output>_work_<pid>_<random>`), so a later run with the same PID no longer deletes
   an earlier run's kept preview. A re-run with the same `--work` replaces the stage files an earlier
   render wrote there and nobody changed since (recorded in `.ffskill-render-stages.json`) instead of
-  refusing them; any other existing file there is still refused. A `--dry-run` writes nothing into
+  refusing them; any other existing file there is still refused, with `--cache` too (a cache hit
+  no longer replaces it: the stage runs and refuses it, `cache.miss_reasons` says
+  `destination_not_owned`). A `--dry-run` writes nothing into
   `--work` and removes a `--work` directory it had to create.
 - **An output is named for what is written into it** (A83, A84, A108). `batch.py` names a `.webm`
   source's output `.mp4` (unless the recipe sets `ext`), where every WebM item was refused

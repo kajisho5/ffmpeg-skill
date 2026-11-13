@@ -1061,8 +1061,10 @@ hardlinks the artifact into the work directory, or copies it where the
 filesystem will not link — never moves it, since the cache has to outlive the
 run's own cleanup. A miss is work to do, not an error, but never a silent one:
 `cache.miss_reasons` says why each stage missed (`not_cached`, `sidecar_missing`,
-`artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`), and a
-damaged entry (the last two of those that name a file this tool wrote) is also a
+`artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`, and
+`destination_not_owned` when the file already at a stage's path in `--work` is not one this
+render wrote: the stage runs and refuses it by its own overwrite rule), and a
+damaged entry (`sidecar_corrupt`, `artifact_truncated`) is also a
 `cache_entry_damaged` warning and a line in `DIR/.ffskill-audit.jsonl`. A sidecar keeps
 the stage's `verified`, `verification`, `notes` and `diagnostics`, and a hit replays
 them, so a cached stage counts toward the render's `verified` as a live one does. A

@@ -323,7 +323,7 @@ def list_templates() -> None:
         loud = ("%g LUFS" % spec["lufs"]) if spec.get("lufs") is not None else "-"
         rows.append({"template": name, "destination": dest, "frame": {"width": frame["w"], "height": frame["h"]} if frame else None,
                      "fit": None if fit == "-" else fit, "max_duration": dur, "lufs": spec.get("lufs"),
-                     "safe": {edge: safe[edge] for edge in ("top", "bottom", "left", "right") if safe.get(edge)}})
+                     "safe": {edge: safe.get(edge, 0) for edge in ("top", "bottom", "left", "right")}})
         if not STATE.json:
             print("%-15s %-11s %-5s %7s  %-10s %s" % (name, size, fit, ("%gs" % dur) if dur else "-", loud, zones or "none"))
     if STATE.json:
@@ -523,7 +523,8 @@ def project_input_files(proj: Dict[str, Any], rel: Any) -> List[str]:
             if not must_exist or os.path.isfile(p):
                 found.append(p)
 
-    for c in proj.get("clips") or []:
+    clips = proj.get("clips")
+    for c in clips if isinstance(clips, list) else []:  # a wrong type is validate_project()'s to refuse
         if isinstance(c, dict):
             add(c.get("src"))
             if isinstance(c.get("snap"), dict):
@@ -967,6 +968,10 @@ def cache_lookup(stage: str, key: str, dest: str, tool: Optional[str] = None) ->
     if STATE.dry_run:
         CACHE["would_hit"].append(stage)
         return True
+    if Path(dest).exists() and not STATE.overwrite and not _earlier_own_stage_file(dest):
+        # a file in --work that is not this render's own (the caller's, or one they edited): a hit
+        # would unlink it without --overwrite. Run the stage instead, which refuses it by its rule
+        return _cache_miss(stage, "destination_not_owned", key=key, destination=str(dest))
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
     try:
         if Path(dest).exists():

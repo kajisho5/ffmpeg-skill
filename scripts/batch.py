@@ -101,13 +101,15 @@ def caseless_glob(pattern: str) -> str:
     case_sensitive= needs Python 3.12; 3.10 is the floor."""
     out: List[str] = []
     in_class = False
+    first = -1  # index of the class's first member: a "]" there is a member, not the end ("[]a]", "[!]a]")
     for i, ch in enumerate(pattern):
         if in_class:
             out.append(ch)
-            if ch == "]" and pattern[i - 1] != "[" and not (pattern[i - 1] == "!" and pattern[i - 2:i - 1] == "["):
+            if ch == "]" and i > first:
                 in_class = False
         elif ch == "[":
             in_class = "]" in pattern[i + 2:]  # an unclosed [ is a literal character to fnmatch
+            first = i + 2 if pattern[i + 1:i + 2] == "!" else i + 1
             out.append(ch if in_class else "[[]")
         elif ch.isalpha() and ch.lower() != ch.upper():
             out.append(f"[{ch.lower()}{ch.upper()}]")
