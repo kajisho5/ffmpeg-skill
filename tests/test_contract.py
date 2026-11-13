@@ -8647,6 +8647,34 @@ class Issue415Tests(unittest.TestCase):
                 self.assertEqual(doc["status"], "completed", doc.get("error"))
                 self.assertTrue((d / default).exists())
 
+    def test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs(self):
+        """#488: every re-encoding tool writes H.264 (or HEVC) and AAC, which WebM cannot hold, and
+        a named `-o x.webm` failed in the muxer after the encode had started (kind ffmpeg, "Nothing
+        was written into output file") while the dry run said completed. Swept over every tool of
+        tests/sweep.py: all of them, through the one check every ffmpeg command passes. Refused
+        now, real run and dry run alike, with nothing run and nothing written; .mkv still works."""
+        d = self.dir("webm_out")
+        mkv = d / "in.mkv"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", mkv)
+        for name, argv in (("crop", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]),
+                           ("cut", ["--start", "0.2", "--end", "1", "--accurate"]), ("loudness", []),
+                           ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, dry=bool(dry)):
+                    out = d / f"{name}.webm"
+                    proc = tool(name, mkv, *argv, *dry, "-o", out, "--json", check=False)
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual(doc["status"], "failed")
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                    self.assertIn("WebM", err["message"])
+                    self.assertTrue(err["details"]["encoders"])
+                    self.assertFalse(out.exists())
+        doc = json.loads(tool("crop", mkv, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                              "-o", d / "crop.mkv", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
         54 in the real run, and nothing said so."""
