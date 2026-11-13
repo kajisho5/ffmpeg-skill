@@ -1820,7 +1820,11 @@ def main() -> int:
             info(f"check: could not run check.py — {err.get('message') if isinstance(err, dict) else err}")
             exit_code = 1
         else:
-            info(f"check: OK for {check_label}")
+            # #485: over the table's upload limit is a WARN the check passes with; say it here too
+            advised = [f"{r['check']}={r['value']} (expected {r['expected']})" for r in check_result.get("checks", [])
+                       if r.get("basis") == "guidance" and r.get("status") == "WARN"]
+            info(f"check: OK for {check_label}" + (" — upload-limit guidance, the uploader checks the current limit: "
+                                                   + "; ".join(advised) if advised else ""))
         stages_done.append("check")
     elif "check" in proj:
         record_skip('the check stage names neither "platform" nor "content": true, so nothing was checked',

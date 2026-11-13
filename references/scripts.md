@@ -58,8 +58,11 @@ Every row names the constant or flag it comes from, and a test holds the table t
 <!-- thresholds:end -->
 
 Delivery targets per platform (`scripts/_platforms.py`). A file passes loudness within the
-platform's tolerance of its target, and true peak at or below its ceiling plus 0.1 dB. `export.py`
-holds the written length to the maximum with no tolerance, as `check.py` does.
+platform's tolerance of its target, and true peak at or below its ceiling plus 0.1 dB. The
+maximum length (and the file size `check.py` reads from the same table) is an upload limit: the
+table's as of `_platforms.UPLOAD_LIMITS_AS_OF`, guidance rather than a requirement, because
+platforms change it and whoever uploads checks the current one. `check.py` WARNs over it;
+`export.py` trims to it unless `--allow-long` and holds the written length to it with no tolerance.
 
 <!-- platforms:start -->
 | platform | loudness | tolerance | true peak | max duration |
@@ -1240,6 +1243,15 @@ step before reporting a deliverable; fix FAILs, mention WARNs. Without
 `--platform` the youtube spec is assumed and the judgement rows (duration,
 aspect, fps, resolution, loudness, true peak) come back as WARN with a `notes`
 line, not FAIL: name the platform when the file is a delivery for it.
+Every row carries `basis`: `requirement` or `guidance`. The `duration` and `file size` rows are
+`guidance` when the limit is the platform table's: a file over it (or whose length or size could
+not be measured) is WARN, not FAIL, with a `reason` that names the table's date
+(`_platforms.UPLOAD_LIMITS_AS_OF`), and it does not make the exit code non-zero by itself. Upload
+limits change often and belong to whoever uploads, who checks the platform's current one; the
+encoding rows (codec, aspect, resolution, fps, pixel format, colour, loudness, true peak) are
+unchanged. `--max-duration S` and `--max-mb N` state the caller's own limit, on any platform
+including `custom`: those rows are `requirement` and FAIL when over or not measured (with no
+`--platform` at all, `duration` is WARN like the other judgement rows).
 `--platform podcast` adds two informational rows: `channels` (PASS for mono or
 stereo, WARN above — podcast players downmix 5.1 unpredictably) and `chapters`
 (PASS when the container carries at least one marker, WARN `none` otherwise —
@@ -2189,7 +2201,8 @@ overhead) in place of its CRF, and the encode runs in two passes. The written si
 overshot. Refused for a preset that does not encode with x264 (and under `--hw`), with `--crf`,
 for a source with no duration, and when the budget leaves under 100 kb/s for the picture.
 Scales into the preset frame (pad by default), tags BT.709 (a BT.601-matrix or RGB source is converted to it, as by every re-encode), sets `+faststart`,
-trims to platform maximums (Reels 90 s, X 140 s) unless `--allow-long`, and says
+trims to the table's platform maximums (Reels 90 s, X 140 s; the table's as of its date, and
+platforms change them) unless `--allow-long`, and says
 so: `trimmed: {from, to}` and a `notes` line. It
 does not touch levels: for youtube / youtube4k / reels / x the written file is
 measured and the result's `loudness` (and a `notes` line) says when it is

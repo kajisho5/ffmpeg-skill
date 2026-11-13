@@ -55,7 +55,7 @@ from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, rep
 from _common.emit import file_identity
 from check import SPECS as PLATFORMS, measure_loudness
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
-from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, resolve as resolve_platform
+from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, UPLOAD_LIMITS_AS_OF, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
 # from a literal restated here: before 1.14 they were typed twice and the facebook preset had
 # already drifted (no duration cap against the table's 14400 s).
@@ -679,7 +679,8 @@ def main() -> int:
         # kept subtitle track is cut at the same point (a cue after it is not written)
         trimmed = {"from": round(float(meta["duration"]), 3), "to": round(float(p["max"]), 3)}
         note(f"trimmed from {trimmed['from']:.3f}s to the {args.preset} maximum of {p['max']:.0f}s "
-             "(use --allow-long to keep full length)")
+             f"(this tool's table as of {UPLOAD_LIMITS_AS_OF}, and platforms change it: "
+             "use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
     damage_before = media_damage(args.input) if args.repair and not STATE.dry_run else None
     with tempfile.TemporaryDirectory(prefix="ffskill_2pass_") as passdir:
