@@ -38,6 +38,7 @@ from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 from _common.runner import default_selection_maps
+from _common.emit import input_length
 
 SR = 8000  # decode sample rate
 
@@ -227,8 +228,8 @@ def measure_one(reference: str, path: str, args) -> Dict:
     # the head to measure over) or low_confidence (the tail did not correlate); None when applied
     skipped_reason = None
     if args.fix_drift:
-        ref_dur = probe(reference)["duration"] or 0.0
-        sec_dur = probe(path)["duration"] or 0.0
+        ref_dur = input_length(probe(reference))
+        sec_dur = input_length(probe(path))
         overlap_end = min(ref_dur, sec_dur + offset)
         head_len = min(args.analyze_seconds, overlap_end)
         tail_start = overlap_end - args.drift_window

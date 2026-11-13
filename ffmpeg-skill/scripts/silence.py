@@ -35,6 +35,7 @@ from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
 from _common.decision import frame_rate, stream_starts
 from _common.probe import PROBED_AUDIO
+from _common.emit import input_length
 
 
 
@@ -657,7 +658,7 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("audio"):
         die("input has no audio stream to analyse")
-    duration = meta.get("duration") or 0.0
+    duration = input_length(meta)
     breaths: List[Tuple[float, float]] = []
     if args.speech_aware:
         silences, breaths = speech_aware_silences(args.input, args.threshold, args.min_silence)
