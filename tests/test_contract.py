@@ -9389,6 +9389,14 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertEqual([r["check"] for r in doc["checks"] if r["status"] == "FAIL"], [])
         text = tool("check", str(long_ok), "--platform", "reels", "--no-loudness", cwd=self.work).stdout
         self.assertIn("[guidance]", text)
+        # render.py names these rows wherever it says a check passed (project check, plan, pack table)
+        import render
+        self.assertEqual(render.guidance_warns(doc), [f"duration={row['value']} (expected <= 90s)"])
+        self.assertEqual(render.guidance_warns({"checks": [{"check": "aspect", "status": "WARN", "basis": "requirement"}]}), [])
+        self.assertEqual(render.guidance_warns(None), [])
+        # with no platform named a stated --max-duration is WARN, as every judgement row is
+        bare, _ = self.doc("check", long_ok, "--max-duration", "90", "--no-loudness")
+        self.assertEqual((self.rows(bare)["duration"]["status"], self.rows(bare)["duration"]["basis"]), ("WARN", "requirement"))
         # the caller's own limit, the same number: a requirement, FAIL, exit 1
         for extra, name in ((["--max-duration", "90"], "duration"), (["--max-mb", "0.001"], "file size")):
             doc, _ = self.doc("check", long_ok, "--platform", "reels", "--no-loudness", *extra, ok_codes=(1,))

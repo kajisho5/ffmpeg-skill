@@ -6,7 +6,8 @@ file size, integrated loudness and true peak against the chosen platform
 and prints a PASS/WARN/FAIL table. Exit code 1 when anything FAILs. A length
 or file size over the platform table's limit is WARN (`basis: guidance`): upload
 limits change and the uploader checks the current one; --max-duration / --max-mb
-state the caller's own limit, which FAILs. Each
+state the caller's own limit, which FAILs when a --platform is named (with none,
+an over-length is WARN, as every judgement row is). Each
 row's `fix` is the command that resolves it; a few of the less obvious FAILs
 (video codec, pixel format, HDR colour, loudness) also carry a plain-language
 `reason` -- "QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0",
@@ -364,7 +365,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
-    ap.add_argument("--max-duration", type=float, help="the caller's own maximum length in seconds: over it FAILs (the platform table's limit is guidance, WARN)")
+    ap.add_argument("--max-duration", type=float, help="the caller's own maximum length in seconds: over it FAILs when a --platform is named, WARNs with none (the platform table's limit is guidance, WARN)")
     ap.add_argument("--aspect", help="override allowed aspect (e.g. 9:16 or 16:9,1:1)")
     ap.add_argument("--lufs", type=float, help="override loudness target")
     ap.add_argument("--tp", type=float, help="override true-peak ceiling")
