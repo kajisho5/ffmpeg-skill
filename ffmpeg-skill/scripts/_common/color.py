@@ -57,6 +57,36 @@ NON_BT709_MATRICES = ("smpte170m", "bt470bg", "fcc", "smpte240m")
 _RGB_PIX_FMT_RE = re.compile(r"^(?:rgb|bgr|argb|abgr|0rgb|0bgr|gbr|x2rgb|x2bgr|pal8)")
 
 
+# A probed colour tag passed back to FFmpeg (#454). ffprobe prints av_color_*_name(), which is
+# also the setparams filter's table; the output options -colorspace/-color_primaries/-color_trc
+# parse an older one that differs on three names (6.1, measured): -colorspace refuses `gbr` (its
+# name is `rgb`) and -color_trc refuses `bt470m` and `bt470bg` (its names: `gamma22`, `gamma28`).
+# `gbr` is not carried over at all: it says the stored samples are RGB, which is the pixel
+# format's to say (the PNG encoder tags it itself), and a tool that converts the picture to YUV on
+# the way (a grade's legs, a 4:4:4 alpha line) would label YUV samples as RGB with it.
+_TAG_KIND = {"-colorspace": "colorspace", "-color_primaries": "color_primaries", "-color_trc": "color_trc"}
+_OPTION_NAMES = {"color_trc": {"bt470m": "gamma22", "bt470bg": "gamma28"}}
+
+
+def carried_tag(kind: str, name: Optional[str], dest: str = "option") -> Optional[str]:
+    """The probed tag `name` of `kind` (colorspace, color_primaries, color_trc) spelled the way
+    `dest` ("option": -colorspace & co; "setparams") accepts it, or None when it is not to be
+    passed on: unknown, unspecified, reserved, or the RGB `gbr`/`rgb`."""
+    if not name or name in ("unknown", "unspecified", "reserved") or (kind == "colorspace" and name in ("gbr", "rgb")):
+        return None
+    return _OPTION_NAMES.get(kind, {}).get(name, name) if dest == "option" else name
+
+
+def carried_tag_args(pairs: Sequence[Tuple[str, Optional[str]]]) -> List[str]:
+    """[flag, value, ...] for each (flag, probed name) whose tag carried_tag() passes on."""
+    out: List[str] = []
+    for flag, name in pairs:
+        value = carried_tag(_TAG_KIND.get(flag, flag.lstrip("-")), name)
+        if value:
+            out += [flag, value]
+    return out
+
+
 def rgb_to_bt709_filter(pix_fmt: str = "yuv444p") -> str:
     """An RGB picture converted to BT.709 limited-range YUV right here, in `pix_fmt`, so no later
     conversion (an auto-inserted one, with FFmpeg's BT.601 default) decides the matrix. 4:4:4 by

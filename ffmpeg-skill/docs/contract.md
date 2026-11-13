@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.6.7`) | any release |
+| `skill.version` | the npm / package.json version (`3.7.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.6.7", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.7.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -675,7 +675,18 @@ Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — t
 `--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
 `--music` the `music_volume` plus a `duck` object naming the threshold (dB and
 linear), ratio, attack and release actually used, or `null` when `--duck` was not
-given. `loudness.py` reports `measured` (the input's loudnorm measurement,
+given. Since #486 `audio.py` also reports `timing`, `{tempo, atempo, length_samples, sample_rate}`:
+the `--tempo` factor and the atempo stages (each 0.5..2.0) it was built from, `--length-samples`,
+and the rate that count is in (`null` before a pending input is measured); with
+`--length-samples` a `length_samples` verification step decodes the written track and counts its
+samples (`expected`, `measured`, `tolerance_samples`: 0 for PCM/FLAC/ALAC, one codec frame for a
+lossy codec; `reason: not_measured` and `ok: false` when the count cannot be read).
+Since #487 `audio.py --sample-rate HZ` resamples the output and `--channel N` keeps one channel by
+index (0-based); the `audio` block reports `channel` and `sample_rate` (`null` when not asked), and
+each is read back from the output by probe as a verification step, `sample_rate` and `channels`
+(`{expected, measured}`; 1 channel, or 2 with `--stereo`; `reason: not_measured` when probe cannot
+read it).
+`loudness.py` reports `measured` (the input's loudnorm measurement,
 including `input_lra`) and `targets` (the requested lufs / tp / lra).
 `check.py --platform podcast` adds two informational rows to `checks`,
 `channels` and `chapters`.
@@ -910,6 +921,7 @@ here claims otherwise until real exit-code/stderr sniffing exists to back that u
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
+`output_container_codecs` (a `.webm` output for an H.264/HEVC or AAC encode, which WebM cannot hold),
 `media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
 `render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and
