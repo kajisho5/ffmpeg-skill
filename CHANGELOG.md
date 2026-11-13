@@ -24,8 +24,9 @@
   still starts the picture a frame late (measured, not fixed here). `sync.py --replace-audio`
   rounded the measured offset to the millisecond: with `--fine-ms 0.25` an offset of 0.2343 s
   became `adelay=234` (the sound started at sample 11232, now 11246); at the default
-  `--fine-ms 1` offsets are whole milliseconds and the command is unchanged, and `--trim-second`
-  still rounds. A length, a delay or an offset in whole milliseconds, an input without sound and
+  `--fine-ms 1` and without `--fix-drift` offsets are whole milliseconds and the command is
+  unchanged (`--fix-drift` moves the offset by the drift it measured, to a tenth of a millisecond,
+  and such an offset is now a delay in samples too), and `--trim-second` still rounds. A length, a delay or an offset in whole milliseconds, an input without sound and
   a dry run's pending input write the command they always did, except `broll.py --at` values
   that were cut by one millisecond. Measured and left alone, because the millisecond cannot
   change what they write: `join.py`'s silence for a part without sound, `insert.py`,

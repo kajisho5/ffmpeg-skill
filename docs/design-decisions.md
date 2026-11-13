@@ -3713,8 +3713,11 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   FFmpeg evaluates it once per audio frame, and a window of samples 48000-95999 was muted over
   48128-96255.
 - **`sync.py --replace-audio` delays the second file by the offset it measured, to the sample.**
-  At the default `--fine-ms 1` the offset is a whole millisecond (8 samples of the 8 kHz the
-  measurement is made at) and the command is the one it was. With `--fine-ms 0.25` an offset of
+  At the default `--fine-ms 1` and without `--fix-drift` the offset is a whole millisecond (8
+  samples of the 8 kHz the measurement is made at) and the command is the one it was.
+  `--fix-drift` adds the measured drift's share to the offset, which is then kept to a tenth of a
+  millisecond (0.234 s can become 0.2339 s): that offset is written in samples as well, where it
+  was `adelay=234`. With `--fine-ms 0.25` an offset of
   0.2343 s was written as `adelay=234` (the sound started at sample 11232, 11246 now, 11244 in
   the fixture), and one of 0.2345 s as 234 as well (`int(round(234.5))`; 11232, 11256 now, 11261
   in the fixture). Not covered: `--trim-second` still delays by the millisecond, because its

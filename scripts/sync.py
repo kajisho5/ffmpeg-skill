@@ -378,8 +378,9 @@ def main() -> int:
             # file started earlier (head_trim > 0) or was simply shorter
             ref_dur = probe(args.reference).get("duration")
             # the delay is the measured offset to the sample of the second's rate: at the default
-            # --fine-ms 1 the offset is a whole millisecond and the text is the one it was; a
-            # finer step (0.25 ms: 0.23425 s) was rounded to `adelay=234` (silence_filter)
+            # --fine-ms 1 without --fix-drift the offset is a whole millisecond and the text is the
+            # one it was; a finer step (0.25 ms: 0.23425 s) or a drift-adjusted offset (kept to
+            # 0.1 ms) was rounded to `adelay=234` (silence_filter)
             lead = [silence_filter(sec_sr, lead=offset)] if offset > 0 and round(offset * sec_sr) else []
             af_parts = on_clock + drift_af + lead + ["apad"]
             cmd += ["-af", ",".join(af_parts)]
