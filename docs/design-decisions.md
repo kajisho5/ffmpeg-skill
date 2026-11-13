@@ -77,6 +77,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
 - [After 3.6.0 — MCP annotations and argument values (audit A9, A10)](#after-360--mcp-annotations-and-argument-values-audit-a9-a10)
 - [After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)](#after-363--a-tagged-version-npm-never-got-is-finished-by-dispatch-on-its-tag-448)
+- [After 3.7.0 — a platform's upload limits are guidance (#485)](#after-370--a-platforms-upload-limits-are-guidance-485)
 <!-- contents:end -->
 
 ## Time limits
@@ -2496,7 +2497,10 @@ What was decided there:
   The step measures the container's duration with no tolerance, because that is the number and the
   rule `check.py` applies. Any other margin would bring back two verdicts on one file. The source of
   the extra 0.1 s, `loudness.py` lengthening the sound, is fixed too, but the step does not depend on
-  that fix. Code: `export.py`. Test: `test_export_measures_the_length_its_preset_promises`.
+  that fix. Code: `export.py`. Test: `test_export_measures_the_length_its_preset_promises`. Since #485
+  `check.py` reports the table's length limit as guidance (WARN), so the two no longer give the same
+  severity: the export step verifies the trim `export.py` itself made, with the same number and no
+  tolerance, and stays a failing step.
 - **loudness.py trims the sound to the input's length.** loudnorm's last block and the AAC encoder
   made the output run 0.015 s long on 6 s and 0.1 s on 90 s. A levels pass should change no timing,
   so `atrim=duration=` keeps the input's audio length, counted from the first sample. `end=` is a
@@ -3526,3 +3530,31 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   it", so a plugin branch or registry step that failed during a recovery is finished by hand, as
   the job's last steps say. Code: `.github/scripts/recover_release.py`. Test:
   `test_release_recovery_publishes_only_a_tagged_version_npm_lacks`.
+
+## After 3.7.0 — a platform's upload limits are guidance (#485)
+
+- **`check.py --platform` WARNs, never FAILs, on a length or file size over the platform table's
+  limit, and marks those rows `basis: guidance`.** How long and how large an upload may be changes
+  often, differs by account, and is owned by whoever uploads (publish-skill reads each platform's
+  current documentation); `scripts/_platforms.py`'s numbers are the table's as of
+  `UPLOAD_LIMITS_AS_OF` and are known to differ from the platforms' (X 140 s / 512 MiB against
+  1200 s / 8 GB, Reels 90 s against 900 s). A FAIL made `check.py` exit 1 on a file its platform
+  takes. The row stays, with the measured value and the table's limit, and its `reason` says the
+  limit is the table's as of that date and that the uploader checks the current one; it is not
+  counted in `failed`. A length or size that could not be measured against a table limit is WARN
+  `could not measure` (3.6.7 made the length a FAIL): still never a PASS. The encoding rows (codec,
+  aspect, resolution, fps, pixel format, colour, loudness, true peak) are what this tool writes and
+  measures, and stay requirements. `basis` is a second field rather than a third `kind`: `kind` says
+  what a fix costs (`duration` stays `judgement`, cutting loses content), `basis` says whose limit
+  it is, and one row is both. Code: `check.main()` (`guidance`), `_platforms.upload_limit_note()`.
+  Test: `test_check_a_platforms_length_and_size_limits_are_guidance`.
+- **A limit the caller states is the caller's requirement and still FAILs.** `--max-duration` and
+  `--max-mb`, on any platform including `custom`, are `basis: requirement`: the caller asked for
+  that number, as with `--levels`. Without a named platform the `duration` row is WARN as every
+  judgement row is (1.8.0); that rule is unchanged. Same test.
+- **`export.py` still trims to the table's maximum, and its `duration` step still fails when the
+  written file is over it.** The trim is the preset's documented behaviour with `--allow-long` as
+  the way out, and the step verifies that trim, not the platform's rule; changing what a preset
+  cuts is a larger decision than the label on a check row. The `notes` line now says the limit is
+  the table's as of its date. The numbers themselves are not edited here (#464 A116, Reels 90 s):
+  the uploader's table is the current one, and a second copy kept current here would drift again.

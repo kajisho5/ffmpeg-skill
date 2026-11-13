@@ -41,6 +41,7 @@ Every step in full: `references/workflow.md`.
    A delivery request is one `render.py --template`; three or more steps: a `render.py` project.
 5. **Check** with `check.py OUTPUT --platform X --expect-identity S:M` (the writer's `output_identity`):
    fix format rows; fix duration, aspect, fps or loudness only when the request implies it. Mention WARNs.
+   A `basis: guidance` WARN (length, size) is the table's upload limit: the uploader checks the current one.
 6. **Verify** from the writer's `--json` probe or `probe.py`: exit 0 and the requested numbers, or it failed.
 7. **Keep originals:** never overwrite a source; `--overwrite` only for this job's files or ones the user
    asked to replace.

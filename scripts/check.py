@@ -3,7 +3,11 @@
 
 Checks duration, frame size / aspect, fps, codec, pixel format, colour tags,
 file size, integrated loudness and true peak against the chosen platform
-and prints a PASS/WARN/FAIL table. Exit code 1 when anything FAILs. Each
+and prints a PASS/WARN/FAIL table. Exit code 1 when anything FAILs. A length
+or file size over the platform table's limit is WARN (`basis: guidance`): upload
+limits change and the uploader checks the current one; --max-duration / --max-mb
+state the caller's own limit, which FAILs when a --platform is named (with none,
+an over-length is WARN, as every judgement row is). Each
 row's `fix` is the command that resolves it; a few of the less obvious FAILs
 (video codec, pixel format, HDR colour, loudness) also carry a plain-language
 `reason` -- "QuickTime and iOS commonly reject video that isn't 8-bit 4:2:0",
@@ -43,7 +47,7 @@ import sys
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
-from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, resolve as resolve_platform
+from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, upload_limit_note, resolve as resolve_platform
 from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity
@@ -361,11 +365,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
-    ap.add_argument("--max-duration", type=float, help="override max duration in seconds")
+    ap.add_argument("--max-duration", type=float, help="the caller's own maximum length in seconds: over it FAILs when a --platform is named, WARNs with none (the platform table's limit is guidance, WARN)")
     ap.add_argument("--aspect", help="override allowed aspect (e.g. 9:16 or 16:9,1:1)")
     ap.add_argument("--lufs", type=float, help="override loudness target")
     ap.add_argument("--tp", type=float, help="override true-peak ceiling")
-    ap.add_argument("--max-mb", type=float, help="override max file size in MB")
+    ap.add_argument("--max-mb", type=float, help="the caller's own maximum file size in MB: over it FAILs (the platform table's limit is guidance, WARN)")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
                     help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
@@ -448,6 +452,11 @@ def main() -> int:
 
     # first frame / flashes: a fade from black or a strobe can be the edit, so neither is a mechanical fix
     JUDGEMENT = {"duration", "aspect", "loudness", "true peak", "fps", "resolution", "first frame", "flashes"}
+    # #485: the rows whose limit is the platform table's upload limit rather than one the caller
+    # stated (--max-duration, --max-mb). Those are guidance: WARN at worst, never counted as failed.
+    guidance = {name for name, stated, limit in (("duration", args.max_duration, spec["max_duration"]),
+                                                 ("file size", args.max_mb, spec["max_bytes"]))
+                if stated is None and limit}
 
     def row(name: str, status: str, value: Any, expect: Any, fix: str = "", reason: str = "") -> None:
         # "format" rows are safe to fix mechanically; "judgement" rows change the content
@@ -456,12 +465,19 @@ def main() -> int:
         # person would ask "so what?" about) is why it matters in plain terms, not the spec clause.
         if status == "FAIL" and not named and name in JUDGEMENT:
             status = "WARN"
+        # "basis" is where the expected value comes from: "requirement" (the delivery format, or a
+        # limit the caller stated) can FAIL; "guidance" (the table's upload limit) cannot.
+        basis = "guidance" if name in guidance else "requirement"
+        if basis == "guidance" and status != "PASS":
+            status = "WARN"
+            reason = (reason + "; " if reason else "") + upload_limit_note(args.platform)
         rows.append({"check": name, "status": status, "value": value, "expected": expect, "fix": fix,
                      "reason": reason if status != "PASS" else "",
-                     "kind": "judgement" if name in JUDGEMENT else "format"})
+                     "kind": "judgement" if name in JUDGEMENT else "format", "basis": basis})
 
     # A113: a length ffprobe did not report is not a length of 0 s that fits under every limit.
-    # The row says it was not measured (FAIL under a length limit, WARN without one), and the
+    # The row says it was not measured (FAIL under a length limit the caller stated, WARN under the
+    # platform table's or without one), and the
     # --content rows that are shares of the running time say so too instead of disappearing.
     dur_read = meta.get("duration")
     dur = dur_read or 0.0
@@ -770,6 +786,8 @@ def main() -> int:
             line = f"  {r['status']:4s} {r['check']:{width}s}  {r['value']}  (expected {r['expected']})"
             if r["status"] != "PASS" and r["kind"] == "judgement":
                 line += "  [judgement]"
+            if r["status"] != "PASS" and r["basis"] == "guidance":
+                line += "  [guidance]"
             if r["status"] != "PASS" and r["reason"]:
                 line += f"  ({r['reason']})"
             if r["status"] != "PASS" and r["fix"]:

@@ -225,7 +225,14 @@ The workflow in `SKILL.md` is "probe first, verify last". The contract states it
 `requires_visual_verification` is `true` exactly for the tools that change the picture
 (fit, caption, overlay, graphics, color, join, multicam, render). Audio-only tools and
 audio-only inputs never need `look`; the report line is `Look: not needed`. `check`
-rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user).
+rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user), and `basis`:
+`requirement` (the row can FAIL) or `guidance`. The `duration` and `file size` rows are `basis: guidance`
+when their limit is the platform table's upload limit (`scripts/_platforms.py`, dated
+`UPLOAD_LIMITS_AS_OF`): over it, or not measurable against it, is WARN with a `reason` naming the
+table's date, never FAIL, and does not make `check` exit non-zero. Platforms change upload limits
+and whoever uploads checks the current one. A limit the caller states (`--max-duration`, `--max-mb`)
+is the caller's requirement: `basis: requirement`, FAIL when over or not measured (with no `--platform`
+named, `duration` is WARN as every judgement row is).
 The `audio` row FAILs (WARN when no loudness target applies) when the track is present but silent (peak at or below -50 dBFS, from
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
@@ -772,7 +779,7 @@ silence a tool reported as fine while another measurement disagreed):
 
 | key | tool | what it holds |
 |---|---|---|
-| `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0). A length that cannot be read fails the step with `reason: not_measured` |
+| `verification[]` step `duration` | `export.py` (a preset with a platform maximum, without `--allow-long`) | the written file's length against the maximum, measured as `check.py` measures it (the container's duration, `tolerance` 0). A length that cannot be read fails the step with `reason: not_measured`. The step verifies the trim `export.py` itself made; `check.py` reports the same table limit as guidance (WARN) |
 | `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame (at least 0.03 s): a levels pass changes no timing. A length that cannot be read fails the step with `reason: not_measured` |
 | `inputs_duration`, `transition_shortening`; step `duration`'s `inputs_total` | `join.py` | the clips' own total and how much the transitions took out of it. `expected_duration` is derived from the transition the join applied, so it cannot show that on its own |
 | `frame_rate`, `clip_frames`, `transition_frames` | `join.py` (video join; added after 3.6.2) | the join's rate as an exact fraction (`"30000/1001"`), the whole frames of it each clip holds (its sound is cut to the samples those frames last), and the frames each transition overlaps (`--duration` rounded to whole frames, at least 1; `0` for `--transition none`). Lengths and xfade offsets are counted in these frames, never in rounded seconds (#455, #468); `inputs_duration` and `expected_duration` are derived from them. A pending `--dry-run` input counts 0 frames |

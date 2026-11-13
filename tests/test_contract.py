@@ -9359,9 +9359,71 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertIsNone(json.loads(tool("probe", self.nolength, "--json").stdout)["duration"])  # the fixture
         doc, _ = self.doc("check", self.nolength, "--platform", "tiktok", "--content", ok_codes=(0, 1))
         rows = self.rows(doc)
-        self.assertEqual((rows["duration"]["status"], rows["duration"]["value"]), ("FAIL", "could not measure"))
+        # #485: under the platform table's length limit the row is guidance, so WARN; under a limit
+        # the caller stated it is the FAIL it was
+        self.assertEqual((rows["duration"]["status"], rows["duration"]["value"], rows["duration"]["basis"]),
+                         ("WARN", "could not measure", "guidance"))
         for name in ("black", "frozen", "silence"):
             self.assertEqual((rows[name]["status"], rows[name]["value"]), ("WARN", "could not measure"), name)
+        doc, _ = self.doc("check", self.nolength, "--platform", "tiktok", "--max-duration", "600", "--no-loudness", ok_codes=(1,))
+        row = self.rows(doc)["duration"]
+        self.assertEqual((row["status"], row["value"], row["basis"]), ("FAIL", "could not measure", "requirement"))
+
+    def test_check_a_platforms_length_and_size_limits_are_guidance(self):
+        """#485: upload limits change and belong to the uploader, and the table's differ from the
+        platforms' own. A file over the table's length or size FAILed and check.py exited 1; it is
+        WARN with basis guidance and exit 0. A limit the caller states still FAILs, and so does an
+        encoding row beside an over-length WARN."""
+        import _platforms
+        long_ok = self.work / "long_reels.mp4"  # 9:16 H.264 4:2:0 with sound, 91 s: only its length is over Reels' 90 s
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=90x160:rate=2", "-f", "lavfi", "-i", "sine=duration=91", "-t", "91",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "32k", long_ok)
+        doc, proc = self.doc("check", long_ok, "--platform", "reels", "--no-loudness")  # exit 0
+        row = self.rows(doc)["duration"]
+        self.assertEqual((row["status"], row["basis"], row["kind"], row["expected"]), ("WARN", "guidance", "judgement", "<= 90s"), row)
+        self.assertIn(_platforms.UPLOAD_LIMITS_AS_OF, row["reason"])
+        self.assertIn("checks the current one", row["reason"])
+        self.assertEqual((doc["ok"], doc["failed"], doc["status"]), (True, 0, "completed"))
+        self.assertEqual(self.rows(doc)["file size"]["basis"], "guidance")  # PASS, and still the table's limit
+        self.assertEqual({r["basis"] for r in doc["checks"] if r["check"] not in ("duration", "file size")}, {"requirement"})
+        self.assertEqual([r["check"] for r in doc["checks"] if r["status"] == "FAIL"], [])
+        text = tool("check", str(long_ok), "--platform", "reels", "--no-loudness", cwd=self.work).stdout
+        self.assertIn("[guidance]", text)
+        # render.py names these rows wherever it says a check passed (project check, plan, pack table)
+        import render
+        self.assertEqual(render.guidance_warns(doc), [f"duration={row['value']} (expected <= 90s)"])
+        self.assertEqual(render.guidance_warns({"checks": [{"check": "aspect", "status": "WARN", "basis": "requirement"}]}), [])
+        self.assertEqual(render.guidance_warns(None), [])
+        # with no platform named a stated --max-duration is WARN, as every judgement row is
+        bare, _ = self.doc("check", long_ok, "--max-duration", "90", "--no-loudness")
+        self.assertEqual((self.rows(bare)["duration"]["status"], self.rows(bare)["duration"]["basis"]), ("WARN", "requirement"))
+        # the caller's own limit, the same number: a requirement, FAIL, exit 1
+        for extra, name in ((["--max-duration", "90"], "duration"), (["--max-mb", "0.001"], "file size")):
+            doc, _ = self.doc("check", long_ok, "--platform", "reels", "--no-loudness", *extra, ok_codes=(1,))
+            row = self.rows(doc)[name]
+            self.assertEqual((row["status"], row["basis"]), ("FAIL", "requirement"), row)
+            self.assertNotIn("current one", row["reason"])
+        doc, _ = self.doc("check", long_ok, "--platform", "custom", "--max-duration", "90", "--no-loudness", ok_codes=(1,))
+        self.assertEqual(self.rows(doc)["duration"]["status"], "FAIL")
+        # an encoding row still fails the check beside the over-length WARN
+        long_wide = self.work / "long_wide.mp4"  # 16:9 is not a Reels aspect: that row FAILs
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=2", "-f", "lavfi", "-i", "sine=duration=91", "-t", "91",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "32k", long_wide)
+        doc, _ = self.doc("check", long_wide, "--platform", "reels", "--no-loudness", ok_codes=(1,))
+        rows = self.rows(doc)
+        self.assertEqual((rows["duration"]["status"], rows["aspect"]["status"], doc["failed"]), ("WARN", "FAIL", 1))
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "verification"))
+        # the table's size limit, and a size that could not be read under it: WARN, exit 0
+        for seeded, value in (("check.SPECS['reels']['max_bytes'] = 1000", None),
+                              ("real = check.probe; check.probe = lambda p, **k: dict(real(p, **k), size_bytes=None)", "could not measure")):
+            seed = ("import sys; sys.path.insert(0, %r); sys.argv = ['check.py', %r, '--platform', 'reels', '--no-loudness', "
+                    "'--max-duration', '600', '--json']; import check; %s; sys.exit(check.main())" % (str(SCRIPTS), str(long_ok), seeded))
+            doc = json.loads(sh(sys.executable, "-c", seed).stdout)  # sh() checks the exit code is 0
+            row = self.rows(doc)["file size"]
+            self.assertEqual((row["status"], row["basis"], doc["failed"]), ("WARN", "guidance", 0), row)
+            self.assertIn("checks the current one", row["reason"])
+            if value:
+                self.assertEqual(row["value"], value)
 
     def test_check_aspect_is_the_displayed_frames(self):
         """A114: the aspect row read the stored grid, so a 16:9 anamorphic file FAILed as 4:3."""
