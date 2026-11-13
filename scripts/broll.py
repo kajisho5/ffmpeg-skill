@@ -21,7 +21,7 @@ import argparse
 import sys
 from typing import Any, Dict, List
 
-from _common.decision import av_trim, conform_output_t, conform_to_length, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, conform_output_t, conform_to_length, frame_rate, grid_at_or_after, silence_filter, stream_starts
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -162,8 +162,14 @@ def main() -> int:
                 # sample moved a track that starts 0.3 s late 0.279 s early (#409)
                 v0b = stream_starts(c["meta"])[0]
                 first = max(v0b, grid_at_or_after(c["from"], v0b, frame_rate(c["meta"])))
+                # the delay is --at to the sample of the mix's rate: `int(at * 1000)` cut 1.001 to
+                # 1000 ms and wrote 1.2346 s as 1234 ms, the cutaway's sound 48 and 29 samples
+                # early. A whole millisecond keeps the text it had, rounded (silence_filter)
+                delay = silence_filter(MIX_RATE, lead=c["at"])
+                if "S:" not in delay:
+                    delay = f"adelay={round(c['at'] * 1000)}|{round(c['at'] * 1000)}"
                 parts.append(f"[{i + 1}:a:0]{av_trim(first, first + c['length'])[1]},"
-                             f"aformat=sample_rates=48000:channel_layouts=stereo,adelay={int(c['at'] * 1000)}|{int(c['at'] * 1000)}[ab{i}]")
+                             f"aformat=sample_rates=48000:channel_layouts=stereo,{delay}[ab{i}]")
                 layers.append(f"[ab{i}]")
             # the mix ends with the A-roll, to the sample (#493): every layer is 48 kHz, so the count
             # is in that rate. `atrim=duration={:.3f}` and `-t {:.3f}` cut it to the millisecond. A

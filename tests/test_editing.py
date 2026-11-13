@@ -4,11 +4,13 @@
     python3 tests/test_editing.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import array
 import os
 import platform
 import json
 import math
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -945,14 +947,18 @@ class EditingTests(MediaFixtures):
         for 59261, and --start 1.001 as 1.000 s (int(1.001 * 1000) is 1000). The count is of the
         written track's samples, as in test_grid_broll_and_multicam_end_their_sound_to_the_sample
         (tests/test_orchestration.py): packet durations with the edit list ignored, less the
-        encoder's 1024 of priming."""
+        encoder's 1024 of priming.
+        The follow-ups of #470 are the same class: fit.py --method trim ended on `-t {:.3f}` too
+        (59232 for 59244), broll.py delayed a cutaway's sound by `int(at * 1000)` ms (--at 1.001:
+        48000 for 48048) and sync.py --replace-audio by the offset rounded to the millisecond
+        (measured with --fine-ms 0.25: 11232 for 11246)."""
         burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
         ff = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
         x264 = ("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p")
 
-        def clip(name, rate, samples):
+        def clip(name, rate, samples, picture=1):
             path = OUT / name
-            sh(*ff, "-f", "lavfi", "-i", "testsrc=d=1:s=160x120:r=25", "-f", "lavfi", "-i", f"aevalsrc={burst}:s={rate}",
+            sh(*ff, "-f", "lavfi", "-i", f"testsrc=d={picture}:s=160x120:r=25", "-f", "lavfi", "-i", f"aevalsrc={burst}:s={rate}",
                "-af", f"atrim=end_sample={samples}", *x264, "-c:a", "pcm_s16le", path)
             return path
 
@@ -975,6 +981,9 @@ class EditingTests(MediaFixtures):
         sh(*ff, "-f", "lavfi", "-i", f"aevalsrc={burst}:s=48000", "-af", "atrim=end_sample=40000", take)
         layer = OUT / "ms_layer.mp4"
         sh(*ff, "-f", "lavfi", "-i", "testsrc2=d=1:s=64x48:r=25", *x264, layer)
+        # fit.py trims a source that runs on: 2 s of picture and of sound
+        two48, two44 = clip("ms_two_48.mov", 48000, 96000, picture=2), clip("ms_two_44.mov", 44100, 88200, picture=2)
+        self.assertEqual((round(1.2343 * 44100), round(1.234 * 44100)), (54433, 54419), "fixture")
         cases = [
             # (label, tool, arguments, rate, samples, frames, text in the command)
             ("overlay --image", "overlay.py", [down48, "--image", self.logo], 48000, 59244, 31, "-t 1.234250 "),
@@ -997,6 +1006,11 @@ class EditingTests(MediaFixtures):
              "aformat=sample_rates=44100,adelay=10330S:all=1"),
             ("freeze: a whole millisecond is rounded, not cut", "freeze.py", [down48, "--at", "0", "--hold", "1.001", "--mode", "insert"], 48000, 59244 + 48048, 50,
              "adelay=1001:all=1"),
+            ("fit --method trim", "fit.py", [two48, "--method", "trim", "--duration", "1.23425"], 48000, 59244, 31, "-t 1.234250 "),
+            ("fit --method trim at 44.1 kHz", "fit.py", [two44, "--method", "trim", "--duration", "1.2343"], 44100, 54433, 31, "-t 1.234300 "),
+            ("fit --method trim from the centre", "fit.py", [two48, "--method", "trim", "--duration", "1.23425", "--from-center"], 48000, 59244, 31, "-t 1.234250 "),
+            ("fit: the source runs on past a millisecond rounded up", "fit.py", [two48, "--method", "trim", "--duration", "1.2346"], 48000, 59261, 31, "-t 1.234600 "),
+            ("fit: a speed change too small to retime the sound", "fit.py", [two48, "--duration", "1.9999"], 48000, 95995, 50, "-t 1.999900 "),
         ]
         for label, tool, args, rate, samples, pictures, text in cases:
             with self.subTest(case=label):
@@ -1015,6 +1029,58 @@ class EditingTests(MediaFixtures):
                     self.assertIn(frames(out), (50, 56))
                     self.assertAlmostEqual(float(probe(str(out))["video"]["duration"]), float(args[-1]), delta=0.045)
                 self.assertIn(text, str(doc["commands"]))
+
+        # A silence ahead of a track that is mixed or laid under a picture: where the sound starts
+        # is read from the graph itself, the command run again with PCM in place of AAC (an AAC
+        # frame smears a start over 1024 samples)
+        def first_sound(doc, name):
+            cmd = shlex.split(doc["commands"][-1])
+            at = cmd.index("aac")
+            self.assertEqual((cmd[at - 1], cmd[at + 1]), ("-c:a", "-b:a"))
+            cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(OUT / name)
+            sh(*cmd)
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", cmd[-1], "-map", "0:a:0", "-ac", "1", "-f", "s16le", "-"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+            pcm = array.array("h")
+            pcm.frombytes(raw)
+            return next(k for k, v in enumerate(pcm) if abs(v) > 200)
+
+        aroll, cutaway = OUT / "ms_aroll.mov", OUT / "ms_cutaway.mov"
+        sh(*ff, "-f", "lavfi", "-i", "testsrc=d=2:s=160x120:r=25", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+           "-af", "atrim=end_sample=96000", *x264, "-c:a", "pcm_s16le", aroll)
+        sh(*ff, "-f", "lavfi", "-i", "testsrc2=d=1:s=160x120:r=25", "-f", "lavfi", "-i", "aevalsrc=0.5:s=48000:d=1",
+           *x264, "-c:a", "pcm_s16le", cutaway)
+        for at, audio, start, text in (("1.001", "mix", 48048, "adelay=1001|1001["),  # int(1.001 * 1000) is 1000
+                                       ("1.2346", "mix", 59261, "aformat=sample_rates=48000,adelay=59261S:all=1["),  # was 1234 ms: 59232
+                                       ("0.23425", "b", 11244, "aformat=sample_rates=48000,adelay=11244S:all=1["),
+                                       ("1", "mix", 48000, "adelay=1000|1000[")):
+            with self.subTest(broll_at=at, audio=audio):
+                out = OUT / "ms_broll_out.mp4"
+                doc = json.loads(script("broll.py", aroll, "--insert", cutaway, "--at", at, "--duration", "0.5", "--audio", audio, "-o", out, "--json").stdout)
+                self.assertIn(text, doc["commands"][-1])
+                self.assertEqual(first_sound(doc, "ms_broll_pcm.mov"), start)
+                self.assertEqual(track_samples(out), 96000, "the mix is as long as the A-roll")
+                self.assertEqual(frames(out), 50)
+
+        # sync.py --replace-audio: the delay is the offset the run measured. --fine-ms 1 measures
+        # in whole milliseconds, a finer step between them; either way the sound starts on the
+        # sample the reported offset names (to the 4 decimals it is reported with: 2.4 samples)
+        noise = "anoisesrc=d=4:c=pink:r=48000:a=0.5:seed=7"
+        reference, late = OUT / "ms_sync_ref.mov", OUT / "ms_sync_late.wav"
+        sh(*ff, "-f", "lavfi", "-i", "testsrc=d=4:s=160x120:r=25", "-f", "lavfi", "-i", noise, *x264, "-c:a", "pcm_s16le", reference)
+        sh(*ff, "-f", "lavfi", "-i", noise, "-af", "atrim=start_sample=11244,asetpts=PTS-STARTPTS", late)  # starts 0.23425 s in
+        for fine in ("0.25", "1"):
+            with self.subTest(sync_fine_ms=fine):
+                out = OUT / "ms_sync_out.mp4"
+                doc = json.loads(script("sync.py", reference, late, "--replace-audio", "--fine-ms", fine, "-o", out, "--json").stdout)
+                self.assertAlmostEqual(doc["offset_seconds"], 0.23425, delta=0.0006 if fine == "1" else 0.0003)
+                delay = re.search(r"adelay=(\d+)(S?):all=1", doc["commands"][-1])
+                written = int(delay.group(1)) * (1 if delay.group(2) else 48)
+                self.assertLessEqual(abs(written - doc["offset_seconds"] * 48000), 2.5, doc["commands"][-1])
+                self.assertLessEqual(abs(first_sound(doc, "ms_sync_pcm.mov") - written), 2)
+                self.assertEqual(track_samples(out), 192000, "padded to the reference")
+                if fine == "1":
+                    self.assertIn(f"adelay={round(doc['offset_seconds'] * 1000)}:all=1,apad", doc["commands"][-1])  # the text it always was
         # what the millisecond says is written as it always was: a whole millisecond, no sound, and
         # a dry run's pending input, which has no rate to count in
         import _common
@@ -1045,11 +1111,18 @@ class EditingTests(MediaFixtures):
         self.assertEqual(_common.silence_filter(48000, lead=2.0), "adelay=2000:all=1")
         self.assertEqual(_common.silence_filter(0, 0.23425, 0.0), "adelay=234:all=1,apad=pad_dur=0.000")
         pending = OUT / "ms_not_written_yet.mp4"
-        for tool, args, text in (("pad.py", ["--end", "0.23425"], "apad=pad_dur=0.234"),
-                                 ("freeze.py", ["--hold", "0.23425"], "apad=pad_dur=0.234"),
-                                 ("overlay.py", ["--image", self.logo], "-shortest")):
-            with self.subTest(pending=tool):
-                plan = json.loads(script(tool, pending, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
+        mute = OUT / "ms_no_sound.mp4"
+        sh(*ff, "-f", "lavfi", "-i", "testsrc=d=2:s=160x120:r=25", *x264, mute)
+        for tool, source, args, text in (("pad.py", pending, ["--end", "0.23425"], "apad=pad_dur=0.234"),
+                                         ("freeze.py", pending, ["--hold", "0.23425"], "apad=pad_dur=0.234"),
+                                         ("overlay.py", pending, ["--image", self.logo], "-shortest"),
+                                         ("fit.py", pending, ["--duration", "1.23425"], "-t 1.234 "),
+                                         ("fit.py", mute, ["--method", "trim", "--duration", "1.23425"], "-t 1.234 "),
+                                         ("fit.py", two48, ["--method", "trim", "--duration", "1.2"], "-t 1.200 "),
+                                         # a retimed track ends before the target (atempo), so its -t cuts nothing and stays
+                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234 ")):
+            with self.subTest(pending=tool, source=source.name, args=args):
+                plan = json.loads(script(tool, source, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
                 self.assertIn(text, str(plan["commands"]))
                 self.assertNotIn("pad_len", str(plan["commands"]))
 

@@ -80,6 +80,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.7.0 — a platform's upload limits are guidance (#485)](#after-370--a-platforms-upload-limits-are-guidance-485)
 - [After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)](#after-380--a-length-that-is-not-stated-and-sound-trimmed-to-the-sample-491-493)
 - [After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)](#after-381--a-length-or-a-silence-between-two-milliseconds-the-siblings-of-493)
+- [After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)](#after-383--the-millisecond-in-fitpy-brollpy-and-syncpy-and-where-it-changes-nothing-follow-ups-of-470)
 <!-- contents:end -->
 
 ## Time limits
@@ -3674,4 +3675,68 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   millisecond of a half-frame boundary (`--end 0.0504` at 29.97 fps: 1 frame from "0.050", 2
   from the amount), where both counts are half a frame from what was asked. Not changed.
   Code: `decision.length_output_t()`, `decision.silence_filter()`. Test:
+  `test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample`.
+
+## After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)
+
+- **`fit.py --method trim` ends its sound on the output's `-t`, written to the sample.** It was
+  `-t {:.3f}`: `--duration 1.23425` on a 48 kHz source that runs on wrote 59232 samples for 59244,
+  `--duration 1.2346` wrote 59280 for 59261, and `--duration 1.2343` at 44.1 kHz 54419 for 54433.
+  It is `length_output_t(target, rate, runs_on=True)` now, the rate the kept track's
+  (`--audio-stream`). `--method speed` takes the same text only when the change is too small to
+  retime (a factor within 1e-4 of 1, where no `atempo` is added and the source's sound runs on:
+  3 s to `--duration 2.9999` wrote 144000 for 143995). Not covered: a retimed track keeps
+  `-t {:.3f}`. Its sound ended 13 to 62 ms before the target in every case measured (58368
+  samples for a target of 59244, 3 s to 1.23425 s; FFmpeg 6.1.1), so the millisecond cuts nothing
+  there; that shortfall is `atempo`'s and is not addressed here, and `render.py` hands a speed
+  stage's length to `fit.py` as `{:.3f}` on that path. A whole millisecond, a source without
+  sound and a dry run's pending input write the command they did.
+- **The same `-t` bounds fit.py's picture.** With sound, a trim to 37 frames of a 30000/1001
+  source (`--duration 1.2345666`) wrote 38 under `-t 1.235` and writes 37 under `-t 1.234567`.
+  Without sound there is no rate, the millisecond stays, and that trim still writes 38 frames:
+  seen, measured and not changed here.
+- **`broll.py` delays a cutaway's sound by `--at` to the sample.** It was
+  `adelay={int(at * 1000)}|...`: `--at 1.001` started the sound at sample 48000 for 48048
+  (`int(1.001 * 1000)` is 1000), `--at 1.2346` at 59232 for 59261 and `--at 1.23425` at 59232
+  for 59244.
+  An `--at` between two milliseconds is `silence_filter(MIX_RATE, lead=at)` now (`adelay=NS:all=1`
+  at the mix's 48 kHz); a whole millisecond keeps `adelay=MS|MS`, rounded. The mix's rate is fixed
+  and `--at` is the caller's, so a plan for a pending A-roll writes the delay the run will.
+  Not covered: the cutaway's picture keeps its millisecond text (`trim=start={:.3f}:
+  duration={:.3f}`, `setpts=PTS-STARTPTS+{:.3f}/TB`, the overlay's
+  `enable='between(t,{:.3f},{:.3f})'`). At 30000/1001 with `--at 1.2345666 --from 1.2345666
+  --duration 1.0343666` (frames 37, 37 and 31) the cutaway is on output frames 38-67 showing its
+  frames 39-68, for 37-67 showing 37-67: a frame time whose millisecond rounds up is past the
+  frame. That is a choice of frames, cured by bounds half a frame early as in `av_trim()`, and
+  it changes the whole-millisecond commands too; it is left for its own change. The
+  `--audio b` gate (`volume=0:enable='between(t,...)'`) is not limited by its text either way:
+  FFmpeg evaluates it once per audio frame, and a window of samples 48000-95999 was muted over
+  48128-96255.
+- **`sync.py --replace-audio` delays the second file by the offset it measured, to the sample.**
+  At the default `--fine-ms 1` the offset is a whole millisecond (8 samples of the 8 kHz the
+  measurement is made at) and the command is the one it was. With `--fine-ms 0.25` an offset of
+  0.2343 s was written as `adelay=234` (the sound started at sample 11232, 11246 now, 11244 in
+  the fixture), and one of 0.2345 s as 234 as well (`int(round(234.5))`; 11232, 11256 now, 11261
+  in the fixture). Not covered: `--trim-second` still delays by the millisecond, because its
+  `-af` reaches every audio track the second file has and the `aformat` that pins the rate of
+  the count would resample a track at another rate; and `multicam.py`'s `adelay`, whose offsets
+  are whole milliseconds (its step is fixed at 1 ms) except under `--fix-drift`, which was not
+  measured and is not changed.
+- **Where the millisecond changes nothing (measured, left as it was).** `join.py`'s
+  `anullsrc -t {:.3f}` for a part without sound is padded and trimmed to that part's sample
+  count like every other part (`apad=whole_len=N,atrim=end_sample=N`), and silence padded with
+  silence is the same silence: two 37-frame parts at 30000/1001 came out as 94494 samples for 59
+  frames (the default transition) under `-t 1.235`, and a 31-frame part ahead of a 37-frame one
+  as 84885 samples for 53 frames under `-t 1.034`. `insert.py` and `background.py` have no
+  sound, and their `-t` is applied in the 1/fps time base of the picture they generate, where
+  FFmpeg rounds it to the nearest frame:
+  at 30 fps 1.01 s is 30 frames and 1.02 s is 31, two frames (0.066667 s, written "0.067") are
+  2, and 37 frames at 29.97 ("1.235") are 37. The text only decides within half a millisecond of
+  a half-frame boundary (1.0166 s at 30 fps: 31 frames from "1.017", 30.498 asked), the case the
+  3.8.1 section leaves to `tpad`. `grid.py`'s `trim=duration={:.3f}` and
+  `tpad=stop_duration={:.3f}` sit behind its `fps` filter in the same time base (37 frames for
+  1.234567 s at 29.97 and at 30 fps, 31 for 1.034367 s). `export.py`'s `-t` is a platform maximum
+  from the table, whole seconds. `broll.py`'s own `-t {:.3f}` with `--audio a` ends a
+  stream-copied track, whose packets are kept whole (59244 of 59244 samples of PCM).
+  All of it on FFmpeg 6.1.1, the only one measured. Test:
   `test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample`.

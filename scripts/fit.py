@@ -39,7 +39,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
@@ -162,6 +162,12 @@ def main() -> int:
         # (#491). Not under --dry-run, where render.py plans a clip's speed stage on the source in
         # place of a cut that does not exist yet and records the stand-in itself (A97)
         src_dur = (meta.get("duration") or 0.0) if STATE.dry_run else input_length(meta)
+        # The output's -t is all that ends the kept track where the source's sound runs on past
+        # the target (a trim; a speed change too small to retime), so it is written to the sample
+        # of that track's rate, not to the millisecond: `-t 1.234` wrote 59244 samples (48 kHz)
+        # as 59232 and `-t 1.235` wrote 59261 as 59280 (length_output_t). No sound, or a dry
+        # run's pending input, has no rate and keeps the millisecond.
+        rate = (audio_streams[args.audio_stream].get("sample_rate") if has_audio and audio_streams else None)
         if args.method == "speed":
             if src_dur <= 0 and STATE.dry_run:
                 src_dur = target  # planning against an intermediate that does not exist yet
@@ -178,7 +184,9 @@ def main() -> int:
                     vf.append("tblend=all_mode=average")
                 if has_audio:
                     af.append(atempo_chain(factor))
-            post += ["-t", f"{target:.3f}"]
+            # atempo's sound ends before the target (13 to 62 ms before it on FFmpeg 6.1.1), so the
+            # millisecond cuts nothing off a retimed track and stays
+            post += ["-t", f"{target:.3f}" if af else length_output_t(target, rate, runs_on=True)]
             STATE.duration_hint = target
         else:
             if target < src_dur:
@@ -189,7 +197,7 @@ def main() -> int:
                 # picture would not be the one the start timecode below names
                 m = min(SEEK_MARGIN, round(start, 3))
                 pre_input += ["-ss", f"{start - m:.3f}"]
-                post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", f"{target:.3f}"]
+                post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", length_output_t(target, rate, runs_on=True)]
                 # the output starts on the first frame at or after the seek (a seek before a
                 # picture that starts after the file's origin: on its first frame): its start
                 # timecode is that frame's, not the source's first frame's

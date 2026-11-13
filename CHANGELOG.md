@@ -4,7 +4,33 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`fit.py --method trim` ends its sound to the sample, and `broll.py` and
+  `sync.py --replace-audio` start a delayed sound on the sample** (follow-ups of #470, the class
+  of #493 and #499). `fit.py --method trim --duration 1.23425` ended its output with `-t 1.234`:
+  59232 samples for 59244 at 48 kHz, 59280 for 59261 when the millisecond rounds up
+  (`--duration 1.2346`), 54419 for 54433 at 44.1 kHz (`--duration 1.2343`). The `-t` is
+  `length_output_t()` now, as in `overlay.py` and `loop.py`; `--method speed` takes it only when
+  the change is too small to retime the sound (3 s to 2.9999 s wrote 144000 for 143995), because
+  a track retimed by `atempo` ends before the target and its `-t` cuts nothing (13 to 62 ms
+  before it in the cases measured, which this change does not address). With sound, the same
+  `-t` no longer lets in the frame that starts on the target: 37 frames of a 30000/1001 source
+  were written as 38 under `-t 1.235`; without sound the command is unchanged and still writes 38.
+  `broll.py` delayed a cutaway's sound by `int(at * 1000)` ms: `--at 1.001` started it at sample
+  48000 for 48048, `--at 1.2346` at 59232 for 59261; it is counted in samples of the 48 kHz mix
+  (`silence_filter()`), and a whole millisecond is rounded, not cut. The cutaway's picture window
+  keeps its millisecond text: a `--at`/`--from` on a 30000/1001 frame whose millisecond rounds up
+  still starts the picture a frame late (measured, not fixed here). `sync.py --replace-audio`
+  rounded the measured offset to the millisecond: with `--fine-ms 0.25` an offset of 0.2343 s
+  became `adelay=234` (the sound started at sample 11232, now 11246); at the default
+  `--fine-ms 1` offsets are whole milliseconds and the command is unchanged, and `--trim-second`
+  still rounds. A length, a delay or an offset in whole milliseconds, an input without sound and
+  a dry run's pending input write the command they always did, except `broll.py --at` values
+  that were cut by one millisecond. Measured and left alone, because the millisecond cannot
+  change what they write: `join.py`'s silence for a part without sound, `insert.py`,
+  `background.py`, `grid.py`'s picture and `export.py`'s platform maximum
+  (docs/design-decisions.md, "After 3.8.3"). Measured on FFmpeg 6.1.1 only.
 
 ## 3.8.3
 
