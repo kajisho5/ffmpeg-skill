@@ -984,9 +984,9 @@ class EditingTests(MediaFixtures):
             ("waveform at 44.1 kHz", "waveform.py", [down44], 44100, 54433, 30, "-t 1.234308 "),
             ("sync pads to the reference", "sync.py", [down48, take, "--replace-audio"], 48000, 59244, 25, "-t 1.234250 "),
             ("sync: the pad runs on past a millisecond rounded up", "sync.py", [up48, take, "--replace-audio"], 48000, 59261, 25, "-t 1.234604 "),
-            ("loop", "loop.py", [down48, "--duration", "2.23425"], 48000, 107244, 56, "-t 2.234250 "),
-            ("loop at 44.1 kHz", "loop.py", [down44, "--duration", "2.23425"], 44100, 98530, 56, "-t 2.234250 "),
-            ("loop: the next repeat runs on past a millisecond rounded up", "loop.py", [down48, "--duration", "2.2346"], 48000, 107261, 56, "-t 2.234600 "),
+            ("loop", "loop.py", [down48, "--duration", "2.23425"], 48000, 107244, None, "-t 2.234250 "),
+            ("loop at 44.1 kHz", "loop.py", [down44, "--duration", "2.23425"], 44100, 98530, None, "-t 2.234250 "),
+            ("loop: the next repeat runs on past a millisecond rounded up", "loop.py", [down48, "--duration", "2.2346"], 48000, 107261, None, "-t 2.234600 "),
             ("pad --end", "pad.py", [down48, "--end", "0.23425"], 48000, 59244 + 11244, 31, "aformat=sample_rates=48000,apad=pad_len=11244"),
             ("pad --start at 44.1 kHz", "pad.py", [down44, "--start", "0.23425"], 44100, 54433 + 10330, 31, "aformat=sample_rates=44100,adelay=10330S:all=1"),
             ("pad --start and --end", "pad.py", [down48, "--start", "0.23425", "--end", "0.5"], 48000, 59244 + 11244 + 24000, 44,
@@ -1005,7 +1005,15 @@ class EditingTests(MediaFixtures):
                 self.assertEqual(int(probe(str(out))["audio"]["sample_rate"]), rate)
                 self.assertEqual(track_samples(out), samples)
                 # the picture is the one the millisecond text wrote (measured on 3.8.1)
-                self.assertEqual(frames(out), pictures)
+                if pictures is not None:
+                    self.assertEqual(frames(out), pictures)
+                else:
+                    # loop.py: the fixture's sound outlasts its picture, so each repeat starts
+                    # 0.234 s after the last frame of the one before. FFmpeg 6.1 fills that with
+                    # repeated frames (56 packets), FFmpeg 8 holds the frame (50): the count is the
+                    # FFmpeg's, the picture's length is the tool's
+                    self.assertIn(frames(out), (50, 56))
+                    self.assertAlmostEqual(float(probe(str(out))["video"]["duration"]), float(args[-1]), delta=0.045)
                 self.assertIn(text, str(doc["commands"]))
         # what the millisecond says is written as it always was: a whole millisecond, no sound, and
         # a dry run's pending input, which has no rate to count in
@@ -1015,6 +1023,13 @@ class EditingTests(MediaFixtures):
         self.assertEqual(_common.length_output_t(59244 / 48000, 48000), "1.234250")
         self.assertEqual(_common.length_output_t(59261 / 48000, 48000), "1.235")
         self.assertEqual(_common.length_output_t(59261 / 48000, 48000, runs_on=True), "1.234604")
+        # the microsecond text is itself a rounding: 2.00001042 s is 96001 samples at 48 kHz and
+        # "2.000010" names 96000, so the text is the first microsecond that names the count asked
+        self.assertEqual(round(2.00001042 * 48000), 96001)
+        self.assertEqual(_common.length_output_t(2.00001042, 48000), "2.000011")
+        for length, rate in ((2.00001042, 48000), (1.2342505, 44100), (59244 / 48000, 48000), (7.123456789, 96000)):
+            text = _common.length_output_t(length, rate, runs_on=True)
+            self.assertEqual(round(float(text) * rate), round(length * rate), (length, rate, text))
         self.assertEqual(_common.length_output_t(59244 / 48000, 0), "1.234")
         self.assertEqual(_common.length_output_t(59244 / 48000, None, runs_on=True), "1.234")
         self.assertEqual(_common.silence_filter(48000, 0.5, 0.25), "adelay=500:all=1,apad=pad_dur=0.250")
