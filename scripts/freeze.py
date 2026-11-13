@@ -21,6 +21,7 @@ import sys
 
 from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
+from _common.emit import input_length
 
 
 def main() -> int:
@@ -43,7 +44,7 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    dur = meta.get("duration") or 0.0
+    dur = input_length(meta)
     fps = meta["video"].get("fps") or 30.0
     if args.at is not None:
         at = time_arg(args.at, "--at", (meta.get("video") or {}).get("fps"))

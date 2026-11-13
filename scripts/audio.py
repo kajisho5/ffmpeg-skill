@@ -30,6 +30,7 @@ from typing import Any, Dict, List
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import warn
+from _common.decision import conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -252,14 +253,6 @@ def property_step(name: str, expected: int, measured: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {"step": name, "expected": expected, "measured": None, "ok": False, "reason": "not_measured"}
     return {"step": name, "expected": expected, "measured": value, "ok": value == expected}
-
-
-def conform_filter(samples: int, rate: int) -> str:
-    """Pad with silence or trim to exactly `samples` at `rate` (#478): counted in samples, not in
-    seconds written to the millisecond, which left a result up to 24 samples (48 kHz) off. The
-    aformat pins the rate the count is in, so a resampler FFmpeg inserts sits ahead of the count."""
-    head = f"aformat=sample_rates={rate}," if rate else ""
-    return f"{head}apad=whole_len={samples},atrim=end_sample={samples}"
 
 
 def main() -> int:
@@ -564,12 +557,9 @@ def main() -> int:
     elif main_dur and (args.replace or args.music or keep_video):
         if rate:
             conform_samples = round(main_dur * rate)
-            # The count is of samples, and sound that starts after the picture keeps its start
-            # (apad and atrim=end_sample do not move timestamps): N samples from 0.3 s end 0.3 s
-            # past the picture. The trim on the timestamp, which is what this was before #478,
-            # ends it with the picture; half a sample of slack keeps the Nth sample of a track
-            # that starts at 0.
-            post.append(conform_filter(conform_samples, rate) + f",atrim=end={main_dur + 0.5 / rate:.6f}")
+            # counted in samples and ended on the timestamp, so sound that starts after the picture
+            # still ends with it (conform_to_length, shared with grid, broll and multicam since #493)
+            post.append(conform_to_length(main_dur, rate))
         else:
             # a dry run's pending input: no rate to count in yet; the real run counts samples
             post.append(f"apad,atrim=0:{main_dur:.6f}")

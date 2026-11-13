@@ -264,6 +264,69 @@ class OrchestrationTests(MediaFixtures):
         data = json.loads(script("cut.py", self.src, "--start", "0", "--end", "2", "-o", out, "--json").stdout)
         self.assertClose(data["probe"]["duration"], 2.0, 0.6)
 
+    def test_grid_broll_and_multicam_end_their_sound_to_the_sample(self):
+        """#493: grid.py, broll.py and multicam.py ended their sound with `atrim=duration={:.3f}` /
+        `atrim=0:{:.3f}` and the output's `-t {:.3f}`, to the millisecond, as audio.py did before
+        #478: a length of 59244 samples (48 kHz) was written as 59232. They share audio.py's
+        conform (decision.conform_to_length) now. The count is of the written track's own samples:
+        its packets' durations with the edit list ignored, less the encoder's 1024 of priming (an
+        MP4 edit list is in 1/1000 s, so the stream's stated duration is a whole millisecond)."""
+        burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
+
+        def clip(name, rate, samples, picture="testsrc"):
+            path = OUT / name
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"{picture}=d=1:s=160x120:r=25",
+               "-f", "lavfi", "-i", f"aevalsrc={burst}:s={rate}", "-af", f"atrim=end_sample={samples}",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", path)
+            return path
+
+        def track_samples(path):
+            rows = sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0",
+                      "-show_entries", "packet=duration", "-of", "csv=p=0", path).stdout.split()
+            return sum(int(r.split(",")[0]) for r in rows) - 1024
+
+        def frames(path):
+            return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
+                          "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path).stdout.split()[0].strip(","))
+
+        long48, short48 = clip("exact_long_48.mov", 48000, 59244), clip("exact_short_48.mov", 48000, 24000, "testsrc2")
+        long44, short44 = clip("exact_long_44.mov", 44100, 54433), clip("exact_short_44.mov", 44100, 22050, "testsrc2")
+        for path, rate, samples in ((long48, 48000, 59244), (long44, 44100, 54433)):
+            self.assertEqual(round(float(probe(str(path))["duration"]) * rate), samples, "fixture")
+            self.assertNotEqual(round(round(samples / rate, 3) * rate), samples, "not a whole millisecond: the old rounding missed it")
+        at48k_of_44 = round(float(probe(str(long44))["duration"]) * 48000)  # broll and multicam write 48 kHz
+        cases = [
+            # (label, tool, arguments, rate the sound is written at, samples)
+            ("grid pads the shorter clip's sound", "grid.py", [short48, long48, "--cols", "2", "--rows", "1", "--pad", "--audio-from", "0", "--label", "none"], 48000, 59244),
+            ("grid trims the longer clip's sound", "grid.py", [short48, long48, "--cols", "2", "--rows", "1", "--pad", "--audio-from", "1", "--label", "none"], 48000, 59244),
+            ("grid at 44.1 kHz", "grid.py", [short44, long44, "--cols", "2", "--rows", "1", "--pad", "--audio-from", "0", "--label", "none"], 44100, 54433),
+            ("broll mix", "broll.py", [long48, "--insert", short48, "--at", "0.2", "--duration", "0.4", "--audio", "mix"], 48000, 59244),
+            ("broll b", "broll.py", [long48, "--insert", short48, "--at", "0.2", "--duration", "0.4", "--audio", "b"], 48000, 59244),
+            ("broll from 44.1 kHz", "broll.py", [long44, "--insert", short44, "--at", "0.2", "--duration", "0.4", "--audio", "mix"], 48000, at48k_of_44),
+            ("multicam", "multicam.py", [long48, short48, "--switch", "0-0.5:0,0.5-1:1"], 48000, 59244),
+            ("multicam from 44.1 kHz", "multicam.py", [long44, short44, "--switch", "0-0.5:0,0.5-1:1"], 48000, at48k_of_44),
+        ]
+        for label, tool, args, rate, samples in cases:
+            with self.subTest(case=label):
+                out = OUT / f"exact_{tool[:-3]}_out.mp4"
+                doc = json.loads(script(tool, *args, "-o", out, "--json").stdout)
+                self.assertEqual(int(probe(str(out))["audio"]["sample_rate"]), rate)
+                self.assertEqual(track_samples(out), samples)
+                self.assertIn(f"apad=whole_len={samples},atrim=end_sample={samples},atrim=end=", " ".join(map(str, doc["commands"])))
+        # the picture is what it was: the output's -t moved by half a sample, not by a frame
+        self.assertEqual(frames(OUT / "exact_grid_out.mp4"), 37)  # 1.234 s at grid.py's 30 fps
+        self.assertEqual(frames(OUT / "exact_broll_out.mp4"), 25)
+        self.assertEqual(frames(OUT / "exact_multicam_out.mp4"), 25)
+        # the one conform, as audio.py emits it (tests/test_audio.py pins audio.py's own graph)
+        import _common
+        self.assertEqual(_common.conform_to_length(59244 / 48000, 48000),
+                         "aformat=sample_rates=48000,apad=whole_len=59244,atrim=end_sample=59244,atrim=end=1.234260")
+        # a dry run's pending A-roll has no length to count in: the old filter stays, as in audio.py
+        plan = script("broll.py", OUT / "exact_not_written_yet.mp4", "--insert", short48, "--at", "0.2", "--duration", "0.4",
+                      "--audio", "mix", "--dry-run", "-o", OUT / "exact_plan.mp4", "--json")
+        self.assertIn("atrim=duration=0.000", plan.stdout)
+        self.assertNotIn("whole_len", plan.stdout)
+
     def test_multicam_offsets_and_switch(self):
         camB = OUT / "camB.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.5", "-i", self.src, "-vf", "hue=h=90", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", camB)

@@ -52,7 +52,7 @@ from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
-from _common.emit import file_identity
+from _common.emit import file_identity, input_length
 from check import SPECS as PLATFORMS, measure_loudness
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, UPLOAD_LIMITS_AS_OF, resolve as resolve_platform
@@ -443,7 +443,7 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
             + (" (--hw puts it on VideoToolbox, which has no two-pass mode)" if STATE.hw else ""))
     if not math.isfinite(args.max_mb) or args.max_mb <= 0:
         die(f"--max-mb must be a positive number of MiB, got {args.max_mb:g}")
-    dur = float(meta.get("duration") or 0.0)
+    dur = input_length(meta)  # the bitrate is the size over the length: no stated length is refused (#491)
     if p["max"] and not args.allow_long:
         dur = min(dur, float(p["max"]))
     if dur <= 0:

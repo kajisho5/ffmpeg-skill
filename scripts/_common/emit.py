@@ -647,6 +647,29 @@ def stream_length(meta: Dict[str, Any], kind: str) -> Optional[float]:
     return None
 
 
+LENGTH_UNREAD_HINT = ("remux the file so its container states a length (export.py INPUT --preset copy -o remuxed.mkv), "
+                      "then run this on the remux")
+
+
+def input_length(meta: Optional[Dict[str, Any]], path: Optional[str] = None) -> float:
+    """An input's length in seconds, for a tool that computes with it (#491). A file that states
+    no length (Matroska written to a pipe: ffprobe prints N/A for the container and every stream)
+    probes as duration None, and `meta.get("duration") or 0.0` read that as a clip 0 s long: a
+    speed factor of 0.00x, "--at 1 is outside the clip (0..0.000)", a reverse of no frames. Unread
+    is not zero, so this refuses, as check.py's duration row says "could not measure". A dry run's
+    pending input (probe()'s stub, duration 0.0), a stated length of 0 and a still picture (one
+    image read by an image demuxer has no length to state) pass through as before."""
+    meta = meta or {}
+    length = meta.get("duration")
+    fmt = meta.get("format") or ""
+    still = fmt == "image2" or fmt.endswith("_pipe")  # probe._is_still()'s rule, on the probe document
+    if length is None and not meta.get("dry_run") and not still:
+        die(f"the length of {path or meta.get('file') or 'the input'} could not be read: neither its container nor "
+            "its streams state one, and this operation is computed from the input's length",
+            kind="input", hint=LENGTH_UNREAD_HINT)
+    return float(length or 0.0)
+
+
 def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
     """Where one stream ends on the file's timeline: its start plus its own length."""
     length = stream_length(meta, kind)

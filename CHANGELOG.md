@@ -4,7 +4,30 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **An input that states no length is refused, not read as 0 s long** (#491). A Matroska written
+  to a pipe has no duration in its container or its streams (`probe.py` reports `duration: null`).
+  `reverse.py`, `grid.py` and `broll.py` ended in a traceback with no JSON document; `fit.py`
+  refused a "speed factor 0.00x", `freeze.py` and `speedramp.py` a clip of `0..0.000`,
+  `silence.py` "nothing would be kept"; `join.py` joined the clip as 0.04 s and `fit.py --method
+  trim`, `scenes.py` and `metadata.py --auto-chapters` completed on a length of 0. The tools that
+  compute with the length (`fit --duration`, `freeze`, `speedramp`, `reverse`, `loop`, `silence`,
+  `scenes`, `look`'s sheet, `graphics` without `--end`, `metadata` chapters, `export --max-mb`,
+  `join`, `grid`, `broll`, `multicam`'s reference, `--fix-drift`) read it through one helper,
+  `input_length()`, which refuses as `kind: input` ("the length of FILE could not be read") with
+  the hint to remux (`export.py INPUT --preset copy`). A tool that does not need the length runs
+  on the file as before.
+- **`grid.py`, `broll.py` and `multicam.py` end their sound to the sample** (#493). They trimmed
+  it with `atrim=duration={:.3f}` / `atrim=0:{:.3f}` and the output's `-t {:.3f}`, to the
+  millisecond, so a length of 59244 samples (48 kHz) was written as 59232. They share
+  `audio.py`'s conform now (`conform_to_length()` in `_common`: `apad=whole_len=N,
+  atrim=end_sample=N` at a pinned rate, then a trim on the timestamp so sound that starts late
+  still ends with the picture); `audio.py`'s own filter strings are unchanged. The sound is
+  padded with silence when it ends before the picture, and `grid.py` conforms every
+  `--audio-from` track, not only a padded one. A dry run's pending input keeps the old filter.
+  An MP4's stated stream duration is still a whole millisecond (its edit list is in 1/1000 s);
+  the track holds the samples.
 
 ## 3.8.0
 
