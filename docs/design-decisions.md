@@ -389,6 +389,14 @@ exists. When a decision changes, edit the entry in the same PR.
 - **`--correct` converts through bt601 on both legs** (not bt709), because on every tested
   FFmpeg the 709 round trip through 8-bit 4:2:0 loses ~5 dB more than 601. Code:
   `color.py _rgb_stage()`. Test: `test_color_correct_identity_holds_on_a_bt709_tagged_source`.
+  This is a YUV picture's working space: the pair cancels because the picture comes in as YUV (an
+  RGB source too on the H.264 line, which converts it to BT.709 first). An RGB source (neither HDR nor BT.2020) on an alpha
+  line (`--keep-alpha`) meets no matrix on the way in (and the way in names none: with
+  `scale=in_color_matrix` on RGB frames, FFmpeg 7.1 wrote BT.601 samples whatever the way out
+  asked for), so the way out decides what the file holds:
+  bt709 on a line that stores YUV, which is then tagged BT.709 (#496, see "the alpha path beyond
+  export"), bt601 on one that stores RGB, where FFmpeg converts back with that default. Code:
+  `color.py working_matrix()`. Test: `test_an_alpha_line_shows_the_colour_of_its_source`.
   `--temperature` at its default 6500 adds no term: `colortemperature=temperature=6500` is not an
   identity (it tinted grey 808080 to 7E7E7B, #410). Test: `test_color_correct_defaults_leave_grey_grey`.
 - **`--lut` converts through BT.709 on both legs, in float RGB** (#410). A LUT maps the RGB the picture
@@ -397,7 +405,9 @@ exists. When a decision changes, edit the entry in the same PR.
   the frame's tag, out by swscale's BT.601 default) and an identity LUT shifted every colour (2FAE4E
   to 249A4B); with `gbrpf32le` an identity LUT returns what `--lut-strength 0` does on 6.1, 8- and
   10-bit, limited and full range. A blend (`--lut-strength` below 1) is made in that RGB too. Code:
-  `color.py lut_legs()`. Test: `test_color_lut_identity_returns_the_picture`.
+  `color.py lut_legs()`. Test: `test_color_lut_identity_returns_the_picture`. An RGB source on an
+  alpha line takes `working_matrix()`'s legs, as `--correct` does: its qtrle/PNG line got BT.709
+  legs and FFmpeg's BT.601 conversion back, and an identity LUT wrote 30C050 as 3CD753 (#496).
 
 ## Outputs and files
 
@@ -3136,6 +3146,31 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   output-option negotiation has nothing to convert. Code: `decision.keeps_source_tags()`,
   `alpha.finish_chain()`, `alpha.tag_args()`. Test:
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
+- **An RGB source that is neither HDR nor BT.2020 is converted to BT.709 on a YUV alpha line and tagged so (#496).** "It converts
+  no matrix" above holds for a YUV source, which has one to keep. An SDR RGB source (qtrle, PNG in
+  `.mov`/`.mkv`; one that probes HDR or BT.2020 is not converted to BT.709: FFmpeg's own conversion makes its YUV, as before) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
+  the tool does. Left to FFmpeg it was BT.601, with no tag on 6.1: a 1280x720 master read as
+  BT.709 showed 30C050 as 26AB4D, from `color.py --correct`, `graphics.py` and `overlay.py` alike
+  (`--lut` wrote BT.709 samples with no tag). The conversion is now BT.709, RGB layers are
+  converted to match, and the line is tagged BT.709 (matrix always; primaries and transfer the
+  source's own when it has them), as the H.264 line treats an RGB source. `color.py` makes it in
+  the grade's own way out of RGB, not in a conversion in front of it, so the grade of an RGB source
+  is the same on every `--alpha-codec`. A qtrle/PNG line keeps the RGB (through the 4:4:4 YUV the
+  tools work in, both ways with one matrix). An untagged YUV source is unchanged on every line: its
+  samples are kept, and an RGB line reads them as FFmpeg's default, BT.601. Code:
+  `alpha.rgb_to_bt709_line()`, `alpha.source_format()`, `color.py working_matrix()`. Test:
+  `test_an_alpha_line_shows_the_colour_of_its_source`.
+- **A conversion the alpha line makes names its matrix where FFmpeg 6.1 would not read the tag
+  (#496's siblings).** Three more places took BT.601 on a BT.709-tagged source. `color.py` to a
+  qtrle/PNG line: FFmpeg puts the conversion to RGB in front of `alphamerge`, ahead of
+  `finish_chain()`'s label, so the graded YUV is labelled at the end of the colour branch too
+  (`alpha.matrix_label()`; 30C050 came out 3CD753). `--alpha-mode premultiplied` on a ProRes
+  4444/VP9 line: the way to RGB and back around `premultiply` name the line's matrix (opaque
+  30C050 came out 3CD753 from `color.py`, 25AC4E from `overlay.py`). An RGB `overlay.py --video`
+  layer with `--keep-alpha`: `matrix_chain()` converts nothing on an alpha line, so the layer
+  became YUV by the default (pure red read FF1800); on a BT.709 line it is converted to BT.709,
+  as an `--image` layer already was. With `--chromakey` the layer is keyed as BT.601 YUV first
+  (the filter computes its key in BT.601 whatever the frames say) and converted after the key. Test: as above.
 - **An RGB source's `gbr` colour space is not carried over (#454).** It says the stored samples are
   RGB, which is the pixel format's to say: the PNG line tags itself `gbr`, and on a YUV line
   (ProRes 4444, VP9) the label would call YUV samples RGB. So the output of a PNG-in-`.mov` source is
@@ -3180,7 +3215,8 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `test_alpha_checks_do_not_pass_what_they_could_not_read`.
 - **On a BT.709-tagged alpha line, RGB layers are converted to BT.709.** The line keeps the source's
   tags, and FFmpeg 6.1 turns an RGB logo or box into YUV with BT.601, so saturated colours shifted
-  under the kept tag. Drawn text colours (drawtext, libass) are not converted on an alpha line.
+  under the kept tag. The YUV line of an RGB source that is neither HDR nor BT.2020 is BT.709 as well (#496) and converts its layers the
+  same way. Drawn text colours (drawtext, libass) are not converted on an alpha line.
   Code: `decision.rgb_chain_to_bt709()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
 - **`--alpha-mode` describes the written colour, as in `export.py`.** Sources are taken as straight;
   `premultiplied` multiplies the written colour by the alpha at the end of the graph.

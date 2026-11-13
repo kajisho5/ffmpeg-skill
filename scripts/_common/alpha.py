@@ -9,7 +9,9 @@ background.py's transparent canvas can do the same:
   writes a fully transparent canvas in the same lines. `--alpha-mode straight|premultiplied` says
   how the colour is stored, as export.py's does.
 - An alpha line keeps the source's colour tags and converts no matrix, as `--codec prores` does
-  (`keeps_source_tags()` in decision.py): an alpha master is an editing master.
+  (`keeps_source_tags()` in decision.py): an alpha master is an editing master. An RGB source has
+  no matrix to keep: on a line that stores YUV (ProRes 4444, VP9) it is converted to BT.709 and
+  tagged so (`rgb_to_bt709_line()`, #496); on an RGB line (qtrle, PNG) it stays the RGB it was.
 - Every completed run on a source whose alpha is really used (a frame below OPAQUE) gets an
   `alpha` verification step. Without `--keep-alpha` the output's picture has no alpha and that step
   fails (the output reported `verified: true` with the alpha gone before this module existed);
@@ -25,7 +27,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from _common import runner as _runner
-from _common.color import carried_tag
+from _common.color import carried_tag, is_rgb, rgb_to_bt709_filter
 from _common.runner import STATE, ffmpeg_encoders, require_tool, run
 
 # A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
@@ -283,13 +285,72 @@ def audio_line(codec: str) -> List[str]:
 
 _TAG_KEYS = (("colorspace", "color_space", "-colorspace"), ("color_primaries", "color_primaries", "-color_primaries"),
              ("color_trc", "color_transfer", "-color_trc"))
+# swscale's name for a tagged SDR matrix (scale=in_color_matrix / out_color_matrix)
+_SWS_MATRIX = {"bt709": "bt709", "smpte170m": "bt601", "bt470bg": "bt601", "smpte240m": "smpte240m", "fcc": "fcc"}
+
+
+def rgb_to_bt709_line(meta: Optional[Dict[str, Any]], codec: Optional[str] = None) -> bool:
+    """True when the alpha line being written (`codec`, default STATE.alpha_line) stores YUV
+    (ProRes 4444, VP9) and the source `meta` probes is RGB (qtrle, PNG in .mov/.mkv, an image).
+
+    An RGB source has no matrix for the line to keep, and the one FFmpeg picks where the graph
+    first needs YUV is BT.601, written with no tag on 6.1: a 1280x720 ProRes 4444 master of a
+    qtrle clip was read as BT.709 by every player and showed 30C050 as 26AB4D (#496). Such a
+    source is converted to BT.709 (source_format(); color.py's grade legs), RGB layers are
+    converted to match (decision.rgb_chain_to_bt709) and the line is tagged BT.709 (_source_tags),
+    as the H.264 line does for an RGB source. An RGB line (qtrle, PNG) is left as it was; an
+    HDR/BT.2020 source is not converted to BT.709 here (FFmpeg's own conversion makes its YUV, as
+    before)."""
+    codec = codec or STATE.alpha_line
+    v = (meta or {}).get("video") or {}
+    return bool(codec) and ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv") and is_rgb(meta) and not v.get("bt2020_or_hdr")
+
+
+def source_format(meta: Optional[Dict[str, Any]]) -> str:
+    """The filter that starts a compositing graph on an alpha line: the source at 4:4:4 with its
+    alpha plane. An RGB source on a YUV line gets there by an explicit BT.709 conversion
+    (rgb_to_bt709_line); a palette is expanded first, because swscale turns one into YUV with
+    BT.601 whatever matrix is asked for. Every other source: `format=yuva444p`, as before."""
+    if rgb_to_bt709_line(meta):
+        pal = ((meta or {}).get("video") or {}).get("pix_fmt") == "pal8"
+        return ("format=rgba," if pal else "") + rgb_to_bt709_filter("yuva444p")
+    return "format=yuva444p"
+
+
+def rgb_line(codec: Optional[str] = None) -> bool:
+    """True when the alpha line being written stores RGB (qtrle, PNG)."""
+    codec = codec or STATE.alpha_line
+    return bool(codec) and not ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv")
+
+
+def matrix_label(meta: Optional[Dict[str, Any]]) -> str:
+    """",setparams=colorspace=<the source's matrix>" to end a YUV chain with that an RGB line
+    (qtrle, PNG) converts, or "" (a YUV line, an untagged or RGB source).
+
+    finish_chain() labels the frames after the last filter of the graph, but FFmpeg places the
+    conversion to an RGB line where the formats first differ, which in color.py is in front of
+    `alphamerge` and so in front of that label: the graded YUV of a BT.709-tagged source reached
+    it untagged (6.1) or carrying the grade legs' working matrix (7.1+) and was read as BT.601
+    (30C050 written as 3CD753). Labelled here, the conversion reads the matrix the samples are in."""
+    if not rgb_line() or is_rgb(meta):
+        return ""
+    space = [val for p, val, _ in _source_tags(meta, "setparams") if p == "colorspace"]
+    return f",setparams=colorspace={space[0]}" if space else ""
 
 
 def _source_tags(meta: Optional[Dict[str, Any]], dest: str = "option") -> List[tuple]:
     """(setparams name, value, output option) per source tag that is passed on, the value spelled
-    for `dest` (carried_tag: an RGB source's `gbr` is left out, #454)."""
+    for `dest` (carried_tag: an RGB source's `gbr` is left out, #454). An RGB source on a YUV line
+    (rgb_to_bt709_line) is BT.709 YUV by then and says so: matrix bt709, and bt709 for a primaries
+    or transfer tag the source does not carry (the H.264 line's reading of an untagged picture)."""
     v = (meta or {}).get("video") or {}
-    tags = [(param, carried_tag(param, v.get(key), dest), flag) for param, key, flag in _TAG_KEYS]
+    to_709 = rgb_to_bt709_line(meta)
+    # the matrix is the one the conversion used, whatever the RGB source's own tag says (a qtrle
+    # clip retagged smpte170m would label its BT.709 samples BT.601); primaries and transfer are
+    # not converted, so the source's own are kept when it has them
+    tags = [(param, "bt709" if to_709 and param == "colorspace"
+             else carried_tag(param, v.get(key), dest) or ("bt709" if to_709 else None), flag)
+            for param, key, flag in _TAG_KEYS]
     return [t for t in tags if t[1]]
 
 
@@ -300,15 +361,24 @@ def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]]
     format (so no later conversion can drop the plane)."""
     tags = _source_tags(meta, "setparams")
     label = ("setparams=" + ":".join(f"{p}={val}" for p, val, _ in tags) + ",") if tags else ""
+    pix = ALPHA_CODECS[codec]["pix_fmt"]
     # premultiplied colour is colour x alpha in RGB: multiplied there (a YUV premultiply scales the
     # limited-range offsets too), after the tags are back so both conversions use the same matrix
-    return (label + ("format=gbrap,premultiply=inplace=1," if mode == "premultiplied" else "")
-            + f"format={ALPHA_CODECS[codec]['pix_fmt']}")
+    pre = "format=gbrap,premultiply=inplace=1," if mode == "premultiplied" else ""
+    matrix = _SWS_MATRIX.get(next((val for p, val, _ in tags if p == "colorspace"), None))
+    if pre and matrix and pix.startswith("yuv"):
+        # ... which 6.1 does not do by itself on a tagged YUV line: the way to RGB is placed in
+        # front of color.py's alphamerge (so in front of the label, and reads BT.601) and the way
+        # back takes swscale's BT.601 default whatever the frames say, so an opaque 30C050 of a
+        # BT.709 line came back 3CD753 (color.py) or 25AC4E (overlay.py). Both legs name the matrix.
+        pre = f"scale=in_color_matrix={matrix},format=gbrap,premultiply=inplace=1,scale=out_color_matrix={matrix},"
+    return label + pre + f"format={pix}"
 
 
 def tag_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     """The source's colour tags as output options, so the written stream says what the frames do
-    (an alpha line keeps the source's tags, as --codec prores does)."""
+    (an alpha line keeps the source's tags, as --codec prores does; an RGB source on a YUV line is
+    tagged the BT.709 it was converted to)."""
     out: List[str] = []
     for _p, val, flag in _source_tags(meta):
         out += [flag, val]

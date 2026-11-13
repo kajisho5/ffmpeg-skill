@@ -4,7 +4,28 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`--keep-alpha` on an RGB source wrote BT.601 YUV with no colour tag** (#496). A qtrle or
+  PNG-in-`.mov` clip written to ProRes 4444 or VP9 by `color.py --correct --keep-alpha`,
+  `graphics.py --keep-alpha` or `overlay.py --keep-alpha` held BT.601 samples and, on FFmpeg 6.1, no
+  tag, so a player read a 1280x720 master as BT.709 and showed 30C050 as 26AB4D. `--correct`'s RGB
+  stage pinned bt601 on both legs, which cancel for a YUV source; an RGB source meets no matrix on
+  the way in, so the way out was the one real conversion, and the alpha line converts nothing in
+  front of it as the H.264 line does. Such a line is now BT.709 YUV and tagged BT.709 (`--lut`, whose
+  samples already were BT.709, gets the tag; `--lut-strength 0` gets the conversion), and RGB layers
+  drawn on it are converted to match. Found by the sweep, the same conversion left to FFmpeg's
+  BT.601 default: `color.py --lut --keep-alpha --alpha-codec qtrle|png` of an RGB source did not
+  return the source's RGB under an identity LUT (30C050 written as 3CD753); `color.py --keep-alpha
+  --alpha-codec qtrle|png` of a BT.709-tagged source read its graded YUV as BT.601 (the same
+  3CD753); `--alpha-mode premultiplied` on a ProRes 4444/VP9 line of a BT.709 picture shifted
+  opaque colour the same way; an RGB `overlay.py --video` layer on a BT.709 alpha line was BT.601
+  (pure red read FF1800; with `--chromakey` it is keyed first, in the BT.601 the key is computed in). Commands for a YUV source are unchanged except in those three cases, each
+  on a BT.709-tagged source. An untagged YUV source is unchanged everywhere, and
+  an RGB source that probes HDR or BT.2020 is not converted to BT.709: FFmpeg's own conversion makes
+  its YUV line, as before.
+  The grade of an RGB source names no matrix on its way in to RGB (with one, FFmpeg 7.1 wrote
+  BT.601 samples on the ProRes 4444/VP9 line).
 
 ## 3.8.1
 
