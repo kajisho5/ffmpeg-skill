@@ -3145,8 +3145,8 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `alpha.finish_chain()`, `alpha.tag_args()`. Test:
   `test_color_keep_alpha_grades_a_prores_4444_clip_and_keeps_its_alpha`.
 - **An RGB source on a YUV alpha line is converted to BT.709 and tagged so (#496).** "It converts
-  no matrix" above holds for a YUV source, which has one to keep. An RGB source (qtrle, PNG in
-  `.mov`/`.mkv`) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
+  no matrix" above holds for a YUV source, which has one to keep. An SDR RGB source (qtrle, PNG in
+  `.mov`/`.mkv`; one that probes HDR or BT.2020 is left as it was) has none, and ProRes 4444 and VP9 store YUV, so one conversion is made whatever
   the tool does. Left to FFmpeg it was BT.601, with no tag on 6.1: a 1280x720 master read as
   BT.709 showed 30C050 as 26AB4D, from `color.py --correct`, `graphics.py` and `overlay.py` alike
   (`--lut` wrote BT.709 samples with no tag). The conversion is now BT.709, RGB layers are
@@ -3167,7 +3167,8 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   30C050 came out 3CD753 from `color.py`, 25AC4E from `overlay.py`). An RGB `overlay.py --video`
   layer with `--keep-alpha`: `matrix_chain()` converts nothing on an alpha line, so the layer
   became YUV by the default (pure red read FF1800); on a BT.709 line it is converted to BT.709,
-  as an `--image` layer already was. Test: as above.
+  as an `--image` layer already was. With `--chromakey` the layer is keyed as BT.601 YUV first
+  (the filter computes its key in BT.601 whatever the frames say) and converted after the key. Test: as above.
 - **An RGB source's `gbr` colour space is not carried over (#454).** It says the stored samples are
   RGB, which is the pixel format's to say: the PNG line tags itself `gbr`, and on a YUV line
   (ProRes 4444, VP9) the label would call YUV samples RGB. So the output of a PNG-in-`.mov` source is

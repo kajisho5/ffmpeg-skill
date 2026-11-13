@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, make_multistream,  # noqa: E402
                        sar_clip, script, sh, written_track)
 from _common import probe  # noqa: E402
+from _common.color import is_rgb  # noqa: E402
 
 
 class DeliveryTests(MediaFixtures):
@@ -283,7 +284,10 @@ class DeliveryTests(MediaFixtures):
         qtrle, png, yuv = OUT / "alpha_matrix_qtrle.mov", OUT / "alpha_matrix_png.mov", OUT / "alpha_matrix_709.mov"
         sh(*ff, "-c:v", "qtrle", qtrle)
         sh(*ff, "-c:v", "png", png)
-        sh(*ff, "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le,setparams=colorspace=bt709", "-c:v",
+        # tagged on the frames as well as in the options: from 7.1 the encoder takes the tags from
+        # the frames, and a clip labelled with the matrix alone probed with no colour tag at all
+        sh(*ff, "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le,"
+           "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709", "-c:v",
            "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-colorspace", "bt709", "-color_primaries", "bt709",
            "-color_trc", "bt709", yuv)
         # the fixtures are what the test says they are
@@ -346,6 +350,30 @@ class DeliveryTests(MediaFixtures):
                 r, g, b = self._rgb_read_as(written(src, "video", "prores4444"), 32, 132, matrix="bt709")
                 self.assertGreater(r, 245, (r, g, b))
                 self.assertLess(max(g, b), 8, (r, g, b))
+        # ... and --chromakey still keys it: the filter computes its key in BT.601 whatever the
+        # frames say, so a layer converted to BT.709 before the key kept its red background
+        keyed = OUT / "alpha_matrix_keyed.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=red:s=64x64:r=25:d=0.2,drawbox=16:16:32:32:0x2040C0:fill,format=rgba", "-c:v", "qtrle", keyed)
+        paths["keyed"] = ("overlay.py", "--video", keyed, "--chromakey", "red", "--chromakey-similarity", "0.05",
+                          "--chromakey-blend", "0", "--position", "0,100", "--margin", "0")
+        for src in (qtrle, yuv):
+            with self.subTest(src=src.stem, path="keyed"):
+                out = written(src, "keyed", "prores4444")
+                for got, want in zip(self._rgb_read_as(out, 4, 104, matrix="bt709"), colour):
+                    self.assertAlmostEqual(got, want, delta=3, msg="the keyed background shows the main picture")
+                for got, want in zip(self._rgb_read_as(out, 32, 132, matrix="bt709"), (0x20, 0x40, 0xC0)):
+                    self.assertAlmostEqual(got, want, delta=3, msg="what the key leaves is the layer's colour")
+        # an RGB source that carries a matrix tag of its own (a qtrle clip retagged smpte170m): the
+        # samples written are BT.709, so that is the tag, not the one carried over
+        tagged = OUT / "alpha_matrix_tagged601.mov"
+        made = subprocess.run([*map(str, ff), "-c:v", "qtrle", "-colorspace", "smpte170m", "-movflags", "write_colr", str(tagged)],
+                              capture_output=True, text=True, encoding="utf-8")
+        # 6.1 writes that tag beside RGB frames; a build that refuses or converts instead has no
+        # such file to give the tool, and the case is not this test's to make there
+        if made.returncode == 0 and is_rgb(probe(str(tagged))) and probe(str(tagged))["video"].get("color_space") == "smpte170m":
+            with self.subTest(src="rgb tagged smpte170m"):
+                self.assertEqual(probe(str(written(tagged, "correct", "prores4444")))["video"]["color_space"], "bt709")
 
     def test_every_probed_colour_tag_is_spelled_the_way_its_destination_takes_it(self):
         """#454's class: a probed tag passed back to FFmpeg. ffprobe's names are setparams' names;

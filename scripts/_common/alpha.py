@@ -344,7 +344,11 @@ def _source_tags(meta: Optional[Dict[str, Any]], dest: str = "option") -> List[t
     or transfer tag the source does not carry (the H.264 line's reading of an untagged picture)."""
     v = (meta or {}).get("video") or {}
     to_709 = rgb_to_bt709_line(meta)
-    tags = [(param, carried_tag(param, v.get(key), dest) or ("bt709" if to_709 else None), flag)
+    # the matrix is the one the conversion used, whatever the RGB source's own tag says (a qtrle
+    # clip retagged smpte170m would label its BT.709 samples BT.601); primaries and transfer are
+    # not converted, so the source's own are kept when it has them
+    tags = [(param, "bt709" if to_709 and param == "colorspace"
+             else carried_tag(param, v.get(key), dest) or ("bt709" if to_709 else None), flag)
             for param, key, flag in _TAG_KEYS]
     return [t for t in tags if t[1]]
 

@@ -491,17 +491,27 @@ def main() -> int:
         # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
         # a 10-bit layer over a main overlay_format() composites at 10 bits stays 10-bit
         deep = bool(overlay_format(meta)) and (pip_meta["video"].get("bit_depth") or 8) > 8
+        keyed_601 = False
         if alpha_codec and is_rgb(pip_meta) and rgb_chain_to_bt709(meta):
             # an RGB layer (qtrle, PNG in .mov) on an alpha line that is BT.709 (a BT.709-tagged
             # main, or an RGB main on a ProRes 4444/VP9 line): matrix_chain() converts nothing on
             # an alpha line, so the layer became YUV with FFmpeg's BT.601 default and pure red
             # read FF1800 under the line's tag (#496's sweep)
-            chain.append(("format=rgba," if pip_meta["video"].get("pix_fmt") == "pal8" else "")
-                         + rgb_chain_to_bt709(meta).lstrip(","))
+            pal = "format=rgba," if pip_meta["video"].get("pix_fmt") == "pal8" else ""
+            if args.chromakey:
+                # chromakey turns its RGB key into YUV with BT.601 whatever the frames say, so the
+                # layer is keyed as BT.601 YUV (what it was before #496, and what the key is
+                # computed in) and taken to the line's BT.709 after the key
+                chain.append(pal + "scale=out_color_matrix=bt601:out_range=tv,format=yuva444p")
+                keyed_601 = True
+            else:
+                chain.append(pal + rgb_chain_to_bt709(meta).lstrip(","))
         else:
             chain.append("format=yuva444p" if alpha_codec else "format=yuva420p10le" if deep else "format=yuva420p")
         if args.chromakey:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
+            if keyed_601:
+                chain.append("scale=in_color_matrix=bt601:out_color_matrix=bt709:in_range=tv:out_range=tv,format=yuva444p")
         if args.opacity < 1:
             # the alpha is scaled in YUV: colorchannelmixer takes RGB only, so FFmpeg converted the
             # layer to RGB and overlay=format=auto then composited the whole main picture in RGB,

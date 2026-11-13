@@ -578,7 +578,7 @@ def alpha_result_schema(name: str) -> Dict[str, Any]:
     if name == "background":
         out["alpha_codec"]["description"] += ". The `alpha` verification step reads every written frame back and expects alpha 0 (provenance specification)"
         return out
-    out["alpha_codec"]["description"] += " (an RGB source on a prores4444/vp9 line has no matrix to keep: it is converted to BT.709 and tagged so)"
+    out["alpha_codec"]["description"] += " (an SDR RGB source on a prores4444/vp9 line has no matrix to keep: it is converted to BT.709 and tagged so; an HDR/BT.2020 one is left as it is)"
     out["alpha_dropped"] = {"type": "boolean", "description": "true when the source's alpha is used (a frame below opaque, or a stored alpha plane that could not be read) and the output does not keep it (color.py --retag too, when its copy fell back to an H.264 re-encode): without --keep-alpha the `alpha` verification step fails (reason alpha_dropped, attribution artifact, with an alpha_dropped warning); with --drop-alpha there is no such step and a note says the alpha was dropped on purpose. Absent on a source without alpha"}
     if name == "color":
         out["alpha_codec"]["description"] += ". --correct / --lut only: the grade works on the colour (at 4:4:4) and the source's alpha is merged back unchanged; the `alpha` step compares the written alpha with the source's frame by frame, tolerance 2 of 255 (comparison {ok, paired, worst_delta, worst_frame}; frames {expected, measured}; written {codec, pix_fmt, alpha_plane})"
