@@ -35,8 +35,10 @@ from typing import List, Optional
 from _common.runner import fail_if_classified
 from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
+from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
-                           report as alpha_report, source_alpha, tag_args, video_line)
+                           matrix_label, report as alpha_report, rgb_line, rgb_to_bt709_line, source_alpha, tag_args,
+                           video_line)
 from _common.decision import keeps_source_tags
 from _common.color import bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402,F401
 
@@ -97,7 +99,7 @@ def _checked_levels(args: argparse.Namespace, flag: str) -> int:
     return value
 
 
-def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p") -> str:
+def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p", matrix: str = "bt601") -> str:
     """Always-present filter stages, in a fixed order chosen so each stage sees a picture already
     corrected by the previous one: exposure (linear light level) -> white balance (temperature/tint/
     lift/gain, so contrast/saturation act on colour-balanced footage) -> contrast/saturation/gamma
@@ -137,7 +139,7 @@ def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p") -> str:
         # "unchanged" adds no term at all
         rgb.append(f"colortemperature=temperature={temperature:g}")
     rgb.append(f"colorbalance=rs={lift:g}:gs={lift:g}:bs={lift:g}:rm={rm:g}:gm={gm:g}:bm={bm:g}:rh={gain:g}:gh={gain:g}:bh={gain:g}")
-    terms = [_rgb_stage(rgb, out_fmt), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
+    terms = [_rgb_stage(rgb, out_fmt, matrix), f"eq=contrast={contrast:g}:saturation={saturation:g}:gamma={gamma:g}"]
     rgb2 = []
     if (in_black, in_white, out_black, out_white) != (0, 255, 0, 255):
         rimin, rimax = in_black / 255.0, in_white / 255.0
@@ -151,11 +153,11 @@ def correction_chain(args: argparse.Namespace, out_fmt: str = "yuv420p") -> str:
     if args.curves:
         rgb2.append(f"curves=preset={args.curves}")
     if rgb2:
-        terms.append(_rgb_stage(rgb2, out_fmt))
+        terms.append(_rgb_stage(rgb2, out_fmt, matrix))
     return ",".join(terms)
 
 
-def _rgb_stage(filters: list, out_fmt: str = "yuv420p") -> str:
+def _rgb_stage(filters: list, out_fmt: str = "yuv420p", matrix: str = "bt601") -> str:
     """Wrap a run of RGB-only filters in explicit, matching YUV<->RGB conversions.
 
     exposure/colortemperature/colorbalance/colorlevels/curves take RGB, so libavfilter inserts a
@@ -168,9 +170,34 @@ def _rgb_stage(filters: list, out_fmt: str = "yuv420p") -> str:
     sides measured better than bt709 on both (34 dB) because swscale's 601 path round-trips
     8-bit 4:2:0 more exactly. The matrix here is only the working space of the conversion pair,
     never a tag: the output carries the encoder's BT.709 tags as before. `out_fmt` is yuv444p for
-    an alpha line (--keep-alpha), whose 4:4:4 master would otherwise get 4:2:0 chroma."""
-    return ("scale=in_color_matrix=bt601,format=gbrpf32le," + ",".join(filters)
-            + f",scale=out_color_matrix=bt601,format={out_fmt}")
+    an alpha line (--keep-alpha), whose 4:4:4 master would otherwise get 4:2:0 chroma.
+
+    The pair cancels only when the picture comes in as YUV. An RGB source (qtrle, PNG in .mov)
+    meets no matrix on the way in, so the way out is the one real RGB-to-YUV conversion of the
+    graph and `matrix` is the matrix of the YUV that leaves it. The H.264 line converts such a
+    source to BT.709 YUV first (x264_args(source=...)), so the pair cancels there as well. An
+    alpha line converts nothing in front, and with bt601 here its ProRes 4444 or VP9 master of an
+    RGB source held BT.601 YUV under no tag, which a player reads as BT.709 at HD (30C050 shown as
+    26AB4D, #496): for an RGB source on a YUV alpha line `matrix` is bt709 (working_matrix()),
+    and the line is tagged so. A later stage of the same chain takes the same matrix on both legs."""
+    return (f"scale=in_color_matrix={matrix},format=gbrpf32le," + ",".join(filters)
+            + f",scale=out_color_matrix={matrix},format={out_fmt}")
+
+
+def working_matrix(meta=None) -> "str | None":
+    """The matrix of the YUV an RGB source's grade writes on an alpha line, or None for every other
+    case (a YUV source, the H.264 line), whose legs are what they were.
+
+    bt709 on a line that stores YUV (ProRes 4444, VP9): that YUV is the master, tagged BT.709
+    (alpha.rgb_to_bt709_line). bt601 on a line that stores RGB (qtrle, PNG): the YUV is only the
+    grade's working format and FFmpeg converts it back for the line with its own default, BT.601
+    (unlabelled frames on 6.1, the tag the leg wrote on 7.1+), so the legs use that and the written
+    RGB is the graded RGB. --lut's legs said bt709 there and an identity LUT wrote 30C050 as 3CD753."""
+    if rgb_to_bt709_line(meta):
+        return "bt709"
+    if rgb_line() and is_rgb(meta):
+        return "bt601"
+    return None
 
 
 # swscale's names for the non-BT.709 matrices a --codec prores re-encode keeps (it does not convert)
@@ -195,6 +222,8 @@ def lut_legs(meta=None, out_fmt: str = "yuv420p") -> "tuple":
     matrix = "bt709"
     if keeps_source_tags():
         matrix = _SWS_MATRIX.get(((meta or {}).get("video") or {}).get("color_space"), "bt709")
+        # an RGB source on an alpha line: the matrix of the YUV its line is written from (#496)
+        matrix = working_matrix(meta) or matrix
     return (f"scale=in_color_matrix={matrix},format=gbrpf32le",
             f"scale=out_color_matrix={matrix}:out_range=tv,format={out_fmt}")
 
@@ -507,7 +536,8 @@ def main() -> int:
         if v.get("bt2020_or_hdr") and not args.force:
             die(f"{args.input} is HDR ({v.get('hdr_format')}); --correct works on SDR pixels and would tag PQ/HLG data as BT.709 "
                 f"without a tone map (sweep F10). Run --to-sdr first, or --force to grade the raw values anyway")
-        vf = "" if args.legalize and correction_is_identity(args) else correction_chain(args, out_fmt)
+        vf = ("" if args.legalize and correction_is_identity(args)
+              else correction_chain(args, out_fmt, working_matrix(meta) or "bt601"))
         output = args.output or default_output(args.input, "correct", ext)
         tag = "correct"
         # OBSERVED technical measurements (signalstats: luma / saturation distribution), never a
@@ -528,7 +558,9 @@ def main() -> int:
             # below) landed in the same "apply the LUT at full strength" fallback as an out-of-range
             # value did before the guard above existed: the one strength value documented to mean
             # "don't grade it" instead silently graded it at 100%, the opposite of what was asked.
-            vf = f"format={out_fmt}"
+            # (an RGB source on a YUV alpha line is still converted to the BT.709 that line is, #496)
+            vf = (("format=rgb24," if v.get("pix_fmt") == "pal8" else "") + rgb_to_bt709_filter(out_fmt)
+                  if rgb_to_bt709_line(meta) else f"format={out_fmt}")
         elif args.lut_strength < 1.0:
             # blend graded and original
             # blended in RGB, both pictures through the same two legs
@@ -550,8 +582,10 @@ def main() -> int:
     if alpha_codec:
         # --keep-alpha: the grade works on the colour and never touches the alpha, which is split off
         # the source, kept as it is and merged back (alphamerge) in front of the alpha line; the
-        # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion)
-        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}[ka_g];[ka_a]alphaextract[ka_m];"
+        # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion). An
+        # RGB source has none: its YUV line is BT.709 and tagged so (working_matrix). An RGB line
+        # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
+        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}{matrix_label(meta)}[ka_g];[ka_a]alphaextract[ka_m];"
               f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode, meta)}[ka_v]")
         cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
                                                                      "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]

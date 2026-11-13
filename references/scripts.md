@@ -1457,7 +1457,7 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
 ```
 `--keep-alpha` draws the template on the input's alpha (a canvas from `background.py --transparent`,
 or any alpha clip) and writes it in an alpha line (see `background.py`; ProRes 4444 by default) with
-the source's colour tags kept: boxes and bars are composited as layers with their alpha, drawtext and
+the source's colour tags kept (an RGB input on a ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709): boxes and bars are composited as layers with their alpha, drawtext and
 libass (`alpha=1`) draw into the alpha, all at 4:4:4. The `alpha` step checks that the written
 stream stores an alpha plane, that no frame's alpha fell below the source's, and that the output
 did not go opaque in every frame the source was transparent in. Without `--keep-alpha` on a source
@@ -1870,7 +1870,8 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
            [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
 `--keep-alpha` composites onto the input's alpha (a `background.py --transparent` canvas or an alpha
-clip) and writes the result in an alpha line with the source's tags kept, checked as
+clip) and writes the result in an alpha line with the source's tags kept (an RGB input on a
+ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709), checked as
 `graphics.py --keep-alpha` is. A `--video` layer with alpha keeps it: VP9 with alpha (`export.py
 --preset vp9-alpha`) is decoded with libvpx-vp9 (FFmpeg's own VP9 decoder drops the alpha), and an
 RGB layer (qtrle, PNG in .mov, e.g. a `graphics.py --keep-alpha` element) is converted to BT.709 with
@@ -1981,7 +1982,9 @@ color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--
 `--keep-alpha` (with `--correct` or `--lut`) grades an alpha clip and keeps its alpha: the alpha is
 split off before the grade, never touched, and merged back in front of the alpha line (ProRes 4444
 by default, `--alpha-codec qtrle|png|vp9`); the grade runs at 4:4:4 and the source's colour tags are
-kept (no BT.709 conversion, as `--codec prores`). The `alpha` step compares the written alpha with
+kept (no BT.709 conversion, as `--codec prores`). An RGB source (qtrle, PNG in `.mov`) has no matrix
+to keep: a ProRes 4444 or VP9 line of it is BT.709 YUV and tagged BT.709, a qtrle or PNG line keeps
+its RGB. The `alpha` step compares the written alpha with
 the source's frame by frame on 64x36 copies, each within 2 of 255. A source without an alpha plane is
 refused. Without `--keep-alpha`, a grade of a source whose alpha is used writes opaque H.264 and the
 `alpha` step fails (`reason: alpha_dropped`, `verified: false`); `--drop-alpha` makes it a note

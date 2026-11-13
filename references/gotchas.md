@@ -76,7 +76,8 @@ opaque and the result says `verified: false` with a failing `alpha` step (`alpha
 transparency, start from `background.py --transparent --duration 5 --width 1920 --height 1080 -o canvas.mov`
 and draw one element on it
 with `graphics.py`/`overlay.py --keep-alpha`. An alpha line keeps the source's colour tags (as
-`--codec prores` does). `--alpha-mode premultiplied` multiplies the written colour by the alpha;
+`--codec prores` does); an RGB source (qtrle, PNG) written to ProRes 4444 or VP9 becomes BT.709
+YUV, tagged BT.709. `--alpha-mode premultiplied` multiplies the written colour by the alpha;
 sources are taken as straight. A VP9 layer with alpha is decoded with libvpx-vp9; FFmpeg's own VP9
 decoder drops the alpha.
 

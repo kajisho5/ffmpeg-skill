@@ -243,7 +243,7 @@ class DeliveryTests(MediaFixtures):
                         for passed_back in ("-colorspace gbr", "colorspace=gbr"):
                             self.assertNotIn(passed_back, " ".join(doc["commands"]))
                         # the tags reported are the ones written: an RGB line says gbr, and a YUV one
-                        # never does (6.1 leaves it untagged; FFmpeg 8 writes the matrix it converted with)
+                        # never does (it is BT.709 and tagged so, #496)
                         written = doc["probe"]["video"]["color_space"]
                         self.assertEqual(written, probe(str(out))["video"]["color_space"])
                         if codec == "png":
@@ -254,6 +254,98 @@ class DeliveryTests(MediaFixtures):
         script("color.py", untagged, "--correct", "--exposure", "0.5", "--keep-alpha", "-o", ref)
         for x, y in ((20, 20), (120, 48)):
             self.assertEqual(self._rgba_at(OUT / "alpha_gbr_mov_correct_prores4444.mov", x, y), self._rgba_at(ref, x, y))
+
+    def _rgb_read_as(self, path, x, y, matrix=None):
+        """One pixel's (r, g, b) of a file's first frame. `matrix` (bt709): a YUV file's samples
+        read as that matrix whatever the file says of itself -- the frames are relabelled first, so
+        FFmpeg 7.1+ converts nothing on the way, and the scale names the matrix for 6.1. None: an
+        RGB file as it is stored."""
+        dec = ["-c:v", "libvpx-vp9"] if str(path).endswith(".webm") else []
+        conv = f"setparams=colorspace={matrix},scale=in_color_matrix={matrix}:out_range=pc," if matrix else ""
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", *dec, "-i", str(path), "-frames:v", "1",
+                              "-vf", f"{conv}format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        return tuple(out[:3])
+
+    def test_an_alpha_line_shows_the_colour_of_its_source(self):
+        """#496's class: a conversion between RGB and YUV on an alpha line that FFmpeg's BT.601
+        default decides. An RGB source (qtrle, PNG in .mov) has no matrix to keep, and its ProRes
+        4444 or VP9 line held BT.601 YUV under no tag (6.1), which is read as BT.709: 30C050 was
+        shown as 26AB4D by color.py --correct, graphics.py and overlay.py alike. Such a line is
+        BT.709 YUV now; an RGB line (qtrle, PNG) holds the source's RGB, which --lut's legs moved
+        (3CD753); a BT.709-tagged source's RGB line and a premultiplied YUV line read the wrong
+        matrix the same way. Decoded pixels are compared, never tags alone: 6.1 writes no tag by
+        itself and FFmpeg 8 writes the matrix it converted with."""
+        colour, at = (0x30, 0xC0, 0x50), (240, 45)
+        lavfi = ("color=c=0x30C050:s=320x180:r=25:d=0.2,format=rgba,"
+                 "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,160),64,255)'")
+        ff = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", lavfi)
+        qtrle, png, yuv = OUT / "alpha_matrix_qtrle.mov", OUT / "alpha_matrix_png.mov", OUT / "alpha_matrix_709.mov"
+        sh(*ff, "-c:v", "qtrle", qtrle)
+        sh(*ff, "-c:v", "png", png)
+        sh(*ff, "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le,setparams=colorspace=bt709", "-c:v",
+           "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-colorspace", "bt709", "-color_primaries", "bt709",
+           "-color_trc", "bt709", yuv)
+        # the fixtures are what the test says they are
+        for src in (qtrle, png):
+            self.assertRegex(probe(str(src))["video"]["pix_fmt"], r"^(argb|rgba)")
+            self.assertEqual(self._rgb_read_as(src, *at), colour)
+        self.assertEqual(probe(str(yuv))["video"]["color_space"], "bt709")
+        for got, want in zip(self._rgb_read_as(yuv, *at, matrix="bt709"), colour):
+            self.assertAlmostEqual(got, want, delta=2)
+        logo, lut = OUT / "alpha_matrix_logo.png", OUT / "alpha_matrix_identity.cube"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=16x16", "-frames:v", "1", logo)
+        lut.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        # every path that puts a picture on an alpha line, each with a grade or a layer that leaves
+        # the sampled pixel as it was
+        paths = {"correct": ("color.py", "--correct", "--exposure", "0"),
+                 "lut": ("color.py", "--lut", lut),
+                 "lut0": ("color.py", "--lut", lut, "--lut-strength", "0"),
+                 "graphics": ("graphics.py", "--template", "bug", "--title", "LIVE", "--position", "bottom-left", "--start", "0"),
+                 "overlay": ("overlay.py", "--image", logo, "--position", "bottom-left")}
+        lines = {"prores4444": "mov", "vp9": "webm", "qtrle": "mov", "png": "mkv"}
+
+        def written(src, name, codec, *more):
+            out = OUT / f"alpha_matrix_{src.stem[13:]}_{name}_{codec}{'_pm' if more else ''}.{lines[codec]}"
+            tool, *flags = paths[name]
+            doc = json.loads(script(tool, src, *flags, "--keep-alpha", "--alpha-codec", codec, *more, "--json", "-o", out).stdout)
+            self.assertTrue(doc["verified"], doc["verification"])
+            # what the result reports is what the file carries
+            self.assertEqual(doc["probe"]["video"]["color_space"], probe(str(out))["video"]["color_space"])
+            got = self._rgb_read_as(out, *at, matrix="bt709" if codec in ("prores4444", "vp9") else None)
+            for g, w in zip(got, colour):
+                self.assertAlmostEqual(g, w, delta=2, msg=f"{got} for {colour}")
+            return out
+
+        for src in (qtrle, png):
+            for name in paths:
+                for codec in lines:
+                    with self.subTest(src=src.stem, path=name, codec=codec):
+                        out = written(src, name, codec)
+                        if codec == "prores4444":
+                            # ... and the BT.709 samples are labelled BT.709 (the tags a BT.709 source's
+                            # line keeps, written the same way on every FFmpeg)
+                            self.assertEqual(probe(str(out))["video"]["color_space"], "bt709")
+        # the same conversions on a BT.709-tagged YUV source: its RGB lines, and premultiplied colour
+        # on a YUV line (the sampled pixel is opaque, so its colour is the straight one)
+        for name in ("correct", "lut"):
+            for codec in ("qtrle", "png"):
+                with self.subTest(src="bt709", path=name, codec=codec):
+                    written(yuv, name, codec)
+        for src in (qtrle, yuv):
+            for name in ("correct", "overlay"):
+                with self.subTest(src=src.stem, path=name, mode="premultiplied"):
+                    written(src, name, "prores4444", "--alpha-mode", "premultiplied")
+        # an RGB --video layer on a BT.709 line is BT.709 too: pure red read FF1800 under the tag
+        layer = OUT / "alpha_matrix_layer.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=25:d=0.2,format=rgba",
+           "-c:v", "qtrle", layer)
+        paths["video"] = ("overlay.py", "--video", layer, "--position", "0,100", "--margin", "0")
+        for src in (qtrle, yuv):
+            with self.subTest(src=src.stem, path="video"):
+                r, g, b = self._rgb_read_as(written(src, "video", "prores4444"), 32, 132, matrix="bt709")
+                self.assertGreater(r, 245, (r, g, b))
+                self.assertLess(max(g, b), 8, (r, g, b))
 
     def test_every_probed_colour_tag_is_spelled_the_way_its_destination_takes_it(self):
         """#454's class: a probed tag passed back to FFmpeg. ffprobe's names are setparams' names;

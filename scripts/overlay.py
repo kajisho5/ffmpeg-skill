@@ -37,8 +37,9 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as 
 from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
+from _common.color import is_rgb
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
-                           has_alpha_plane, report as alpha_report, source_alpha, tag_args, video_line)
+                           has_alpha_plane, report as alpha_report, source_alpha, source_format, tag_args, video_line)
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.wrap import wrap_text
 from _common import text_width_em
@@ -490,7 +491,15 @@ def main() -> int:
         # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
         # a 10-bit layer over a main overlay_format() composites at 10 bits stays 10-bit
         deep = bool(overlay_format(meta)) and (pip_meta["video"].get("bit_depth") or 8) > 8
-        chain.append("format=yuva444p" if alpha_codec else "format=yuva420p10le" if deep else "format=yuva420p")
+        if alpha_codec and is_rgb(pip_meta) and rgb_chain_to_bt709(meta):
+            # an RGB layer (qtrle, PNG in .mov) on an alpha line that is BT.709 (a BT.709-tagged
+            # main, or an RGB main on a ProRes 4444/VP9 line): matrix_chain() converts nothing on
+            # an alpha line, so the layer became YUV with FFmpeg's BT.601 default and pure red
+            # read FF1800 under the line's tag (#496's sweep)
+            chain.append(("format=rgba," if pip_meta["video"].get("pix_fmt") == "pal8" else "")
+                         + rgb_chain_to_bt709(meta).lstrip(","))
+        else:
+            chain.append("format=yuva444p" if alpha_codec else "format=yuva420p10le" if deep else "format=yuva420p")
         if args.chromakey:
             chain.append(f"chromakey={args.chromakey}:{args.chromakey_similarity:g}:{args.chromakey_blend:g}")
         if args.opacity < 1:
@@ -588,12 +597,12 @@ def main() -> int:
         cmd[first:first] = decoder_args_for(meta, args.input)
         if "-filter_complex" in cmd:
             i = cmd.index("-filter_complex") + 1
-            cmd[i] = ("[0:v]format=yuva444p[ka0];" + cmd[i].replace("[0:v]", "[ka0]").replace(":format=auto", ":format=yuv444")
+            cmd[i] = (f"[0:v]{source_format(meta)}[ka0];" + cmd[i].replace("[0:v]", "[ka0]").replace(":format=auto", ":format=yuv444")
                       + f";[out]{finish}[ka_v]")
             cmd[cmd.index("[out]")] = "[ka_v]"
         else:
             i = cmd.index("-vf") + 1
-            cmd[i] = f"format=yuva444p,{cmd[i]},{finish}"
+            cmd[i] = f"{source_format(meta)},{cmd[i]},{finish}"
         cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta)
         cmd += audio_line(alpha_codec) if meta.get("audio") else ["-an"]
         if STATE.hw:

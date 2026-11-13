@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, record_fallback, refuse, warn
 from _common.runner import read_json
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
@@ -893,9 +894,11 @@ def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva
     with (rgb_to_bt709_filter), or "" when the line does not tag BT.709 (the lines matrix_chain()
     leaves alone). Without it the graph's own RGB-to-YUV step used FFmpeg's BT.601 default."""
     v = (line_meta or {}).get("video") or {}
-    if STATE.alpha_line is not None and v.get("color_space") == "bt709" and not v.get("bt2020_or_hdr"):
+    if (STATE.alpha_line is not None and (v.get("color_space") == "bt709" or rgb_to_bt709_line(line_meta))
+            and not v.get("bt2020_or_hdr")):
         # an alpha line keeps the source's tags: on a BT.709-tagged picture an RGB layer is made
-        # BT.709 too (FFmpeg 6.1's own conversion is BT.601), in 4:4:4 with its alpha plane
+        # BT.709 too (FFmpeg 6.1's own conversion is BT.601), in 4:4:4 with its alpha plane. An
+        # RGB source on a YUV line is a BT.709 picture as well (alpha.rgb_to_bt709_line, #496)
         return "," + rgb_to_bt709_filter("yuva444p")
     if keeps_source_tags() or v.get("bt2020_or_hdr"):
         return ""
