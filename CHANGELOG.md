@@ -21,6 +21,30 @@
   longer fails the run on that row alone. `export.py` still trims to the table's maximum unless
   `--allow-long`, and its `notes` line now says the limit is the table's.
 
+## 3.8.0
+
+_Automated release: version and notes generated from pull requests merged since 3.7.0._
+
+### Changed
+
+- **`check.py --platform`: the duration and file-size rows are guidance, not requirements** (#485).
+  **This changes exit codes:** a file longer or larger than the platform table's limit was FAIL and
+  made `check.py` exit 1; it is now WARN and, when nothing else fails, `check.py` exits 0 with
+  `ok: true`. A length that could not be measured under a table limit (FAIL since 3.6.7) and a
+  size that could not be read are WARN `could not measure` too. Upload limits change often and
+  are owned by whoever uploads; the table's numbers (`scripts/_platforms.py`, dated
+  `UPLOAD_LIMITS_AS_OF`) are known to differ from the platforms' current ones. Every row gains
+  `basis`: `guidance` for these two rows under a table limit, `requirement` for the rest, and the
+  WARN's `reason` says the limit is the table's as of its date and that the uploader checks the
+  current one. A limit the caller states with `--max-duration` or `--max-mb` is still FAIL, and the
+  encoding rows (codec, aspect, resolution, fps, pixel format, colour, loudness, true peak) are
+  unchanged. `render.py`'s check stage and plan check step follow: an over-length delivery no
+  longer fails the run on that row alone. `export.py` still trims to the table's maximum unless
+  `--allow-long`, and its `notes` line now says the limit is the table's.
+- feat(check): a platform's length and file-size limits are guidance (WARN), not a requirement (#495)
+
+Closes: #485
+
 ## 3.7.0
 
 _Automated release: version and notes generated from pull requests merged since 3.6.7._
