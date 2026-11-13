@@ -76,5 +76,5 @@ fix belongs (one shared helper, or one tool).
 - Not a judgement: `tests/sweep.py` prints what each tool said. A row is a
   question for design-decisions, not a bug by itself.
 - Not complete: the table covers tools that take one media file. Sweep
-  `join`, `sync`, `multicam`, `broll`, `render`, `batch`, `sequence`, `grid`
-  and `insert` by hand when the class can reach them.
+  `join`, `sync`, `multicam`, `broll`, `render`, `batch`, `sequence`, `grid`,
+  `insert`, `report` and `background` by hand when the class can reach them.

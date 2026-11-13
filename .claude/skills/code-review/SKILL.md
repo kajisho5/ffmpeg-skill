@@ -110,7 +110,7 @@ applicable rule against the tree:
 ## Run the gate, then read it honestly
 
 ```bash
-npm test                              # tests/test_all.py + tests/test_contract.py
+npm test                              # tests/run_parallel.py: test_all.py's nine modules + tests/test_contract.py
 npm run release-check                 # packaging + installer + MCP + doctor + full suite
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```

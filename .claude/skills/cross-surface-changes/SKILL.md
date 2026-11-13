@@ -211,15 +211,16 @@ Wording:
 
 ## Note for this repository (ffmpeg-skill)
 
-The "22 tools" count (and the per-category tool tables) in README.md and
-SKILL.md is exactly this kind of restated surface — it drifted to "21" more
-than once this session when a tool was added and only the code was updated.
+The tool count (42 today) and the per-category tool tables in README.md and
+SKILL.md are exactly this kind of restated surface — the count drifted more
+than once when a tool was added and only the code was updated.
 `tests/test_contract.py`'s `test_mcp_tools_match_contract` and
 `test_mcp_schema_drift_follows_the_scripts` are the "generated surface" /
-"drift test" answer for the MCP tool list specifically (MCP's `tools/list` is
-derived from the contract, never hand-written) — the same rigor doesn't yet
-exist for the README/SKILL.md tool-count prose, which is still grepped and
-hand-edited. `docs/contract.md`'s `capability_map`/`provides` sections are the
+"drift test" answer for the MCP tool list (MCP's `tools/list` is derived from
+the contract, never hand-written), and
+`test_docs_tool_count_matches_the_real_tool_list` is the drift test for the
+count in the prose: the documents are still hand-edited, but a wrong number
+now fails. `docs/contract.md`'s `capability_map`/`provides` sections are the
 other real example: they explicitly promise "says nothing tools[] doesn't
 already say," i.e. they are declared to be a re-index, not a second source of
 truth — exactly the "truth flows outward from whoever owns it" principle.

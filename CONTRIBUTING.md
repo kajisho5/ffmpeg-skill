@@ -21,8 +21,9 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
   see "Scope" below.
 - **A bug fix sweeps for siblings first.** Before fixing a reported defect, name its class and
   check which other tools meet the same thing: `python3 tests/sweep.py INPUT --baseline PLAIN`
-  runs one input through the 25 single-input tools and prints the rows that differ from a plain
-  clip's. The full procedure is `.claude/skills/sibling-sweep/SKILL.md`; the PR template's
+  runs one input through the 31 single-input tools (`cut` twice, plain and `--accurate`) and prints
+  the rows that differ from a plain clip's; the tools that need a second file or a project are
+  named in its docstring and are swept by hand. The full procedure is `.claude/skills/sibling-sweep/SKILL.md`; the PR template's
   "Siblings" section records what was swept.
 - **Every change needs a reproduction.** If you're fixing a bug, show the failing
   case before your fix and the passing case after — either as a new test or a
@@ -122,14 +123,18 @@ would have caught the original bug isn't done yet.
 
 ## Publishing the MCP listing
 
-These steps are manual. Nothing in CI publishes the server.
+The MCP Registry entry is published by CI: since 3.5.0 `release.yml` publishes `server.json` after
+the npm publish of every release, signed in through GitHub's OIDC token (no stored secret), and a
+re-run fills in a version the registry does not list yet. Step 1 below is the manual fallback for
+when that step fails; steps 2 to 4 are manual and nothing in CI does them.
 
 The registry checks the **already published** npm package. `mcpName` in `package.json` has to
 equal `server.json`'s `name` (`io.github.kajisho5/ffmpeg-skill`) at that exact version, so publish
 npm first (the release workflow does) and only then the registry. Clients run
 `npx -y ffmpeg-skill mcp`, which is `python3 mcp/server.py` on stdio.
 
-1. Install [`mcp-publisher`](https://modelcontextprotocol.io/registry/quickstart) and run
+1. Only when the workflow's "Publish to the MCP Registry" step failed and a re-run does not fix
+   it: install [`mcp-publisher`](https://modelcontextprotocol.io/registry/quickstart) and run
    `mcp-publisher login github` as **kajisho5** (GitHub auth only allows the `io.github.kajisho5/`
    namespace). `mcp-publisher validate`, then `mcp-publisher publish`.
 2. Smithery: nothing to run. Its API, CLI and SDKs stopped working on 2026-10-31

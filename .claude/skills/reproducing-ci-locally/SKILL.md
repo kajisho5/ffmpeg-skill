@@ -237,14 +237,17 @@ Fixing:
 
 This repo's gate is `.github/workflows/ci.yml`: install ffmpeg per-OS (apt /
 `brew install ffmpeg-full` / `choco install ffmpeg`), then `python
-tests/test_all.py` and `python tests/test_contract.py` (unittest, not pytest —
-there is no marker expression to copy, but there IS an OS-conditional: a
-handful of `test_contract.py` tests are `skipIf`'d on Windows because they
-depend on a POSIX shell shim, not on CI's own `if:` gating). Read the actual
-workflow file before assuming a local `npm test` run matches — `npm test` runs
-both files with no OS-conditional skip logic layered on top, so on a
-non-Windows machine it is already a faithful local reproduction; the gap only
-shows up when debugging a Windows-specific CI failure, where the fix is to
-read what `skipIf` actually excludes before assuming a fix applies everywhere.
+tests/run_parallel.py --part N/3` on each of three machines per OS: the nine
+modules `tests/test_all.py` imports plus `tests/test_contract.py`, split three
+ways (unittest, not pytest — there is no marker expression to copy, but there
+IS an OS-conditional: some `test_contract.py` tests and classes are `skipIf`'d
+on Windows because they depend on a POSIX shell shim, not on CI's own `if:`
+gating). Read the actual workflow file before assuming a local `npm test` run
+matches — `npm test` runs the same modules through `tests/run_parallel.py`
+without the three-way split, so on a non-Windows machine it is already a
+faithful local reproduction, and `python3 tests/run_parallel.py --part 2/3`
+reproduces one CI machine's share; the gap only shows up when debugging a
+Windows-specific CI failure, where the fix is to read what `skipIf` actually
+excludes before assuming a fix applies everywhere.
 
 Source: [wdm0006/python-skills](https://github.com/wdm0006/python-skills) (MIT).

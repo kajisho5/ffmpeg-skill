@@ -126,18 +126,22 @@ After Release:
 
 ## Note for this repository (ffmpeg-skill)
 
-`CHANGELOG.md` here already follows Keep a Changelog's dated-section format
-(`## 0.10.0 — 2026-09-06 — ...`), so the format guidance above matches this
-repo exactly. Two real differences from the generic PyPI example:
+`CHANGELOG.md` here keeps a `## Unreleased` section and one `## X.Y.Z` section
+per version (no dates in the headings since the releases became automatic).
+Two real differences from the generic PyPI example:
 
-- **No automated release workflow exists.** There is no
-  `.github/workflows/release.yml` — the 0.10.0 release this session did every
-  step by hand: bump `package.json`'s `version`, convert the CHANGELOG's
-  `## Unreleased` into a dated section, `git tag`, create the GitHub Release,
-  then `npm publish` separately. This is exactly the gap `managing-python-releases`
-  is meant to close with automation — worth considering if releases become
-  frequent enough that a manual miss (like 0.9.2 sitting un-published to npm
-  for a while, discovered this session) becomes a recurring problem.
+- **Releases are automatic; nothing is cut by hand.**
+  `.github/workflows/release.yml` runs on every push to `main`: it resolves the
+  next version from the merged PRs' labels (`.github/scripts/resolve_version.py`),
+  bumps `package.json`, the plugin manifests, `server.json`, `docs/contract.md`
+  and `docs/roadmap.md`, moves `## Unreleased` into the new version's section,
+  pushes that commit, tags it, creates the GitHub Release, publishes to npm with
+  provenance, the `plugin` branch and the MCP Registry entry. A PR writes its
+  notes under `## Unreleased` and never bumps a version, except a major, which
+  is a hand bump in a PR. A version that was tagged but did not reach npm is
+  finished by the workflow's `recover` job (CONTRIBUTING.md, "Pull requests"),
+  never by a local `npm publish`. (The 0.10.0 release was the last one done by
+  hand, before the workflow existed.)
 - **The registry is npm, not PyPI**, and there is no `__version__` in code —
   `scripts/_contract.py`'s `skill_version()` and `doctor`'s `version` field
   both read `package.json` directly (see this repo's own `concurrent-branches`

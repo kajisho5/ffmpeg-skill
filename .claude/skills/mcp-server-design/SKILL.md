@@ -263,7 +263,7 @@ Distribution & tests:
 `mcp/server.py` here is a hand-rolled stdio JSON-RPC server, NOT FastMCP — the
 `@mcp.tool()` decorator examples above don't apply directly. But most of the
 *principles* transfer almost exactly, because this server's entire job is
-wrapping 22 subprocess-based CLI tools:
+wrapping 42 subprocess-based CLI tools:
 
 - The subprocess-wrapping section (stdout/stderr handling, argv-list-only, no
   `shell=True`) matches `mcp/server.py`'s actual design: `execution.shell:

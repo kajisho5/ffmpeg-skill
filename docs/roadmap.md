@@ -64,6 +64,10 @@ markers; everything else listed as `not_exported`), plus the eval-24 follow-up t
 | 1.25.0 | shipped, evaluated (eval 23b) | `chore:` release bump; closes the remaining mp4 stream-copy paths over to `-movflags +faststart` (#279). No script API change, tool count still 42. Covered by eval 23b alongside 1.24.1 -- same faststart code path, no regression found |
 | 2.0.0 | shipped | see "2.0.0 — the announced breaks" below |
 
+The table and the per-version blocks below end at 2.0.0. Releases after it (2.1 onward and 3.x)
+have no row and no block of their own here: `CHANGELOG.md` is their record. The "released version"
+sentence above follows them, and the "Eval 25" block records one evals run on 2.1/2.2.
+
 ## 1.8.0 — one-call delivery, quieter checks, encoder flags (shipped + evaluated, eval 8)
 
 - **`check.py` judgement rows without a named platform.** Today `--platform` defaults to
@@ -228,8 +232,10 @@ encode because `export.py` ran without `--normalize` first.
 - `export.py` presets for shorts / tiktok / linkedin as named targets (today aliases of
   reels / youtube), `youtube-hdr` (HEVC Main10 HDR10 kept), `youtube-av1`; a preset carries its
   loudness spec so `--normalize` and `check.py` read one table.
-- `look.py --best-frame` picks a thumbnail candidate by sharpness and exposure (measured, no
-  content judgement) and writes it at the platform's thumbnail size; `report.py` embeds it.
+- **Not shipped:** `look.py --best-frame` (a thumbnail candidate picked by measured sharpness and
+  exposure, written at the platform's thumbnail size and embedded by `report.py`) was planned for
+  this release and was never built. No released version has the flag; `look.py --at` with a time
+  the caller chooses is what exists.
 - Eval 15 on the delivery prompts (`dl1`–`dl8`), three repeats, measuring the encode count per
   delivery rather than pass/fail alone.
 

@@ -212,6 +212,6 @@ a real fixture (`--start 1.13 --end 5.71 --tolerance 2.0`) showed a real
 1.24s divergence between `requested_duration` and `output_duration` — the
 kind of finding this skill says to record with the command, the output, and
 the date, which is exactly how `test_cut_copy_keyframe_snap_reports_a_real_nonzero_delta`
-in `tests/test_all.py` was derived, rather than calculated from first principles.
+in `tests/test_editing.py` was derived, rather than calculated from first principles.
 
 Source: [wdm0006/python-skills](https://github.com/wdm0006/python-skills) (MIT).

@@ -168,15 +168,16 @@ Release:
 ## Note for this repository (ffmpeg-skill)
 
 `package.json`'s `"files"` list is the equivalent of `DIST_FILES` here — it must
-list exactly what ships (`bin/`, `scripts/`, `mcp/`, `references/`, `SKILL.md`,
-`README.md`, `LICENSE`), and `.claude/` (this file included) must NEVER appear
+list exactly what ships (`bin/`, `scripts/`, `templates/`, `mcp/`, the shipped
+`references/*.md` files one by one, `docs/contract.md`, `SKILL.md`, `README.md`,
+`LICENSE`), and `.claude/` (this file included) must NEVER appear
 in it. `npm publish --dry-run` is the "list every entry and assert the
 entrypoints are present" step (step 2 above) — run it before every publish, and
 watch for stray `__pycache__`/`.pyc` files sneaking into the tarball from a
 local test run (this actually happened once this session and was caught by
-exactly this check). There is no separate "install from outside the repo and
-exercise a symbol" step in this repo's release process today (`node
-bin/install.js --dir /tmp/skills` from README's Development section is the
-closest equivalent) — worth doing before a real publish, not just a dry-run.
+exactly this check). The "install from outside the repo and exercise a
+symbol" step is `npm run release-check` (`tests/release_check.sh`): it packs
+the tarball, installs from it into a temp HOME, and asks the installed copy
+for its contract, its MCP tool list and `doctor`.
 
 Source: [wdm0006/python-skills](https://github.com/wdm0006/python-skills) (MIT).

@@ -4,7 +4,58 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **Tests no longer depend on the order they run in** (#467: A227, A228, A229, and the `gappy.mp4`
+  item). `emoji_src.mp4` was built by three classes with different content, so `EmojiTests`
+  usually ran without its sound; `export_reels.mp4` was a `--fit crop` fixture in `test_analysis`
+  and a `--fit pad` output of `test_delivery`; `gappy.mp4` had two layouts; and
+  `test_sequence_no_match_refused` used a directory another test creates, so it tested the
+  missing-directory refusal instead. Each now has its own file, and the sequence test makes its
+  directory and asserts the "no files match" refusal.
+- **Three test defects** (#467: A230, A231, A232). `ContractTests` and `SilentPathTests` remove
+  the temp folders they make; `_ass_advance` escapes the path it puts into `ass=` (a colon in it
+  made the emoji-placeholder test skip); `test_json_determinism` compared a document with itself
+  and now compares the emitted key order with the sorted one at every depth. The second A232
+  item, a "cached" test that passes without the cache, could not be identified in the tree and is
+  not changed.
+- **`tests/sweep.py` runs every one-file tool** (#467: A225; #466: A216). Seven were left out
+  (`probe`, `check`, `cropdetect`, `scenes`, `sphere`, `verify`, `waveform`): the table has 32 rows
+  for 31 tools, a tool that takes no `-o` is run without one, and a `--baseline` run uses its own
+  folder. `BY_HAND` names the eleven tools the table cannot run, and a test fails when a script is
+  in neither list. CONTRIBUTING's "25 single-input tools" (24, `cut` counted twice) is corrected.
+- **CI: a release no longer rebases its bump onto a merge it did not read** (#467: A25). A PR
+  merged while the bump was being prepared was put under the release commit by `git pull
+  --rebase`: it shipped in the tag without its label or changelog line, and its own run found
+  nothing to release. The push is tried once; when `main` has moved, that run drops the bump and
+  releases nothing, and the newer merge's queued run releases both.
+- **CI: GitHub Pages is rebuilt after a release** (#467: A28). The bump commit carries
+  `[skip ci]`, so the site kept the previous version and showed the shipped notes under
+  "Unreleased". `release.yml` now dispatches `pages.yml` once the tag exists (the job gains
+  `actions: write`); a failed dispatch does not stop the npm publish and turns the job red at its
+  end.
+- **Installer** (#467: A29, A30, A31, A37). `npx ffmpeg-skill` from a git checkout copies what
+  the npm package ships (2.6 MB) instead of all of `docs/` and `references/` (17 MB), and copies
+  `LICENSE`. An unknown argument, or `--dir` with no value, is refused with exit 2 before anything
+  is installed or removed (`--uninstall --cursr` used to remove the Claude Code install). A failed
+  install removes its `ffmpeg-skill.tmp-<pid>/` scratch folder, and `--uninstall` removes ones an
+  interrupted install left.
+- **Docs corrected against the code** (#466: A203, A204, A205, A206, A207, A208, A213, A214, A215;
+  #467: A35, A248, A249). README: `contract_version` is 2.0, not 1.0; a PR does write
+  `CHANGELOG.md` notes; three demos use AI-generated footage; the Gemini CLI install is the whole
+  repository; the no-Node route copies `docs/contract.md`, not `docs/`. CONTRIBUTING: the MCP
+  Registry entry is published by `release.yml`. Roadmap: `look.py --best-frame` never shipped, and
+  the document ends at 2.0.0. CHANGELOG: the two `## 1.15.0` headings are one section, so the
+  release-notes extraction reads all of it. The notes under `.claude/skills/` no longer say
+  there is no release workflow, that an existing output is replaced without a word, that CI has
+  no `concurrency`, that there are 22 tools, or that `probe` is an `analysis_only` tool.
+- **Evals, demos and examples** (#467: A242, A245, A246, A250, A251, A252, A253, A272, A273).
+  Gallery commands are shell-quoted (an unquoted `#` colour made the rest of a pasted line a
+  comment). `examples/make_demo.sh` passes `--overwrite`, so a second run works, and says it runs
+  13 of the 42 scripts. `evals/write_fixtures.py` builds `source.mp4`, so `kw1`, `ff1` and `--all`
+  stage; `evals/grade_runs.py` reads `agent_prompts.json`; `evals/grade_runs_25.py` pairs each
+  command with its own output by tool-use id, and grades a run that never started `NOT_RUN`;
+  `evals/README.md` counts 99 + 11 prompts and says which paths in them are the maintainer's.
 
 ## 3.6.6
 
@@ -2451,12 +2502,6 @@ _Automated release: version and notes generated from pull requests merged since 
 
 _Automated release: version and notes generated from pull requests merged since 1.14.0._
 
-- feat: text people can see (emoji, complex-script shaping in graphics.py, ' and % kept, caption wrap without orphans, label rule) (#226)
-- docs: demo gallery covers every tool (51 demos, inspection section, every-script test) (#227)
-- docs: eval iteration 15 at 1.14.0 (delivery templates: 12/13 one encode, 13/13 platform pass) (#225)
-
-## 1.15.0
-
 ### Added
 
 - **Emoji in captions and titles.** `caption.py`, `graphics.py` and `overlay.py` gain `--emoji auto|color|png|mono|none`, `--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N`. The colour route is a **PNG overlay**, not a font: drawtext cannot load a CBDT/sbix emoji face at all (it fails filter initialisation — `Could not set font size to 48 pixels: invalid library handle`, and at the font's own strike `Monocromatic (1bpp) fonts are not supported.` — and writes no file), and an installed colour emoji family proves nothing either (Noto Color Emoji installs cleanly on builds whose libass still draws a monochrome outline). `--emoji-assets DIR` is a directory of PNGs named by code point in the Twemoji/Noto convention (`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png`), also read from `brand.json` (`styles.caption.emoji_assets`) and `FFMPEG_SKILL_EMOJI_ASSETS`. **Nothing is ever downloaded**: a missing directory is `kind: input` naming the two sets people already have, never a fetch. In a caption the text keeps its place in the generated ASS with an invisible placeholder reserving exactly the emoji's box (measured: U+2588 FULL BLOCK is 0.66–0.83 em depending on the face, so the gap is reserved with alpha-hidden `\fsp` spacing instead, which is exact in every face this repo resolves — including inside a `\kf` karaoke run, where the placeholder is its own zero-duration segment), and each PNG is composited after the `ass=` filter. `caption.py`/`graphics.py --json` gain an `emoji` block (`mode`, `count`, `clusters`, `assets`, `missing`, `overlays`); `--json-brief` carries `mode` and `count`. Emoji also count as a full em in the wrap, so an emoji-heavy line no longer overflows the safe area, and a wrap never breaks inside a ZWJ sequence, a flag pair or a skin-tone modifier.
@@ -2496,6 +2541,12 @@ Carried into the next release, all P2 from the 1.15.0 review:
 - `demos/build.py` and `docs/demos.md` gain `captions_emoji` (colour PNGs against the monochrome fallback) and `lower_third_hindi` (`--text-render drawtext` against `--text-render ass`, the release's headline picture).
 - `evals/agent_prompts_24.json` gains `em1`–`em4` and `sh1`–`sh2` with their fixtures, `evals/grade_runs_24.py` the honesty rule for the emoji prompts, and `evals/trigger/prompts.json` two more prompts (40: an emoji caption request that must trigger, an "emoji sticker pack as PNGs" near-miss that must not).
 - `tests/fixtures/mcp_tools.json` regenerated: `caption`, `graphics` and `overlay` gain `emoji`, `emoji_assets`, `emoji_max` and `emoji_scale`; `graphics` also gains `text_render` and `write_ass`. Nothing was removed, renamed or made required.
+
+### Pull requests
+
+- feat: text people can see (emoji, complex-script shaping in graphics.py, ' and % kept, caption wrap without orphans, label rule) (#226)
+- docs: demo gallery covers every tool (51 demos, inspection section, every-script test) (#227)
+- docs: eval iteration 15 at 1.14.0 (delivery templates: 12/13 one encode, 13/13 platform pass) (#225)
 
 ## 1.14.0
 

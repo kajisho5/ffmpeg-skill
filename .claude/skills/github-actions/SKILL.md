@@ -304,14 +304,14 @@ built twice for the same reason. It has no Python dependency install step to
 cache (stdlib only, nothing to resolve), so the caching section mostly doesn't
 apply here.
 
-Two things this skill's checklist would flag as genuinely missing, verified by
-reading the file directly (not assumed): **no `concurrency:` block** — pushing
-several commits to an open PR in quick succession runs the full 3-OS matrix
-every time with nothing cancelling the superseded ones, and macOS is the 10x
-runner in that matrix — and **no `timeout-minutes:`** on the job, so a hung
-`ffmpeg`/`choco`/`brew` step would run to the platform's multi-hour default
-before failing instead of failing fast. Neither has been added as part of
-adding this skill; they're noted here as a real, verified finding for whoever
-next touches the workflow file to decide on.
+Of the two gaps this note used to report, one is closed: `ci.yml` has a
+`concurrency:` block (`cancel-in-progress: true`, grouped per PR or ref), so a
+newer push cancels the superseded run of the 3-OS matrix. The other is still
+open, verified by reading the files at 3.6.6: **no workflow sets
+`timeout-minutes:`**, so a hung `ffmpeg`/`choco`/`brew` step would run to the
+platform's multi-hour default before failing. `release.yml` and `pages.yml`
+use their own concurrency groups; `release.yml`'s does not cancel a run in
+progress, and `pages.yml` is also dispatched by `release.yml` after each
+release because the bump commit carries `[skip ci]`.
 
 Source: [wdm0006/python-skills](https://github.com/wdm0006/python-skills) (MIT).
