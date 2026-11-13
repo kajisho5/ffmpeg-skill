@@ -158,7 +158,7 @@ def main() -> int:
         media_out = args.output or default_output(args.inputs[0], "multicam", "mp4")
         guard_sidecar(args.edl, *args.inputs, siblings=(args.write_project, media_out))
         guard_sidecar(args.write_project, *args.inputs, siblings=(media_out,))
-        if args.edl or args.write_project:  # they are written before the cut: refuse its output first
+        if args.edl or args.write_project:  # refused up front with them, before any decode
             guard_sidecar(media_out, *args.inputs)
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
@@ -276,13 +276,6 @@ def main() -> int:
         if not metas[c].get("video"):
             die(f"camera {c} ({args.inputs[c]}) has no video; it can only be used with --audio")
 
-    if args.edl:
-        if not STATE.dry_run:
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e, _c in filled:
-                    fh.write(f"{s:.3f}-{e:.3f}\n")
-        info(f"wrote {args.edl}")
-
     v0 = metas[0]["video"]
     # camera 0's displayed frame: rotation applied, non-square pixels squared (#411)
     w, h = args.width or display_size(v0)[0], args.height or display_size(v0)[1]
@@ -363,12 +356,21 @@ def main() -> int:
         # project's relative paths against the project file's directory: written elsewhere
         # (--write-project out/cut.json), they named files that are not there
         project = rebase_project_paths(project, os.getcwd())
+
+    run(cmd)
+    # the EDL and the project record the cut: written once it exists, not before an encode that then
+    # failed (#462 A41, the silence.py --edl sibling)
+    if args.edl:
+        if not STATE.dry_run:
+            with open(args.edl, "w", encoding="utf-8") as fh:
+                for s, e, _c in filled:
+                    fh.write(f"{s:.3f}-{e:.3f}\n")
+        info(f"wrote {args.edl}")
+    if args.write_project:
         if not STATE.dry_run:
             with open(args.write_project, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(project, indent=2) + "\n")
         info(f"wrote {args.write_project}")
-
-    run(cmd)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {len(filled)} cuts, audio from input {a})")
     extra = {"switch_mode": "energy", "min_shot": args.min_shot} if energy_mode else {}

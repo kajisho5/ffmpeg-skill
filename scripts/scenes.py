@@ -325,12 +325,6 @@ def main() -> int:
         result["highlights_total"] = round(sum(e - s for s, e in picks), 2)
         result["highlights_rank_by"] = args.rank_by
         info(f"proposed {len(picks)} highlight ranges totalling {result['highlights_total']:.1f}s")
-        if args.edl:
-            if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
-                with open(args.edl, "w", encoding="utf-8") as fh:
-                    for s, e in picks:
-                        fh.write(f"{s:.2f}-{e:.2f}\n")
-            info(f"wrote {args.edl}")
 
     if args.sheet:
         n = len(scenes)
@@ -366,6 +360,15 @@ def main() -> int:
         run(ffmpeg_base() + ["-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
+
+    # after the sheet, as silence.py writes its EDL after the cut (#462 A41): a --sheet refused as an
+    # existing file, or failed, left the EDL behind, and the corrected retry was then refused for it
+    if args.highlights and args.edl:
+        if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
+            with open(args.edl, "w", encoding="utf-8") as fh:
+                for s, e in picks:
+                    fh.write(f"{s:.2f}-{e:.2f}\n")
+        info(f"wrote {args.edl}")
 
     if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)
         emit(None, **result)

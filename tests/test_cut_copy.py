@@ -420,6 +420,55 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn("in the source there", cut.av_skew({"video": {"start_time": 0.0, "fps": 30.0},
                                                           "audio": {"start_time": 0.0}}, expected=0.5)[1])
 
+    def test_an_audio_extraction_keeps_a_late_sounds_offset(self):
+        """#462 A46: a single-range audio extraction rebased the sound to its own first sample
+        (asetpts=PTS-STARTPTS), so a cut 0-2 of a sound that starts 0.355 s after its picture came out
+        1.72 s long with the sound 0.355 s early, where --segments --accurate padded it. Every
+        re-encoded extension of one range now pads it from 0 too: a sample-exact .wav (through
+        --accurate and through the PCM container's own re-encode) and a .flac."""
+        meta = probe(str(self.late))
+        late = meta["audio"]["start_time"] - meta["video"]["start_time"]
+        self.assertGreater(late, 0.3, "fixture: the sound starts after the picture")
+        for name, extra in (("late_extract.wav", ["--accurate"]), ("late_extract_pcm.wav", []),
+                            ("late_extract.flac", ["--accurate"])):
+            out = DIR / name
+            if out.exists():
+                out.unlink()
+            data = cut_json(self.late, "--start", "0", "--end", "2", *extra, "-o", out)
+            self.assertEqual(data["status"], "completed", data)
+            self.assertAlmostEqual(data["output_duration"], 2.0, delta=0.001, msg=name)
+            proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(out), "-af",
+                                   "silencedetect=noise=-50dB:d=0.05", "-f", "null", "-"], capture_output=True, text=True)
+            onset = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", proc.stderr)]
+            self.assertTrue(onset, f"{name}: no leading silence, the sound was moved to 0")
+            self.assertAlmostEqual(onset[0], late, delta=0.03, msg=name)
+
+    def test_remove_drops_a_leftover_with_no_picture_and_says_so(self):
+        """#462 A51: --remove 1-6 of a file whose sound runs 0.3 s past its 6 s picture left 6.0-6.3,
+        sound with no frame, and then refused it as "segment 6.000-6.300s is shorter than one frame",
+        a segment the caller never gave. That leftover is not kept, with a note; a removal that leaves
+        nothing else is refused as such."""
+        meta = probe(str(self.long))
+        self.assertGreater(meta["audio"]["duration"] - meta["video"]["duration"], 0.25, "fixture: sound outlasts picture")
+        out = DIR / "remove_sound_tail.mp4"
+        if out.exists():
+            out.unlink()
+        data = cut_json(self.long, "--remove", "1-6", "--accurate", "--preset", "ultrafast", "-o", out)
+        self.assertEqual(data["status"], "completed", data)
+        self.assertEqual((data["requested_start"], data["requested_end"]), (0.0, 1.0))
+        self.assertTrue(any("holds sound but no frame of the picture" in n for n in data["notes"]), data["notes"])
+        proc = script("cut.py", self.long, "--remove", "0-6", "-o", DIR / "remove_all_but_sound.mp4", "--json",
+                      expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("only sound with no picture", err["message"])
+        # to an audio output the sound after the picture is kept, as it was
+        wav = DIR / "remove_sound_tail.wav"
+        if wav.exists():
+            wav.unlink()
+        data = cut_json(self.long, "--remove", "1-6", "-o", wav)
+        self.assertEqual(len(data["requested_segments"]), 2, data)
+
     def test_a_reencode_never_carries_the_copy_skew_note(self):
         """The note is about a stream copy that began on packets the two streams do not share. A
         re-encode starts both streams where the source has them (the re-cut pads the audio to each
@@ -1467,6 +1516,29 @@ class SmartCutTests(unittest.TestCase):
         params = probe_mod.run([probe_mod.require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
                                 "stream=profile,has_b_frames,pix_fmt", "-of", "csv=p=0", str(out)], quiet=True).stdout.strip()
         self.assertEqual(sorted(params.split(",")), ["2", "High", "yuv420p"])
+
+    def test_smart_cut_to_the_end_copies_the_last_gop(self):
+        """#462 A44: a cut that runs to the end of the video stopped its copy at the last keyframe and
+        re-encoded the whole last GOP as a tail, which the module docstring says is left out."""
+        data = self._cut(self.bsrc, self.dir / "smart_to_end.mp4", "--start", "1.3")
+        sm = data["smart"]
+        self.assertTrue(sm["applied"], sm)
+        self.assertEqual([(p["kind"], p["start"], p["end"], p["frames"]) for p in sm["parts"]],
+                         [("reencode", 1.3, 2.0, 21), ("copy", 2.0, None, 120)])
+        self.assertEqual((sm["reencoded_frames"], sm["copied_frames"]), (21, 120))
+        self.assertTrue(data["verified"])
+
+    def test_smart_cut_into_matroska_from_an_mp4_source(self):
+        """#462 A45: an .mkv output always has Matroska's 1/1000 time base, and the check compared it
+        with the MP4 source's 1/15360, so every such cut fell back -- after the whole smart cut had been
+        built and checked. Matroska's own time base is what an .mkv is checked against."""
+        out = self.dir / "smart_b.mkv"
+        data = self._cut(self.bsrc, out, "--start", "1.3", "--end", "4.6")
+        sm = data["smart"]
+        self.assertTrue(sm["applied"], sm)
+        self.assertEqual((data["mode"], sm["time_base"]), ("smart", "1/1000"))
+        self.assertEqual(sm["copied_frames"], 60)
+        self.assertTrue(data["verified"])
 
     def test_smart_cut_joins_segments_and_keeps_a_no_b_frame_ntsc_source_on_its_grid(self):
         out = self.dir / "smart_ntsc.mkv"

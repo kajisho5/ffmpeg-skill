@@ -387,6 +387,37 @@ _Automated release: version and notes generated from pull requests merged since 
   recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default; the refusal names
   the nearest valid key when one is close, else lists them).
 - fix: a flag value the tool cannot honour is refused before FFmpeg runs (26 audit items) (#504)
+- **`silence.py` keeps no margin where there is no speech** (#462 A40). A silence that starts where
+  the sound starts, or runs to where it ends, is removed from the file's start or to its end. It
+  used to keep `--margin` there as a piece of dead air of its own, with a jump cut after it; FFmpeg
+  6.1 closes a trailing silence at the end of the file, so the last one kept its margin too.
+- **`silence.py --edl` is written once the cut exists** (#462 A41), like `--timemap`: a run refused
+  for an existing `-o`, `-o` the input or nothing kept left an EDL that then blocked the corrected
+  retry. The same for `scenes.py --highlights --edl` beside a refused or failed `--sheet`, and
+  `multicam.py --edl` / `--write-project` beside a failed render.
+- **`silence.py`'s `cut_points` are measured on the file's clock** (#462 A42): with a sound that
+  starts late, each level was read that far after the cut.
+- **`silence.py` never keeps a range before 0** (#462 A43): with a picture that starts after the
+  sound off its frame grid, the first bound of `keep`, `--edl` and `--timemap` could snap to a
+  negative time, and `cut.py --segments` refused that EDL.
+- **`silence.py --list` / `--filler-list` with an audio `-o`** report the ranges the audio run
+  cuts, not frame-snapped ones (#462 A48).
+- **`silence.py --max-cuts` counts removal ranges, as its help says, and no longer refuses
+  `--list` or `--filler-list`** (#462 A49). Its refusal names the likely cause (a threshold that
+  catches speech) instead of a filter-graph size the chunked re-cut no longer has.
+- **`cut.py --smart` copies the last GOP of a cut that runs to the end of the video** (#462 A44)
+  instead of re-encoding it, and **a smart cut to `.mkv` from an MP4/MOV source is checked against
+  Matroska's 1/1000 time base** (#462 A45) instead of always falling back after the whole cut was
+  built.
+- **`cut.py`'s re-encoded single-range audio extraction keeps a late sound's offset** (#462 A46):
+  `-o part.wav` / `.flac` (and other re-encoded audio outputs) from a source whose sound starts after
+  its picture pads it from 0, as `--segments --accurate` does, instead of moving it earlier and
+  writing a shorter file. A stream copy of the sound (`.m4a` without `--accurate`) is unchanged.
+- **`cut.py --remove` to a video output leaves out a leftover with no frame of the picture**
+  (sound after the last frame or before the first) with a note, instead of refusing it as a
+  segment the caller never gave (#462 A51). A removal that leaves only such sound is refused.
+- `docs/contract.md` and `references/scripts.md` no longer say the `--timemap` drifts over many cuts
+  (#462 A47): since #409 its times are the exact sums of the rendered ranges.
 
 ## 3.8.5
 

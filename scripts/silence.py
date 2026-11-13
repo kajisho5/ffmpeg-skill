@@ -33,7 +33,7 @@ from _common.runner import parse_json, replace_checked
 from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
-from _common.decision import frame_rate, stream_starts
+from _common.decision import frame_rate, grid_at_or_after, stream_starts
 from _common.probe import PROBED_AUDIO
 from _common.emit import input_length
 
@@ -163,12 +163,35 @@ def speech_aware_silences(path: str, threshold: float, min_silence: float) -> "T
     return boundaries, breaths
 
 
+# how close to the start or the end of the sound a silence's edge may sit and still be where the sound
+# starts or ends: silencedetect closes a silence that runs to the end at its last decoded block (7.509
+# for a sound probed as 7.500), and an AAC stream's stated start sits a priming frame off its samples
+SOUND_EDGE = 0.05
+
+
+def sound_span(meta: Dict[str, Any], duration: float) -> Tuple[float, float]:
+    """Where the sound starts and ends on the clock silencedetect reports on (the file's), for
+    inside_margin(): its start, and its start plus its own length (the file's length when that is
+    not stated)."""
+    from _common.emit import stream_length
+    a0 = stream_starts(meta)[1]
+    length = stream_length(meta, "audio")
+    return a0, (a0 + length) if length is not None else duration
+
+
 def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: float,
-                  lead: Optional[float] = None) -> List[Tuple[float, float]]:
+                  lead: Optional[float] = None,
+                  sound: Optional[Tuple[float, float]] = None) -> List[Tuple[float, float]]:
     """Each silence with a margin kept on both sides: the stretch actually removed. `margin` is
     kept after the speech that ends where the silence starts (--margin-tail), `lead` before the
     speech that starts where it ends (--margin-lead; the same as `margin` when not given). A
     silence too short to hold both removes nothing (it is dropped, never turned inside out).
+
+    A silence with no speech on one side keeps no margin on that side (#462 A40): one that starts
+    where the sound does (`sound`, from sound_span()) is removed from the file's start, and one
+    that runs to where the sound ends (or that silencedetect never closed, `inf`) to the file's end.
+    A margin there kept dead air as a piece of its own, with a jump cut after it; FFmpeg 6.1 closes
+    a silence at the end of the file, so the `inf` end alone never caught the last one.
 
     The margin is applied to the silences alone, before they are merged with filler spans (#414):
     a filler word's span is the word itself plus --filler-pad, and taking a 0.2 s margin off each
@@ -176,8 +199,10 @@ def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: 
     as removed."""
     out: List[Tuple[float, float]] = []
     for s, e in silences:
-        a = s + margin
-        b = duration if e == float("inf") else min(duration, e - (margin if lead is None else lead))
+        opens = sound is not None and s <= sound[0] + SOUND_EDGE
+        closes = e == float("inf") or (sound is not None and e >= sound[1] - SOUND_EDGE)
+        a = 0.0 if opens else s + margin
+        b = duration if closes else min(duration, e - (margin if lead is None else lead))
         if b > a:
             out.append((a, b))
     return out
@@ -215,7 +240,10 @@ def rendered_ranges(keeps: List[Tuple[float, float]], meta: Dict[str, Any], dura
     v0 = stream_starts(meta)[0]
 
     def snap(t: float) -> float:
-        return min(v0 + round((t - v0) * rate) / rate, duration)
+        # a video that starts after the sound puts frame times before 0 on its grid's extension: a
+        # bound there moves to the first one at or after 0, which is where the re-cut starts (#462 A43)
+        t = v0 + round((t - v0) * rate) / rate
+        return min(t if t >= 0 else grid_at_or_after(0.0, v0, rate), duration)
     return [(a, b) for a, b in ((snap(s), snap(e)) for s, e in keeps) if b > a]
 
 
@@ -307,8 +335,10 @@ def cut_levels(path: str, tm: Dict[str, Any], duration: float,
     out = []
     with tempfile.TemporaryDirectory(prefix="silence-levels-") as tmp:
         raw = os.path.join(tmp, "pcm.s16le")
+        # padded from the file's start, as decode_pcm_mono() pads it: the windows are read at
+        # t x rate, so a sound that starts late was read that far after each cut (#462 A42)
         proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
-                             "-map", f"0:{PROBED_AUDIO}", "-vn",
+                             "-map", f"0:{PROBED_AUDIO}", "-vn", "-af", "aresample=async=1:first_pts=0",
                              "-ac", str(channels), "-ar", str(CUT_LEVEL_RATE), "-f", "s16le", "-y", raw],
                             check=False, text=False)
         if proc.returncode != 0 or not os.path.isfile(raw) or not os.path.getsize(raw):
@@ -624,8 +654,9 @@ def main() -> int:
     fil.add_argument("--filler-list", action="store_true",
                      help="report what --filler would remove and write nothing")
     fil.add_argument("--max-cuts", type=int, default=400,
-                     help="refuse above this many removal ranges: the filter graph grows with them "
-                          "(default 400)")
+                     help="refuse to render above this many removal ranges (default 400): that many cuts usually "
+                          "means --threshold, --min-silence or the filler list is catching speech. --list and "
+                          "--filler-list report them without the limit")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
     add_common(ap)
@@ -686,6 +717,7 @@ def main() -> int:
     if not meta.get("audio"):
         die("input has no audio stream to analyse")
     duration = input_length(meta)
+    sound = sound_span(meta, duration)
     breaths: List[Tuple[float, float]] = []
     if args.speech_aware:
         silences, breaths = speech_aware_silences(args.input, args.threshold, args.min_silence)
@@ -717,10 +749,10 @@ def main() -> int:
     def margined(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """The stretch of each silence that is removed: its own tail for one after a sentence end."""
         if not by_sentence:
-            return inside_margin(spans, duration, tail, lead)
+            return inside_margin(spans, duration, tail, lead, sound)
         out: List[Tuple[float, float]] = []
         for span, pos in zip(spans, positions):
-            out += inside_margin([span], duration, sentence_tail if pos == "sentence_end" else tail, lead)
+            out += inside_margin([span], duration, sentence_tail if pos == "sentence_end" else tail, lead, sound)
         return out
     # One sorted, merged removal list through the graph the tool already has: filler removal IS
     # time-range removal, so it reuses keep_ranges() and the same select chain.
@@ -730,7 +762,9 @@ def main() -> int:
     keeps = keep_ranges(removals, duration, 0.0, args.min_keep)
     # what the render holds (on a picture, each bound on its nearest frame): the report, the EDL
     # and the time map all describe these, so a re-cut or a sum of `keep` is the rendered edit
-    video_out = bool(meta.get("video")) and not (media_out and is_audio_output(media_out))
+    # from the -o given, under --list and --filler-list too (which write no media): a list for an
+    # audio -o reported frame-snapped ranges that the audio run does not cut (#462 A48)
+    video_out = bool(meta.get("video")) and not is_audio_output(args.output or "")
     held = rendered_ranges(keeps, meta, duration, video_out)
     kept = sum(e - s for s, e in held)
     removed = max(0.0, duration - kept)
@@ -787,10 +821,6 @@ def main() -> int:
         # an English-only transcript made on an assumption (asr.assumed_english_note): the
         # bridge already logged the warning; the result document carries it at the top level
         summary["notes"] = list(args._asr_notes)
-    if len(keeps) > args.max_cuts:
-        die(f"{len(keeps)} keep ranges is above --max-cuts {args.max_cuts}: the filter graph grows "
-            "with every range and a graph this size is slow and fragile. Raise --max-cuts if you "
-            "mean it, or use --min-silence/--filler-pad to merge the short ones.", kind="input")
     filler_only = args.filler and not args.speech_aware and not by_sentence
     if filler_only:
         info(f"--filler only (no --speech-aware): skipping generic silence detection, "
@@ -812,6 +842,14 @@ def main() -> int:
         info("hint: " + summary["hint"])
 
     tm = time_map(held, duration)
+    cuts = len(tm["removed"])
+    if cuts > args.max_cuts and not (args.list or args.filler_list):
+        # the removal ranges, as --max-cuts says, not the kept ones; a list renders nothing and is
+        # how the caller sees what the limit is about (#462 A49)
+        die(f"{cuts} removal ranges is above --max-cuts {args.max_cuts}: that many cuts usually means "
+            "--threshold, --min-silence or the filler list is catching speech. Check them with --list, then "
+            "raise --max-cuts if you mean it, or use --min-silence/--filler-pad to merge the short ones.",
+            kind="input")
     points: Any = False  # False: not measured (a dry run over a pending input); None: the decode failed
     if not (STATE.dry_run and not os.path.exists(args.input)):
         points = cut_levels(args.input, tm, duration, list(filler_ranges))
@@ -841,7 +879,12 @@ def main() -> int:
             info(f"wrote {args.timemap}")
         summary["timemap"] = args.timemap
 
-    if args.edl:
+    def finish_edl() -> None:
+        """Written with the time map, once the cut exists (or under --list): an EDL left by a
+        refused run (an existing -o, -o the input, nothing kept) or a failed encode described
+        media never made, and then blocked the corrected retry as an existing file (#462 A41)."""
+        if not args.edl:
+            return
         if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing
             with open(args.edl, "w", encoding="utf-8") as fh:
                 on_frames = bool(video_out and frame_rate(meta))
@@ -852,6 +895,7 @@ def main() -> int:
         info(f"wrote {args.edl}")
 
     if args.list or args.filler_list:
+        finish_edl()
         finish_time_map()
         if args.json:
             emit(None, **summary)
@@ -883,6 +927,7 @@ def main() -> int:
         _cut.join_from_source(args.input, held, output, meta, args.crf, args.preset, tmp)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, expected ~{kept:.3f}s)")
+    finish_edl()
     finish_time_map()
     emit(output, **summary)
     return 0

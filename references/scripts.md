@@ -147,7 +147,7 @@ by default since 3.0.0 (`--keep-hevc`; `--no-keep-hevc` uses x264 as 2.x did);
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
-Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start` (even `--start 0`), `--end`, `--duration` or `--snap beats` (a snapped edge could move into a dropped range). Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
+Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, nor (to a video output) one that holds less than one frame of picture, such as sound that runs past the last frame (a note names it), and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start` (even `--start 0`), `--end`, `--duration` or `--snap beats` (a snapped edge could move into a dropped range). Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
@@ -719,12 +719,14 @@ silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|z
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
            [--model MODEL] [--filler-list] [--max-cuts 400]
 ```
-Runs `silencedetect`, keeps `--margin` seconds of air around speech, drops
+Runs `silencedetect`, keeps `--margin` seconds of air around speech (none at the start or the
+end of the sound, where there is no speech to keep it for), drops
 gaps shorter than `--min-silence`, and re-encodes the kept ranges the way `cut.py --segments
 --accurate` does: both streams cut on the same frame times, so the sound never drifts from the
 picture at the cuts, and a sound that starts late keeps its offset. `--list` prints silences, kept ranges and seconds removed
 without rendering; `--edl` saves the kept ranges in `cut.py --segments` format
-so the user can edit the list by hand. Quiet rooms need `--threshold -40`
+so the user can edit the list by hand (written once the cut is, as `--timemap` is). `--max-cuts N`
+(400) refuses to render more than N removal ranges; `--list` reports them whatever their number. Quiet rooms need `--threshold -40`
 to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 
 **Breaths and weak word endings.** `--margin` is the padding kept on each side of every cut
@@ -766,9 +768,10 @@ unchanged, and filler-word cuts (which sit in sound by design) are measured but 
 source and output times, and every removed range with the output time it was cut at. `.csv`
 gives `type,source_start,source_end,output_start,output_end` rows (a removed row's two output
 columns are its cut point); any other path must end in `.json`. Use it to re-time subtitles
-made on the source, or to find a removed sentence again. Its times advance by the
-millisecond-rounded ranges the render cuts on; they are computed, not measured on the written
-file, so each kept range can be off by up to one video frame or audio block. An existing map is refused without `--overwrite`,
+made on the source, or to find a removed sentence again. Its times advance by the exact
+lengths of the ranges the render cuts on (with a picture, each bound on its nearest frame time;
+with sound alone, as asked), rounded only when written, so nothing adds up over many cuts; they
+are computed, not measured on the written file. An existing map is refused without `--overwrite`,
 and a missing directory or a directory at the path as `kind: input`, before anything runs (a dry
 run predicts both); the map is written only after the cut is, so a failed or refused encode
 leaves none. A dry run writes nothing.

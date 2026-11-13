@@ -3505,6 +3505,100 @@ class EditingTests(MediaFixtures):
         self.assertNotIn("filler", data)
         self.assertNotIn("removed_seconds_total", data)
 
+    def _tone_wav(self, name, expr, seconds):
+        """A 48 kHz WAV of a 440 Hz tone, sounding where `expr` (an aevalsrc condition in t) is 1."""
+        wav = OUT / name
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           f"aevalsrc='0.5*sin(2*PI*440*t)*({expr})':s=48000:d={seconds}", "-c:a", "pcm_s16le", wav)
+        return wav
+
+    def test_silence_keeps_no_margin_where_there_is_no_speech(self):
+        """#462 A40: a silence at the start or the end of the sound kept --margin on the side with no
+        speech, as a piece of dead air of its own with a jump cut after it: keep [0, 0.2] before the
+        first word. FFmpeg 6.1 closes a silence that runs to the end of the file at the file's end, so
+        the `inf` end the code relied on never came and the last one kept its margin too."""
+        wav = self._tone_wav("edge_silences.wav", "between(t\\,1\\,3)+between(t\\,4\\,6)", 7.5)
+        doc = json.loads(script("silence.py", wav, "--list", "--min-keep", "0.1", "--json").stdout)
+        sil = doc["silences"]
+        self.assertEqual(len(sil), 3, sil)
+        self.assertEqual(sil[0][0], 0.0, "fixture: a silence from the file's start")
+        self.assertGreaterEqual(sil[-1][1] if sil[-1][1] is not None else 7.5, 7.45, "fixture: one to its end")
+        keep = doc["keep"]
+        self.assertEqual(len(keep), 2, keep)
+        self.assertClose(keep[0][0], 0.8, 0.01, "the margin before the first word")
+        self.assertClose(keep[-1][1], 6.2, 0.01, "the margin after the last word")
+        self.assertClose(doc["kept_duration"], 4.8, 0.02)
+
+    def test_silence_writes_its_cut_lists_only_once_the_media_exists(self):
+        """#462 A41: silence.py wrote --edl before it checked the media output, so a refused run (an
+        existing -o, -o the input, nothing kept) left an EDL describing media never made, and the
+        corrected retry was then refused for that EDL. scenes.py --highlights --edl did the same
+        before a refused --sheet."""
+        wav = self._tone_wav("edl_order.wav", "lt(t\\,2)+gt(t\\,3)", 5)
+        edl = OUT / "edl_order.txt"
+        taken = OUT / "edl_order_taken.wav"
+        taken.write_bytes(b"theirs")
+        refused = (["-o", taken], ["-o", wav], ["--threshold", "-1", "--min-silence", "0.1", "-o", OUT / "edl_order_none.wav"])
+        for extra in refused:
+            if edl.exists():
+                edl.unlink()
+            # sh, not script(): script() would add --overwrite, and the existing -o is one refusal here
+            proc = sh(sys.executable, SCRIPTS / "silence.py", wav, *extra, "--edl", edl, "--json", expect_fail=True)
+            self.assertEqual(json.loads(proc.stdout)["status"], "failed", extra)
+            self.assertFalse(edl.exists(), f"{extra}: an EDL was left beside a refused run")
+        ok = OUT / "edl_order_ok.wav"
+        if ok.exists():
+            ok.unlink()
+        # the corrected retry, without --overwrite: no EDL is in its way
+        doc = json.loads(sh(sys.executable, SCRIPTS / "silence.py", wav, "-o", ok, "--edl", edl, "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertEqual(len(edl.read_text(encoding="utf-8").split()), len(doc["keep"]))
+        clip = self._av_clip(OUT / "edl_order_clip.mp4", 3, 3, 440)
+        sheet, sedl = OUT / "edl_order_sheet.png", OUT / "edl_order_scenes.txt"
+        sheet.write_bytes(b"theirs")
+        if sedl.exists():
+            sedl.unlink()
+        proc = script("scenes.py", clip, "--highlights", "1", "--edl", sedl, "--sheet", sheet, "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_exists")
+        self.assertFalse(sedl.exists(), "scenes.py left its EDL beside a refused --sheet")
+
+    def test_silence_list_for_an_audio_output_reports_the_ranges_the_audio_run_cuts(self):
+        """#462 A48: --list decided on the picture from the media output, which a list does not
+        write, so with an audio -o it reported frame-snapped ranges (1.233) that the audio run does
+        not cut (1.213)."""
+        src = OUT / "list_audio_out.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=4",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,1.013)+gt(t\\,2.017))':s=48000:d=4",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", src)
+        wav = OUT / "list_audio_out.wav"
+        if wav.exists():
+            wav.unlink()
+        on_frames = json.loads(script("silence.py", src, "--list", "--json").stdout)
+        run = json.loads(script("silence.py", src, "-o", wav, "--json").stdout)
+        self.assertNotEqual(run["keep"], on_frames["keep"], "fixture: the frame grid moves a bound")
+        listed = json.loads(script("silence.py", src, "--list", "-o", wav, "--json").stdout)
+        self.assertEqual(listed["keep"], run["keep"])
+        self.assertEqual(listed["kept_duration"], run["kept_duration"])
+
+    def test_silence_max_cuts_counts_the_removal_ranges_and_never_refuses_a_list(self):
+        """#462 A49: --max-cuts counted keep ranges although its help says removal ranges, so one pause
+        (two kept pieces) was refused at --max-cuts 1; it refused --list, the way to see the cuts; and
+        its message gave the one-graph render's size as the reason, which the chunked re-cut no longer has."""
+        one = self._tone_wav("max_cuts_one.wav", "lt(t\\,2)+gt(t\\,3)", 5)
+        out = OUT / "max_cuts_one_out.wav"
+        if out.exists():
+            out.unlink()
+        doc = json.loads(script("silence.py", one, "--max-cuts", "1", "-o", out, "--json").stdout)
+        self.assertEqual((doc["status"], len(doc["keep"])), ("completed", 2), doc)
+        two = self._tone_wav("max_cuts_two.wav", "lt(t\\,2)+between(t\\,3\\,5)+gt(t\\,6)", 8)
+        proc = script("silence.py", two, "--max-cuts", "1", "-o", OUT / "max_cuts_two_out.wav", "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertTrue(err["message"].startswith("2 removal ranges is above --max-cuts 1"), err["message"])
+        self.assertNotIn("filter graph", err["message"])
+        listed = json.loads(script("silence.py", two, "--max-cuts", "1", "--list", "--json").stdout)
+        self.assertEqual(len(listed["keep"]), 3, listed)
+
 
 class OneClockTests(MediaFixtures):
     """#409: a tool that cuts, repeats, reverses or re-times both streams keeps them on one clock.
@@ -3548,6 +3642,51 @@ class OneClockTests(MediaFixtures):
         script("silence.py", self._fx("talk_late", talk=True, audio_late=0.3), "--min-silence", "0.5",
                "--margin", "0.1", "--preset", "veryfast", "-o", out, "--overwrite")
         self.assertInSync(av_offsets_ms(out, beep_db=-12), msg="silence, late sound")
+
+    def test_silence_measures_each_cut_on_the_files_clock(self):
+        """#462 A42: the level at each cut was read from PCM decoded from the sound's first sample, at
+        t x rate on the file's clock, so a sound 0.5 s late was read 0.5 s after every cut: -24 dB at
+        a cut that sits in digital silence."""
+        d = OUT / "clock_cut_levels"
+        d.mkdir(exist_ok=True)
+        pic, snd, src = d / "pic.mp4", d / "snd.wav", d / "late_sound.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=6",
+           "-c:v", "libx264", "-preset", "ultrafast", pic)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+gt(t\\,3))':s=48000:d=5.5", "-c:a", "pcm_s16le", snd)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", pic, "-itsoffset", "0.5", "-i", snd,
+           "-map", "0:v", "-map", "1:a", "-c", "copy", src)
+        doc = json.loads(script("silence.py", src, "--list", "--json").stdout)
+        self.assertEqual(len(doc["silences"]), 1, doc["silences"])
+        self.assertAlmostEqual(doc["silences"][0][0], 2.5, delta=0.02, msg="fixture: the silence on the file's clock")
+        self.assertEqual([(c["edge"], c["rms_dbfs"]) for c in doc["cut_points"]], [("out", None), ("in", None)])
+
+    def test_silence_never_keeps_a_range_before_the_files_start(self):
+        """#462 A43: a picture 0.29 s after its sound put the first kept bound on its frame grid's
+        extension before 0 (-0.011): `keep`, --edl and --timemap started before the file, and
+        cut.py --segments refused the EDL (start must be >= 0)."""
+        d = OUT / "clock_late_picture"
+        d.mkdir(exist_ok=True)
+        pic, snd, src = d / "pic.mp4", d / "snd.wav", d / "late_picture.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=5.7",
+           "-c:v", "libx264", "-preset", "ultrafast", pic)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "aevalsrc='0.5*sin(2*PI*440*t)*(lt(t\\,2)+gt(t\\,3))':s=48000:d=6", "-c:a", "pcm_s16le", snd)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "0.29", "-i", pic, "-i", snd,
+           "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", src)
+        meta = probe(str(src))
+        self.assertAlmostEqual(meta["video"]["start_time"] - meta["audio"]["start_time"], 0.29, delta=0.01,
+                               msg="fixture: the picture starts off the sound's frame grid")
+        edl, tm = d / "keep.txt", d / "map.json"
+        doc = json.loads(script("silence.py", src, "--list", "--edl", edl, "--timemap", tm, "--overwrite",
+                                "--json").stdout)
+        self.assertGreaterEqual(doc["keep"][0][0], 0.0, doc["keep"])
+        self.assertGreaterEqual(json.loads(tm.read_text())["kept"][0]["source_start"], 0.0)
+        ranges = edl.read_text(encoding="utf-8").split()
+        self.assertFalse(ranges[0].startswith("-"), ranges)
+        recut = json.loads(script("cut.py", src, "--segments=" + ",".join(ranges), "--accurate", "--preset", "ultrafast",
+                                  "-o", d / "recut.mp4", "--overwrite", "--json").stdout)
+        self.assertEqual(recut["status"], "completed", recut)
 
     def test_silence_refuses_an_output_that_is_its_input_when_the_join_is_chunked(self):
         """#416 review: above 32 kept ranges the join's last command concats a chunk list, never
