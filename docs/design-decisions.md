@@ -79,6 +79,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.6.3 — a tagged version npm never got is finished by dispatch, on its tag (#448)](#after-363--a-tagged-version-npm-never-got-is-finished-by-dispatch-on-its-tag-448)
 - [After 3.7.0 — a platform's upload limits are guidance (#485)](#after-370--a-platforms-upload-limits-are-guidance-485)
 - [After 3.8.0 — a length that is not stated, and sound trimmed to the sample (#491, #493)](#after-380--a-length-that-is-not-stated-and-sound-trimmed-to-the-sample-491-493)
+- [After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)](#after-381--a-length-or-a-silence-between-two-milliseconds-the-siblings-of-493)
 <!-- contents:end -->
 
 ## Time limits
@@ -3633,3 +3634,44 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   packets with the edit list ignored. Code: `decision.conform_filter()`,
   `decision.conform_to_length()`, `decision.conform_output_t()`. Test:
   `test_grid_broll_and_multicam_end_their_sound_to_the_sample`.
+
+## After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)
+
+- **A tool whose output ends on `-t` writes the millisecond unless it names another sample
+  count.** `overlay.py --image/--video`, `waveform.py`, `loop.py --duration` and `sync.py
+  --replace-audio` have no filter that ends the sound: the output's `-t` does, and it was
+  `{:.3f}`. 59244 samples at 48 kHz (1.23425 s) were written as 59232. `length_output_t(length,
+  rate)` keeps the millisecond text when it cuts nothing off the track at that rate and writes
+  the length to the microsecond when it does; FFmpeg takes `-t` in microseconds and rounds it to
+  the nearest sample. Where the sound runs on past the length (`sync.py`'s endless `apad`,
+  `loop.py`'s next repeat) a millisecond that rounds up is too long as well (59280 for a
+  reference of 59261), so there the microsecond is written whenever the two counts differ
+  (`runs_on=True`); in `overlay.py` and `waveform.py` a `-t` past the end of the sound cuts
+  nothing and stays. The rate is the kept track's (`--audio-stream`), in `sync.py` the second
+  file's. No sound, or a dry run's pending input, has no rate: the millisecond stays.
+- **That `-t` has no half sample of slack.** `conform_output_t()` adds one beside
+  `conform_to_length()`, whose tools end their picture in the graph. Here the same `-t` ends the
+  picture, and with the slack a layer's frame that starts exactly at the main input's end (31
+  NTSC frames under a longer layer on the same grid) came through on a 1/60000 and a 1/90000
+  time base: 32 frames for 31 (FFmpeg 6.1.1; on 1/30000 the slack rounds away). At the
+  microsecond the frame stays out. What does change: a frame that starts in the last half
+  millisecond before the stated end, which a `-t` rounded down left out and one rounded up always
+  let in, is written. `overlay.py --video` over a main input whose sound outlasts its last frame
+  by 8 microseconds writes the layer's next frame, as it already did when the sound outlasted it
+  by a millisecond.
+- **A silence that is not a whole millisecond is counted in samples.** `pad.py --start/--end`
+  and `freeze.py --hold` (at the clip's end and at its first frame) wrote `adelay=<ms>` and
+  `apad=pad_dur={:.3f}`: 0.23425 s of silence was 11232 samples for 11244. `silence_filter(rate,
+  lead, tail)` writes `aformat=sample_rates=R,adelay=NS:all=1,apad=pad_len=N` when an amount is
+  between two milliseconds (the `aformat` pins the rate the count is in, as in
+  `conform_filter()`; a part of 0 is left out), and the old text when both are whole
+  milliseconds, so those commands are the ones they were. One exception, a defect of its own: the
+  millisecond was `int(seconds * 1000)`, which cuts 1.001 to 1000 (741 of the whole-millisecond
+  values up to 100 s), and is `round()` now. `freeze.py --at T` in the middle of a clip already
+  pads by the held frames' length to the microsecond and is unchanged.
+- **The picture's `tpad` keeps its millisecond.** `tpad=start_duration/stop_duration={:.3f}`
+  becomes a whole number of frames, so the text only matters when the amount is within half a
+  millisecond of a half-frame boundary (`--end 0.0504` at 29.97 fps: 1 frame from "0.050", 2
+  from the amount), where both counts are half a frame from what was asked. Not changed.
+  Code: `decision.length_output_t()`, `decision.silence_filter()`. Test:
+  `test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample`.

@@ -34,7 +34,7 @@ import tempfile
 
 from _common import STATE, concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
-from _common.decision import av_trim
+from _common.decision import av_trim, length_output_t
 from _common.probe import decode_gray_frames, decode_pcm_mono
 from _common.emit import input_length
 
@@ -320,7 +320,8 @@ def main() -> int:
         else:
             cmd += ["-map", "0:v:0", "-vf", vtrim]
     if target is not None:
-        cmd += ["-t", f"{target:.3f}"]
+        # the sound ends at --duration to the sample, not to the millisecond (length_output_t)
+        cmd += ["-t", length_output_t(target, (meta.get("audio") or {}).get("sample_rate") if has_audio else None, runs_on=True)]
     cmd += video_args(meta, args.crf, args.preset)
     # a crossfade's repeat is already constant at `rate` (its graph's fps=): the loop keeps that rate,
     # not a variable-rate source's average, which re-timed every repeat by a frame or two

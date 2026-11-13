@@ -38,6 +38,7 @@ from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb
+from _common.decision import length_output_t
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            has_alpha_plane, report as alpha_report, source_alpha, source_format, tag_args, video_line)
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -362,6 +363,10 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.audio_stream and not audio_streams:
         die("--audio-stream needs an input with audio streams")
+    # the -t that ends a layer at the main input's length: to the sample of the kept track when the
+    # millisecond would cut it (length_output_t); no sound, or a pending input, keeps the millisecond
+    kept_track = audio_streams[args.audio_stream] if audio_streams else (meta.get("audio") or {})
+    main_t = length_output_t(meta["duration"], kept_track.get("sample_rate")) if meta.get("duration") else None
     # ffmpeg applies display rotation before the filter graph, so the frame this overlay is
     # composited on is the displayed one. A 320x180 phone file tagged 90 degrees is 180 wide here.
     # A non-square-pixel source is made square at its display aspect first (#411), so a logo or
@@ -454,7 +459,7 @@ def main() -> int:
             # streams -- a preserved subtitle/data stream that ends earlier (run_keeping_subtitles)
             # must not be allowed to cut the whole output short via -shortest's "stop at whichever
             # mapped stream finishes first" semantics.
-            cmd += ["-t", f"{meta['duration']:.3f}"]
+            cmd += ["-t", main_t]
         else:
             # No known duration to bound by -t (e.g. probe found no video duration): -shortest is
             # the only thing stopping the looped still from running forever. FFmpeg 7+'s
@@ -567,7 +572,7 @@ def main() -> int:
         if meta.get("duration"):
             # See the --image branch above: -t (exact, bounds only the main input) instead of
             # -shortest (would also stop at a preserved subtitle/data stream that ends earlier).
-            cmd += ["-t", f"{meta['duration']:.3f}"]
+            cmd += ["-t", main_t]
         else:
             cmd += ["-shortest"]
     else:
