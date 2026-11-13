@@ -28,7 +28,8 @@ name: release
 # The MCP Registry step still runs on it (unless the bump was superseded): it
 # asks npm and the registry about server.json's version and publishes the entry
 # only when npm has the version and the registry does not, so a re-run or a
-# later push finishes an entry an earlier run failed to publish
+# later push finishes an entry an earlier run failed to publish -- while that
+# version is still the one on main; an older version's entry is not gone back to
 # (docs/design-decisions.md, "After 3.4.3").
 #
 # This runs as one job triggered directly by the push to main, not chained
