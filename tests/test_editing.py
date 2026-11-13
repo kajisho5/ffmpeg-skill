@@ -1010,7 +1010,7 @@ class EditingTests(MediaFixtures):
                 else:
                     # loop.py: the fixture's sound outlasts its picture, so each repeat starts
                     # 0.234 s after the last frame of the one before. FFmpeg 6.1 fills that with
-                    # repeated frames (56 packets), FFmpeg 8 holds the frame (50): the count is the
+                    # repeated frames (56 packets), FFmpeg 7.1 and 8 hold the frame (50): the count is the
                     # FFmpeg's, the picture's length is the tool's
                     self.assertIn(frames(out), (50, 56))
                     self.assertAlmostEqual(float(probe(str(out))["video"]["duration"]), float(args[-1]), delta=0.045)
@@ -1027,9 +1027,16 @@ class EditingTests(MediaFixtures):
         # "2.000010" names 96000, so the text is the first microsecond that names the count asked
         self.assertEqual(round(2.00001042 * 48000), 96001)
         self.assertEqual(_common.length_output_t(2.00001042, 48000), "2.000011")
-        for length, rate in ((2.00001042, 48000), (1.2342505, 44100), (59244 / 48000, 48000), (7.123456789, 96000)):
+        def ffmpeg_samples(text, rate):  # a rescale that rounds a half up, not to the even count
+            return (round(float(text) * 1_000_000) * rate + 500_000) // 1_000_000
+
+        for length, rate in ((2.00001042, 48000), (1.2342505, 44100), (59244 / 48000, 48000), (7.123456789, 96000), (0.0049999, 44100)):
             text = _common.length_output_t(length, rate, runs_on=True)
-            self.assertEqual(round(float(text) * rate), round(length * rate), (length, rate, text))
+            self.assertEqual(ffmpeg_samples(text, rate), round(length * rate), (length, rate, text))
+        # 0.005 s is 220.5 samples at 44.1 kHz, which FFmpeg writes as 221: for the 220 asked the
+        # millisecond text is one too many where the sound runs on (round() called it 220)
+        self.assertEqual(_common.length_output_t(0.0049999, 44100, runs_on=True), "0.004999")
+        self.assertEqual(_common.length_output_t(0.0049999, 44100), "0.005")
         self.assertEqual(_common.length_output_t(59244 / 48000, 0), "1.234")
         self.assertEqual(_common.length_output_t(59244 / 48000, None, runs_on=True), "1.234")
         self.assertEqual(_common.silence_filter(48000, 0.5, 0.25), "adelay=500:all=1,apad=pad_dur=0.250")

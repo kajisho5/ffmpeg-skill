@@ -469,16 +469,21 @@ def length_output_t(length: float, rate: Optional[int], runs_on: bool = False) -
     millisecond text."""
     text = f"{length:.3f}"
     if rate:
-        written, asked = round(float(text) * rate), round(length * rate)
+        def names(micro: int) -> int:
+            # the samples FFmpeg makes of a -t of `micro` microseconds: a rescale that rounds a
+            # half up, where Python's round() takes it to the even count (0.005 s at 44.1 kHz is
+            # 220.5 samples: 221 written, round() says 220)
+            return (micro * rate + 500_000) // 1_000_000
+        written, asked = names(round(float(text) * 1_000_000)), round(length * rate)
         if written < asked or (runs_on and written != asked):
             # the microsecond text is a rounding too (2.00001042 s is 96001 samples at 48 kHz and
             # "2.000010" names 96000): the microsecond nearest the length, moved by whole
             # microseconds until it names the count asked. A microsecond is a twentieth of a
             # sample at 48 kHz, so this is a step or two, not conform_output_t()'s half sample
             micro = round(length * 1_000_000)
-            while round(micro * rate / 1_000_000) < asked:
+            while names(micro) < asked:
                 micro += 1
-            while round(micro * rate / 1_000_000) > asked:
+            while names(micro) > asked:
                 micro -= 1
             return f"{micro // 1_000_000}.{micro % 1_000_000:06d}"
     return text
