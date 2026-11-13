@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.6
+
+_Automated release: version and notes generated from pull requests merged since 3.8.5._
+
 ### Fixed
 
 - **A number outside a flag's range is refused before ffmpeg runs** (`kind: input`, naming the
@@ -67,6 +73,7 @@
   dry run completed and the real run failed at the export); an unknown key in a `batch.py`
   recipe (a misspelled `output_dir`, `suffix` or `glob` ran with the default; the refusal names
   the nearest valid key when one is close, else lists them).
+- fix: a flag value the tool cannot honour is refused before FFmpeg runs (26 audit items) (#504)
 
 ## 3.8.5
 
