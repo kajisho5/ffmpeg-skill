@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.8.6`) | any release |
+| `skill.version` | the npm / package.json version (`3.8.7`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.8.6", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.8.7", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -197,12 +197,16 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 
 ### Roles
 
+Every tool is in exactly one row; `tests/test_contract.py`'s
+`test_contract_md_role_and_verification_tables_match_the_contract` compares both tables below with
+`contract --json`. A parenthesis after a name is a note, not part of it.
+
 | Role | Tools |
 |---|---|
-| `analysis` (measures, writes no media) | probe, scenes |
-| `analysis_and_execution` (measures by default or with a flag, can also write) | silence (`--list`), loudness (`--measure-only`), sync (offset JSON without `-o`) |
-| `execution` (writes a new artifact) | cut, fit, caption, overlay, graphics, multicam, audio, join, color, export, render, batch |
-| `verification` (checks or shows an artifact) | check, look, verify, report |
+| `analysis` (measures, writes no media) | cropdetect, probe, scenes (`--sheet` draws a contact sheet PNG, `--edl` writes a text list) |
+| `analysis_and_execution` (measures by default or with a flag, can also write) | loudness (`--measure-only`), silence (`--list`), sync (offset JSON without `-o`) |
+| `execution` (writes a new artifact) | audio, background, batch, broll, caption, color, crop, cut, deinterlace, denoise, export, fit, freeze, graphics, grid, insert, join, loop, metadata, multicam, overlay, pad, proxy, redact, render, reverse, sequence, speedramp, sphere, stabilize, straighten, waveform |
+| `verification` (checks or shows an artifact) | check, look, report, verify |
 
 `batch` writes one artifact per input only when a recipe step names `{out}` (or the recipe is a
 render project): a recipe in which no step does (a QC pass of `check.py`/`probe.py`) writes none,
@@ -215,15 +219,15 @@ The workflow in `SKILL.md` is "probe first, verify last". The contract states it
 
 | Tool | After it wrote an artifact, run |
 |---|---|
-| cut, silence, audio, sync, batch | probe |
-| loudness | probe, check |
-| export | probe, check |
-| fit, caption, overlay, graphics, color, join, multicam | probe, look |
+| audio, batch, cut, metadata, silence, sync | probe |
+| export, loudness | probe, check |
+| background, broll, caption, color, crop, deinterlace, denoise, fit, freeze, graphics, grid, insert, join, loop, multicam, overlay, pad, proxy, redact, reverse, sequence, speedramp, sphere, stabilize, straighten, waveform | probe, look |
 | render | probe, check, look |
-| probe, check, look, scenes, verify, report | nothing (they are the verification) |
+| check, cropdetect, look, probe, report, scenes, verify | nothing (they measure or are the verification) |
 
-`requires_visual_verification` is `true` exactly for the tools that change the picture
-(fit, caption, overlay, graphics, color, join, multicam, render). Audio-only tools and
+`requires_visual_verification` is `true` exactly for the tools whose row above names `look`:
+the tools that make or change a picture. `join` of audio-only inputs and `render`'s audio
+templates write no picture, but the flag is per tool, not per run. Audio-only tools and
 audio-only inputs never need `look`; the report line is `Look: not needed`. `check`
 rows carry `kind: format` (fix it) or `kind: judgement` (decide with the user), and `basis`:
 `requirement` (the row can FAIL) or `guidance`. The `duration` and `file size` rows are `basis: guidance`
@@ -248,12 +252,15 @@ document. Thresholds: `docs/design-decisions.md` ("check.py --content", "broadca
 
 ### Dry run
 
-`supports_dry_run` is measured, not declared: `tests/test_contract.py` runs every tool
+`supports_dry_run` is measured, not declared: `tests/test_contract.py` runs every tool whose
+`dry_run.ffmpeg_execution` is `none` (and `cut` and `metadata` without their measuring flags)
 with `--dry-run` behind a fake `ffmpeg` that records any call, and asserts that no
-call happened and no file appeared. Under `--dry-run` a tool prints the command lines
+call happened and no file appeared; the `analysis_only` tools in that test run with the real
+ffmpeg and are checked for files only. Under `--dry-run` a tool prints the command lines
 it would run, reports `dry_run: true`, and never reports an output probe. The
 exceptions are stated per tool in the contract's `dry_run` field: `probe` and `check` are
-read-only (ffprobe still runs); `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`,
+read-only (ffprobe still runs; `probe` decodes with ffmpeg only with `--analyze`, to sample
+picture levels); `sync`, `multicam`, `scenes`, `cropdetect`, `report`, `silence`,
 `loudness` and `stabilize` still run their ffmpeg/ffprobe measurements (the analysis is the
 tool's job; only the artifact is skipped, including side files such as `--edl`, `--sheet` or a
 generated `.ass`), `overlay` measures the lines of a multi-line `--text` with one drawtext on a
@@ -261,9 +268,10 @@ generated frame on FFmpeg 8.0, 8.0.1 and 8.1.0 (it draws them one by one there),
 with `--auto-chapters` and `cut` with `--snap beats` decode the input for their measurement,
 `render` and `batch` run each stage or step as its own dry run (a measuring stage measures an
 input that exists), and `verify` does not support dry-run (its steps run, and its document says
-`dry_run: false`). `tests/test_contract.py` runs every tool's dry run behind an ffmpeg that logs
-each decode and asserts that every tool that decoded is in `DRY_RUN_ANALYSIS`. `SKILL.md` and
-`references/scripts.md` repeat the same list; the contract is the authority.
+`dry_run: false`). `tests/test_contract.py` runs the dry run of every tool that supports one
+behind an ffmpeg that logs each decode and asserts that every tool that decoded is in
+`DRY_RUN_ANALYSIS`. `SKILL.md`, `README.md`, `references/scripts.md` and `references/flags.md`
+repeat the same list (a test checks each names every tool in it); the contract is the authority.
 
 `--codec h264|hevc|av1|prores` and `--quality N` (1.8) are on every tool that re-encodes,
 marked `common`. They are resolved in one place

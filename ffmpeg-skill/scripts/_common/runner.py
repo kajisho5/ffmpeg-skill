@@ -34,6 +34,22 @@ INSTALL_HINTS = {
     ),
 }
 
+# For an FFmpeg that is on PATH but older than MIN_FFMPEG (#467 A226): reinstalling the
+# distribution's package gives the same old version back (Ubuntu 22.04's is 4.4, Debian 12's 5.1),
+# so the hint names a newer build instead.
+UPGRADE_HINTS = {
+    "Darwin": "  brew upgrade ffmpeg-full   # or ffmpeg, whichever formula is installed",
+    "Linux": (
+        "  Your distribution's own package may be older than that (Ubuntu 22.04 ships 4.4, Debian 12 ships 5.1).\n"
+        "  Use a release whose package is new enough (Ubuntu 24.04, Debian 13), or a static build\n"
+        "  from https://ffmpeg.org/download.html put ahead of the old one on PATH"
+    ),
+    "Windows": (
+        "  winget upgrade Gyan.FFmpeg\n"
+        "  or download a newer build from https://ffmpeg.org/download.html and put it ahead of the old one on PATH"
+    ),
+}
+
 
 # `kind` (below) is the machine-readable failure axis: input / missing_tool / ffmpeg / output
 # since 0.1, plus timeout (1.3), verification (1.4.3) and interrupted (1.4.10). `ERROR_CODE` is an
@@ -304,11 +320,12 @@ def require_tool(name: str) -> str:
         found = ffmpeg_version()
         if found != (0, 0) and (found[0] < MIN_FFMPEG[0] or (_FFMPEG_VERSION_IS_RELEASE and found < MIN_FFMPEG)):
             system = platform.system()
-            hint = INSTALL_HINTS.get(system, "  See https://ffmpeg.org/download.html")
+            hint = UPGRADE_HINTS.get(system, "  See https://ffmpeg.org/download.html")
+            floor = f"{MIN_FFMPEG[0]}.{MIN_FFMPEG[1]}"
             refuse("missing_tool", "ffmpeg_unsupported",
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
-                   f"2.14.0): use FFmpeg 6.1+. Install it for {system}:\n{hint}",
-                   code=127, version=f"{found[0]}.{found[1]}", required="6.1")
+                   f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
+                   code=127, version=f"{found[0]}.{found[1]}", required=floor)
     if path:
         return path
     system = platform.system()

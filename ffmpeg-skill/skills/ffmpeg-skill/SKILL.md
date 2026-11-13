@@ -19,7 +19,7 @@ MCP `tools/list` shows the core 12; the other 30 of the 42 tools stay callable b
 
 Shared flags (the rest, codec defaults and `--hw`: `references/flags.md`):
 `--dry-run` (plan, write nothing), `--json` (output, probe, commands), `--json-brief` (status + `summary`),
-`--overwrite` (step 7), `--timeout SECONDS` (default 1800, `0` = none; `kind: timeout`).
+`--overwrite` (step 7), `--timeout SECONDS` (default 1800, `verify` 600 per step, `0` = none; `kind: timeout`).
 
 Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`,
 `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `overlay`, `metadata`, `cut`, `render`,
@@ -115,7 +115,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |
 | "speed up here, slow-mo there" | `speedramp.py in.mp4 --segment 0-3:1.0 --segment 3-4:0.25` |
 | "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
-| "smooth slow motion" | `fit.py in.mp4 --duration 2x --smooth interpolate` |
+| "smooth slow motion" | `fit.py in.mp4 --duration 20 --smooth interpolate` (a 10 s clip at half speed; `--duration` is the target length) |
 | "reverse this clip" | `reverse.py in.mp4` |
 | "loop it to fill 30 seconds", "seamless loop" | `loop.py clip.mp4 --duration 30` (`--crossfade 0.5` hides the seam) |
 | "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --fit pad` (or `crop`, `blur`) |
@@ -170,7 +170,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "is it broadcast legal?" | `check.py final.mp4 --levels ebu-r103` (clamp: `color.py in.mp4 --correct --legalize ebu-r103`) |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 -o report.html` |
 | "title card", "Ken Burns on a photo" | `insert.py title.png --duration 3` (`--zoom in --pan right`) |
-| "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --color 0x101010` |
+| "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
 | "grade it but keep the alpha" | `color.py logo.mov --correct --exposure 0.3 --keep-alpha -o graded.mov` |
 | "lower third as a transparent layer" | `background.py --transparent -o canvas.mov --duration 5 --width 1920 --height 1080`, then `graphics.py canvas.mov --template lower-third --name "Ada" --keep-alpha -o lt.mov` |
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |

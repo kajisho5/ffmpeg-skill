@@ -55,6 +55,9 @@ from _common.emit import input_length  # noqa: E402
 TEXT = "@TEXT@"
 BOX = "@BOX@"  # a box's place in the filter chain, followed by its index (graphics.main fill_box)
 TEMPLATES = ["lower-third", "title", "chapter", "progress", "countdown", "bug", "sticker", "hook", "meme"]
+# --dry-run on an input that does not exist yet, with no --end: how long after --start the planned
+# graphic ends (its length is unknown; the plan says so in a note)
+PENDING_PLACEHOLDER_SECONDS = 10.0
 
 
 def ff_color(hex_rgb: str, alpha: float = 1.0) -> str:
@@ -208,7 +211,17 @@ def main(force_route: Optional[str] = None) -> int:
         info(f"--platform {args.platform}: safe margins top {m_top} / bottom {m_bottom} / left {m_left} / right {m_right} px")
     fps = meta["video"].get("fps")
     s = time_arg(args.start, "--start", fps) if args.start else 0.0
-    e = time_arg(args.end, "--end", fps) if args.end else input_length(meta)  # no --end is the clip's end (#491)
+    if args.end:
+        e = time_arg(args.end, "--end", fps)
+    elif meta.get("dry_run"):
+        # #466 A202: an input an earlier --dry-run stage would write is probe()'s stub, whose
+        # length is unknown, not 0 s: planning to "the clip's end" refused with "--end must be
+        # after --start". The plan ends the graphic at a stated placeholder instead
+        e = s + PENDING_PLACEHOLDER_SECONDS
+        note(f"{args.input} does not exist yet, so its length is unknown: the planned graphic ends at a placeholder "
+             f"{e:g} s; a real run ends it at the clip's end (or pass --end)")
+    else:
+        e = input_length(meta)  # no --end is the clip's end (#491)
     # the picture's own length first: sound that runs on keeps the container open past the last frame
     picture_len = meta["video"].get("duration") or dur
     if picture_len and s >= picture_len:

@@ -203,12 +203,15 @@ these had ever shown up before.
 On certain Windows ffmpeg
 builds (e.g. winget's gyan.dev), `drawtext` crashes with an access violation
 whenever it resolves a font by family name through fontconfig, even with a
-valid `fonts.conf` (#100). `look.py`, `scenes.py --sheet`, `overlay.py --text`
-and `graphics.py` all resolve a concrete `--font-file` by default when one is
-available (`fontfile=` skips fontconfig entirely and is the form confirmed
-not to crash), so this should already be handled automatically. If a
-drawtext tool still crashes, pass `--font-file` explicitly rather than
-relying on `--font`/`font=` resolution; `doctor` also runs a real one-frame
+valid `fonts.conf` (#100). `look.py`, `scenes.py --sheet`, `grid.py`'s labels,
+`overlay.py --text` and `graphics.py` all resolve a concrete font file by default
+when one is available (`fontfile=` skips fontconfig entirely and is the form
+confirmed not to crash), so this should already be handled automatically. If a
+drawtext tool still crashes: `overlay.py` and `graphics.py` take `--font-file`,
+pass one explicitly rather than relying on `--font`/`font=` resolution;
+`look.py` and `scenes.py` have no font flag, and `--no-timecode` draws no text
+at all; `grid.py` has only `--font` (a family name, the form that crashes), and
+`--label none` draws no labels. `doctor` also runs a real one-frame
 drawtext probe and reports `filter:drawtext` missing (with the crash detail
 in `errors[]`) rather than a false "available" from the `-filters` listing
 alone.
