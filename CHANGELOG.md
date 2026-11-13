@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.0
+
+_Automated release: version and notes generated from pull requests merged since 3.7.0._
+
 ### Changed
 
 - **`check.py --platform`: the duration and file-size rows are guidance, not requirements** (#485).
@@ -20,6 +26,9 @@
   unchanged. `render.py`'s check stage and plan check step follow: an over-length delivery no
   longer fails the run on that row alone. `export.py` still trims to the table's maximum unless
   `--allow-long`, and its `notes` line now says the limit is the table's.
+- feat(check): a platform's length and file-size limits are guidance (WARN), not a requirement (#495)
+
+Closes: #485
 
 ## 3.7.0
 
