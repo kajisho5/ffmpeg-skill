@@ -21,7 +21,8 @@
   3CD753); `--alpha-mode premultiplied` on a ProRes 4444/VP9 line of a BT.709 picture shifted
   opaque colour the same way; an RGB `overlay.py --video` layer on a BT.709 alpha line was BT.601
   (pure red read FF1800; with `--chromakey` it is keyed first, in the BT.601 the key is computed in). Commands for a YUV source are unchanged except in those three cases, each
-  on a BT.709-tagged source. An untagged YUV source is unchanged everywhere.
+  on a BT.709-tagged source. An untagged YUV source is unchanged everywhere, and
+  so is an RGB source that probes HDR or BT.2020: its YUV line is not converted to BT.709.
   The grade of an RGB source names no matrix on its way in to RGB (with one, FFmpeg 7.1 wrote
   BT.601 samples on the ProRes 4444/VP9 line).
 

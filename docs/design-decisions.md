@@ -3215,7 +3215,7 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `test_alpha_checks_do_not_pass_what_they_could_not_read`.
 - **On a BT.709-tagged alpha line, RGB layers are converted to BT.709.** The line keeps the source's
   tags, and FFmpeg 6.1 turns an RGB logo or box into YUV with BT.601, so saturated colours shifted
-  under the kept tag. An RGB source's YUV line is BT.709 as well (#496) and converts its layers the
+  under the kept tag. The YUV line of an RGB source that is neither HDR nor BT.2020 is BT.709 as well (#496) and converts its layers the
   same way. Drawn text colours (drawtext, libass) are not converted on an alpha line.
   Code: `decision.rgb_chain_to_bt709()`. Test: `test_graphics_and_overlay_render_on_a_transparent_canvas`.
 - **`--alpha-mode` describes the written colour, as in `export.py`.** Sources are taken as straight;
