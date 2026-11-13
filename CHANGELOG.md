@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.7.0
+
+_Automated release: version and notes generated from pull requests merged since 3.6.7._
+
 ### Added
 
 - **`audio.py --tempo FACTOR` and `--length-samples N`** (#486). `--tempo` changes the tempo of
@@ -59,6 +65,9 @@
   `kind: input` with reason `output_container_codecs` and the encoders in `details`; name a
   `.mp4`/`.mov`/`.mkv` output instead. VP9/Opus lines (`--alpha-codec vp9`, `export.py --preset
   vp9-alpha`) and stream copies are unchanged.
+- feat(audio): --tempo, --length-samples, --sample-rate, --channel; fixes for colour tags, limiter delay, sample-exact length and .webm outputs (#492)
+
+Closes: #454, #476, #478, #486, #487, #488
 
 ## 3.6.7
 
