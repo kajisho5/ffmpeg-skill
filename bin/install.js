@@ -219,7 +219,19 @@ function staleScratchDirs(dir) {
   const prefix = `${path.basename(dir)}.tmp-`;
   let entries = [];
   try { entries = fs.readdirSync(parent); } catch (_) { return []; }
-  return entries.filter((e) => e.startsWith(prefix) && /^\d+$/.test(e.slice(prefix.length))).map((e) => path.join(parent, e));
+  return entries
+    .filter((e) => e.startsWith(prefix) && /^\d+$/.test(e.slice(prefix.length)))
+    .filter((e) => !processIsRunning(Number(e.slice(prefix.length))))
+    .map((e) => path.join(parent, e));
+}
+
+// The number after ".tmp-" is the pid of the install that made the directory. One whose process
+// is still running is that install's work in progress, not a leftover: removing it lets the
+// install recreate the directory with only the files it had not copied yet and then rename that
+// into place as a finished install. Signal 0 asks without signalling: ESRCH is "no such
+// process"; EPERM is a live process this user may not signal, so it counts as running.
+function processIsRunning(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
 }
 
 let failed = false;

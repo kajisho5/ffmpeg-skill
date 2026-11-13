@@ -848,6 +848,24 @@ class ContractTests(unittest.TestCase):
         self.assertRegex(push, r'if \[ "\$\(git rev-parse origin/main\)" = "\$BASE" \]; then\n(?:.*\n)?\s+exit 1\n')
         self.assertIn("git reset --hard origin/main", push)
         self.assertLess(push.index("exit 1"), push.index("git reset --hard origin/main"))
+        # dropping the bump leaves the checkout on the newer merge, which this run must not
+        # release either (a hand-set major there has no tag yet): the drop is an output, the
+        # check step turns it into "nothing to release", and every step that tags, publishes or
+        # asks a registry is conditioned on one of the two
+        self.assertLess(push.index("git reset --hard origin/main"), push.index('echo "superseded=true" >> "$GITHUB_OUTPUT"'))
+        self.assertIn("        id: bump\n", bump)
+        rest = normal[normal.index("      - name: Check whether this version is already released"):]
+        check = rest[:rest.index("\n      - ", 1)]
+        self.assertIn("          SUPERSEDED: ${{ steps.bump.outputs.superseded }}\n", check)
+        self.assertRegex(check, r'if \[ "\$SUPERSEDED" = "true" \]; then\n(?:.*\n)*?\s+echo "already_released=true" >> "\$GITHUB_OUTPUT"\n\s+elif git rev-parse "\$TAG"')
+        ungated = []
+        for chunk in re.split(r"\n(?=      - (?:name|uses): )", rest)[1:]:
+            head = chunk.splitlines()[0]
+            cond = re.search(r"^        if: (.*(?:\n          .*)*)", chunk, re.M)
+            cond = cond.group(1) if cond else ""
+            if not any(key in cond for key in ("already_released == 'false'", "superseded != 'true'", "registry_state.outputs.publish == 'true'", ".outcome == 'failure'", "latest_lag != ''")):
+                ungated.append(head)
+        self.assertEqual(ungated, [])
         # the dispatch: after the tag exists, not able to stop the npm publish, reported at the end
         step = normal[normal.index("      - name: Rebuild GitHub Pages for the released version\n"):]
         step = step[:step.index("\n      - ", 1)]
@@ -2779,13 +2797,21 @@ class ContractTests(unittest.TestCase):
             self.assertIn("SIMULATED_CRASH_MID_COPY", proc.stderr)
             self.assertEqual(sorted(p.name for p in skills.iterdir()), ["ffmpeg-skill"], "the failed run's scratch copy is removed")
             # one left by a killed run (nothing ran its catch) goes with --uninstall
-            stale = skills / "ffmpeg-skill.tmp-4242"
+            # (the pid of a process that has already ended, so no running install owns it)
+            ended = subprocess.Popen([sys.executable, "-c", "pass"])
+            ended.wait()
+            stale = skills / f"ffmpeg-skill.tmp-{ended.pid}"
             stale.mkdir()
             (stale / "SKILL.md").write_text("partial", encoding="utf-8")
             (skills / "ffmpeg-skill.tmp-notes").mkdir()
+            # one whose pid is a running process is an install in progress: removing it would let
+            # that install rename a directory without SKILL.md into place and report success
+            running = skills / f"ffmpeg-skill.tmp-{os.getpid()}"
+            running.mkdir()
+            (running / "SKILL.md").write_text("being copied", encoding="utf-8")
             sh("node", installer, "--uninstall", env=env)
-            self.assertEqual(sorted(p.name for p in skills.iterdir()), ["ffmpeg-skill.tmp-notes"],
-                             "only the installer's own <name>.tmp-<pid> folders are removed")
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), sorted([running.name, "ffmpeg-skill.tmp-notes"]),
+                             "only the installer's own <name>.tmp-<pid> folders are removed, and only when that pid is gone")
 
     # ------------------------------------------------------------------ integration: claims hold at run time
     def test_every_1_17_flag_is_reachable_off(self):

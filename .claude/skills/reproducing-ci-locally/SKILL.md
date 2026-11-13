@@ -244,10 +244,11 @@ IS an OS-conditional: some `test_contract.py` tests and classes are `skipIf`'d
 on Windows because they depend on a POSIX shell shim, not on CI's own `if:`
 gating). Read the actual workflow file before assuming a local `npm test` run
 matches — `npm test` runs the same modules through `tests/run_parallel.py`
-without the three-way split, so on a non-Windows machine it is already a
-faithful local reproduction, and `python3 tests/run_parallel.py --part 2/3`
-reproduces one CI machine's share; the gap only shows up when debugging a
-Windows-specific CI failure, where the fix is to read what `skipIf` actually
+without the three-way split, and `python3 tests/run_parallel.py --part 2/3`
+runs one CI machine's share. Either reproduces a CI job only when the OS and
+the FFmpeg version match that job's (CI runs FFmpeg 6.1, 7.1 and 8, and
+Windows): a failure that belongs to another FFmpeg version passes locally just
+as a Windows-only one does, and for Windows read what `skipIf` actually
 excludes before assuming a fix applies everywhere.
 
 Source: [wdm0006/python-skills](https://github.com/wdm0006/python-skills) (MIT).

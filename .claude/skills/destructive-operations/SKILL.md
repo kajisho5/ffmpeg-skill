@@ -203,9 +203,11 @@ closest analogue is `-o`/output-path handling: every tool takes a
 caller-supplied output path. Since 2.0.0 an existing output is refused before
 any ffmpeg runs unless the caller passes `--overwrite`
 (`_common._check_existing_output()`, `kind: input`, reason `output_exists`);
-ffmpeg gets `-n` without the flag and `-y` only with it, and the output is
-written through a hidden sibling temp file that replaces the target only on
-success. (Before 2.0 every tool passed `-y` and replaced an existing file
+the refusal is that Python guard, not an ffmpeg option (`ffmpeg_base()` passes
+`-y` either way). With `--overwrite`, an output that already exists is written
+through a hidden sibling temp file that replaces it only on success
+(`_stage_existing_output()`); a new output is written straight to its path, so
+a partial file can be seen there while the run is in progress. (Before 2.0 every tool passed `-y` and replaced an existing file
 without a word, which is what this note used to report.) Since this is a local CLI a human or agent
 invokes directly (not a server resolving untrusted network input against a
 base directory), the "boundary escape" half of this skill is low-stakes here;

@@ -134,6 +134,7 @@ jobs:
       # interpolation into a run: block is a known script-injection vector -- only our own
       # already-resolved, numeric version strings pass through ${{ }} here.
       - name: Auto-bump package.json / docs/contract.md / docs/roadmap.md / CHANGELOG.md
+        id: bump
         if: |
           steps.setup.outputs.needs_auto_bump == 'true' &&
           steps.drafter.outputs.resolved_version != '' &&
@@ -260,10 +261,16 @@ jobs:
             fi
             echo "::notice::main moved while ${NEW_VERSION} was being prepared; this run releases nothing and the run for the newer merge releases both"
             git reset --hard origin/main
+            # The checkout is now the newer merge, and nothing below may release it from this
+            # run: a merge that set its own version by hand (a major) has no tag yet, and the
+            # steps below would tag and publish it here, under this run's label arithmetic.
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check whether this version is already released
         id: check
+        env:
+          SUPERSEDED: ${{ steps.bump.outputs.superseded }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
@@ -274,7 +281,12 @@ jobs:
           # github.sha (as this did through v1.1.0) put every auto-released tag one commit
           # before its own version bump, so `git checkout v1.1.0` showed package.json at 1.0.4.
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          if [ "$SUPERSEDED" = "true" ]; then
+            # not released, and not this run's to release: every step below that tags or
+            # publishes is conditioned on already_released == 'false'
+            echo "::notice::this run's bump was superseded; $TAG is left to the run for the newer merge"
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
           else
             echo "already_released=false" >> "$GITHUB_OUTPUT"
@@ -406,6 +418,7 @@ jobs:
       # steps may fail, and the job's last step reports it.
       - name: Ask whether the MCP Registry already lists this version
         id: registry_state
+        if: steps.bump.outputs.superseded != 'true'
         continue-on-error: true
         run: |
           set -euo pipefail

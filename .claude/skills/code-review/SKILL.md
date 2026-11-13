@@ -53,9 +53,9 @@ whether each field is something the tool *measured*.
 | `error.retryable` | must stay `false`; a `true` here invites a blind retry loop |
 
 `--dry-run` claims matter too: `info()` rewrites `wrote X` to `[dry-run] would
-write X`, and `analysis_only` tools (`probe`, `check`, `sync`, `multicam`,
-`scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`) do run
-FFmpeg to measure. A change that makes a writing tool print a write claim under
+write X`, and `analysis_only` tools (`check`, `sync`, `multicam`, `scenes`,
+`cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `overlay`) do run
+FFmpeg to measure; `probe` is not one of them (`ffmpeg_execution: none`). A change that makes a writing tool print a write claim under
 dry-run is a defect.
 
 See `references/result-honesty.md` for the code pointers and the exact test names
