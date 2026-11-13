@@ -17,6 +17,7 @@ import argparse
 import sys
 
 from _common.emit import record_fallback
+from _common.decision import silence_filter
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
@@ -64,7 +65,8 @@ def main() -> int:
             # front (one -filter_complex), so the record is made here, as broll and stabilize do
             record_fallback(f"{args.input} is {v.get('width')}x{v.get('height')}: scaled to even dimensions first",
                             "odd_dimensions_scaled_even", output=output, scale=EVEN_SCALE)
-        af = f"adelay={int(args.start * 1000)}:all=1,apad=pad_dur={args.end:.3f}"
+        # the silence is counted in samples when --start/--end is not a whole millisecond
+        af = silence_filter(meta["audio"].get("sample_rate"), args.start, args.end)
         cmd += ["-filter_complex", f"[0:v:0]{even}{vf}[v];[0:a:0]{af}[a]", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-vf", vf, "-map", "0:v:0"]

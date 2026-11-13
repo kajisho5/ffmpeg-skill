@@ -41,6 +41,7 @@ from _common import (add_common, apply_common, aac_args, default_output, die, dr
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, warn
+from _common.decision import length_output_t
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -232,7 +233,9 @@ def main() -> int:
     # audio ends (a 12 s source came out 14.08 s on 5.1.1, #146), so the output is also capped
     # at the source's own duration when probe knows it.
     if meta.get("duration"):
-        cmd += ["-t", f"{float(meta['duration']):.3f}"]
+        # to the sample of the drawn track when the millisecond would cut it (length_output_t)
+        drawn_track = audio_streams[args.audio_stream] if audio_streams else meta["audio"]
+        cmd += ["-t", length_output_t(float(meta["duration"]), drawn_track.get("sample_rate"))]
     cmd += ["-shortest", render]
     titled_tmp = sibling_temp(output, "titled")
     intermediates = [p for p in (render, titled_tmp) if p != output]

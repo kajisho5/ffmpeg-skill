@@ -936,6 +936,101 @@ class EditingTests(MediaFixtures):
         src = self._ramp("ramp2.mp4", 2)
         script("loop.py", src, "--boomerang", "--times", "2", "-o", OUT / "loop_boom_short.mp4", expect_fail=True)
 
+    # ------------------------------------------- a length that is not a whole millisecond
+    def test_a_length_or_a_silence_between_two_milliseconds_is_written_to_the_sample(self):
+        """The siblings #493 left: overlay.py, waveform.py, loop.py and sync.py --replace-audio
+        ended their output with `-t {:.3f}`, and pad.py and freeze.py added silence of
+        `adelay={int(ms)}` / `apad=pad_dur={:.3f}`: a length to the millisecond. 59244 samples
+        (48 kHz) came out as 59232, a sound that runs on (sync's apad, loop's next repeat) as 59280
+        for 59261, and --start 1.001 as 1.000 s (int(1.001 * 1000) is 1000). The count is of the
+        written track's samples, as in test_grid_broll_and_multicam_end_their_sound_to_the_sample
+        (tests/test_orchestration.py): packet durations with the edit list ignored, less the
+        encoder's 1024 of priming."""
+        burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
+        ff = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
+        x264 = ("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p")
+
+        def clip(name, rate, samples):
+            path = OUT / name
+            sh(*ff, "-f", "lavfi", "-i", "testsrc=d=1:s=160x120:r=25", "-f", "lavfi", "-i", f"aevalsrc={burst}:s={rate}",
+               "-af", f"atrim=end_sample={samples}", *x264, "-c:a", "pcm_s16le", path)
+            return path
+
+        def track_samples(path):
+            rows = sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0",
+                      "-show_entries", "packet=duration", "-of", "csv=p=0", path).stdout.split()
+            return sum(int(r.split(",")[0]) for r in rows) - 1024
+
+        def frames(path):
+            return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
+                          "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path).stdout.split()[0].strip(","))
+
+        down48, down44, up48 = clip("ms_down_48.mov", 48000, 59244), clip("ms_down_44.mov", 44100, 54433), clip("ms_up_48.mov", 48000, 59261)
+        for path, rate, samples, text in ((down48, 48000, 59244, "1.234"), (down44, 44100, 54433, "1.234"), (up48, 48000, 59261, "1.235")):
+            length = float(probe(str(path))["duration"])
+            self.assertEqual(round(length * rate), samples, "fixture")
+            self.assertEqual(f"{length:.3f}", text, "fixture")
+            self.assertNotEqual(round(float(text) * rate), samples, "not a whole millisecond: the old text names another count")
+        take = OUT / "ms_take.wav"  # sync's second file: ends before the reference does
+        sh(*ff, "-f", "lavfi", "-i", f"aevalsrc={burst}:s=48000", "-af", "atrim=end_sample=40000", take)
+        layer = OUT / "ms_layer.mp4"
+        sh(*ff, "-f", "lavfi", "-i", "testsrc2=d=1:s=64x48:r=25", *x264, layer)
+        cases = [
+            # (label, tool, arguments, rate, samples, frames, text in the command)
+            ("overlay --image", "overlay.py", [down48, "--image", self.logo], 48000, 59244, 31, "-t 1.234250 "),
+            ("overlay --video at 44.1 kHz", "overlay.py", [down44, "--video", layer], 44100, 54433, 25, "-t 1.234308 "),
+            ("overlay: a millisecond that cuts nothing stays", "overlay.py", [up48, "--image", self.logo], 48000, 59261, 31, "-t 1.235 "),
+            ("waveform", "waveform.py", [down48], 48000, 59244, 30, "-t 1.234250 "),
+            ("waveform at 44.1 kHz", "waveform.py", [down44], 44100, 54433, 30, "-t 1.234308 "),
+            ("sync pads to the reference", "sync.py", [down48, take, "--replace-audio"], 48000, 59244, 25, "-t 1.234250 "),
+            ("sync: the pad runs on past a millisecond rounded up", "sync.py", [up48, take, "--replace-audio"], 48000, 59261, 25, "-t 1.234604 "),
+            ("loop", "loop.py", [down48, "--duration", "2.23425"], 48000, 107244, 56, "-t 2.234250 "),
+            ("loop at 44.1 kHz", "loop.py", [down44, "--duration", "2.23425"], 44100, 98530, 56, "-t 2.234250 "),
+            ("loop: the next repeat runs on past a millisecond rounded up", "loop.py", [down48, "--duration", "2.2346"], 48000, 107261, 56, "-t 2.234600 "),
+            ("pad --end", "pad.py", [down48, "--end", "0.23425"], 48000, 59244 + 11244, 31, "aformat=sample_rates=48000,apad=pad_len=11244"),
+            ("pad --start at 44.1 kHz", "pad.py", [down44, "--start", "0.23425"], 44100, 54433 + 10330, 31, "aformat=sample_rates=44100,adelay=10330S:all=1"),
+            ("pad --start and --end", "pad.py", [down48, "--start", "0.23425", "--end", "0.5"], 48000, 59244 + 11244 + 24000, 44,
+             "aformat=sample_rates=48000,adelay=11244S:all=1,apad=pad_len=24000"),
+            ("pad: a whole millisecond is rounded, not cut", "pad.py", [down48, "--start", "1.001"], 48000, 59244 + 48048, 50, "adelay=1001:all=1,apad=pad_dur=0.000"),
+            ("freeze holds the end", "freeze.py", [down48, "--hold", "0.23425"], 48000, 59244 + 11244, 31, "aformat=sample_rates=48000,apad=pad_len=11244"),
+            ("freeze holds the start at 44.1 kHz", "freeze.py", [down44, "--at", "0", "--hold", "0.23425", "--mode", "insert"], 44100, 54433 + 10330, 31,
+             "aformat=sample_rates=44100,adelay=10330S:all=1"),
+            ("freeze: a whole millisecond is rounded, not cut", "freeze.py", [down48, "--at", "0", "--hold", "1.001", "--mode", "insert"], 48000, 59244 + 48048, 50,
+             "adelay=1001:all=1"),
+        ]
+        for label, tool, args, rate, samples, pictures, text in cases:
+            with self.subTest(case=label):
+                out = OUT / f"ms_{tool[:-3]}_out.mp4"
+                doc = json.loads(script(tool, *args, "-o", out, "--json").stdout)
+                self.assertEqual(int(probe(str(out))["audio"]["sample_rate"]), rate)
+                self.assertEqual(track_samples(out), samples)
+                # the picture is the one the millisecond text wrote (measured on 3.8.1)
+                self.assertEqual(frames(out), pictures)
+                self.assertIn(text, str(doc["commands"]))
+        # what the millisecond says is written as it always was: a whole millisecond, no sound, and
+        # a dry run's pending input, which has no rate to count in
+        import _common
+        self.assertEqual(_common.length_output_t(1.2, 48000), "1.200")
+        self.assertEqual(_common.length_output_t(12.0, 44100, runs_on=True), "12.000")
+        self.assertEqual(_common.length_output_t(59244 / 48000, 48000), "1.234250")
+        self.assertEqual(_common.length_output_t(59261 / 48000, 48000), "1.235")
+        self.assertEqual(_common.length_output_t(59261 / 48000, 48000, runs_on=True), "1.234604")
+        self.assertEqual(_common.length_output_t(59244 / 48000, 0), "1.234")
+        self.assertEqual(_common.length_output_t(59244 / 48000, None, runs_on=True), "1.234")
+        self.assertEqual(_common.silence_filter(48000, 0.5, 0.25), "adelay=500:all=1,apad=pad_dur=0.250")
+        self.assertEqual(_common.silence_filter(44100, 0.29, 0.0), "adelay=290:all=1,apad=pad_dur=0.000")
+        self.assertEqual(_common.silence_filter(48000, tail=2.0), "apad=pad_dur=2.000")
+        self.assertEqual(_common.silence_filter(48000, lead=2.0), "adelay=2000:all=1")
+        self.assertEqual(_common.silence_filter(0, 0.23425, 0.0), "adelay=234:all=1,apad=pad_dur=0.000")
+        pending = OUT / "ms_not_written_yet.mp4"
+        for tool, args, text in (("pad.py", ["--end", "0.23425"], "apad=pad_dur=0.234"),
+                                 ("freeze.py", ["--hold", "0.23425"], "apad=pad_dur=0.234"),
+                                 ("overlay.py", ["--image", self.logo], "-shortest")):
+            with self.subTest(pending=tool):
+                plan = json.loads(script(tool, pending, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
+                self.assertIn(text, str(plan["commands"]))
+                self.assertNotIn("pad_len", str(plan["commands"]))
+
     # ---------------------------------------------------------------- insert
     def test_insert_native_size_and_duration(self):
         out = OUT / "insert1.mp4"

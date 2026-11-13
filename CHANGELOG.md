@@ -4,7 +4,30 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`overlay.py`, `waveform.py`, `loop.py` and `sync.py --replace-audio` end their sound to the
+  sample; `pad.py` and `freeze.py` add silence to the sample** (the siblings of #493). The first
+  four ended their output with `-t {:.3f}`, a length to the millisecond: an input whose sound is
+  59244 samples long (48 kHz, 1.23425 s) came out of `overlay.py --image`/`--video` and
+  `waveform.py` with 59232 (54433 at 44.1 kHz with 54419), the reference's 59244 came out of
+  `sync.py --replace-audio` as 59232, and `loop.py --duration 2.23425` wrote 107232 for 107244. Where
+  the sound runs on past the length (`sync.py`'s pad, `loop.py`'s next repeat) a millisecond that
+  rounds up wrote too much: 59280 for a reference of 59261. `pad.py --start/--end` and
+  `freeze.py --hold` (a hold at the clip's end or at its first frame) wrote the silence as
+  `adelay=<whole ms>` / `apad=pad_dur={:.3f}`: `--end 0.23425` added 11232 samples for 11244, and
+  the millisecond was cut, not rounded, so `--start 1.001` delayed the sound by 1.000 s
+  (`int(1.001 * 1000)` is 1000; 741 of the whole-millisecond values up to 100 s). The `-t` is the
+  length to the microsecond when the millisecond text names another sample count
+  (`length_output_t()` in `_common`), and a silence that is not a whole millisecond is counted in
+  samples (`silence_filter()`: `adelay=NS`, `apad=pad_len=N` behind an `aformat` that pins the
+  rate). A length or a silence in whole milliseconds, an input without sound and a dry run's
+  pending input write the command they always did, except the whole milliseconds that were cut by
+  one. The picture is bounded by the same `-t`, so the limit carries no half sample of slack
+  (with it a layer's frame that starts exactly at the main input's end came through on a 1/60000
+  time base); a frame that starts in the last half millisecond before the end, which `-t {:.3f}`
+  left out when it rounded down, is now written. `pad.py`'s and `freeze.py`'s picture
+  (`tpad`, whole frames) is unchanged. Measured on FFmpeg 6.1.1.
 
 ## 3.8.2
 

@@ -74,7 +74,7 @@ from _common.probe import (
     display_size, pixel_aspect, square_pixels, square_pixels_note
 )
 from _common.decision import (
-    aac_args, add_pad_fill_args, conform_filter, conform_to_length, conform_output_t, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
+    aac_args, add_pad_fill_args, conform_filter, conform_to_length, conform_output_t, length_output_t, silence_filter, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
     frame_flow, label_shot_flow, MOTION_GRID, MOTION_SEARCH, MOTION_STATIC_PX, MOTION_PAN_SPREAD,
     filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS, FILLER_MAX_WORD,
