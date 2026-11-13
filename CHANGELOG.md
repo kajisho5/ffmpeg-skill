@@ -4,7 +4,39 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **What the tools and the contract say, made to match what they do** (#466: A193, A194, A195,
+  A198, A202; #467 A226; #464 A122; #463 A155). `graphics.py --dry-run` on an input an earlier
+  step would write refused "--end must be after --start" (the probe stub's 0 s read as the
+  clip's end); with no `--end` it now plans to a placeholder 10 s after `--start` and says so in
+  `notes` (`silence`, `crop`, `freeze`, `loop`, `redact`, `speedramp` and `multicam` still refuse
+  a dry run on such an input). `contract --json`: `probe` is `analysis_only` under `--dry-run`,
+  since `--analyze` decodes with ffmpeg; `output_schema` gains the top-level keys these tools emit
+  and it left out: cropdetect (`crop`, `confidence`, `file`, `source_width`, `source_height`,
+  `motion_centre`), probe (`levels`, `audio_streams`, `stream_counts` and others), graphics, join,
+  loudness, multicam, broll, grid, scenes, batch, render and report, and join's `mode` enum gains
+  `copy` (a test runs those tools and fails on an emitted key the schema lacks); every tool `description` is the docstring's first sentence,
+  where 16 ended mid-phrase on the first physical line; `error_kinds` names the encoders, the
+  VP9 decoder and the speech engines under `missing_tool`, and loudness.py, join.py `--copy`
+  and render.py's social pack under `verification`; color.py's `alpha_codec` description says a
+  10- or 12-bit ProRes 4444 alpha keeps 8 bits of precision through `--correct`/`--lut`. An
+  FFmpeg older than 6.1 is refused with a hint that names a newer build, not `sudo apt install
+  ffmpeg`, which reinstalls the same version. `export.py --normalize`'s help lists the platform
+  presets it takes from the table (10), not four.
+- **Docs that disagreed with the code** (#466: A191, A192, A197, A199, A200, A201, A209, A210,
+  and `references/flags.md`'s dry-run list; #467 A32; #463 A155). SKILL.md's slow-motion row
+  (`fit.py --duration 2x`) and blank-clip row (`background.py` without `--width`/`--height`)
+  failed on every input. `docs/contract.md`'s role and verification-policy tables cover all 42
+  tools, and `requires_visual_verification` is stated as the tools whose row names `look`; a test
+  compares both tables with the contract. `references/workflow.md` and `gotchas.md` no longer say
+  `scenes` refuses audio, or prescribe `--lang` for `overlay.py`, which has none.
+  `ci-platform-pitfalls.md`'s drawtext remedy names the flag each tool has. `flags.md` states
+  `verify.py`'s 600 s per-step `--timeout`, the tools without `-o`, and the whole dry-run list.
+  README: the fake-ffmpeg dry-run test now has a case for every tool whose dry run runs no ffmpeg
+  (it had 19 cases over 18 tools), the Windows skips are described without a count, and a push
+  with nothing to release still asks the MCP Registry (release.yml's comment says the same).
+  `docs/design-decisions.md`: color.py's merged alpha is 8-bit, not "kept as decoded".
 
 ## 3.8.6
 

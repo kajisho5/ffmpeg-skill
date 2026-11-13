@@ -484,7 +484,7 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
-    ap.add_argument("--normalize", action="store_true", help="youtube/youtube4k/reels/x: when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
+    ap.add_argument("--normalize", action="store_true", help=f"the platform presets ({', '.join(sorted(PLATFORM_OF))}): when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
     ap.add_argument("--alpha-mode", choices=["straight", "premultiplied"],
                     help="alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): write the colour straight "
                          "(default, as decoded) or premultiplied by the alpha; written to the result as alpha_mode")

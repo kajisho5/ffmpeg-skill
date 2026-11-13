@@ -1382,13 +1382,15 @@ class ContractTests(unittest.TestCase):
         the same list."""
         analysis_tools = set(_contract.DRY_RUN_ANALYSIS.keys())
         self.assertEqual(analysis_tools, {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay",
-                                          "metadata", "cut", "render", "batch"},
+                                          "metadata", "cut", "render", "batch", "probe"},
                           "the analysis-only dry-run tool set changed -- update SKILL.md/references/scripts.md's exception list to match")
         # "the name appears somewhere in the file" was too weak: every tool name is in SKILL.md's
         # request table anyway, so the list drifted twice (#176 -> #179) with this test green.
         # Pin the sentence that states the exception: the one naming `verify` and `--dry-run`.
+        # references/flags.md (#466) left out metadata, cut, render and batch.
         docs = {"SKILL.md": ROOT / "SKILL.md", "references/scripts.md": ROOT / "references" / "scripts.md",
-                "docs/contract.md": ROOT / "docs" / "contract.md", "README.md": ROOT / "README.md"}
+                "docs/contract.md": ROOT / "docs" / "contract.md", "README.md": ROOT / "README.md",
+                "references/flags.md": ROOT / "references" / "flags.md"}
         for label, path in docs.items():
             text = path.read_text(encoding="utf-8")
             paragraphs = [p for p in text.split("\n\n") if "verify" in p and "dry-run" in p and "multicam" in p]
@@ -2597,6 +2599,10 @@ class ContractTests(unittest.TestCase):
             if refused:
                 self.assertEqual(proc.returncode, 127, (banner, proc.stderr))
                 self.assertIn("not supported since ffmpeg-skill 3.0.0", proc.stderr)
+                # #467 A226: reinstalling the distribution's package gives the same old version
+                # back, so the hint names the floor and a newer build, not `apt install ffmpeg`
+                self.assertIn("FFmpeg 6.1 or later", proc.stderr)
+                self.assertNotIn("apt install ffmpeg", proc.stderr)
             else:
                 self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
 
@@ -2890,7 +2896,31 @@ class ContractTests(unittest.TestCase):
             "look": [self.src, "-o", outdir / "look.png"],
             "report": ["--after", self.src, "-o", outdir / "rep.html"],
             "cropdetect": [self.src, "--seconds", "1", "--samples", "1"],
+            # #466 A209: README and docs/contract.md said "every tool"; these 19 had no case
+            "metadata": [self.src, "--title", "t", "-o", outdir / "md.mp4"],
+            "background": ["--duration", "1", "--width", "320", "--height", "240", "-o", outdir / "bg.mp4"],
+            "broll": [self.src, "--insert", self.camb, "--at", "1", "--duration", "1", "-o", outdir / "br.mp4"],
+            "crop": [self.src, "--x", "0", "--y", "0", "--width", "100", "--height", "60", "-o", outdir / "cr.mp4"],
+            "deinterlace": [self.src, "-o", outdir / "di.mp4"], "denoise": [self.src, "-o", outdir / "dn.mp4"],
+            "freeze": [self.src, "--at", "1", "--hold", "1", "-o", outdir / "fr.mp4"],
+            "grid": [self.src, self.camb, "--cols", "2", "--rows", "1", "-o", outdir / "gr.mp4"],
+            "insert": [self.logo, "--duration", "1", "-o", outdir / "in.mp4"],
+            "loop": [self.src, "--times", "2", "-o", outdir / "lo.mp4"], "pad": [self.src, "--end", "1", "-o", outdir / "pa.mp4"],
+            "proxy": [self.src, "-o", outdir / "px.mp4"],
+            "redact": [self.src, "--x", "0", "--y", "0", "--width", "100", "--height", "60", "-o", outdir / "rd.mp4"],
+            "reverse": [self.src, "-o", outdir / "rv.mp4"], "speedramp": [self.src, "--segment", "0-6:2", "-o", outdir / "sr.mp4"],
+            "sphere": [self.src, "-o", outdir / "sp.mp4"], "straighten": [self.src, "--degrees", "2", "-o", outdir / "st.mp4"],
+            "waveform": [self.src, "-o", outdir / "wf.mp4"],
+            "sequence": ["--dir", self.work / "dry_seq", "--pattern", "f%03d.png", "-o", outdir / "sq.mp4"],
         }
+        (self.work / "dry_seq").mkdir(exist_ok=True)
+        for i in range(3):
+            shutil.copy(self.logo, self.work / "dry_seq" / f"f{i:03d}.png")
+        # every tool whose dry run the contract says runs no ffmpeg has a case here (the claim is
+        # "every tool", so a tool added without one fails)
+        none_tools = {n for n, s in self.tools.items() if s["supports_dry_run"] and s["dry_run"]["ffmpeg_execution"] == "none"}
+        self.assertEqual((none_tools | {"cut", "metadata"}) - {k.split("#")[0] for k in cases}, set(),
+                         "a tool whose dry run runs no ffmpeg has no case here")
         for name, args in cases.items():
             name = name.split("#")[0]
             spec = self.tools[name]
@@ -2910,9 +2940,11 @@ class ContractTests(unittest.TestCase):
                 self.assertFalse(marker.exists(), f"{name} --dry-run invoked ffmpeg")
         self.assertEqual({n for n, s in self.tools.items() if s["dry_run"]["ffmpeg_execution"] == "analysis_only"},
                          {"sync", "multicam", "scenes", "report", "cropdetect", "silence", "loudness", "check", "stabilize", "overlay",
-                          "metadata", "cut", "render", "batch"})
-        # the read-only tools keep working under --dry-run (ffprobe still runs)
+                          "metadata", "cut", "render", "batch", "probe"})
+        # the read-only tools keep working under --dry-run (ffprobe still runs); probe without
+        # --analyze runs no ffmpeg
         self.assertEqual(tool("probe", self.src, "--dry-run", env=env).returncode, 0)
+        self.assertFalse(marker.exists(), "probe --dry-run without --analyze invoked ffmpeg")
         self.assertEqual(tool("check", self.src, "--platform", "x", "--no-loudness", "--dry-run", env=env).returncode, 0)
 
     def test_every_reencoding_tool_plans_the_bt601_conversion(self):
@@ -5832,6 +5864,168 @@ class OutputSchemaDriftTests(unittest.TestCase):
             with self.subTest(tool=name):
                 self.assertIn("dropped_non_av_streams", _contract.output_schema(name, {})["properties"])
         self.assertEqual(sorted(emitting - _contract.NON_AV_STREAM_TOOLS), [])
+
+    def test_every_emitted_top_level_key_is_in_the_output_schema(self):
+        """#466 A194: cropdetect emitted crop, confidence, file, source_width and source_height,
+        none of them in its output_schema, and a sweep found fourteen more tools with the same gap.
+        Each case is a tool's cheap run (a dry run where it has one, so a writing tool writes
+        nothing); every top-level key of its document must be a property of its schema. A failed
+        run's error and exit_code are the failure shape, not the tool's keys."""
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        w = Path(tempfile.mkdtemp(prefix="ffskill_keys_", dir=OUT if OUT.is_dir() else None))
+        self.addCleanup(shutil.rmtree, w, True)
+        c, b, logo = w / "a.mp4", w / "b.mp4", w / "logo.png"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25", "-f", "lavfi", "-i", f"aevalsrc='{TONE}':s=48000",
+               "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", c)
+        shutil.copy(c, b)
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", logo)
+        batch_in = w / "batch_in"
+        batch_in.mkdir()
+        shutil.copy(c, batch_in / "a.mp4")
+        recipe = w / "recipe.json"
+        recipe.write_text(json.dumps({"steps": [["loudness.py", "{in}", "-o", "{out}"]], "output_dir": str(w / "batch_out")}),
+                          encoding="utf-8")
+        pack = w / "x_pack.md"
+        pack.write_text("| platform | file | size | duration | check |\n|---|---|---|---|---|\n| x | a.mp4 | 1 MB | 1 s | pass |\n",
+                        encoding="utf-8")
+        o = lambda ext="mp4": ["-o", str(w / "out" / f"x.{ext}")]  # noqa: E731
+        dry = ["--dry-run"]
+        cases = {
+            "probe": [c], "probe --analyze": [c, "--analyze"], "check": [c, "--platform", "x", *dry],
+            "cropdetect": [c, "--seconds", "1", "--samples", "1"],
+            "cropdetect --motion-centre": [c, "--seconds", "1", "--samples", "1", "--motion-centre"],
+            "graphics": [c, "--template", "title", "--title", "T", *o(), *dry],
+            "graphics lower-third": [c, "--template", "lower-third", "--name", "N", "--title", "T", *o(), *dry],
+            "loudness": [c, *o(), *dry], "join": [c, b, *o(), *dry],
+            "join --copy": [c, b, "--copy", "--transition", "none", *o(), *dry],
+            "multicam": [c, b, "--switch", "0-1:0,1-2:1", *o(), *dry],
+            "broll": [c, "--insert", b, "--at", "0.5", "--duration", "0.5", *o(), *dry],
+            "grid": [c, b, "--cols", "2", "--rows", "1", *o(), *dry],
+            "scenes --highlights": [c, "--highlights", "1", "--sheet", str(w / "out" / "s.png"), *dry],
+            "batch": [batch_in, "--recipe", recipe, *dry],
+            "render --write-project": ["--template", "reels", c, "--write-project", str(w / "out" / "p.json"), *dry],
+            "report --pack": ["--pack", pack, *o("html"), *dry],
+            "silence": [c, *o(), *dry], "cut": [c, "--start", "0.5", "--end", "1.5", *o(), *dry],
+            "sync": [c, b, *dry], "export": [c, "--preset", "x", *o(), *dry],
+        }
+        for label, args in cases.items():
+            name = label.split()[0]
+            with self.subTest(case=label):
+                shutil.rmtree(w / "out", ignore_errors=True)
+                (w / "out").mkdir()
+                proc = tool(name, *args, "--json", check=False)
+                doc = json.loads(proc.stdout)
+                doc = doc[0] if isinstance(doc, list) else doc
+                self.assertIn((doc.get("error") or {}).get("kind"), (None, "verification"), proc.stdout[-600:])
+                schema = _contract.output_schema(name, {}, hw=True)
+                props = set(schema.get("properties") or {})
+                self.assertEqual(sorted(set(doc) - props - {"error", "exit_code"}), [],
+                                 f"{label}: keys emitted but not in output_schema")
+
+
+class DocsAgreeWithCodeTests(unittest.TestCase):
+    """#466: text in the contract, docs/contract.md and references/ that had drifted from the code."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tools = {t["name"]: t for t in json.loads(tool("_contract", "--json", "--static").stdout)["tools"]}
+
+    def test_every_tool_description_is_a_whole_sentence(self):
+        """A195: the description was the docstring's first physical line, so 16 ended mid-phrase
+        ("... e.g. a 4x2 wall of", "... with")."""
+        for name, spec in self.tools.items():
+            with self.subTest(tool=name):
+                d = spec["description"]
+                self.assertTrue(d, name)
+                self.assertRegex(d, r"[.!?]$", f"{name}: {d!r} does not end a sentence")
+                self.assertNotRegex(d, r"\b(e\.g|i\.e)\.$", f"{name}: {d!r} ends on an abbreviation")
+        self.assertEqual(_contract.summary_sentence("Composite clips, e.g. a\nwall of takes.\n\nMore."),
+                         "Composite clips, e.g. a wall of takes.")
+
+    @staticmethod
+    def _table(text, heading, first_col):
+        """{first cell: second cell} of the markdown table under `heading` whose header starts with `first_col`."""
+        section = text.split(heading, 1)[1]
+        rows, seen = {}, False
+        for line in section.splitlines():
+            if line.startswith(f"| {first_col} |"):
+                seen = True
+                continue
+            if seen and line.startswith("|---"):
+                continue
+            if seen and line.startswith("|"):
+                cells = [x.strip() for x in line.strip("|").split("|")]
+                rows[cells[0]] = cells[1]
+            elif seen:
+                break
+        return rows
+
+    @staticmethod
+    def _names(cell):
+        """Tool names in a table cell: a parenthesis is a note."""
+        return {n.strip() for n in re.sub(r"\([^)]*\)", "", cell).split(",") if n.strip()}
+
+    def test_contract_md_role_and_verification_tables_match_the_contract(self):
+        """A197: the role and verification-policy tables and the visual-check sentence described a
+        21-tool subset ("exactly for" eight tools; the contract has 27)."""
+        text = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        roles = self._table(text, "### Roles", "Role")
+        got = {}
+        for role_cell, tools_cell in roles.items():
+            role = re.match(r"`([a-z_]+)`", role_cell).group(1)
+            for n in self._names(tools_cell):
+                self.assertNotIn(n, got, f"{n} is in two role rows")
+                got[n] = role
+        self.assertEqual(got, {n: s["role"] for n, s in self.tools.items()})
+        policy = self._table(text, "### Verification policy", "Tool")
+        got = {}
+        for tools_cell, run in policy.items():
+            want = [] if run.startswith("nothing") else [x.strip() for x in run.split(",")]
+            for n in self._names(tools_cell):
+                self.assertNotIn(n, got, f"{n} is in two verification rows")
+                got[n] = want
+        self.assertEqual(got, {n: [t.split("/")[1] for t in s["verification"]["tools"]] for n, s in self.tools.items()})
+        # the sentence: requires_visual_verification is true exactly where the row names look
+        self.assertIn("`requires_visual_verification` is `true` exactly for the tools whose row above names `look`", text)
+        self.assertEqual({n for n, s in self.tools.items() if s["requires_visual_verification"]},
+                         {n for n, v in got.items() if "look" in v})
+
+    def test_flags_md_names_every_timeout_default_that_differs(self):
+        """A201: flags.md said --timeout defaults to 1800 for every script; verify.py's is 600 per step.
+        Every default the parsers state that is not 1800 must be named with its tool."""
+        text = (ROOT / "references" / "flags.md").read_text(encoding="utf-8")
+        shared = next(p for p in text.split("\n\n") if p.startswith("Shared flags"))
+        self.assertIn("default 1800", shared)
+        for name, spec in self.tools.items():
+            desc = spec["input_schema"]["properties"]["timeout"].get("description", "")
+            m = re.search(r"default (\d+)", desc)
+            if m and m.group(1) != "1800":
+                with self.subTest(tool=name):
+                    self.assertIn(f"`{name}.py` per step, default {m.group(1)}", shared)
+        # and -o: the tools with no output flag are named
+        for name, spec in self.tools.items():
+            if "output" not in spec["input_schema"]["properties"]:
+                with self.subTest(tool=name, flag="-o"):
+                    self.assertIn(f"`{name}`", shared.split("`-o` is not shared", 1)[1])
+
+    def test_graphics_dry_run_plans_on_an_input_an_earlier_step_writes(self):
+        """A202: graphics.py --dry-run on a pending input refused "--end must be after --start"
+        (the stub's 0 s read as the clip's end), where overlay.py plans it."""
+        require_ffmpeg_or_skip("ffprobe")
+        w = Path(tempfile.mkdtemp(prefix="ffskill_gfx_pending_", dir=OUT if OUT.is_dir() else None))
+        self.addCleanup(shutil.rmtree, w, True)
+        pending = w / "pending.mp4"
+        proc = tool("graphics", pending, "--template", "title", "--title", "T", "--dry-run", "--json", "-o", w / "g.mp4", check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "completed", proc.stdout[-600:])
+        self.assertTrue(any("placeholder" in n and "length is unknown" in n for n in doc.get("notes") or []), doc.get("notes"))
+        self.assertTrue(any("between(t,0.000,10.000)" in cmd for cmd in doc["commands"]), doc["commands"])
+        self.assertFalse(pending.exists())
+        # an --end the caller gives is used as given
+        doc = json.loads(tool("graphics", pending, "--template", "title", "--title", "T", "--end", "3", "--dry-run", "--json",
+                              "-o", w / "g.mp4").stdout)
+        self.assertTrue(any("between(t,0.000,3.000)" in cmd for cmd in doc["commands"]), doc["commands"])
+        self.assertFalse(any("placeholder" in n for n in doc.get("notes") or []))
 
 
 class SilentResultTests(unittest.TestCase):
@@ -9740,7 +9934,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
                "-i", "aevalsrc='sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.05)':d=8", "-t", "8",
                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", beat)
         cases = {
-            "probe": [c], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
+            "probe": [c], "probe --analyze": [c, "--analyze"], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
             "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
             "metadata": [c, "--title", "t", *o()], "metadata --auto-chapters": [c, "--auto-chapters", *o()],
             "caption": [c, "--text", cues, *o()], "overlay": [c, "--image", logo, *o()],
@@ -9785,10 +9979,10 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
             self.assertIn(kind, (None, "verification"), f"{label}: the dry run was refused or failed\n{proc.stdout[-800:]}")
             if log.exists():
                 decoded.add(name)
-        allowed = set(_contract.DRY_RUN_ANALYSIS) | {"probe"}
-        self.assertEqual(decoded - allowed, set(), "tools that decode under --dry-run but are not in DRY_RUN_ANALYSIS")
-        # and the four the audit named do decode in the modes their notes name
-        self.assertTrue({"metadata", "cut", "render", "batch"} <= decoded, decoded)
+        # #466 A193: probe --analyze decoded while the contract said "none" (probe was exempted here)
+        self.assertEqual(decoded - set(_contract.DRY_RUN_ANALYSIS), set(), "tools that decode under --dry-run but are not in DRY_RUN_ANALYSIS")
+        # and the five the audits named do decode in the modes their notes name
+        self.assertTrue({"metadata", "cut", "render", "batch", "probe"} <= decoded, decoded)
 
     @staticmethod
     def contract_tools():

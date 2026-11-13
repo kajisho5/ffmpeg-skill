@@ -82,6 +82,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.1 — a length or a silence between two milliseconds (the siblings of #493)](#after-381--a-length-or-a-silence-between-two-milliseconds-the-siblings-of-493)
 - [After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)](#after-383--the-millisecond-in-fitpy-brollpy-and-syncpy-and-where-it-changes-nothing-follow-ups-of-470)
 - [After 3.8.5 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-385--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
+- [After 3.8.6 — the contract says what a dry run decodes, and a pending input has no length (#466)](#after-386--the-contract-says-what-a-dry-run-decodes-and-a-pending-input-has-no-length-466)
 <!-- contents:end -->
 
 ## Time limits
@@ -110,8 +111,8 @@ exists. When a decision changes, edit the entry in the same PR.
   beats`, and `render`/`batch`, whose stages run as their own dry runs (audit A236/A193: the
   contract said `none` for these four; a test now derives the list from what each dry run
   decodes, `test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis`). The contract lists them as
-  `analysis_only`, except `probe`, which is `none` with the note that ffprobe still runs (it writes
-  nothing either way); every other tool runs nothing. Code:
+  `analysis_only`, `probe` included since "After 3.8.4" below (it was `none` with the note that
+  ffprobe still runs, while `--analyze` decodes with ffmpeg); every other tool runs nothing. Code:
   `_contract.DRY_RUN_ANALYSIS`. Tests: `test_dry_run_never_runs_ffmpeg_and_writes_nothing`,
   `test_dry_run_plans_rest_on_real_measurements`.
 - **When a measured input is an intermediate an earlier dry-run stage would have written**
@@ -3183,10 +3184,14 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   refuses `bt470m`/`bt470bg` (it says `gamma22`/`gamma28`); setparams takes ffprobe's names. Tests:
   `test_color_keep_alpha_grades_an_rgb_source_tagged_gbr`,
   `test_every_probed_colour_tag_is_spelled_the_way_its_destination_takes_it`.
-- **`color.py` never grades the alpha.** The alpha is split off the source, kept as decoded and merged
-  back (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth), so
-  the written alpha is compared with the source's frame by frame (tolerance 2 of 255), exactly as
-  export's alpha presets are. Code: `color.main()`. Test: as above.
+- **`color.py` never grades the alpha.** The alpha is split off the source and merged back
+  (`alphamerge`) after the grade, which runs at 4:4:4 (8-bit: the grade filters' own depth). The
+  merge is onto that 8-bit picture, so the alpha is written with 8 bits of precision whatever the
+  output line stores: an 8-bit alpha (qtrle, PNG) comes back unchanged, while a 10- or 12-bit one
+  (ProRes 4444) loses its low bits (#463 A155, measured on FFmpeg 6.1.1: a ProRes 4444 source of
+  alpha 513 of 1023, decoded `yuva444p12le`, was written as 514 to 519 of 1023, two 8-bit steps
+  dithered). The written alpha is compared with the source's frame by frame (tolerance 2 of 255),
+  exactly as export's alpha presets are. Code: `color.main()`. Test: as above.
 - **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
   coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
   stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn
@@ -3795,3 +3800,25 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 - **A `batch.py` recipe's unknown key is refused**, as `render.py` refuses a project's
   (`check_keys()`): a recipe has no comment key. Test:
   `test_a_project_or_recipe_value_no_stage_reads_as_written_is_refused`.
+
+## After 3.8.6 — the contract says what a dry run decodes, and a pending input has no length (#466)
+
+- **`probe` is `analysis_only` under `--dry-run`.** It was `none`, with the note that ffprobe
+  still runs, because it writes nothing either way; but `none` is the promise that no ffmpeg runs,
+  and `--analyze` decodes the first 20 s of each video input with ffmpeg to sample picture levels,
+  under `--dry-run` too (audit A193). The levels are measured, not skipped: a dry run of a
+  read-only tool that measures is the measurement, as for `check`. Without `--analyze` only
+  ffprobe runs, and the fake-ffmpeg test still checks that. Code: `_contract.DRY_RUN_ANALYSIS`.
+  Tests: `test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis` (a `probe
+  --analyze` case, and no exemption for `probe`), `test_dry_run_never_runs_ffmpeg_and_writes_nothing`.
+- **`graphics.py --dry-run` on an input an earlier step writes plans to a stated placeholder
+  end.** With no `--end`, a graphic ends at the clip's end, and a pending input's probe stub says
+  0 s, so the plan refused "--end must be after --start" where `overlay.py` (whose default end is
+  open, `gte(t,start)`) plans the same input (audit A202). Its templates animate towards the end
+  (fades, the lower third's slide-out, the progress bar, the countdown's steps), so the plan needs
+  a number: `--start` plus `PENDING_PLACEHOLDER_SECONDS` (10 s), with a `notes` line saying the
+  length is unknown and a real run ends the graphic at the clip's end. An `--end` the caller gives
+  is used as given. Not changed here: the same 0 s stub still makes `silence`, `crop`, `freeze`,
+  `loop`, `redact`, `speedramp` and `multicam` refuse a dry run on a pending input (swept on
+  FFmpeg 6.1.1 and left for a fix of their own). Code: `graphics.main()`. Test:
+  `test_graphics_dry_run_plans_on_an_input_an_earlier_step_writes`.
