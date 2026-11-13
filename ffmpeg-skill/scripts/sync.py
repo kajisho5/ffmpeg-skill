@@ -35,7 +35,7 @@ from typing import Dict, List
 from _common.runner import fail_if_classified
 from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
-from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
 from _common.timeline import output_timecode_args
 from _common.runner import default_selection_maps
 from _common.emit import input_length
@@ -377,7 +377,12 @@ def main() -> int:
             # its length instead of -shortest, which cut the reference's tail whenever the second
             # file started earlier (head_trim > 0) or was simply shorter
             ref_dur = probe(args.reference).get("duration")
-            af_parts = on_clock + drift_af + ([f"adelay={delay_ms}:all=1"] if delay_ms > 0 else []) + ["apad"]
+            # the delay is the measured offset to the sample of the second's rate: at the default
+            # --fine-ms 1 without --fix-drift the offset is a whole millisecond and the text is the
+            # one it was; a finer step (0.25 ms: 0.23425 s) or a drift-adjusted offset (kept to
+            # 0.1 ms) was rounded to `adelay=234` (silence_filter)
+            lead = [silence_filter(sec_sr, lead=offset)] if offset > 0 and round(offset * sec_sr) else []
+            af_parts = on_clock + drift_af + lead + ["apad"]
             cmd += ["-af", ",".join(af_parts)]
             # to the sample of the rate the second's sound is written at, not to the millisecond:
             # the endless apad is ended by this -t alone (length_output_t)
