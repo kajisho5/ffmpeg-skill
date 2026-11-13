@@ -156,6 +156,12 @@ def main() -> int:
     apply_common(args)
     if STATE.plan:
         die("verify.py does not support --plan: its steps run for real (it ignores --dry-run too)")
+    ignored_dry_run = STATE.dry_run
+    if ignored_dry_run:
+        # A240: the flag is accepted and ignored (docs/design-decisions.md "Dry run"); the steps
+        # run and write, so the document says dry_run: false and a note says the flag was ignored
+        STATE.dry_run = False
+        info("--dry-run is ignored by verify.py: its steps run and write their outputs")
 
     files = collect(args.paths)
     tmp = None
@@ -267,11 +273,12 @@ def main() -> int:
         print(report)
     if tmp and not args.keep:
         tmp.cleanup()
+    notes = (["--dry-run is ignored by verify.py: its steps ran and wrote their outputs"] if ignored_dry_run else [])
     if failed:
         die(f"{failed} of {total} verification steps failed", kind="verification", output=None, dry_run=STATE.dry_run,
-            report=args.report, files=results, failed=failed, total=total)
+            report=args.report, files=results, failed=failed, total=total, **({"notes": notes} if notes else {}))
     if args.json:
-        emit(None, report=args.report, files=results, failed=failed, total=total)
+        emit(None, report=args.report, files=results, failed=failed, total=total, **({"notes": notes} if notes else {}))
     return 0
 
 

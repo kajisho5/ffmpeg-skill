@@ -193,6 +193,16 @@ def start_timecode(streams: List[Dict[str, Any]], fmt: Dict[str, Any],
     return {"value": None, "drop_frame": None, "source": None}
 
 
+# EBU R128 integrated loudness is gated over 400 ms blocks: sound shorter than one has a true peak
+# and no integrated loudness. A longer track can read -inf too (every block under the absolute
+# gate), so "too short" is decided on the sound's length, never on a finite peak alone.
+LOUDNESS_BLOCK_SECONDS = 0.4
+
+
+def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
+    return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
+
+
 def probe(path: str, role: str = "input") -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -297,6 +307,9 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
             "codec": s.get("codec_name"),
             "language": (s.get("tags") or {}).get("language"),
             "title": (s.get("tags") or {}).get("title"),
+            # the stream's default disposition as the file states it (caption.py --mode mux
+            # reports a kept track's from here, A60)
+            "default": bool((s.get("disposition") or {}).get("default")),
         } for n, s in enumerate(subs)],
     }
     if video:

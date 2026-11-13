@@ -606,12 +606,26 @@ def kept_deliverables() -> List[str]:
     return [p for p in STATE.delivered if os.path.isfile(p)]
 
 
+def written_on_disk() -> List[str]:
+    """Files this process wrote itself (run()'s outputs, STATE.written) that are still on disk, the
+    deliverables mark_delivered() named excepted. A stopped command's partial output is removed
+    before a stop is reported, so it is not among them."""
+    delivered = {os.path.realpath(p) for p in STATE.delivered}
+    return sorted(p for p in STATE.written if p not in delivered and os.path.isfile(p))
+
+
 def kept_clause() -> str:
-    """How a stopped run's message ends: "nothing was written", or which deliverable it had already
-    written and keeps (not the finished result: the step that was stopped did not run on it)."""
+    """How a stopped run's message ends: "nothing was written" only when no file this run wrote is
+    on disk (A182: every tool but export and render said it after writing its output), else which
+    deliverable it had already written and keeps (not the finished result: the step that was
+    stopped did not run on it), or which files it had written before the stop."""
     kept = kept_deliverables()
     if not kept:
-        return "nothing was written"
+        written = written_on_disk()
+        if not written:
+            return "nothing was written"
+        return (f"{', '.join(written)} had already been written by this run before the stop and "
+                f"{'is' if len(written) == 1 else 'are'} still on disk")
     return (f"{', '.join(kept)} had already been written by this run and {'is' if len(kept) == 1 else 'are'} kept, "
             "without the step that was stopped (pass --overwrite to make it again)")
 

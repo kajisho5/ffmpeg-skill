@@ -33,7 +33,7 @@ import sys
 from typing import Dict, List, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
-from _common.emit import note, record_fallback, warn
+from _common.emit import note, record_fallback, record_skip, warn
 from _common.decision import av_trim, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
 from sync import measure_offset
@@ -179,9 +179,13 @@ def main() -> int:
     offsets = [0.0]
     ratios = [1.0]
     conf = [1.0]
+    # A131: per camera, why --fix-drift measured no drift (too_short / low_confidence, as sync.py
+    # says it); None when it was measured, and for the reference, which is the clock (0 by definition)
+    drift_skipped: List[object] = [None]
     for p in args.inputs[1:]:
         off, score = measure_offset(args.inputs[0], p, 0.0, args.analyze_seconds, 20.0, args.max_offset, 1.0)
         ratio = 1.0
+        skipped_reason = None
         if args.fix_drift:
             ref_dur = metas[0]["duration"] or 0.0
             sec_dur = probe(p)["duration"] or 0.0
@@ -189,7 +193,11 @@ def main() -> int:
             window = 60.0
             head_len = min(args.analyze_seconds, overlap_end)
             tail_start = overlap_end - window
-            if tail_start > head_len / 2 + 5:
+            if tail_start <= head_len / 2 + 5:
+                skipped_reason = "too_short"
+                record_skip(f"{p} too short to measure drift reliably; skipping drift correction", "drift_correction_skipped",
+                            path=p, reason=skipped_reason, overlap_seconds=round(overlap_end, 3), drift_window=window)
+            else:
                 ref_start, sec_start = tail_start, tail_start - off
                 if sec_start < 0:
                     ref_start -= sec_start
@@ -204,10 +212,18 @@ def main() -> int:
                 if elapsed > 0 and sc > 0.1:
                     ratio = 1.0 - residual / elapsed
                     off = off + (ratio - 1.0) * (head_len / 2)
+                else:
+                    skipped_reason = "low_confidence"
+                    record_skip(f"could not measure drift with confidence for {p}; skipping drift correction",
+                                "drift_correction_skipped", path=p, reason=skipped_reason,
+                                confidence=round(max(0.0, sc), 3), measured_over_seconds=round(elapsed, 2))
+        drift_skipped.append(skipped_reason)
         offsets.append(off)
         ratios.append(ratio)
         conf.append(score)
-        info(f"{p}: offset {off:+.3f}s (confidence {score:.2f})" + (f", drift {(ratio - 1) * 1e6:+.0f} ppm" if args.fix_drift else ""))
+        info(f"{p}: offset {off:+.3f}s (confidence {score:.2f})"
+             + (f", drift {(ratio - 1) * 1e6:+.0f} ppm" if args.fix_drift and not skipped_reason else
+                f", drift not measured ({skipped_reason})" if args.fix_drift else ""))
         if score < 0.1:
             warn(f"{p} has low correlation confidence ({score:.2f}); check that it shares an audio event with the reference before "
                  "trusting this offset", "sync_low_confidence", path=p, confidence=round(score, 3))
@@ -215,7 +231,8 @@ def main() -> int:
     report = {"inputs": args.inputs, "offsets_seconds": [round(o, 4) for o in offsets],
               "confidence": [round(c, 3) for c in conf]}
     if args.fix_drift:
-        report["drift_ppm"] = [round((r - 1) * 1e6, 1) for r in ratios]
+        report["drift_ppm"] = [None if why else round((r - 1) * 1e6, 1) for r, why in zip(ratios, drift_skipped)]
+        report["drift_skipped_reason"] = drift_skipped
     if args.offsets_only:
         emit(None, **report)
         if not args.json:

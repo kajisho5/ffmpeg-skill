@@ -202,6 +202,12 @@ def main(force_route: Optional[str] = None) -> int:
     fps = meta["video"].get("fps")
     s = time_arg(args.start, "--start", fps) if args.start else 0.0
     e = time_arg(args.end, "--end", fps) if args.end else dur
+    # the picture's own length first: sound that runs on keeps the container open past the last frame
+    picture_len = meta["video"].get("duration") or dur
+    if picture_len and s >= picture_len:
+        # A172: a graphic that starts after the picture ends draws nothing (verified: true before)
+        die(f"--start {s:g} is at or after the end of the video ({picture_len:.3f} s): nothing would be drawn",
+            hint="give a --start inside the clip")
     if e <= s:
         die("--end must be after --start")
     en = f"enable='between(t,{s:.3f},{e:.3f})'"

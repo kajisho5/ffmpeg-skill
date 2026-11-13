@@ -388,6 +388,12 @@ def main() -> int:
     end = time_arg(args.end, "--end", fps) if args.end else None
     if start is not None and end is not None and end <= start:
         die("--end must be after --start")
+    main_len = (meta.get("video") or {}).get("duration") or meta.get("duration")
+    if start is not None and main_len and start >= main_len:
+        # A172: an overlay that starts after the picture ends draws nothing, and the run said
+        # verified: true; --place already refuses the same case
+        die(f"--start {start:g} is at or after the end of the video ({main_len:.3f} s): nothing would be drawn",
+            hint="give a --start inside the clip")
     if not 0 <= args.opacity <= 1:
         die("--opacity must be within 0..1")
     if args.chromakey and not args.video:
