@@ -239,6 +239,8 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
 # on PATH). "analysis_only": ffmpeg still decodes/measures the input under --dry-run, but nothing
 # is encoded and no file is written. Every other tool with the flag runs no ffmpeg at all.
 DRY_RUN_ANALYSIS = {
+    # #466 A193: probe was "none" with an ffprobe note while --analyze decoded with ffmpeg
+    "probe": "read-only tool; --dry-run changes nothing: ffprobe still runs, and only with --analyze ffmpeg decodes the first 20 s of each video input to sample picture levels",
     "sync": "audio is decoded to find the offset; the aligned output is not written",
     "multicam": "audio is decoded to align the cameras; the switched output is not written",
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
@@ -255,7 +257,6 @@ DRY_RUN_ANALYSIS = {
     "overlay": "only for a multi-line --text on FFmpeg 8.0, 8.0.1 or 8.1.0: one drawtext measures each line on a generated one-frame picture (the input is not read), so the planned per-line positions are the ones a run uses; otherwise no ffmpeg runs and the composited output is never written",
 }
 DRY_RUN_NOTES = {
-    "probe": "read-only tool; --dry-run changes nothing (ffprobe still runs)",
     "verify": "not supported: the flag is accepted but the steps run and outputs are written",
 }
 
@@ -581,7 +582,7 @@ def alpha_result_schema(name: str) -> Dict[str, Any]:
     out["alpha_codec"]["description"] += " (an RGB source that is neither HDR nor BT.2020, on a prores4444/vp9 line has no matrix to keep: it is converted to BT.709 and tagged so; an HDR or BT.2020 one is not: FFmpeg's own conversion makes its YUV, as before)"
     out["alpha_dropped"] = {"type": "boolean", "description": "true when the source's alpha is used (a frame below opaque, or a stored alpha plane that could not be read) and the output does not keep it (color.py --retag too, when its copy fell back to an H.264 re-encode): without --keep-alpha the `alpha` verification step fails (reason alpha_dropped, attribution artifact, with an alpha_dropped warning); with --drop-alpha there is no such step and a note says the alpha was dropped on purpose. Absent on a source without alpha"}
     if name == "color":
-        out["alpha_codec"]["description"] += ". --correct / --lut only: the grade works on the colour (at 4:4:4) and the source's alpha is merged back unchanged; the `alpha` step compares the written alpha with the source's frame by frame, tolerance 2 of 255 (comparison {ok, paired, worst_delta, worst_frame}; frames {expected, measured}; written {codec, pix_fmt, alpha_plane})"
+        out["alpha_codec"]["description"] += ". --correct / --lut only: the grade works on the colour (at 4:4:4) and the source's alpha is merged back onto that 8-bit picture (an 8-bit alpha unchanged; a 10- or 12-bit ProRes 4444 alpha keeps 8 bits of precision); the `alpha` step compares the written alpha with the source's frame by frame, tolerance 2 of 255 (comparison {ok, paired, worst_delta, worst_frame}; frames {expected, measured}; written {codec, pix_fmt, alpha_plane})"
     else:
         out["alpha_codec"]["description"] += ". Drawn on the input's alpha at 4:4:4 (layers composited with their alpha, text drawn into it); the `alpha` step (property alpha_at_least_source) passes when the written stream stores an alpha plane, every frame's alpha is at or above the source's (tolerance 2 of 255) and the output did not turn opaque in every frame the source was transparent in (reason: opaque_everywhere, alpha_below_source or no_alpha_plane when it fails)"
     out["alpha_codec"]["description"] += ". A source that stores an alpha plane whose alpha could not be read is never taken as opaque: its step fails with reason source_alpha_unmeasured"
@@ -608,6 +609,60 @@ NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "cut", "deinterlace"
                                  "sphere", "straighten"})
 
 
+# Top-level keys a tool emits that its own branch in output_schema() does not list (#466 A194: the
+# schemas were written by hand and left these out). tests/test_contract.py's
+# test_every_emitted_top_level_key_is_in_the_output_schema runs each tool and fails on a key that
+# is in neither.
+EMITTED_KEYS: Dict[str, Dict[str, Any]] = {
+    "cropdetect": {
+        "file": {"type": "string", "description": "the input path, as given"},
+        "source_width": {"type": "integer", "description": "the displayed frame's width (a 90/270 degree rotation swaps the stored size; a non-square-pixel source is squared at its display aspect): the frame crop and motion_centre are in"},
+        "source_height": {"type": "integer", "description": "the displayed frame's height, as source_width"},
+        "crop": {"type": ["object", "null"], "description": "{width, height, x, y}: the rectangle cropdetect read most often over the sampled windows, in source pixels (the full frame when there are no bars); null when it produced no reading"},
+        "confidence": {"type": "number", "description": "present with a crop: the share of readings (0..1) that gave that rectangle"},
+        "motion_centre": {"type": "array", "description": "--motion-centre only: [{time, x, y, x_frac, y_frac, motion}] per second over the same windows; x/y null for a window with no measured motion. Report only"}},
+    "graphics": {
+        "template": {"type": "string", "description": "the --template drawn"},
+        "text_renderer": {"enum": ["ass", "drawtext"], "description": "what drew the text: libass (a generated .ass) or drawtext"},
+        "script": {"type": "string", "description": "the writing system detected in the text, which picks the font (latin, han, ...)"},
+        "ass": {"type": "string", "description": "text_renderer ass only: the generated .ass path (--write-ass, else <output>_gfx.ass); under --dry-run the path that would be written"},
+        "emoji": {"type": "object", "description": "text with emoji only: {mode, count, clusters, assets, missing, overlays}"},
+        "broken_inside_word": {"type": "integer", "description": "present when above 0: words hard-sliced because they did not fit a line alone"}},
+    "loudness": {
+        "loudnorm_mode": {"enum": ["linear", "dynamic"], "description": "--dry-run only (a real run reports it in result): the mode loudnorm's planned pass 2 runs in for the measured input"}},
+    "join": {
+        "reencoded": {"type": "boolean", "description": "--copy --transition none only: false, the clips were joined by stream copy"},
+        "audio_substituted": {"type": "array", "items": {"type": "string"}, "description": "a re-encoded video join: the clips with no audio stream, whose span of the join is generated silence (notes says the same); [] when every clip has sound"},
+        "inputs_duration": {"type": ["number", "null"], "description": "the clips' own total length, seconds"},
+        "transition_shortening": {"type": ["number", "null"], "description": "how much the transitions took out of inputs_duration, seconds"}},
+    "multicam": {
+        "inputs": {"type": "array", "items": {"type": "string"}, "description": "the input paths as given, reference first; a camera number in cuts indexes this list"}},
+    "broll": {
+        "cutaways": {"type": "array", "description": "[{insert, at, end, from}] per cutaway: the B clip, where it starts and ends on A's timeline (seconds), and where in B it starts"},
+        "audio": {"enum": ["a", "b", "mix"], "description": "--audio: what plays under a cutaway"}},
+    "grid": {
+        "cols": {"type": "integer"}, "rows": {"type": "integer"},
+        "clips": {"type": "integer", "description": "how many input clips the grid holds"}},
+    "scenes": {
+        "highlights": {"type": "array", "description": "--highlights only: [{start, end, duration}] the proposed ranges"},
+        "highlights_total": {"type": "number", "description": "--highlights only: the ranges' total seconds"},
+        "highlights_rank_by": {"enum": ["audio", "duration"], "description": "--highlights only: --rank-by"},
+        "sheet": {"type": "string", "description": "--sheet only: the contact sheet path (under --dry-run the path that would be written; nothing is drawn)"}},
+    "batch": {
+        "jobs": {"type": "integer", "description": "the parallelism actually applied"},
+        "jobs_requested": {"type": ["integer", "null"], "description": "the --jobs asked for (auto resolved to a number)"},
+        "wall_seconds": {"type": "number", "description": "the batch's wall clock"},
+        "item_seconds_total": {"type": "number", "description": "the sum of the per-item times"},
+        "timed_out": {"type": "boolean", "description": "whether the shared --timeout budget ran out (a timed-out item's row carries skipped: timeout)"}},
+    "render": {
+        "template": {"type": "string", "description": "--write-project only: the template the written project was filled from"},
+        "pack": {"type": "array", "description": "--template naming several destinations (a social pack) only: one row per destination {platform, file, path, size_bytes, duration, check, guidance, ok}; output is then the <stem>_pack.md table"},
+        "outputs": {"type": "array", "items": {"type": "string"}, "description": "a social pack only: each destination's output path"}},
+    "report": {
+        "pack": {"type": "array", "description": "--pack only: the pack table's rows as {column: cell} objects, as read from the file"}},
+}
+
+
 def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str, Any]:
     """What the tool prints on stdout with --json (keys observed in the implementation). `hw`: the
     tool takes --hw, so its `notes` can also carry a VideoToolbox encode's quality line."""
@@ -618,7 +673,15 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                                "timecode": {"type": "object", "description": "3.0.0: the source's start timecode {value, drop_frame, source}: the first HH:MM:SS[:;.]FF timecode tag from the video stream, then a tmcd data stream, then the container; all three null when none carries one"},
                                "chapters": {"type": "array", "description": "the container's chapter markers [{index, start, end, title}]"},
                                "subtitle_stream_details": {"type": "array", "description": "every subtitle stream in file order [{index (the n of -map 0:s:n), codec, language, title, default (the stream's default disposition)}]"},
-                               "keyframes": {"type": "array", "description": "--keyframes-near only: one entry per time [{at, window, keyframes (the video keyframes within window seconds of it), before (the nearest of those at or before it, or null when none is within the window), after (at or after it, likewise)}], seconds from the file's start; a failed keyframe read fails the run (kind ffmpeg)"}},
+                               "keyframes": {"type": "array", "description": "--keyframes-near only: one entry per time [{at, window, keyframes (the video keyframes within window seconds of it), before (the nearest of those at or before it, or null when none is within the window), after (at or after it, likewise)}], seconds from the file's start; a failed keyframe read fails the run (kind ffmpeg)"},
+                               "start_time": {"type": ["number", "null"], "description": "where the container's timeline starts, seconds (an MPEG-TS file often starts above 0)"},
+                               "bitrate": {"type": ["integer", "null"], "description": "the container's overall bit rate, bits per second, as ffprobe reads it; null when it states none"},
+                               "subtitle_streams": {"type": "integer", "description": "how many subtitle streams the file carries"},
+                               "data_streams": {"type": "integer", "description": "how many data streams (a tmcd timecode track, telemetry) the file carries"},
+                               "stream_counts": {"type": "object", "description": "{video, audio}: picture streams (a cover picture is not one) and sound streams"},
+                               "tags": {"type": "object", "description": "the container's title, artist, album, comment, date and genre tags that are set, keys lower-cased"},
+                               "audio_streams": {"type": "array", "description": "every audio stream in file order [{index (the n of -map 0:a:n), codec, channels, channel_layout, sample_rate, language, title}]"},
+                               "levels": {"type": "object", "description": "--analyze only, on an input with a video stream: picture levels sampled at 2 fps over the first 20 s, on an 8-bit scale inferred from the values measured (a 10-bit or deeper picture whose luma never passes code 255 is read as 8-bit and left unscaled) {scale, y_min, y_max, y_avg, y_low_p5, y_high_p95, saturation_avg, looks_like_log, note}; {error} when no frame was analysed. Measured under --dry-run too"}},
                 "additionalProperties": True}
     base = {"status": {"enum": ["completed"]}, "output": {"type": ["string", "null"], "description": "path written, or null"},
             "dry_run": {"type": "boolean"}, "commands": {"type": "array", "items": {"type": "string"}, "description": "the ffmpeg command lines this run planned or ran to write its output (render.py and waveform.py: their stages' too); a measurement pass is listed only where the tool records it (e.g. loudness.py pass 1, check.py, stabilize.py pass 1), and batch.py lists none of its steps' (each results row's step documents carry their own)"},
@@ -781,7 +844,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "drift_ppm": {"type": "array", "items": {"type": ["number", "null"]}, "description": "--fix-drift: per input, the drift measured against the reference (the reference itself 0, the clock); null for a camera whose drift was not measured, with the reason in drift_skipped_reason (also a diagnostics.skipped entry, drift_correction_skipped)"},
                  "drift_skipped_reason": {"type": "array", "items": {"enum": ["too_short", "low_confidence", None]}, "description": "--fix-drift: per input, why its drift was not measured (too_short: no tail window far enough from the head; low_confidence: the tail did not correlate), null when it was and for the reference"}}
     elif name == "join":
-        extra = {"mode": {"enum": ["video", "audio"]}, "clips": {"type": "integer"}, "transition": {"type": "string"},
+        extra = {"mode": {"enum": ["video", "audio", "copy"], "description": "copy: --copy --transition none wrote a stream copy"}, "clips": {"type": "integer"}, "transition": {"type": "string"},
                  "expected_duration": {"type": ["number", "null"], "description": "clip lengths minus the transitions; null under --dry-run while an input is pending (its length is unknown)"},
                  "frame_rate": {"type": "string", "description": "video mode only: the join's frame rate as an exact fraction (\"30000/1001\"), the rate every clip length and xfade offset is counted in"},
                  "clip_frames": {"type": "array", "items": {"type": "integer"}, "description": "video mode only: per clip, the whole frames of frame_rate it holds in the join (its picture's, or the frames that cover a sound running more than a frame past it); its sound is cut to the samples those frames last. A pending --dry-run input counts 0"},
@@ -802,6 +865,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present with `silent`: which tracks were silent and how to refuse them"},
                  "timing": {"type": "object", "description": "#486: {tempo, atempo, length_samples, sample_rate}: the --tempo factor (null without it), the atempo stages (each 0.5..2.0, [] at tempo 1) whose product it is, --length-samples (null without it) and the sample rate that count is in (null when not measured yet); with --length-samples a length_samples verification step counts the written track's decoded samples (exact for PCM/FLAC/ALAC, within tolerance_samples, one codec frame, for a lossy codec)"},
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, channel (--channel N, the 0-based channel kept, else null), sample_rate (--sample-rate, else null; both are read back from the output as the channels / sample_rate verification steps), effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, ratio, attack_ms, release_ms, amount_db actually used)"}}
+    for key, prop in EMITTED_KEYS.get(name, {}).items():
+        extra.setdefault(key, prop)
     if name in ("overlay", "graphics", "caption", "grid"):
         extra["font_used"] = FONT_USED_SCHEMA
     if name in ALPHA_LINE_TOOLS:
@@ -1672,6 +1737,18 @@ def _merge_optional(base: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> 
     return out
 
 
+_SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)(?<!\betc)[.!?](?=\s|$)")
+
+
+def summary_sentence(docstring: str) -> str:
+    """The docstring's first sentence, its wrapped lines joined (#466 A195: the first physical line
+    cut 16 descriptions mid-phrase). A first paragraph with no full stop is taken whole."""
+    para = re.split(r"\n\s*\n", docstring.strip(), maxsplit=1)[0]
+    joined = " ".join(line.strip() for line in para.splitlines())
+    end = _SENTENCE_END.search(joined)
+    return joined[:end.end()] if end else joined
+
+
 def tool_spec(name: str, version: str) -> Dict[str, Any]:
     if name not in TOOL_META:
         # a public script without metadata is drift: fail loudly instead of guessing its role or capabilities
@@ -1696,7 +1773,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         "id": f"{SKILL_ID}/{name}",
         "name": name,
         "version": version,
-        "description": (parser.description or "").strip().splitlines()[0] if parser.description else "",
+        "description": summary_sentence(parser.description or ""),
         "executable": f"scripts/{name}.py",
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
@@ -2079,7 +2156,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
                                       "hidden .<output>.ffskill-audit.jsonl beside the output, and a cache event's .ffskill-audit.jsonl in the "
                                       "cache directory (render.py --cache DIR) or the batch's output_dir. Never written under --dry-run; a write that "
                                       "fails is a diagnostics.warnings entry (audit_log_unwritable), never a failure"},
-            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "ffmpeg or ffprobe not on PATH, or older than the supported 6.1 (error.reason ffmpeg_unsupported)", "timeout": "one ffmpeg/ffprobe run exceeded --timeout (default 1800 s, FFMPEG_SKILL_TIMEOUT) and was killed; partial output removed; exit 124", "verification": "the tool ran but its result failed the requested check: check.py platform rows (checks attached), render.py's check stage (output written, check attached), batch.py items (results attached), verify.py steps (files attached), color.py --retag (output written, but ffprobe does not read the requested colour tags on it); exit 1", "interrupted": "the tool received SIGINT or SIGTERM: the running ffmpeg (or sibling script) was stopped and its partial output removed; exit 130 or 143"},
+            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "something the run needs is not installed: ffmpeg or ffprobe not on PATH, or older than the supported 6.1 (error.reason ffmpeg_unsupported) (both exit 127); an encoder this build lacks for --codec, an export.py preset or an alpha line (encoder_missing); the libvpx-vp9 decoder for a VP9 source with an alpha layer (decoder_missing); no local speech-to-text engine for --transcribe (asr_engine_missing), or a named --engine that is not installed (these exit 1)","timeout": "one ffmpeg/ffprobe run exceeded --timeout (default 1800 s, FFMPEG_SKILL_TIMEOUT; verify.py's --timeout is per step, default 600 s) and was killed; partial output removed; exit 124", "verification": "the tool ran but its result failed the requested check: check.py platform rows (checks attached), render.py's check stage (output written, check attached), a render.py --template social pack with a destination that failed (pack rows attached; a destination that timed out or was interrupted gives that kind instead), batch.py items (results attached), verify.py steps (files attached), color.py --retag (output written, but ffprobe does not read the requested colour tags on it), loudness.py (output written, its true peak still above --tp after the re-encodes; result attached), join.py --copy (the stream-copied join does not hold the clips it was given; it is not moved to the output path, verification attached); exit 1", "interrupted": "the tool received SIGINT or SIGTERM: the running ffmpeg (or sibling script) was stopped and its partial output removed; exit 130 or 143"},
             "success_criterion": "exit 0 AND the output exists AND is non-empty AND ffprobe reads a stream from it; only then is status completed printed and the output probe attached",
         },
         "capabilities": caps,

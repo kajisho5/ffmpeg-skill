@@ -23,8 +23,14 @@ name: release
 # that tag, publishes a GitHub Release with notes extracted from
 # CHANGELOG.md's matching section, and publishes to npm. A push to main that
 # ends up not changing the version at all (nothing mergeable since the last
-# release, e.g. this very bump commit -- see below) is a no-op: every
-# remaining step is skipped.
+# release, e.g. this very bump commit -- see below) creates no tag, Release,
+# npm publish, Pages rebuild or plugin-branch commit: those steps are skipped.
+# The MCP Registry step still runs on it (unless the bump was superseded): it
+# asks npm and the registry about server.json's version and publishes the entry
+# only when npm has the version and the registry does not, so a re-run or a
+# later push finishes an entry an earlier run failed to publish -- while that
+# version is still the one on main; an older version's entry is not gone back to
+# (docs/design-decisions.md, "After 3.4.3").
 #
 # This runs as one job triggered directly by the push to main, not chained
 # through a separate tag-push trigger, because a tag (or, now, a bump commit)

@@ -211,8 +211,11 @@ printing one line — `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`.
   already resolves a file for you on Windows, so this bites only a hand-built
   drawtext call. More: `references/ci-platform-pitfalls.md`.
 - Han characters alone (no kana, no hangul) are read as Chinese. Japanese or
-  Korean hanja text with no kana needs `--lang ja` / `--lang ko`
-  (`caption.py --language` is the same flag), or `"lang"` in brand.json.
+  Korean hanja text with no kana needs `--lang ja` / `--lang ko` on `graphics.py`
+  (`caption.py --language`, alias `--lang`, is the same hint), or `"lang"` in the
+  brand.json those two read. `overlay.py` has no such flag and its brand.json
+  `"lang"` is not read: name the face (`--font "Noto Sans CJK JP"` or
+  `--font-file`).
 - An explicit `--font`, an explicit `--font-file`, or a font your brand file
   itself names is always kept, even when fontconfig says it does not cover the script: you get one info
   line saying so, not a silent substitution. A brand file that never names a
@@ -400,8 +403,11 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 - `Look: not needed` in the report; `Check:` still applies for loudness
   (`check.py file.wav --platform podcast` measures LUFS and true peak).
 - Scripts that need a picture (`fit`, `caption`, `overlay`, `graphics`,
-  `color`, `export`, `scenes`, `look`) refuse an audio file with
-  "input has no video stream". Say so instead of forcing a video wrapper.
+  `color`, `export`, `look`; the contract's `video_required` lists the rest)
+  refuse an audio file with "input has no video stream". Say so instead of
+  forcing a video wrapper. `scenes` takes one as a single scene (`--beats`,
+  `--audio-peaks`, `--speech`, `--highlights`); its `--sheet` and `--shots`
+  refuse it.
 
 ### Audio-only recipes
 

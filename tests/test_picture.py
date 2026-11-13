@@ -1121,6 +1121,16 @@ class PictureTests(MediaFixtures):
                 self.assertEqual(err["kind"], "input", err)
                 self.assertIn("offset_mux_en.srt before 0", err["message"])
                 self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
+        # every track is checked, not the first alone: here the first keeps its second cue and
+        # only the added track would be empty
+        short = OUT / "offset_mux_short.srt"
+        short.write_text("1\n00:00:00,200 --> 00:00:00,400\nmijikai\n", encoding="utf-8")
+        proc = script("caption.py", self.src, "--mode", "mux", "--srt", f"{files['en']}:en", "--srt", f"{short}:ja",
+                      "--offset=-1", "-o", empty, "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input", err)
+        self.assertIn("offset_mux_short.srt before 0", err["message"])
+        self.assertEqual(sorted(p.name for p in OUT.glob("offset_mux_empty*")), [])
         # text cues are a cue source too: every one moved before 0 is the same refusal, not an
         # empty SRT (or, with a frame rate to report in, an IndexError)
         cue_file = OUT / "offset_mux_cues.txt"
