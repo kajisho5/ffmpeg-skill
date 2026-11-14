@@ -1268,15 +1268,25 @@ class Audit459AudioTests(MediaFixtures):
             "S chain, no mix": f"[0:a:0]{','.join(full)},{lim},{tail}[out]",
         }
         rows = []
+        keep = ("A full", "B no limiter", "D no afftdn", "E no deessers", "F no compressors", "G highpass only", "S chain, no mix")
         for name, graph in variants.items():
+            if name not in keep:
+                continue
             out = OUT / "a459_diag.wav"
             if out.exists():
                 out.unlink()
-            proc = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin", "-y", "-i", str(self.voice),
-                                   "-i", str(self.bed), "-filter_complex", graph, "-map", "[out]", "-c:a", "pcm_s16le", str(out)],
-                                  capture_output=True, text=True)
-            size = out.stat().st_size if out.exists() else -1
-            rows.append(f"{name}: rc={proc.returncode} bytes={size} stderr={proc.stderr.strip()[-300:]!r}")
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(self.voice),
+                            "-i", str(self.bed), "-filter_complex", graph, "-map", "[out]", "-c:a", "pcm_s16le", str(out)],
+                           capture_output=True, text=True)
+            raw = out.read_bytes() if out.exists() else b""
+            pr = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+                                 "-show_chapters", str(out)], capture_output=True, text=True)
+            pv = subprocess.run(["ffprobe", "-v", "debug", "-show_format", str(out)], capture_output=True, text=True)
+            pf = subprocess.run(["ffprobe", "-v", "error", "-f", "wav", "-show_format", str(out)], capture_output=True, text=True)
+            dec = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out), "-f", "null", "-"], capture_output=True, text=True)
+            rows.append(f"{name}: bytes={len(raw)} head={raw[:96].hex()} probe_rc={pr.returncode} probe_err={pr.stderr.strip()[-200:]!r} "
+                        f"forced_wav_rc={pf.returncode} forced_err={pf.stderr.strip()[-200:]!r} decode_rc={dec.returncode} "
+                        f"decode_err={dec.stderr.strip()[-200:]!r} debug_tail={pv.stderr.strip()[-900:]!r}")
         self.fail("\n".join(rows))
 
     @staticmethod
