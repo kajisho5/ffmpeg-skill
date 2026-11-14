@@ -4717,35 +4717,43 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   #530). Not measured here: a case-insensitive volume (the CI runners on macOS and Windows have one). Code:
   `_common.runner.same_file()`. Tests: `test_a_second_name_for_the_input_is_refused`,
   `test_caption_refuses_the_input_as_output_before_writing_a_sidecar`.
-- **A stale output lock is taken over under a second lock** (A186). The run that judged it stale
-  creates `<lock>.takeover` with O_EXCL, judges the lock again, removes it only if it is still
-  stale, and removes the guard; the other run then meets either no lock or a held one. A lock
-  found gone under the guard is not removed (a run that took it over may be creating its own), and
-  the O_EXCL create decides. A guard younger than 60 s (`TAKEOVER_STALE`) is a takeover in
-  progress and the run is refused as `output_locked` with `why: takeover_in_progress` and the
-  guard's path. An older one was left by a run killed inside those few lines and is recovered, but
-  never removed by its name alone: two runs that found the same expired guard used to both remove
-  "it", the second removing the guard the first had just made, and both went on inside (review of
-  #530). Now each run that judged it expired creates a claim named after that guard's device,
-  inode and time with O_EXCL; only the run whose create succeeds looks again and removes the guard
-  if it is still that one; any other run, or one that finds another guard there, removes nothing
-  and is refused. The run that owns the guard removes it under the same claim when it is done: a
-  look at the name followed by a removal is not atomic, and an owner paused between the two until
-  its guard expired removed the replacement a recoverer had made meanwhile, which let a third run
-  in beside the recoverer. So exactly one of the owner and a recoverer removes a given guard, and
-  an owner that cannot get the claim leaves its guard to the run that holds it. A run killed while
-  it holds a claim leaves the claim, and that guard then stays until both are removed by hand. The lock itself appears with its holder's pid and deadline
-  already in it: they are written to a file of the run's own, which is hard-linked to the lock's
-  name (atomic, and refused when the name exists, as O_EXCL is). A lock created empty and written
-  after read as `unreadable`, which is stale, to a run that looked in between; where no hard link
-  can be made (FAT, some network shares) it still is. On Windows a process that has exited is dead
-  even while a handle to it is open (its exit code is read): the Windows CI judged such a child
-  alive and refused its stale lock as held. Not changed: a holder that outlived its own deadline still
-  removes the lock by name when it ends, which can be the lock of the run that took it over. Code:
-  `_OutputLock._remove_stale()`, `_remove_guard()`, `_create()`, `_pid_dead()`. Tests:
-  `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`,
-  `test_two_runs_recovering_one_expired_takeover_guard_do_not_both_go_in`,
-  `test_the_owner_of_a_takeover_guard_never_removes_a_replacement`,
+- **A stale output lock is taken over inside a section the operating system holds** (A186). Two
+  runs that both found the same stale lock used to both remove "it": the second removal took the
+  first run's new lock, and both wrote the output. A run that judges the lock stale now takes the
+  section first: `<lock>.takeover`, locked through the OS (`flock` on POSIX, `msvcrt.locking` on
+  Windows). Inside it the run judges the lock again, removes it only if it is still stale, and
+  creates its own lock before it leaves; a lock found gone there is not removed, and its own
+  create decides. A run that cannot get the section within 2 s (`SECTION_WAIT`) is refused as
+  `output_locked`, `why: takeover_in_progress`. A run also removes its own lock at its end inside
+  the section, and on POSIX only while the file at that name is still its own; when a takeover of
+  its lock is under way it leaves the lock to that run. The section belongs to the run while it
+  lives and is released by the kernel when the run closes it or ends, killed included, so a run
+  paused inside it for any length of time still keeps every other run out, and nothing is left
+  for another run to judge or recover. Through the review of #530 the section was a file whose
+  existence was the lock, recovered by others once it was older than 60 s: a run paused past that
+  lost it without knowing, a contender took the lock over, and the paused run then removed the
+  contender's fresh lock, so both held one; three rounds each closed one window of that and left
+  another. The section's file means nothing by itself: its name is removed when the section is
+  left. On POSIX that happens while the lock is still held, and a run that had opened the old file
+  finds, once it has the lock, that the name is another file or none, and starts again. On
+  Windows a file another run has open cannot be removed, so the holder closes it first and a
+  failed removal leaves the empty file for the next run to use. Where the filesystem gives no OS
+  file lock (some network filesystems), no weaker scheme stands in: a stale lock is not taken over
+  (`why: takeover_unavailable`, and the refusal says to delete the lock by hand), while a run that
+  finds no lock is unaffected. The lock itself appears with its holder's pid and deadline already
+  in it: they are written to a file of the run's own, which is hard-linked to the lock's name
+  (atomic, and refused when the name exists, as O_EXCL is). A lock created empty and written after
+  read as `unreadable`, which is stale, to a run that looked in between; where no hard link can be
+  made (FAT, some network shares) it still is. On Windows a process that has exited is dead even
+  while a handle to it is open (its exit code is read): the Windows CI judged such a child alive
+  and refused its stale lock as held. Not measured here: the Windows branch (`msvcrt.locking`,
+  the removal of an open file) runs on the Windows CI job only, and a filesystem without `flock`.
+  Code: `_common.runner._TakeoverSection`, `_OutputLock._take_over()`, `__exit__()`, `_create()`,
+  `_pid_dead()`. Tests: `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`,
+  `test_a_run_paused_in_a_takeover_keeps_every_other_run_out`,
+  `test_a_run_that_opened_the_section_before_its_name_went_starts_again`,
+  `test_a_killed_holder_releases_the_takeover_section`,
+  `test_without_an_os_file_lock_a_stale_lock_is_left_for_a_person`,
   `test_an_output_lock_is_never_seen_without_its_pid`,
   `test_a_finished_process_is_dead_while_its_handle_is_open`.
 - **`batch.py` removes the directories it created when no item started** (A187): a refusal before

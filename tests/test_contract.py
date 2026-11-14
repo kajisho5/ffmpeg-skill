@@ -11171,164 +11171,188 @@ class ReviewOf530Tests(unittest.TestCase):
         self.assertEqual(set(results["specs"]), set(saved_specs))
         self.assertTrue(results["list"])
 
-    # 3. the expired takeover guard
+    # 3. the takeover section: an OS-held lock, so nothing in it expires or is recovered
 
-    def test_two_runs_recovering_one_expired_takeover_guard_do_not_both_go_in(self):
-        """Two runs that found the same expired `.takeover` guard both removed "it": the second
-        removed the first's new guard, both judged the stale lock inside, and the second's late
-        removal took the first run's new output lock, so both wrote the output."""
-        import threading
-        from unittest import mock
+    def _stale_lock(self, name):
         runner = sys.modules["_common.runner"]
-        out = str(self.work / "guarded.mp4")
-        lock = Path(self.work / ".guarded.mp4.ffskill-lock")
-        guard = Path(str(lock) + ".takeover")
+        out = str(self.work / name)
+        lock = Path(runner._OutputLock(out).path)
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
         lock.write_text(str(dead.pid), encoding="utf-8")
-        guard.write_text("", encoding="utf-8")
-        old = time.time() - runner.TAKEOVER_STALE - 30
-        os.utime(guard, (old, old))
-        a, b = runner._OutputLock(out), runner._OutputLock(out)
-        names = {a: "A", b: "B"}
-        b_observed, a_inside, b_judged, a_locked = (threading.Event() for _ in range(4))
-        holder_calls = {"A": 0, "B": 0}
-        real_holder = runner._OutputLock._holder
+        return out, lock
 
-        def holder(self_):
-            who = names.get(self_)
-            judged = real_holder(self_)
-            if who:
-                holder_calls[who] += 1
-                if holder_calls[who] == 2:  # the judgement made inside the guard
-                    if who == "A":
-                        a_inside.set()
-                        b_judged.wait(3)
+    def test_a_run_paused_in_a_takeover_keeps_every_other_run_out(self):
+        """The takeover was guarded by a file whose ownership expired on a timer: a run paused
+        after judging the lock stale, for longer than that, lost the guard without knowing; a
+        contender recovered it and took the lock over, and the paused run then removed the
+        contender's fresh lock, so both held one. The section is now held by the OS while its
+        holder lives, paused or not, and a contender is refused however long it waits."""
+        import threading
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        for leftover in (False, True):
+            with self.subTest("a guard file left behind by a killed run" if leftover else "no file left behind"):
+                out, lock = self._stale_lock(f"paused_{int(leftover)}.mp4")
+                if leftover:
+                    guard = Path(str(lock) + ".takeover")
+                    guard.write_text("", encoding="utf-8")
+                    os.utime(guard, (time.time() - 7200, time.time() - 7200))
+                owner, contender = runner._OutputLock(out), runner._OutputLock(out)
+                inside, go = threading.Event(), threading.Event()
+                calls = {"owner": 0}
+                real_holder = runner._OutputLock._holder
+
+                def holder(self_):
+                    judged = real_holder(self_)
+                    if self_ is owner:
+                        calls["owner"] += 1
+                        if calls["owner"] == 2:  # the judgement made inside the takeover
+                            inside.set()
+                            go.wait(30)
+                    return judged
+
+                def refuse(kind, reason, msg, **kw):
+                    raise self.Refused(reason, kw.get("why"))
+                outcome = {}
+
+                def contend(name, lk):
+                    try:
+                        lk.__enter__()
+                        outcome[name] = "holds"
+                    except self.Refused as exc:
+                        outcome[name] = exc.args
+                patches = [mock.patch.object(runner._OutputLock, "_holder", holder), mock.patch.object(runner, "refuse", refuse)]
+                if hasattr(runner, "TAKEOVER_STALE"):
+                    patches.append(mock.patch.object(runner, "TAKEOVER_STALE", -1.0))  # paused past any timer
+                try:
+                    with contextlib.ExitStack() as stack:
+                        for p in patches:
+                            stack.enter_context(p)
+                        to = threading.Thread(target=contend, args=("owner", owner))
+                        to.start()
+                        self.assertTrue(inside.wait(10), "the owner never judged the lock inside the takeover")
+                        tc = threading.Thread(target=contend, args=("contender", contender))
+                        tc.start()
+                        tc.join(30)
+                        go.set()
+                        to.join(30)
+                    self.assertEqual(outcome.get("owner"), "holds", outcome)
+                    self.assertEqual(outcome.get("contender"), ("output_locked", "takeover_in_progress"), outcome)
+                    self.assertEqual(lock.read_text(encoding="utf-8"), str(os.getpid()))
+                    self.assertEqual(os.fstat(owner.fd).st_ino, os.stat(lock).st_ino, "the lock on disk is the owner's")
+                finally:
+                    go.set()
+                    for lk in (owner, contender):
+                        if getattr(lk, "fd", None) is not None:
+                            lk.__exit__()
+                self.assertFalse(lock.exists())
+                if platform.system() != "Windows":
+                    self.assertFalse(Path(str(lock) + ".takeover").exists(), "the section's file is removed when left")
+
+    @unittest.skipIf(platform.system() == "Windows", "a file another handle has open cannot be removed on Windows")
+    def test_a_run_that_opened_the_section_before_its_name_went_starts_again(self):
+        """The section's file is removed when it is left. A run that opened it before that and gets
+        its lock afterwards holds a file no longer at the name, beside a run that made a new one:
+        it sees the name is another file and starts again."""
+        import threading
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        lock_path = str(self.work / ".race.mp4.ffskill-lock")
+        for names_checked in (True, False):
+            with self.subTest("name checked" if names_checked else "name check disabled (what it prevents)"):
+                first = runner._TakeoverSection(lock_path)
+                self.assertIsNone(first.acquire())
+                opened, go = threading.Event(), threading.Event()
+                real_lock = runner._os_lock
+                seen = {"n": 0}
+
+                def os_lock(fd):
+                    if threading.current_thread().name == "late" and seen["n"] == 0:
+                        seen["n"] += 1
+                        opened.set()  # it has the old file open
+                        go.wait(10)
+                    return real_lock(fd)
+                late, result = runner._TakeoverSection(lock_path), {}
+                patches = [mock.patch.object(runner, "_os_lock", os_lock)]
+                if not names_checked:
+                    patches.append(mock.patch.object(runner._TakeoverSection, "_names", lambda self_, fd: True))
+                with contextlib.ExitStack() as stack:
+                    for p in patches:
+                        stack.enter_context(p)
+                    t = threading.Thread(target=lambda: result.update(r=late.acquire(wait=0.3)), name="late")
+                    t.start()
+                    self.assertTrue(opened.wait(10))
+                    first.release()
+                    third = runner._TakeoverSection(lock_path)
+                    self.assertIsNone(third.acquire(wait=0), "a run after the release gets in")
+                    go.set()
+                    t.join(10)
+                try:
+                    if names_checked:
+                        self.assertEqual(result["r"], "busy", "the late run went in beside the one inside")
                     else:
-                        b_judged.set()
-                        a_locked.wait(3)
-            return judged
+                        self.assertIsNone(result["r"], "without the name check both are inside")
+                finally:
+                    late.release()
+                    third.release()
 
-        def b_pauses_after_reading(fn):
-            def wrapped(*args, **kw):
-                value = fn(*args, **kw)
-                if (threading.current_thread().name == "B" and str(args[0]).endswith(".takeover")
-                        and not b_observed.is_set()):
-                    b_observed.set()
-                    a_inside.wait(3)
-                return value
-            return wrapped
+    def test_a_killed_holder_releases_the_takeover_section(self):
+        """The kernel releases the section's lock when its holder dies, however it is killed
+        (SIGKILL on POSIX, TerminateProcess on Windows): nothing is left to expire or recover."""
+        runner = sys.modules["_common.runner"]
+        out, lock = self._stale_lock("killed.mp4")
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys, time\nsys.path.insert(0, sys.argv[1])\nfrom _common import runner\n"
+             "s = runner._TakeoverSection(sys.argv[2])\nassert s.acquire() is None\nprint('in', flush=True)\ntime.sleep(300)\n",
+             str(SCRIPTS), str(lock)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "in")
+            self.assertEqual(runner._TakeoverSection(str(lock)).acquire(wait=0.2), "busy")
+            child.kill()
+            child.wait(30)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+            child.stdout.close()
+        lk = runner._OutputLock(out)
+        try:
+            lk.__enter__()
+            self.assertEqual(lock.read_text(encoding="utf-8"), str(os.getpid()), "the stale lock was taken over")
+        finally:
+            lk.__exit__()
+
+    def test_without_an_os_file_lock_a_stale_lock_is_left_for_a_person(self):
+        """Where the filesystem gives no OS file lock, no weaker scheme is used in its place: the
+        takeover is refused with a reason that says so, and the stale lock stays. A run with no
+        stale lock to take over is not affected, and still removes its own lock."""
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+
+        def no_lock(fd):
+            raise runner._SectionUnavailable("[Errno 37] No locks available")
+        refused = {}
 
         def refuse(kind, reason, msg, **kw):
+            refused.update(reason=reason, msg=msg, **kw)
             raise self.Refused(reason)
-        outcome = {}
-
-        def contend(lock_obj, name, after=None):
-            try:
-                lock_obj.__enter__()
-                outcome[name] = "holds"
-            except self.Refused as exc:
-                outcome[name] = exc.args[0]
-            finally:
-                if after is not None:
-                    after.set()
-
-        patches = [mock.patch.object(runner._OutputLock, "_holder", holder), mock.patch.object(runner, "refuse", refuse),
-                   mock.patch("os.path.getmtime", b_pauses_after_reading(os.path.getmtime))]
-        if hasattr(runner, "_expired_guard"):
-            patches.append(mock.patch.object(runner, "_expired_guard", b_pauses_after_reading(runner._expired_guard)))
-        try:
-            with contextlib.ExitStack() as stack:
-                for p in patches:
-                    stack.enter_context(p)
-                tb = threading.Thread(target=contend, args=(b, "B"), name="B")
-                tb.start()
-                self.assertTrue(b_observed.wait(5), "B never looked at the expired guard")
-                ta = threading.Thread(target=contend, args=(a, "A", a_locked), name="A")
-                ta.start()
-                ta.join(20)
-                tb.join(20)
-            self.assertEqual(sorted(outcome.values()), ["holds", "output_locked"], outcome)
-            winner = a if outcome["A"] == "holds" else b
-            self.assertTrue(lock.exists(), "the winner's output lock was removed")
-            self.assertEqual(os.fstat(winner.fd).st_ino, os.stat(lock).st_ino, "the lock on disk is the winner's")
-            self.assertEqual(sorted(p.name for p in self.work.iterdir() if ".takeover" in p.name), [],
-                             "no guard or claim is left behind")
-        finally:
-            for lk in (a, b):
-                if getattr(lk, "fd", None) is not None:
-                    lk.__exit__()
-
-    def test_the_owner_of_a_takeover_guard_never_removes_a_replacement(self):
-        """The owner of a guard checked that the file at its name was still its own and then
-        removed it by name; paused between the two until its guard expired, a contender that had
-        seen the stale lock recovered the guard and made its own, which the owner then removed,
-        letting a third run in beside the contender. The owner now removes its guard under the
-        same claim a recoverer needs, so exactly one of them removes it."""
-        import threading
-        from unittest import mock
-        runner = sys.modules["_common.runner"]
-        out = str(self.work / "owned.mp4")
-        lock = Path(self.work / ".owned.mp4.ffskill-lock")
-        guard = str(lock) + ".takeover"
-        dead = subprocess.Popen([sys.executable, "-c", "pass"])
-        dead.wait()
-        lock.write_text(str(dead.pid), encoding="utf-8")
-        owner, contender, third = (runner._OutputLock(out) for _ in range(3))
-        stale = owner._holder()
-        self.assertTrue(stale["stale"], stale)
-        a_at_remove, a_go, c_paused, c_go = (threading.Event() for _ in range(4))
-        state = {"c_inside": False, "c_guard_removes": 0}
-        real_remove, real_open = os.remove, os.open
-
-        def remove(path, *a, **k):
-            if str(path) == guard:
-                who = threading.current_thread().name
-                if who == "owner" and not a_at_remove.is_set():
-                    a_at_remove.set()  # checked that the guard is its own; about to remove it
-                    a_go.wait(10)
-                elif who == "contender" and state["c_inside"]:
-                    c_paused.set()  # the contender is inside, holding its replacement guard
-                    c_go.wait(10)
-            return real_remove(path, *a, **k)
-
-        def open_(path, flags, *a, **k):
-            fd = real_open(path, flags, *a, **k)
-            if str(path) == guard and flags & os.O_EXCL and threading.current_thread().name == "contender":
-                state["c_inside"] = True
-            return fd
-
-        results = {}
-
-        def run(name, lk):
-            try:
-                results[name] = lk._remove_stale(dict(stale))
-            finally:
-                if name == "contender":
-                    c_paused.set()
-        with mock.patch("os.remove", remove), mock.patch("os.open", open_):
-            ta = threading.Thread(target=run, args=("owner", owner), name="owner")
-            ta.start()
-            self.assertTrue(a_at_remove.wait(10), "the owner never reached its cleanup")
-            with mock.patch.object(runner, "TAKEOVER_STALE", -1.0):  # the owner's guard has expired meanwhile
-                tc = threading.Thread(target=run, args=("contender", contender), name="contender")
-                tc.start()
-                self.assertTrue(c_paused.wait(10))
-            a_go.set()
-            ta.join(10)
-            try:
-                if state["c_inside"]:
-                    self.assertTrue(os.path.exists(guard), "the owner removed the contender's replacement guard")
-                    entered = third._remove_stale(dict(stale))
-                    self.assertEqual(entered.get("why"), "takeover_in_progress",
-                                     f"a third run went in beside the contender: {entered}")
-                else:
-                    self.assertEqual(results["contender"].get("why"), "takeover_in_progress", results)
-            finally:
-                c_go.set()
-                tc.join(10)
-        self.assertEqual(sorted(p.name for p in self.work.iterdir() if ".takeover" in p.name), [],
-                         "no guard or claim is left behind")
+        out, lock = self._stale_lock("nolock.mp4")
+        before = lock.read_text(encoding="utf-8")
+        with mock.patch.object(runner, "_os_lock", no_lock), mock.patch.object(runner, "refuse", refuse):
+            with self.assertRaises(self.Refused):
+                runner._OutputLock(out).__enter__()
+            self.assertEqual((refused["reason"], refused["why"]), ("output_locked", "takeover_unavailable"))
+            self.assertIn("no OS file lock", refused["msg"])
+            self.assertIn("delete", refused["hint"])
+            self.assertEqual(lock.read_text(encoding="utf-8"), before, "the stale lock was not touched")
+            lock.unlink()
+            fresh = runner._OutputLock(out)
+            fresh.__enter__()
+            self.assertTrue(lock.exists())
+            fresh.__exit__()
+            self.assertFalse(lock.exists(), "its own lock is still removed")
 
     def test_a_finished_process_is_dead_while_its_handle_is_open(self):
         """Windows CI: a child that had exited was judged alive while its Popen (and so a handle

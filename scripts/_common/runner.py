@@ -1293,61 +1293,113 @@ def _pid_dead(pid: int) -> bool:
 
 
 LOCK_HOUR = 3600.0
-TAKEOVER_STALE = 60.0  # seconds after which a `.takeover` guard no run is inside any more is removed
 LOCK_UNLIMITED = 10 * 365 * 86400.0  # --timeout 0: the deadline is pushed past any run (and kept short of 2038)
 
 
-def _identity(st: os.stat_result) -> "Tuple[int, int, int]":
-    """A file instance: its device, inode and modification time. The time tells a new file apart
-    from a removed one whose inode number was handed out again."""
-    return (st.st_dev, st.st_ino, st.st_mtime_ns)
+SECTION_WAIT = 2.0  # seconds a run waits for another's takeover section before it is refused
 
 
-def _expired_guard(guard: str) -> "Optional[Tuple[int, int, int]]":
-    """The identity of the takeover guard at `guard` when it is older than TAKEOVER_STALE (a run
-    killed while it held it), else None. FileNotFoundError when there is none."""
-    import time
-    st = os.stat(guard)
-    return _identity(st) if time.time() - st.st_mtime > TAKEOVER_STALE else None
+class _SectionUnavailable(OSError):
+    """This filesystem (or platform) gives no OS file lock to the takeover section."""
 
 
-def _remove_guard(guard: str, expired: "Tuple[int, int, int]") -> bool:
-    """Remove the takeover guard instance `expired` names, if this run is the one that gets to.
-
-    Both runs that may remove a guard go through here: its owner when it is done, and a run that
-    judged it expired (its owner killed, or paused past TAKEOVER_STALE). Each reaches for the same
-    claim file, named after that guard's identity, and only one O_EXCL create of it succeeds: that
-    run looks at `guard` again, removes it only if it is still that instance, and removes the claim
-    (each file closed before it is removed, as Windows needs). A run that loses the claim, or finds
-    another guard at the name (a recoverer's replacement), removes nothing and returns False (a
-    recoverer then refuses as takeover_in_progress; an owner leaves its guard to the run holding the
-    claim), so no run removes a guard another run holds. A run killed while it holds a claim leaves
-    it: that guard then stays until it and its claim are removed by hand (the refusal names it)."""
-    claim = f"{guard}.{expired[0]}-{expired[1]}-{expired[2]}.claim"
-    try:
-        cfd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except OSError:
-        return False
-    try:
+def _os_lock(fd: int) -> bool:
+    """Lock `fd` exclusively through the OS without waiting: True when locked, False when another
+    open file holds it. The kernel releases it when the file is closed or its process ends, killed
+    or not. _SectionUnavailable when the filesystem or platform has no such lock."""
+    if os.name == "nt":
+        import errno
+        import msvcrt
         try:
-            if _identity(os.stat(guard)) != expired:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # one byte; a lock past the end of a file is allowed
+            return True
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK), errno.EDEADLK):
                 return False
-        except FileNotFoundError:
-            return True  # recovered by a run that held the claim before us: nothing to remove
-        try:
-            os.remove(guard)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            return False
+            raise _SectionUnavailable(str(exc)) from exc
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise _SectionUnavailable(f"no fcntl here: {exc}") from exc
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
-    finally:
+    except BlockingIOError:
+        return False
+    except OSError as exc:
+        raise _SectionUnavailable(str(exc)) from exc
+
+
+class _TakeoverSection:
+    """The section in which a stale output lock is judged, removed and replaced, and in which a
+    holder removes its own lock: `<lock>.takeover`, held through an OS file lock (flock on POSIX,
+    msvcrt.locking on Windows), never through the file's existence or age. The kernel releases it
+    when the run closes it or ends, killed included, so nothing in it expires while its holder
+    lives -- a paused holder still holds it -- and nothing is left for anyone to recover (review of
+    #530: every timed or claimed scheme before this had a window where a paused run lost it).
+
+    The file itself means nothing: its name is removed when the section is left, so no file stays
+    beside the output. On POSIX the name is removed while the lock is still held, and a run that
+    opened the old file before that finds, once it has the lock, that the name is now another file
+    or none, and starts again (the usual lock-file race). On Windows a file another handle has open
+    cannot be removed: the holder closes it first and a failed removal is left alone; the file then
+    serves the next run as it is."""
+
+    def __init__(self, lock_path: str) -> None:
+        self.path = lock_path + ".takeover"
+        self.fd: Optional[int] = None
+
+    def acquire(self, wait: float = SECTION_WAIT) -> Optional[str]:
+        """None when held; "busy" when another run held it all through `wait` seconds;
+        _SectionUnavailable when the OS lock cannot be had here at all."""
+        import time
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                got = _os_lock(fd)
+            except BaseException:
+                os.close(fd)
+                raise
+            if got:
+                if os.name == "nt" or self._names(fd):
+                    self.fd = fd
+                    return None
+                os.close(fd)  # locked a file whose name was removed meanwhile: start again
+                continue
+            os.close(fd)
+            if time.monotonic() >= deadline:
+                return "busy"
+            time.sleep(0.05)
+
+    def _names(self, fd: int) -> bool:
         try:
-            os.close(cfd)
+            mine, there = os.fstat(fd), os.stat(self.path)
+        except FileNotFoundError:
+            return False
+        return (mine.st_dev, mine.st_ino) == (there.st_dev, there.st_ino)
+
+    def release(self) -> None:
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
+        if os.name != "nt":
+            try:
+                os.remove(self.path)  # still locked: whoever opened this file re-checks its name
+            except OSError:
+                pass
+            os.close(fd)  # closing releases the lock
+            return
+        try:
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
+        os.close(fd)
         try:
-            os.remove(claim)
+            os.remove(self.path)  # fails while another run has it open: it is left to that run
         except OSError:
             pass
 
@@ -1382,108 +1434,89 @@ class _OutputLock:
     def __enter__(self) -> "_OutputLock":
         if not self.path:
             return self
-        taken: Optional[Dict[str, Any]] = None
-        for attempt in (0, 1):
-            try:
-                self.fd = self._create()
-                if taken is not None:
-                    self._record_takeover(taken)
+        try:
+            self.fd = self._create()
+            return self
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            return self._unlocked(exc)
+        holder = self._holder()
+        if holder["stale"]:
+            holder = self._take_over(holder)
+            if holder.get("unlocked"):
                 return self
-            except FileExistsError:
-                holder = self._holder()
-                if attempt == 0 and holder["stale"]:
-                    holder = self._remove_stale(holder)
-                    if holder["stale"]:
-                        taken = holder
-                        continue
-                name = os.path.basename(self.path)[1:-len(".ffskill-lock")]
-                msg = (f"another run is writing {name!r} right now (lock {self.path}"
-                       + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path")
-                hint = ("wait for that run, or choose another -o path; if pid "
-                        f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}")
-                details = dict(lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
-                if self.on_locked:
-                    self.on_locked(msg, hint, details)
-                refuse("input", "output_locked", msg, hint=hint, **details)
-            except OSError as exc:
-                # an unlockable location (a read-only directory surfaces elsewhere): the run goes
-                # on without a lock, and says so -- two runs could now both write this output
-                details = {"lock": self.path, "output": os.path.abspath(self.output), "error": str(exc)}
-                warn(f"could not create the output lock {self.path} ({exc}); running without one, so a second run "
-                     "writing the same output at the same time would not be refused", "output_unlocked", **details)
-                audit("output_unlocked", details, default_path=self._audit_default())
+            if self.fd is not None:
+                self._record_takeover(holder)
                 return self
+        name = os.path.basename(self.path)[1:-len(".ffskill-lock")]
+        if holder.get("why") == "takeover_unavailable":
+            msg = (f"the lock on {name!r} ({self.path}) is stale ({holder.get('stale_why')}), but it cannot be taken over "
+                   f"safely here: this filesystem gives no OS file lock ({holder.get('takeover_error')})")
+            hint = f"if no other run is writing {name!r}, delete {self.path} and run again"
+        else:
+            msg = (f"another run is writing {name!r} right now (lock {self.path}"
+                   + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path")
+            hint = ("wait for that run, or choose another -o path; if pid "
+                    f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}")
+        details = dict(lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
+        if self.on_locked:
+            self.on_locked(msg, hint, details)
+        refuse("input", "output_locked", msg, hint=hint, **details)
         return self
 
-    def _remove_stale(self, judged: Dict[str, Any]) -> Dict[str, Any]:
-        """Remove a lock judged stale, under a second lock (`<lock>.takeover`, O_EXCL) that only
-        one run can hold, judging it again there first (A186, #465). Two runs that both found the
-        same stale lock used to both remove "it": the second removal took the first run's new
-        lock, and both went on to write the output. Now the second judges the first's new lock,
-        which is held, and is refused. Returns the holder as judged last; `stale` is True only
-        when this run removed the lock (or found it already gone) and may create its own.
+    def _unlocked(self, exc: OSError) -> "_OutputLock":
+        # an unlockable location (a read-only directory surfaces elsewhere): the run goes
+        # on without a lock, and says so -- two runs could now both write this output
+        details = {"lock": self.path, "output": os.path.abspath(self.output), "error": str(exc)}
+        warn(f"could not create the output lock {self.path} ({exc}); running without one, so a second run "
+             "writing the same output at the same time would not be refused", "output_unlocked", **details)
+        audit("output_unlocked", details, default_path=self._audit_default())
+        return self
 
-        A takeover lock left by a run killed inside these few lines is recovered once it is older
-        than TAKEOVER_STALE seconds; until then a takeover in progress counts as held. Recovery
-        never removes a guard by its name alone (review of #530: two runs that found the same
-        expired guard both removed "it", the second removing the first's new guard, and both went
-        on inside): see _remove_guard()."""
-        guard = self.path + ".takeover"
-        for _ in (0, 1, 2):
-            try:
-                gfd = os.open(guard, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-                break
-            except FileExistsError:
+    def _take_over(self, judged: Dict[str, Any]) -> Dict[str, Any]:
+        """Take a lock judged stale over inside the takeover section (A186, #465; review of #530):
+        judge it again there, remove it only if it is still stale, and create this run's own lock
+        before leaving, so no other run can judge, remove or create between those steps. Sets
+        self.fd and returns the holder as judged last when this run now holds the lock; otherwise
+        returns why not (held, `takeover_in_progress`, `takeover_unavailable`, `takeover_error`).
+        Returns {"unlocked": True} when the lock cannot be created at all (the run goes on
+        without one, as __enter__ says)."""
+        section = _TakeoverSection(self.path)
+        try:
+            busy = section.acquire()
+        except OSError as exc:
+            # no OS lock on this filesystem: nothing safe to fall back on, so the stale lock is
+            # left for a person to remove (the refusal says so)
+            return dict(judged, stale=False, why="takeover_unavailable", stale_why=judged.get("why"),
+                        takeover_error=str(exc))
+        if busy:
+            return dict(judged, stale=False, why="takeover_in_progress")
+        try:
+            now = judged
+            if os.path.lexists(self.path):
+                now = self._holder()
+                if not now["stale"]:
+                    return now  # taken over, or written again, since our look
                 try:
-                    expired = _expired_guard(guard)
+                    os.remove(self.path)
                 except FileNotFoundError:
-                    continue  # gone since: the other takeover finished, try again
-                except OSError:
-                    return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
-                if expired is None or not _remove_guard(guard, expired):
-                    return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
-            except OSError as exc:
-                return dict(judged, stale=False, takeover_error=str(exc))
-        else:
-            return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
-        try:
-            # read the way a recoverer reads it (os.stat by name, not fstat: on Windows the two can
-            # differ in how much of the file id st_ino carries), so both name the same claim; the
-            # guard is seconds old, and no run recovers it before TAKEOVER_STALE
-            mine = _identity(os.stat(guard))
-        except OSError:
-            mine = None
-        try:
+                    pass
+                except OSError as exc:
+                    # Windows will not delete a file another process holds open, and a live
+                    # holder keeps its lock open until it finishes: the takeover fails and
+                    # the run is refused, with the reason, instead of passing silently
+                    return dict(now, stale=False, takeover_error=str(exc))
             try:
-                os.stat(self.path)
-            except FileNotFoundError:
-                # gone since our look (a takeover that has not created its own lock yet, or the
-                # holder finishing): remove nothing, and the O_EXCL create decides who writes
-                return dict(judged, stale=True)
-            now = self._holder()
-            if not now["stale"]:
-                return now  # another run took the lock over between our look and the guard
-            try:
-                os.remove(self.path)
-            except FileNotFoundError:
-                pass
+                self.fd = self._create()
+            except FileExistsError:
+                return self._holder()  # a run that found no lock created one: it holds it
             except OSError as exc:
-                # Windows will not delete a file another process holds open, and a live
-                # holder keeps its lock open until it finishes: the takeover fails and
-                # the run is refused, with the reason, instead of passing silently
-                return dict(now, stale=False, takeover_error=str(exc))
+                self._unlocked(exc)
+                return {"unlocked": True}
             return now
         finally:
-            try:
-                os.close(gfd)
-            except OSError:
-                pass
-            # our own guard only, and under the claim a recoverer of it would need: a look at the
-            # name followed by a removal is not atomic, and a run paused between the two until its
-            # guard expired removed the replacement a recoverer had made by then (review of #530).
-            # Without the claim (a recoverer holds it) the guard is the recoverer's to remove.
-            if mine is not None:
-                _remove_guard(guard, mine)
+            section.release()
 
     def _audit_default(self) -> Optional[str]:
         if not self.path:
@@ -1546,7 +1579,8 @@ class _OutputLock:
     def _holder(self) -> Dict[str, Any]:
         """Who holds the lock and whether it is stale: {pid, pid_alive, deadline (UTC, the
         mtime plus an hour), why: pid_dead | past_deadline | unreadable | held, stale}.
-        _remove_stale() adds why `takeover_in_progress` (another run is taking it over)."""
+        _take_over() adds why `takeover_in_progress` (another run is in the takeover section) and
+        `takeover_unavailable` (no OS file lock here)."""
         import datetime
         import time
         out: Dict[str, Any] = {"pid": None, "pid_alive": None, "deadline": None, "why": "unreadable", "stale": True}
@@ -1579,16 +1613,46 @@ class _OutputLock:
         record_fallback(f"took over the stale output lock {self.path}: {why}", "stale_lock_taken_over", **details)
 
     def __exit__(self, *exc: Any) -> None:
-        if self.fd is not None:
+        """Remove this run's own lock, inside the takeover section: a holder past its deadline
+        whose lock another run is taking over, or has taken over, never removes that run's lock
+        by its name. On POSIX the lock at the name is removed only when it is still this run's
+        file; on Windows no other run can remove a lock this run has open, so the name is still
+        ours. When the section is busy (a takeover of this lock is under way) the lock is left to
+        that run; when there is no OS lock here, the same file check alone decides."""
+        fd, self.fd = self.fd, None
+        if fd is None or not self.path:
+            if fd is not None:
+                os.close(fd)
+            return
+        section = _TakeoverSection(self.path)
+        try:
+            busy = section.acquire()
+        except OSError:
+            busy = None  # no OS lock: the file check below alone
+        try:
+            if busy == "busy":
+                return
+            if os.name == "nt":
+                os.close(fd)
+                fd = None
+                try:
+                    os.remove(self.path)
+                except OSError:
+                    pass
+                return
             try:
-                os.close(self.fd)
+                mine, there = os.fstat(fd), os.stat(self.path)
+                if (mine.st_dev, mine.st_ino) == (there.st_dev, there.st_ino):
+                    os.remove(self.path)
             except OSError:
                 pass
-        if self.path:
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            section.release()
 
 
 def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:

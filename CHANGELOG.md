@@ -35,11 +35,13 @@
     input's name in another case on a case-insensitive volume (not measured here); `--overwrite`
     replaced it. The side-file guards compare files the same way, and `caption.py` refuses such an
     `-o` before it writes its SRT or ASS.
-  - Two runs that find the same stale output lock no longer both take it over (A186), nor two
-    that find the same expired takeover guard, and a guard's owner never removes a guard that
-    replaced its own. A new lock holds its pid from the moment it
-    exists (it was briefly empty, which reads as stale), and on Windows a finished process whose
-    handle is still open no longer counts as a live holder.
+  - Two runs that find the same stale output lock no longer both take it over (A186): the lock is
+    judged, removed and replaced inside a section the OS holds (`flock`, `msvcrt.locking`), which
+    a paused run keeps and a killed one releases, and a run removes its own lock at its end there
+    too. Where the filesystem has no OS file lock, a stale lock is refused with a note to delete it
+    by hand. A new lock holds its pid from the moment it exists (it was briefly empty, which reads
+    as stale), and on Windows a finished process whose handle is still open no longer counts as a
+    live holder.
   - `batch.py` leaves no `out/` or `out/.work` behind when it refuses a run before any item starts
     (`--jobs`, an output collision) or matches no file (A187), and `verify.py` no new `--out` folder
     when its `--report` is refused (found by the sweep).
