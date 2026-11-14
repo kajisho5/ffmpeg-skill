@@ -22,6 +22,35 @@ from _common.emit import note
 from _common import STATE,  add_common, apply_common, die, draws_chroma, emit, ffmpeg_base, info, parse_time, probe, rgb_chain_to_bt709, run, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs
 
 
+def gradient_source(w: int, h: int, fps: float, c0: str, c1: str, angle: float) -> str:
+    """The `gradients` source for a `w`x`h` gradient at `angle` degrees (0 = left to right, 90 =
+    top to bottom) that runs from the frame's first corner along that direction to its last: c0
+    on the corner the direction starts from, c1 on the one opposite.
+
+    `gradients` takes its two points inside its own frame: a coordinate below -1 is refused and
+    one outside 0..w-1 / 0..h-1 is replaced by a seeded random one. The points were (0, 0) and the
+    width along the angle, so every angle outside 0-90 failed as kind ffmpeg (135 put x1 at -45:
+    A169), and inside it the far point was past the frame (x1 = w at 0, y1 = w at 90) and drawn
+    from the seed instead. A line of any direction that crosses the whole frame fits inside a
+    square canvas as wide as the frame's diagonal, so the gradient is drawn there, through the
+    centre, over the frame's extent along the direction (w|cos| + h|sin|), and the frame is cropped
+    from the middle."""
+    rad = math.radians(angle)
+    c, s = math.cos(rad), math.sin(rad)
+    side = 2 * math.ceil((math.hypot(w, h) + 4) / 2)  # even, so the centred crop is whole pixels
+    half = (w * abs(c) + h * abs(s)) / 2
+    mid = side / 2
+    x0, y0, x1, y1 = (round(mid - half * c), round(mid - half * s), round(mid + half * c), round(mid + half * s))
+    # gradients defaults to seed=-1 (a random seed picked fresh each run) and speed=0.01 (a
+    # slow rotation applied every frame), so without pinning both, this "static" background
+    # was neither reproducible between runs nor actually static across its own duration --
+    # violating the bit_exact/deterministic contract _contract.py declares for this tool.
+    # speed's own valid range bottoms out at 1e-05 (0 is refused), so that's the closest to
+    # motionless the filter allows.
+    return (f"gradients=size={side}x{side}:rate={fps:g}:c0={c0}:c1={c1}:x0={x0}:y0={y0}:x1={x1}:y1={y1}"
+            f":seed=0:speed=1e-05,crop={w}:{h}:{(side - w) // 2}:{(side - h) // 2}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-o", "--output", required=True, help="output file")
@@ -66,16 +95,7 @@ def main() -> int:
             die(f"--gradient needs two colours as C1:C2, got '{args.gradient}'")
         validate_color(c0, "--gradient")
         validate_color(c1, "--gradient")
-        rad = math.radians(args.angle)
-        x1 = round(args.width * math.cos(rad))
-        y1 = round(args.width * math.sin(rad))
-        # gradients defaults to seed=-1 (a random seed picked fresh each run) and speed=0.01 (a
-        # slow rotation applied every frame), so without pinning both, this "static" background
-        # was neither reproducible between runs nor actually static across its own duration --
-        # violating the bit_exact/deterministic contract _contract.py declares for this tool.
-        # speed's own valid range bottoms out at 1e-05 (0 is refused), so that's the closest to
-        # motionless the filter allows.
-        src_filter = f"gradients=size={args.width}x{args.height}:rate={args.fps:g}:c0={c0}:c1={c1}:x0=0:y0=0:x1={x1}:y1={y1}:seed=0:speed=1e-05"
+        src_filter = gradient_source(args.width, args.height, args.fps, c0, c1, args.angle)
         colours = [c0, c1]
     else:
         validate_color(args.color, "--color")

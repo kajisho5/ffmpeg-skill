@@ -86,6 +86,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.7 — render.py, batch.py and sequence.py, the audit's remaining findings (#458)](#after-387--renderpy-batchpy-and-sequencepy-the-audits-remaining-findings-458)
 - [After 3.8.8 — four old grouped issues, item by item (#402, #403, #404, #429)](#after-388--four-old-grouped-issues-item-by-item-402-403-404-429)
 - [After 3.8.9 — captions and text drawing (audit #457, #505)](#after-389--captions-and-text-drawing-audit-457-505)
+- [After 3.8.10 — compositing, time and edge inputs (#460, #461)](#after-3810--compositing-time-and-edge-inputs-460-461)
 <!-- contents:end -->
 
 ## Time limits
@@ -505,14 +506,14 @@ exists. When a decision changes, edit the entry in the same PR.
 - **Subtitle/data tracks are kept where the picture's timeline is untouched and dropped where
   it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
   or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
-  `deinterlace`, `denoise`, `freeze --mode extend`) try `run_keeping_subtitles()` first and
+  `deinterlace`, `denoise`, `freeze` holding the last frame) try `run_keeping_subtitles()` first and
   report `false` unless the container refused the track. `export` does the same with its own
   ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
   .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
   timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
   track with the picture, and `non_av_streams` lists every stream kept or dropped. Test:
   `test_export_keeps_the_subtitle_track_for_every_preset_whose_container_holds_one`. Tools that move the timeline
-  (`cut` re-encode, `pad --start`, `freeze --mode insert`, `fit --method speed`, `speedramp`,
+  (`cut` re-encode, `pad --start`, `freeze` inside the clip or at its start, `fit --method speed`, `speedramp`,
   `broll`, `join`) do not copy a track whose cues would fire at the wrong time and report
   `true` when the source had one. Code: `_common.run_keeping_subtitles()` and each tool's `emit`.
 - **`caption.py` leaves its `.srt`/`.ass` sidecar next to the output by design**; it is a
@@ -2872,8 +2873,11 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `test_graphics_title_says_when_the_wrapped_block_is_taller_than_the_frame`.
 - **`straighten.py --fit crop` scales by |cos| + max(W/H, H/W) |sin|** of the displayed frame: the
   window turned back by the angle must fit the scaled frame on both axes; |cos| + |sin| is a
-  square's factor and left two corners black on 16:9 (#416 review). Test:
-  `test_straighten_crop_fit_covers_all_four_corners_of_a_wide_frame`.
+  square's factor and left two corners black on 16:9 (#416 review). The output is the displayed
+  frame's own size (to even), with square pixels: the scale is rounded up to even so it still
+  covers the window, where `trunc(iw/s/2)*2` after `scale=iw*s` lost 2 px on each axis (audit
+  A235). Tests: `test_straighten_crop_fit_covers_all_four_corners_of_a_wide_frame`,
+  `test_straighten_crop_writes_the_source_size_with_square_pixels`.
 - **`loop.py` has no repeat cap** (#416 review): the concat list costs one ~100-byte line per
   repeat against an output that costs a whole clip per repeat, so any count whose list strains
   memory asks for an encode that fills the disk first; `-stream_loop` had no cap either.
@@ -4051,3 +4055,61 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   colour's at the Style's own value) and a letter spacing of 0. `{\r}` also dropped the pop, a
   per-cue `\fs` and a cue's `<i>`/`<b>`/colour for the text after an emoji. Code:
   `_ass_overlay.emoji_placeholder()`. Test: `test_the_emoji_placeholder_keeps_the_lines_own_animation`.
+## After 3.8.10 — compositing, time and edge inputs (#460, #461)
+
+- **A printed command that names a file the tool removed is a record, not a rerunnable line.**
+  A concat list, an ffmetadata file, a drawtext text file, a two-pass log or a render stage's
+  intermediate is written for the run and removed when the tool exits, so the line in `commands`
+  that names it cannot be pasted and run again (audit A238). Keeping those files would leave a
+  temporary directory behind every run; the README and the contract's `commands` description say
+  which lines are records instead. Code: the tools' temp directories (`tempfile.mkdtemp`). Test:
+  `test_printed_commands_say_which_name_a_removed_temp_file`.
+- **A rectangle at an odd `--x`/`--y` is exact in luma; the chroma pair on its odd edge is
+  shared.** `redact.py` takes its patch with `crop=...:exact=1`, gives it a transparent first
+  column/row where x/y is odd and puts it at the even position before it (`overlay` places a 4:2:0
+  input on the chroma grid), so no luma sample outside the rectangle changes and every one inside
+  it is redacted (audit A170). A 4:2:0 chroma sample on that edge covers a pixel inside and one
+  outside, and is half mixed: there is no exact answer at that resolution. `crop.py` cuts with
+  `exact=1`, so the rectangle written is the one asked for. Not changed: `overlay.py --position
+  X,Y` still lands on the even position before an odd one (10,12 for 11,13, measured on 6.1.1)
+  and `fit.py`'s computed crop offset is rounded the same way. Code: `redact.main()`, `crop.main()`.
+  Test: `test_an_odd_rectangle_is_taken_and_redacted_where_it_was_asked`.
+- **A hold of the last frame keeps the subtitle track.** `freeze.py` with no `--at` (or an `--at`
+  at the clip's end) appends frames past the end and moves no cue, so it keeps the track as
+  `--mode extend` does; a hold inside the clip or at its start still drops it (its cues would fire
+  early) and says so (audit A180). Code: `freeze.main()`. Test:
+  `test_freeze_of_the_last_frame_keeps_the_subtitle_track`.
+- **Matroska attachments travel only into Matroska, and a second picture is reported, not
+  kept.** A subtitle track's fonts are attachments, which no `-map 0:s?`/`0:d?` selects; a tool
+  that keeps the subtitles into `.mkv`/`.mka`/`.mks` now maps `0:t?` as well. MP4, MOV and WebM
+  hold none, so there `source_carry` lists `attachments` dropped with the warning (audit A256). A
+  second playable video stream is left out by every tool that writes one picture (they write the
+  one `probe()` describes, `V:0`); `source_carry` lists `video_streams` dropped (audit A258).
+  Neither is a refusal: the output is what was asked for, minus what the container or the tool
+  cannot carry, said. An MP4/MOV chapter text track (read by FFmpeg as a data stream with the tag
+  `text`) is never copied: the muxer writes one from the chapters it is given, and the copy was a
+  stray data track with the old titles (audit A173). Code: `runner.carried_stream_maps()`,
+  `emit.source_carry()`. Tests: `test_attachments_and_a_second_picture_are_kept_or_reported`,
+  `test_a_chapter_track_is_not_copied_as_a_data_stream`.
+- **`render.py` compares its output with a project's one source only.** Its stages run as their
+  own tools, so it probes the source itself before it reports: a project whose clips are all one
+  file, with no music, replacement or effects track, no video layer and no audiogram, gets
+  `source_carry`; any other mixes sources, and is not compared, as for any tool with two (audit
+  A255). The start timecode counts as kept when every stage that compared it kept it (a cut from
+  1 s writes the label of the frame it starts on, not the source's), as dropped when one dropped
+  it; a stage served from `--cache` replays the verdict its entry recorded. Code: `render.emit()`,
+  `render.project_source()`. Test: `test_a_one_source_render_says_what_its_output_lost`.
+- **`background.py --gradient` runs corner to corner at every angle.** C1 is on the corner the
+  direction starts from, C2 on the opposite one; the `gradients` source is drawn on a square as
+  wide as the frame's diagonal and the frame cropped from its middle, since `gradients` takes its
+  two points only inside its own frame (a point below -1 is refused, one past the edge replaced by
+  a seeded random one). Every angle outside 0-90 failed as `kind: ffmpeg` (audit A169), and inside
+  it the far point lay past the frame, so the picture of `--angle 0`/`90` changes too. Code:
+  `background.gradient_source()`. Test: `test_background_gradient_runs_corner_to_corner_at_any_angle`.
+- **`memory_heavy` is keyed on the decoded frames held, about 2 GiB.** `reverse.py` and
+  `loop.py --boomerang` hold every decoded frame; the estimate is width x height x the chroma
+  planes (4:2:0 1.5, 4:2:2 2, 4:4:4 3, plus an alpha plane) x 2 bytes above 8 bits x the frames.
+  reverse.py warned on a length above 60 s, so 30 s of 4K60 (about 21 GiB) went unwarned and 61 s
+  of 320x180 was warned (audit A174). It is an estimate for a warning, not a limit: nothing is
+  refused. Code: `decision.held_frames_bytes()`. Test:
+  `test_reverse_warns_from_what_it_holds_not_from_the_length`.

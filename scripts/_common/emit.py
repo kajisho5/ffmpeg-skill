@@ -167,10 +167,11 @@ def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None
 # source_carry: the items compared, in report order. The first group is content a viewer or
 # listener notices missing and raises the warning; the second is tags, listed but never warned
 # about (every camera file has a creation_time, so a warning for it would fire on every run).
-CARRY_CONTENT = ("subtitles", "chapters", "cover_art", "audio_channels")
+CARRY_CONTENT = ("subtitles", "chapters", "cover_art", "audio_channels", "attachments", "video_streams")
 CARRY_TAGS = ("creation_time", "audio_language", "timecode")
 _CARRY_NAMES = {"subtitles": "subtitle track", "chapters": "chapters", "cover_art": "cover picture",
-                "audio_channels": "audio channels"}
+                "audio_channels": "audio channels", "attachments": "attached files (a subtitle track's fonts)",
+                "video_streams": "video streams"}
 
 
 def source_carry(output: Optional[str], ctx: "Context", extra: Dict[str, Any]) -> "Optional[Dict[str, List[str]]]":
@@ -205,7 +206,9 @@ def source_carry(output: Optional[str], ctx: "Context", extra: Dict[str, Any]) -
             continue
         if item == "audio_channels" and src[item] <= 2:
             continue  # mono and stereo are what every tool writes; only a surround layout can be folded down
-        if item in ("subtitles", "timecode") and src["has_video"] and not out["has_video"]:
+        if item == "video_streams" and src[item] <= 1:
+            continue  # one picture is what every tool writes; only a second one can be left out
+        if item in ("subtitles", "timecode", "attachments", "video_streams") and src["has_video"] and not out["has_video"]:
             continue
         if item in ("audio_channels", "audio_language") and not out["has_audio"]:
             continue
@@ -227,8 +230,8 @@ def source_carry(output: Optional[str], ctx: "Context", extra: Dict[str, Any]) -
     if loud:
         parts = []
         for i in loud:
-            if i == "audio_channels":
-                parts.append(f"{src[i] - out.get(i, 0)} of its {src[i]} audio channels")
+            if i in ("audio_channels", "video_streams"):
+                parts.append(f"{src[i] - out.get(i, 0)} of its {src[i]} {_CARRY_NAMES[i]}")
             else:
                 parts.append("its " + _CARRY_NAMES[i])
         warn("the source carried " + ", ".join(parts) + " that this output does not have "

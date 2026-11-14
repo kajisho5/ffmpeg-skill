@@ -67,7 +67,8 @@ def main() -> int:
     # no frame at or after --at (no --at holds at the clip's end): the insert tail would be empty
     # and the hold lost, so hold the last frame as --mode extend does (#416 review)
     vend = v0 + (meta["video"].get("duration") or dur - v0)
-    if args.mode == "extend" or cut_at >= vend - 0.5 / rate:
+    holds_end = args.mode == "extend" or cut_at >= vend - 0.5 / rate
+    if holds_end:
         # tpad's stop_duration clones the last frame for the given duration; no PTS surgery
         # needed since it only ever appends past the real end.
         vf = f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}"
@@ -127,10 +128,12 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    if args.mode == "insert":
+    if not holds_end:
         # the picture gains `hold` seconds at `at`; a stream-copied subtitle track would keep its
         # old timestamps and every cue after the freeze would fire early (same reasoning as
-        # fit.py --method speed). Drop it rather than ship captions that lie.
+        # fit.py --method speed). Drop it rather than ship captions that lie. A hold of the last
+        # frame (the default with no --at, or an --at at the end) moves nothing, so the track is
+        # kept as --mode extend keeps it (A180)
         run(cmd + [output])
         dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
     else:

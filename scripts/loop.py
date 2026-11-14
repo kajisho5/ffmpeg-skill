@@ -34,7 +34,7 @@ import tempfile
 
 from _common import STATE, concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, parse_time, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
-from _common.decision import av_trim, length_output_t
+from _common.decision import HELD_FRAMES_WARN_BYTES, av_trim, held_frames_bytes, length_output_t, stream_starts
 from _common.probe import decode_gray_frames, decode_pcm_mono
 from _common.emit import input_length
 
@@ -60,9 +60,8 @@ def _boomerang_graph(meta, src_dur: float, times) -> str:
             f"-- cut the clip shorter first (cut.py)")
     # reverse holds the clip's decoded frames; split, trim and loop pass references to the same
     # frames, so the peak is about one clip (measured: the same max RSS as a plain reverse)
-    bytes_per_frame = v["width"] * v["height"] * 1.5 * (2 if (v.get("bit_depth") or 8) > 8 else 1)
-    held = bytes_per_frame * frames
-    if held > 2 * 1024 ** 3:
+    held = held_frames_bytes(v, frames)
+    if held > HELD_FRAMES_WARN_BYTES:
         warn(f"--boomerang holds about {held / 1024 ** 3:.1f} GiB of decoded frames in memory "
              f"({frames} frames of {v['width']}x{v['height']}) -- cut the clip shorter first (cut.py) if RAM is tight",
              "memory_heavy", bytes=int(held))
@@ -160,7 +159,12 @@ def _seamless_unit_cmd(meta, src: str, unit: str, rate: str, frames: int, fade_f
     if has_audio:
         # acrossfade writes nothing when its first input is exactly the fade long (FFmpeg 6.1 and
         # 7.1, measured), so the fade is built by hand: tail faded out + head faded in, summed
-        graph += (f";[0:a:0]aresample=async=1:first_pts=0,apad,atrim=end={length:.6f},asplit=3[at][ah][ab];"
+        # the sound is shifted by the picture's start, the constant setpts=PTS-STARTPTS takes off the
+        # picture: rebased to its own start (aresample's first_pts=0 alone), a picture that starts
+        # 0.2 s after its sound came out 200 ms behind it in every repeat (A168)
+        v0 = stream_starts(meta)[0]
+        graph += (f";[0:a:0]atrim=start={v0:.6f},asetpts=PTS-{v0:.6f}/TB,aresample=async=1:first_pts=0,"
+                  f"apad,atrim=end={length:.6f},asplit=3[at][ah][ab];"
                   f"[at]atrim=start={cut:.6f},asetpts=PTS-STARTPTS,afade=t=out:d={fade:.6f}:curve=tri[ta];"
                   f"[ah]atrim=end={fade:.6f},asetpts=PTS-STARTPTS,afade=t=in:d={fade:.6f}:curve=tri[ha];"
                   f"[ta][ha]amix=inputs=2:normalize=0:duration=longest[xa];"

@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -156,8 +157,14 @@ class PictureTests(MediaFixtures):
         breakout payload must render literally, not start a sibling filter."""
         evil = OUT / "evil,drawtext=text=OWNED.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.src, "-t", "2", "-c", "copy", evil)
-        proc = script("grid.py", evil, self.rot, "--cols", "2", "--rows", "1", "-o", OUT / "grid5.mp4")
-        self.assertIn("\\,drawtext=text=OWNED", proc.stderr, "comma in the filename-derived label must be escaped")
+        proc = script("grid.py", evil, self.rot, "--cols", "2", "--rows", "1", "-o", OUT / "grid5.mp4", "--json")
+        # since A178 the label reaches drawtext through its text file, so no part of the file name
+        # is in the filter graph at all (an escape is no longer what keeps it out)
+        cmd = shlex.split(json.loads(proc.stdout)["commands"][-1])
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        self.assertIn("textfile=", graph)
+        self.assertNotIn("OWNED", graph, "the filename-derived label must not reach the filter graph")
+        self.assertEqual(probe(str(OUT / "grid5.mp4"))["video"]["width"], 960)
 
     # ---------------------------------------------------------------- background
     def test_background_solid_color(self):
@@ -3354,8 +3361,11 @@ class DrawnColourTests(unittest.TestCase):
             script("background.py", "--duration", "1", "--width", "256", "--height", "64", "--gradient",
                    "0xFF0000:0x00FF00", "--fast", "-o", out)
             rects = [(4, 16, 20, 48), (120, 16, 136, 48), (236, 16, 252, 48)]
-            # the truth: the same gradients source rendered as RGB by this very build
-            src = "gradients=size=256x64:rate=30:c0=0xFF0000:c1=0x00FF00:x0=0:y0=0:x1=256:y1=0:seed=0:speed=1e-05"
+            # the truth: the same gradients source rendered as RGB by this very build (the source
+            # background.py builds, which draws on a larger canvas and crops the frame: A169)
+            sys.path.insert(0, str(SCRIPTS))
+            from background import gradient_source
+            src = gradient_source(256, 64, 30, "0xFF0000", "0x00FF00", 0)
             raw = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", src, "-frames:v", "1", "-f", "rawvideo",
                                   "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, check=True).stdout
             want = []
@@ -6431,6 +6441,115 @@ class CaptionDrawingAuditTests(unittest.TestCase):
                 self.assertLess(ink[0] - (x + box), 2 * box, f"x={x}, text from {ink[0]}")
 
 
+class CompositingAuditPictureTests(unittest.TestCase):
+    """Issue #460 (audit 2026-11): a gradient at any angle, a rectangle at an odd position, the
+    sticker's pop on both routes and a file name's label. Fixtures are small lavfi clips."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _gray(path, t=0.0):
+        w, h = (int(n) for n in subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+             str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip().split(","))
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                              "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+        return raw, w, h
+
+    def test_background_gradient_runs_corner_to_corner_at_any_angle(self):
+        """A169: --angle outside 0-90 failed as kind ffmpeg (`gradients` refuses a point below -1),
+        and inside it the far point lay past the frame, which `gradients` replaces with a seeded
+        random one. C1 is now on the corner the direction starts from and C2 on the opposite one,
+        at every angle; the other two corners lie between them."""
+        corners = {"tl": (2, 2), "tr": (157, 2), "bl": (2, 87), "br": (157, 87)}
+        # angle -> (the C1 corner(s), the C2 corner(s)); at 45-degree steps the others are mixed
+        cases = {"0": (("tl", "bl"), ("tr", "br")), "90": (("tl", "tr"), ("bl", "br")),
+                 "135": (("tr",), ("bl",)), "180": (("tr", "br"), ("tl", "bl")),
+                 "270": (("bl", "br"), ("tl", "tr")), "-45": (("bl",), ("tr",))}
+        for angle, (red, blue) in cases.items():
+            with self.subTest(angle=angle):
+                out = OUT / "a460_grad.mp4"
+                script("background.py", "--duration", "0.2", "--width", "160", "--height", "90", "--gradient",
+                       "0xff0000:0x0000ff", "--angle", angle, "--fast", "-o", out)
+                px = {n: frame_rgb(out, 0, x, y) for n, (x, y) in corners.items()}
+                for n in red:
+                    self.assertGreater(px[n][0], 200, (n, px))
+                for n in blue:
+                    self.assertGreater(px[n][2], 200, (n, px))
+                for n in set(corners) - set(red) - set(blue):
+                    self.assertTrue(40 < px[n][0] < 215 and 40 < px[n][2] < 215, (n, px))
+
+    def test_an_odd_rectangle_is_taken_and_redacted_where_it_was_asked(self):
+        """A170: crop rounds an odd --x/--y down to the chroma grid of a 4:2:0 frame unless told
+        exact, and overlay always does, so redact.py took and put back its rectangle one pixel up
+        and left (the last column and row left as they were, one outside changed) and crop.py cut
+        the rectangle one pixel left of / above the asked one. Lossless in and out, so every luma
+        sample is compared."""
+        src = OUT / "a460_odd_src.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=0.4",
+           "-c:v", "ffv1", "-pix_fmt", "yuv420p", src)
+        before, w, _h = self._gray(src)
+        x, y, rw, rh = 11, 13, 40, 40
+        for mode in ("pixelate", "blur"):
+            with self.subTest(mode=mode):
+                out = OUT / f"a460_odd_{mode}.mkv"
+                script("redact.py", src, "--x", str(x), "--y", str(y), "--width", str(rw), "--height", str(rh),
+                       "--mode", mode, "--block-size", "40", "--quality", "0", "--fast", "-o", out)
+                after, _w, _h = self._gray(out)
+                inside = lambda i: x <= i % w < x + rw and y <= i // w < y + rh  # noqa: E731
+                outside = [i for i in range(len(before)) if not inside(i) and before[i] != after[i]]
+                self.assertEqual(outside, [], f"luma outside the rectangle changed at {[(i % w, i // w) for i in outside[:4]]}")
+                if mode == "pixelate":  # one block: the whole rectangle is one value, its last column and row included
+                    vals = {after[i] for i in range(len(after)) if inside(i)}
+                    self.assertEqual(len(vals), 1, sorted(vals)[:8])
+        out = OUT / "a460_odd_crop.mkv"
+        script("crop.py", src, "--x", str(x), "--y", str(y), "--width", str(rw), "--height", str(rh), "--quality", "0",
+               "-o", out)
+        got, cw, _ch = self._gray(out)
+        want = bytes(before[(y + r) * w + x + c] for r in range(rh) for c in range(rw))
+        self.assertEqual(cw, rw)
+        self.assertEqual(got, want, "crop.py must cut the rectangle at the odd position asked for")
+
+    def test_sticker_rises_into_place_on_both_routes(self):
+        """A177: on the drawtext route a bottom sticker started above its rest and dropped into
+        place, while the ASS route (and the top positions) rise from below."""
+        flat = tiny_clip(OUT / "a460_flat.mp4", "color=c=0x202020:s=640x360:r=25", seconds=2)
+        for route in ("drawtext", "ass"):
+            for position in ("bottom-right", "top-left"):
+                with self.subTest(route=route, position=position):
+                    out = OUT / "a460_sticker.mp4"
+                    script("graphics.py", flat, "--template", "sticker", "--text", "NEW", "--position", position,
+                           "--start", "0.5", "--text-render", route, "--fast", "-o", out)
+                    tops = []
+                    for t in (0.62, 1.2):
+                        raw, w, _h = self._gray(out, t)
+                        rows = [i // w for i in range(len(raw)) if abs(raw[i] - 0x20) > 30]
+                        self.assertTrue(rows, f"no sticker at {t}s")
+                        tops.append(min(rows))
+                    self.assertGreater(tops[0], tops[1], f"the chip must start below its rest and rise: tops {tops}")
+
+    def test_grid_label_keeps_an_apostrophe_and_a_percent_sign(self):
+        """A178: grid.py drew a cell label through escape_drawtext (a font name's escape), which
+        drops ' and %: a cell named p'%.mp4 was labelled `p`, like p.mp4. The label now goes through
+        drawtext's text file, as every other drawn text does."""
+        if not shutil.which("ffmpeg") or "drawtext" not in subprocess.run(
+                ["ffmpeg", "-hide_banner", "-filters"], stdout=subprocess.PIPE, text=True).stdout:
+            self.skipTest("this ffmpeg build has no drawtext filter")
+        flat = tiny_clip(OUT / "a460_cell.mp4", "color=c=0x202020:s=320x180:r=25", seconds=1)
+        plain, odd = OUT / "p.mp4", OUT / "p'%.mp4"
+        shutil.copyfile(flat, plain)
+        shutil.copyfile(flat, odd)
+        out = OUT / "a460_grid.mp4"
+        script("grid.py", plain, odd, "--cols", "2", "--rows", "1", "--fast", "-o", out)
+        raw, w, _h = self._gray(out, 0.5)
+        ink = [sum(1 for i in range(len(raw)) if raw[i] > 120 and (i % w >= w // 2) == half) for half in (False, True)]
+        self.assertGreater(ink[1], ink[0] * 1.5, f"the p'% label must draw more than p's: {ink}")
 
 
 class LeanBuildTests(unittest.TestCase):

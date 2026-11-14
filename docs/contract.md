@@ -936,7 +936,8 @@ before, and, when `--json` was given, on stdout:
 `message` carries the script's own reason (missing input, ffprobe failure, the last
 stderr lines of ffmpeg, the verification that failed); an optional `error.hint` names the
 flag change that would make a retry meaningful (never a diagnosis of the media); `commands` lists what was planned
-or run so the caller can retry or report without re-deriving the command; `kind: ffmpeg`
+or run so the caller can retry or report without re-deriving the command (a line that names a file
+the tool wrote for the run and removed when it exited, such as a concat list, is a record of it); `kind: ffmpeg`
 failures add `ffmpeg_returncode` (ffmpeg's own exit code; the process exits 1). `code` is a
 purely additive, statically-mapped relabelling of `kind` (never a new distinction `kind`
 doesn't already make) for a caller that wants a stable enum instead of matching `kind`
@@ -976,8 +977,10 @@ says it is kept without the step that was stopped, and the document carries it a
 **Source carry-over.** Every tool that writes a media file compares what its first input carried
 besides the picture and the sound with the file it wrote, and says so in `source_carry:
 {kept: [...], dropped: [...]}`. The items are `subtitles`, `chapters`, `cover_art`,
-`audio_channels` (a surround source only: more than two), `creation_time`, `audio_language` and
-`timecode`. A timecode is compared by its value: it is kept when the written start timecode
+`audio_channels` (a surround source only: more than two), `attachments` (Matroska attached files,
+such as the fonts of a subtitle track; only a Matroska output holds them), `video_streams` (a
+source with more than one playable picture: the tools write one), `creation_time`,
+`audio_language` and `timecode`. A timecode is compared by its value: it is kept when the written start timecode
 labels the frame the output starts on, which is the source's own label or, where the tool moved
 the picture's start (`cut` from a later frame, `fit --method trim`, `sync --trim-second`, a
 `render.py` clip with an `in`), the label of the source frame the output now starts on. A join of
@@ -985,9 +988,12 @@ several ranges (`cut --segments`, `--remove` leaving two or more) writes no star
 no single start labels the frames after the first join. The key is present only when the source
 had at least one of them, so a result for a plain source is unchanged. It is absent under `--dry-run`, for a still or GIF output, and when two
 or more inputs have a picture or sound (which one's items the output should carry is the tool's
-choice). An item bound to a stream the output does not have at all is not compared (a sound-only
+choice). `render.py`, whose stages run as their own tools, compares a project whose clips are all
+one file, with no music, replacement or effects track and no video layer, with that file; its
+timecode counts as kept when every stage that compared it kept it. An item bound to a stream the output does not have at all is not compared (a sound-only
 extract has no subtitle track to lose). It is a report, not a check: `verified` does not depend on
-it. A dropped `subtitles`, `chapters`, `cover_art` or `audio_channels` also records one
+it. A dropped `subtitles`, `chapters`, `cover_art`, `audio_channels`, `attachments` or
+`video_streams` also records one
 `source_items_dropped` warning and a notes line; a subtitle track the tool already reports through
 `dropped_non_av_streams` is not warned about twice, and a lost tag is listed without a warning.
 

@@ -62,7 +62,9 @@ def main() -> int:
     has_audio = bool(meta.get("audio"))
 
     output = args.output or default_output(args.input, "crop")
-    vf = [f"crop={args.width}:{args.height}:{args.x}:{args.y}", "setsar=1"]
+    # exact=1: without it crop rounds an odd --x/--y down to the chroma grid of a 4:2:0 frame,
+    # and the rectangle written was one pixel left of / above the one asked for (A170's sibling)
+    vf = [f"crop={args.width}:{args.height}:{args.x}:{args.y}:exact=1", "setsar=1"]
     if square_pixels(meta["video"]):
         vf.insert(0, square_pixels(meta["video"]))
         note(square_pixels_note(meta["video"]))

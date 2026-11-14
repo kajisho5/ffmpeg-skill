@@ -4,7 +4,37 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Compositing and time tools** (#460: A168, A169, A170, A173, A174, A177, A178, A179, A180).
+  `loop.py --crossfade` put a picture that starts 0.2 s after its sound 200 ms behind it in every
+  repeat; both streams are now shifted by the picture's start. `background.py --angle` outside
+  0-90 failed as `kind: ffmpeg`, and inside it the far end of the gradient was a seeded random
+  point; C1 now sits on the corner the direction starts from and C2 on the opposite one, at any
+  angle (the picture at 0 and 90 changes too). `redact.py` blur/pixelate at an odd `--x`/`--y`
+  left the rectangle's last column and row as they were and changed one outside it; `crop.py` cut
+  one pixel left of / above an odd position. An MP4/MOV's chapter text track was copied as a stray
+  data track holding the old titles by `metadata.py` (also `--clear-chapters`), `color.py
+  --retag`/`--strip-dovi`, export's data ladder and the tools that keep subtitle/data streams
+  through `run_keeping_subtitles`; the muxer's own chapter track is now the only one. `reverse.py`'s `memory_heavy` warning is
+  keyed on the decoded frames (size, chroma, depth, count; the estimate `loop.py --boomerang`
+  uses) instead of a length over 60 s. A `graphics.py --template sticker` at a bottom position
+  dropped into place on the drawtext route; it rises, as on the ASS route. `grid.py` labels keep
+  an apostrophe and a percent sign. `broll.py` judges cutaway overlap by time, so windows given
+  out of order are no longer refused as overlapping. `freeze.py` holding the last frame (no
+  `--at`) keeps the subtitle track, as `--mode extend` does.
+- **Edge-case inputs** (#461: A234, A235, A238, A255, A256, A258). `reverse.py` on a variable
+  frame rate wrote 51 frames for 49 that ran 81 ms past its sound; the graph now closes on the
+  rate the output is written at. `straighten.py --fit crop` wrote 1920x1080 as 1918x1078 (and a
+  SAR such as 6112:6111); it writes the displayed size, even, with square pixels. Matroska
+  attachments (a subtitle track's fonts) are kept into `.mkv`/`.mka`/`.mks` by the tools that keep
+  subtitles (`run_keeping_subtitles`, `export.py` including `--preset copy`, `caption.py --mode
+  mux`, `color.py`'s re-encoding retag); `source_carry` gains `attachments` and `video_streams` (a
+  second playable picture the tool left out), both with the `source_items_dropped` warning when
+  dropped. `render.py`'s result carries `source_carry` for a project whose clips are one file with
+  no other picture or sound source. README and the contract's `commands` description say that a
+  line naming a file the tool removed at exit (a concat list, an ffmetadata file, ...) cannot be
+  run again as printed.
 
 ## 3.8.10
 
@@ -30,7 +60,7 @@ _Automated release: version and notes generated from pull requests merged since 
     go through the same wrap and get the same fix.
   - `caption.py`: an emoji PNG in a left- or right-aligned caption is placed from the Style's side
     margins, not `--margin` (A62): on the left it covered the first words.
-  - `--karaoke` with word timings that match the cue's word count waits for the first word (A59) instead of leading the
+  - `--karaoke` with usable word timings that match the cue's word count waits for the first word (A59) instead of leading the
     speech by the cue's opening silence, and `--offset` moves the word timings with the cues
     (#505): `--offset 0.05` had cut the first word short and `0.2` dropped the timings for an even
     split.
