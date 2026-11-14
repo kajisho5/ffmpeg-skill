@@ -10548,6 +10548,23 @@ class Audit467Tests(unittest.TestCase):
                 proc = run(outside, action)
                 self.assertEqual(proc.returncode, 1, proc.stderr)
                 self.assertTrue((outside / "a" / ".tree_changed").is_file())
+        with self.subTest("an edit the run commits"):
+            proc = run(outside, "echo four >> tracked.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qam run")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertTrue((outside / "a" / ".tree_changed").is_file())
+        with self.subTest("a snapshot that cannot be taken"):
+            # a git that fails is not a state two snapshots can share: the agent is never started
+            real_git = shutil.which("git")
+            (stubs / "git").write_text(f'#!/bin/sh\n[ -n "$STUB_GIT_FAIL" ] && exit 1\nexec "{real_git}" "$@"\n', encoding="utf-8")
+            (stubs / "git").chmod(0o755)
+            os.environ["STUB_GIT_FAIL"] = "1"
+            self.addCleanup(os.environ.pop, "STUB_GIT_FAIL", None)
+            proc = run(outside, "touch ran_blind.txt")
+            os.environ.pop("STUB_GIT_FAIL", None)
+            (stubs / "git").unlink()
+            self.assertEqual(proc.returncode, 3, proc.stderr)
+            self.assertIn("cannot read the state", proc.stderr)
+            self.assertFalse((repo / "ran_blind.txt").exists(), "the agent did not run")
         self.assertEqual(run(repo / "runs").returncode, 0, "an ignored run folder inside the checkout")
         inside = repo / "eval_runs"
         proc = run(inside, "touch ran.txt")
