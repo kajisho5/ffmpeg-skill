@@ -16,8 +16,8 @@ Examples:
 import argparse
 import sys
 
-from _common.emit import record_fallback
-from _common.decision import silence_filter
+from _common.emit import note, record_fallback
+from _common.decision import silence_filter, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
@@ -65,8 +65,16 @@ def main() -> int:
             # front (one -filter_complex), so the record is made here, as broll and stabilize do
             record_fallback(f"{args.input} is {v.get('width')}x{v.get('height')}: scaled to even dimensions first",
                             "odd_dimensions_scaled_even", output=output, scale=EVEN_SCALE)
-        # the silence is counted in samples when --start/--end is not a whole millisecond
-        af = silence_filter(meta["audio"].get("sample_rate"), args.start, args.end)
+        # The sound is delayed by what the picture is: tpad puts whole frames ahead of the clip
+        # (--start 0.23425 at 25 fps: 6 frames, 0.240 s), and a delay of --start itself moved the
+        # sound 5.75 ms ahead of its picture (tpad_length). The silence after the clip moves
+        # nothing and is --end as asked. Either is counted in samples when it is not a whole
+        # millisecond (silence_filter).
+        lead = tpad_length(args.start, meta)
+        if abs(lead - args.start) > 1e-9:
+            note(f"--start {args.start:g}: the picture can only be padded by whole frames, {lead:.6f} s here; "
+                 f"the sound is delayed by the same {lead:.6f} s so the clip keeps its sync")
+        af = silence_filter(meta["audio"].get("sample_rate"), lead, args.end)
         cmd += ["-filter_complex", f"[0:v:0]{even}{vf}[v];[0:a:0]{af}[a]", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-vf", vf, "-map", "0:v:0"]

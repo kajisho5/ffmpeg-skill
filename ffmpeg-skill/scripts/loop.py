@@ -296,6 +296,8 @@ def main() -> int:
             die(f"--duration ({target:g}s) must be longer than one repeat ({unit:.3f}s) -- use cut.py to trim instead")
         stream_loop = math.ceil(target / unit) - 1
 
+    # a variable-rate source is conformed by the output's own -fps_mode cfr -r (cfr_args)
+    forced_rate = cfr_args(meta, fps if fade_frames and v.get("variable_frame_rate_suspected") else None)
     if args.boomerang:
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", _boomerang_graph(meta, src_dur, args.times), "-map", "[v]"]
         if meta.get("audio"):
@@ -318,6 +320,18 @@ def main() -> int:
             fh.write((concat_list_line(repeat) + "\n") * (stream_loop + 1))
         vtrim, atrim = av_trim(concat_first_frame(listfile), None, fill_gaps=True)
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
+        v_end = stream_starts(meta)[0] + (v.get("duration") or 0.0)
+        if has_audio and not forced_rate and not fade_frames and src_dur - v_end > 0.5 / fps:
+            # A repeat is as long as the file, so where the sound outlasts the picture by more
+            # than half a frame the next repeat's first frame comes later than one frame after
+            # the last. What stood in that gap was left to the output's frame-rate handling:
+            # FFmpeg 6.1 repeated the last frame and showed the next repeat's first frame twice,
+            # from a frame before its time (a 1 s 25 fps clip with 1.23425 s of sound: frame 0 of
+            # the second repeat at 1.20 s and 1.24 s, its sound from 1.23425 s); FFmpeg 7.1 and 8
+            # held the last frame (50 packets for 56). The graph ends on the clip's own rate, so
+            # the gap is the last frame repeated and each later repeat's frames sit on the grid
+            # once. A clip without that gap has nothing to fill and keeps the command it had.
+            vtrim += f",fps={rate}"
         if has_audio:
             cmd += ["-filter_complex", f"[0:v:0]{vtrim}[v];[0:a:0]{atrim}[a]",
                     "-map", "[v]", "-map", "[a]"]
@@ -329,7 +343,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     # a crossfade's repeat is already constant at `rate` (its graph's fps=): the loop keeps that rate,
     # not a variable-rate source's average, which re-timed every repeat by a frame or two
-    cmd += ["-fps_mode", "passthrough"] if args.boomerang else cfr_args(meta, fps if fade_frames and v.get("variable_frame_rate_suspected") else None)
+    cmd += ["-fps_mode", "passthrough"] if args.boomerang else forced_rate
     if has_audio:
         cmd += aac_args()
     else:
