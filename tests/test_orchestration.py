@@ -1418,7 +1418,8 @@ class OrchestrationTests(MediaFixtures):
         self.assertIn("\\kf", ass.read_text(encoding="utf-8-sig"), "brand enables karaoke")
         proc = script("overlay.py", self.src, "--logo", "--brand", brand, "--fast", "-o", OUT / "brand_logo.mp4")
         self.assertIn("scale=140:-1", proc.stderr)
-        self.assertIn("overlay=W-w-40:40", proc.stderr)
+        # top-right at the brand's safe margin, W-w-40:40, which overlay.py resolves to a pixel (#512)
+        self.assertIn(f"overlay={probe(str(self.src))['video']['width'] - 140 - 40}:40", proc.stderr)
         script("overlay.py", self.src, "--logo", expect_fail=True)
 
     # ---------------------------------------------------------------- v0.7: MCP server / batch / ASR bridge
@@ -2657,6 +2658,34 @@ class TimelineExportTests(unittest.TestCase):
                 doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
                 m = probe(doc["output"])
                 self.assertEqual((m["video"]["width"], m["video"]["height"]), size)
+
+    def test_a_one_clip_sequence_takes_the_fit_objects_frame(self):
+        """#506: the render's fit stage gives fit.py the fit object's aspect, sides and mode, the
+        frame's only where it has none; the export sized the sequence from the frame alone. So
+        frame 16:9 with fit 1:1 rendered a square and exported 640x360, and with frame.aspect
+        "16/9" (which fit.aspect replaces) the export dropped the aspect altogether. The sequence
+        is compared with the rendered file's size."""
+        for i, (frame, fit) in enumerate((({"aspect": "16:9"}, {"aspect": "1:1"}),
+                                          ({"aspect": "16/9"}, {"aspect": "1:1"}),
+                                          ({"aspect": "1:1"}, {"width": 200}),
+                                          ({"aspect": "16:9", "width": 320}, {"aspect": "4:5", "fit": "crop"}))):
+            with self.subTest(frame=frame, fit=fit):
+                proj = self.dir / f"fit_object{i}.json"
+                proj.write_text(json.dumps({"output": f"fit_object{i}.mp4", "frame": frame, "fit": fit,
+                                            "clips": [{"src": "a.mp4", "in": 0, "out": 1}]}), encoding="utf-8")
+                _, seq_size, _ = self._sequence(proj, f"fit_object{i}.fcpxml")
+                work = self.dir / f"fit_object{i}_work"
+                shutil.rmtree(work, ignore_errors=True)
+                doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
+                m = probe(doc["output"])
+                self.assertEqual(seq_size, (m["video"]["width"], m["video"]["height"]))
+                shutil.rmtree(work, ignore_errors=True)
+        # a fit object whose aspect fit.py would refuse is refused by the export under its own name
+        proj = self.dir / "fit_object_bad.json"
+        proj.write_text(json.dumps({"frame": {"aspect": "16:9"}, "fit": {"aspect": "wide"},
+                                    "clips": [{"src": "a.mp4", "in": 0, "out": 1}]}), encoding="utf-8")
+        proc = script("render.py", proj, "--export-timeline", self.dir / "fit_object_bad.fcpxml", "--json", expect_fail=True)
+        self.assertIn("fit.aspect 'wide'", json.loads(proc.stdout)["error"]["message"])
 
     def test_the_export_and_fit_py_read_one_aspect_grammar(self):
         """The render hands frame.aspect to fit.py --aspect, so the export refuses what fit.py

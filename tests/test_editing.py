@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
-from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_tones_take, stream_spans  # noqa: E402
+from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_vfr_flash_beep, make_tones_take, stream_spans  # noqa: E402
 from _fixtures import frame_lumas, frame_numbers, numbered_clip, pcm_of, plain_clip, stretches  # noqa: E402
 from _common import probe  # noqa: E402
 import _common  # noqa: E402
@@ -483,6 +483,64 @@ class EditingTests(MediaFixtures):
             self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
         # different horizontal anchors must crop different content, not just resize the same crop
         self.assertLess(self._psnr(left, right), 40, "crop-x=0 vs crop-x=1 kept the same picture")
+
+    def test_fit_crop_anchor_lands_on_the_edge_or_the_centre_it_names(self):
+        """#512: crop floored fit.py's computed offset to the chroma grid, so over a margin of 35
+        px --crop-x 1 kept a column of the margin and lost the source's last one, and a centred
+        crop sat a pixel left of the centre. The source has two 30-px white bars at its edges
+        (mirror-symmetric, stored luma read with extractplanes=y on a BT.709-tagged fixture), so
+        the bar kept by --crop-x 0 and the one kept by --crop-x 1 are as wide, and a centred crop
+        keeps both as wide; on each axis. The fixture's bars are checked first."""
+        tags = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+
+        def luma(path, w, h):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-vf", "extractplanes=y",
+                                  "-f", "rawvideo", "-"], stdout=subprocess.PIPE).stdout
+            return [list(raw[r * w:(r + 1) * w]) for r in range(h)]
+
+        def bars(line):
+            # the sub-pixel widths of the white run at each end of a line (crossing 128)
+            def run(seq):
+                for i in range(len(seq) - 1):
+                    if seq[i] >= 128 > seq[i + 1]:
+                        return i + (seq[i] - 128) / (seq[i] - seq[i + 1]) + 0.5
+                return 0.0 if seq[0] < 128 else float(len(seq))
+            return run(line), run(line[::-1])
+
+        for axis, size, boxes, flags in (
+                ("x", "102x60", "drawbox=x=0:y=0:w=30:h=60:c=white:t=fill,drawbox=x=72:y=0:w=30:h=60:c=white:t=fill",
+                 ["--width", "50"]),
+                ("y", "60x102", "drawbox=x=0:y=0:w=60:h=30:c=white:t=fill,drawbox=x=0:y=72:w=60:h=30:c=white:t=fill",
+                 ["--height", "50"])):
+            src = OUT / f"i512_fitcrop_{axis}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c=black:s={size}:r=25:d=0.2,{boxes}", "-pix_fmt", "yuv420p", *tags,
+               "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", src)
+            w, h = (int(v) for v in size.split("x"))
+            rows = luma(src, w, h)
+            line = rows[h // 2] if axis == "x" else [r[w // 2] for r in rows]
+            for bar in bars(line):
+                self.assertAlmostEqual(bar, 30.0, delta=0.05, msg=f"the fixture's bars: {bars(line)}")
+            got = {}
+            for anchor in ("0", "0.5", "1"):
+                out = OUT / f"i512_fitcrop_{axis}_{anchor}.mp4"
+                doc = json.loads(script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", anchor,
+                                        "-o", out, "--overwrite", "--json").stdout)
+                # an anchor that lands on the even grid as asked moves nothing, and says nothing
+                self.assertFalse([n for n in doc.get("notes") or [] if "--crop-" in n], doc.get("notes"))
+                rows = luma(out, 50, 50)
+                got[anchor] = bars(rows[25] if axis == "x" else [r[25] for r in rows])
+            # #525 review: over this 36 px margin 0.25 asks for 9 px; the offset is kept even (10),
+            # and the result says so, naming the axis, the offset asked and the one applied
+            doc = json.loads(script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", "0.25",
+                                    "-o", OUT / f"i512_fitcrop_{axis}_q.mp4", "--overwrite", "--json").stdout)
+            moved = [n for n in doc.get("notes") or [] if f"--crop-{axis} 0.25" in n]
+            self.assertEqual(len(moved), 1, doc.get("notes"))
+            self.assertIn("10px, not 9px", moved[0])
+            with self.subTest(axis=axis):
+                self.assertAlmostEqual(got["0"][0], got["1"][1], delta=0.25, msg=f"edge bars {got}")
+                self.assertAlmostEqual(got["0.5"][0], got["0.5"][1], delta=0.25, msg=f"centred bars {got}")
+                self.assertGreater(got["0.5"][0], 0.5, f"a centred crop keeps some of each bar: {got}")
 
     def test_fit_crop_anchor_out_of_range_is_refused(self):
         script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-x", "1.5", expect_fail=True)
@@ -1656,6 +1714,178 @@ class EditingTests(MediaFixtures):
         m2 = probe(str(out2))
         self.assertClose(m2["video"]["fps"], 30.0, 0.05)
         self.assertFalse(m2["video"]["variable_frame_rate_suspected"])
+
+    def test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame(self):
+        """#512: a VFR clip conformed to its average rate (27 fps here) by the encoder line's
+        `-fps_mode cfr -r` alone let each frame run up to about two frames late before one was
+        dropped: every tool through cfr_args wrote its picture up to 56 ms after the sound
+        (speedramp, closed on the source's 30 fps and resampled to 27, 114 ms), and the picture
+        ran 74 ms past it. The conform is the fps filter now, the nearest frame for every slot.
+        Measured on the picture (the flashes' times against where they belong) and against the
+        sound where no atempo moves it; the fixture's own timing is checked first. reverse.py is
+        not here: see docs/design-decisions.md, "After 3.8.11"."""
+        src = make_vfr_flash_beep(OUT / "i512_vfr.mp4")
+        meta = probe(str(src))
+        self.assertTrue(meta["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        self.assertAlmostEqual(meta["video"]["fps"], 27.0, delta=0.05)
+        self.assertEqual([round(t, 3) for t in flash_times(src)], [0.5, 1.5, 2.5, 3.5])
+        half = 0.5 / 27 + 0.001
+        same = [0.5, 1.5, 2.5, 3.5]
+        cases = (
+            ("denoise", ["denoise.py"], same, True),
+            ("crop", ["crop.py", "--x", "0", "--y", "0", "--width", "120", "--height", "100"], same, True),
+            ("redact", ["redact.py", "--x", "10", "--y", "10", "--width", "40", "--height", "40"], same, True),
+            ("overlay", ["overlay.py", "--text", "A"], same, True),
+            ("export", ["export.py", "--preset", "youtube"], same, True),
+            ("cut", ["cut.py", "--start", "0", "--end", "4", "--accurate"], same, True),
+            ("segments", ["cut.py", "--segments", "0-2,2.2-4"], [0.5, 1.5, 2.3, 3.3], False),
+            ("pad", ["pad.py", "--start", "0.5"], [1.0, 2.0, 3.0, 4.0], False),
+            # a fill with chroma is drawn in a split/maskedmerge graph (drawn_chain)
+            ("pad-colour", ["pad.py", "--start", "0.5", "--color", "red"], [1.0, 2.0, 3.0, 4.0], False),
+            ("graphics", ["graphics.py", "--template", "chapter", "--title", "C"], same, True),
+            ("freeze", ["freeze.py", "--at", "1.2", "--hold", "1"], [0.5, 2.5, 3.5, 4.5], False),
+            ("loop", ["loop.py", "--times", "2"], same + [4.5, 5.5, 6.5, 7.5], False),
+            # its sound is moved early by atempo (about 21 ms, at any factor): the picture alone here
+            ("speedramp", ["speedramp.py", "--segment", "0-2:1", "--segment", "2-3:0.5", "--segment", "3-4:1"],
+             [0.5, 1.5, 3.0, 4.5], None),
+        )
+        for name, argv, want, unchanged in cases:
+            with self.subTest(tool=name):
+                out = OUT / f"i512_vfr_{name}.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                got = flash_times(out)
+                self.assertEqual(len(got), len(want), f"flashes at {got}")
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), half, f"flashes at {got}, want {want}")
+                if unchanged is not None:
+                    for o in av_offsets_ms(out):
+                        self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
+                if unchanged:
+                    vlen = stream_spans(out)["video"][1]
+                    self.assertLessEqual(abs(vlen - 4.0), half, f"the picture lasts {vlen} s of 4")
+
+    def test_a_speed_change_puts_each_picture_within_half_a_frame(self):
+        """#512's class on a constant rate: fit --method speed retimed the picture with setpts and
+        left the encoder line to put it back on the source's 30 fps grid, so a 1.11x speed-up
+        showed every flash 50 ms late (0.5 s for 0.45). Measured on the picture: atempo moves the
+        sound by itself (about 21 ms)."""
+        src = OUT / "i512_cfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=black:s=160x120:r=30:d=4,drawbox=c=white:t=fill:enable='lt(mod(t-0.5\\,1)\\,0.06)*gte(t\\,0.5)'",
+           "-f", "lavfi", "-i", "sine=d=4", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", src)
+        self.assertEqual([round(t, 3) for t in flash_times(src)], [0.5, 1.5, 2.5, 3.5])
+        for target in (3.6, 3.0, 4.4):
+            with self.subTest(duration=target):
+                out = OUT / "i512_speed.mp4"
+                script("fit.py", src, "--duration", f"{target:g}", "--method", "speed", "--fast", "-o", out, "--overwrite")
+                got = flash_times(out)
+                want = [t * target / 4.0 for t in (0.5, 1.5, 2.5, 3.5)]
+                self.assertEqual(len(got), 4, got)
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), 0.5 / 30 + 0.001, f"flashes at {got}, want {want}")
+
+    def test_speedramp_segments_hold_the_frames_between_their_retimed_ends(self):
+        """#525 review: each segment's picture was its own length rounded to the delivered grid,
+        so eight contiguous 0.5 s segments at 1x of the 27 fps average clip held 14 frames each,
+        concat advanced 14/27 s per segment, the picture ran 4.148 s and the last flash (and,
+        padded by concat, its beep) landed at 3.630 s for 3.5. Each segment now holds the frames
+        between its retimed ends on the whole output's grid, and the two streams are joined by
+        their own concats. Picture against its slot, and against the sound."""
+        src = make_vfr_flash_beep(OUT / "i525_vfr.mp4")
+        half = 0.5 / 27 + 0.001
+        segs = [a for i in range(8) for a in ("--segment", f"{i * 0.5:g}-{(i + 1) * 0.5:g}:1")]
+        out = OUT / "i525_ramp8.mp4"
+        script("speedramp.py", src, *segs, "--fast", "-o", out, "--overwrite")
+        got = flash_times(out)
+        self.assertEqual(len(got), 4, got)
+        for g, w in zip(got, (0.5, 1.5, 2.5, 3.5)):
+            self.assertLessEqual(abs(g - w), half, f"flashes at {got}")
+        for o in av_offsets_ms(out):
+            self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
+        self.assertLessEqual(abs(stream_spans(out)["video"][1] - 4.0), half, stream_spans(out))
+
+    def test_a_one_frame_speedramp_segment_keeps_its_length(self):
+        """#525 review: a segment whose picture is one frame (0-0.1 at 3x of a 30 fps clip) was
+        given no length by FFmpeg 6.1.1's video-only concat, which ends a segment at its last
+        frame's timestamp, while the sound's concat advanced by 1/30 s: three of them in a row put
+        the rest of the picture a frame early (flash at 0.267 s for 0.3, 113 frames for 114). The
+        joined picture's timestamps are rebuilt from its frame count. The picture is measured
+        against where it belongs; the sound, which atempo moves by itself (about 21 ms), against
+        the same offset in every flash."""
+        src = make_flash_beep(OUT / "i525_onef.mp4")
+        cases = (
+            (["0-0.1:3", "0.1-4:1"], 0.1 / 3 - 0.1),
+            (["0-0.1:3", "0.1-0.2:3", "0.2-4:1"], 2 * 0.1 / 3 - 0.2),
+            (["0-0.1:3", "0.1-0.2:3", "0.2-0.3:3", "0.3-4:1"], 0.1 - 0.3),
+            (["0-1:1", "1-1.1:3", "1.1-1.2:3", "1.2-4:1"], 2 * 0.1 / 3 - 0.2),
+        )
+        for segs, moved in cases:
+            with self.subTest(segments=segs):
+                out = OUT / "i525_onef_out.mp4"
+                script("speedramp.py", src, *[a for seg in segs for a in ("--segment", seg)], "--fast",
+                       "-o", out, "--overwrite")
+                got = flash_times(out)
+                want = [t + moved if t > 0.5 or segs[0] != "0-1:1" else t for t in (0.5, 1.5, 2.5, 3.5)]
+                self.assertEqual(len(got), 4, got)
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), 0.5 / 30 + 0.001, f"flashes at {got}, want {want}")
+                offsets = av_offsets_ms(out)
+                self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
+                frames = round((4.0 + moved) * 30)
+                self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
+
+    def test_a_speed_change_to_a_named_rate_keeps_every_picture(self):
+        """#525 review: fit --method speed put the retimed picture on the source's rate and --fps
+        then put it on the rate asked: a 2x speed-up of a 30 fps clip to --fps 60 went through
+        fps=30 (every other picture dropped) and fps=60 (the rest shown twice), 60 distinct
+        pictures in 120 frames. The retimed picture goes straight to the rate asked. Each source
+        frame has its own luma, so the output's distinct levels count the pictures it kept."""
+        src = OUT / "i525_levels.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=black:s=64x48:r=30:d=4,format=gray,geq=lum='16+N*1.7',format=yuv420p",
+           "-f", "lavfi", "-i", "sine=d=4", "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-c:a", "aac", src)
+
+        def levels(path):
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:v:0", "-vf",
+                      "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-f", "null", "-")
+            return [round(float(x)) for x in re.findall(r"YAVG=([\d.]+)", proc.stderr)]
+
+        kept = len(set(levels(src)))
+        self.assertGreaterEqual(kept, 100, "the source's pictures must be told apart")
+        out = OUT / "i525_speed60.mp4"
+        script("fit.py", src, "--duration", "2", "--method", "speed", "--fps", "60", "--fast", "-o", out, "--overwrite")
+        got = levels(out)
+        self.assertEqual(len(got), 120)
+        self.assertGreaterEqual(len(set(got)), kept - 2, f"{len(set(got))} distinct pictures of the source's {kept}")
+
+    def test_a_rate_conform_ahead_of_a_composite_pad_keeps_the_last_frame(self):
+        """#525 review: the fps filter that delivers the rate came after the -vf, and a blur pad
+        (split/overlay) or a drawn pad with chroma (maskedmerge) ends its output at the last
+        frame's start on FFmpeg 6.1, so the conform lost the last frame: export reels --pad-fill
+        blur wrote 119 frames of a 4 s 30 fps picture, fit --fit blur on the 27 fps average clip
+        107 of 108, fit --fit blur --fps 60 238 of 240. The rate now comes first in such a -vf,
+        after any retiming. Frame count, and each flash against its beep."""
+        vfr = make_vfr_flash_beep(OUT / "i525_vfr.mp4")
+        cfr = make_flash_beep(OUT / "i525_cfr.mp4")
+        half27 = 0.5 / 27 + 0.001
+        cases = (
+            ("reels-blur", cfr, ["export.py", "--preset", "reels", "--pad-fill", "blur"], 120, 0.5 / 30 + 0.001),
+            ("reels-colour-vfr", vfr, ["export.py", "--preset", "reels", "--pad-color", "red"], 120, 0.5 / 30 + 0.001),
+            ("fit-blur-vfr", vfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--fit", "blur"], 108, half27),
+            ("fit-padfill-vfr", vfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--pad-fill", "blur"], 108, half27),
+            ("fit-blur-fps", cfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--fit", "blur", "--fps", "60"], 240,
+             0.5 / 60 + 0.001),
+        )
+        for name, src, argv, frames, half in cases:
+            with self.subTest(case=name):
+                out = OUT / f"i525_pad_{name}.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
+                offsets = av_offsets_ms(out)
+                self.assertEqual(len(offsets), 4, offsets)
+                for o in offsets:
+                    self.assertLessEqual(abs(o), half * 1000 + 1, f"flash minus beep {offsets} ms")
 
     def test_rotated_source_uses_display_orientation(self):
         out = OUT / "rot_fit.mp4"

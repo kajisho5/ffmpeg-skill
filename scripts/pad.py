@@ -18,7 +18,7 @@ import sys
 
 from _common.emit import note, record_fallback
 from _common.decision import silence_filter, tpad_length
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
+from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
 def main() -> int:
@@ -51,7 +51,12 @@ def main() -> int:
     tpad = f"tpad=start_duration={args.start:.3f}:stop_duration={args.end:.3f}:color="
     # a --color with chroma lands in the BT.709 the output is tagged with (tpad's own YUV is BT.601
     # before FFmpeg 7.1, and for an untagged picture after it); black is the same under every matrix
-    vf = drawn_chain(tpad + args.color, meta, [args.color], tpad + "black")
+    # the conform of a VFR source is the fps filter right after tpad, which pads by time: before
+    # it, the padding was rounded to the delivered grid on top of the frames' own rounding (37 ms
+    # late), and after a drawn chain's maskedmerge the last frame was lost (#512)
+    conform = with_cfr("", meta)
+    vf = drawn_chain(tpad + args.color + ("," + conform if conform else ""), meta, [args.color],
+                     tpad + "black" + ("," + conform if conform else ""))
     cmd = ffmpeg_base() + ["-i", args.input]
     if has_audio:
         # One -filter_complex, not a -vf and an -af: the ffmpeg scheduler of Ubuntu 26.04's 8.0.1 and

@@ -4,7 +4,63 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A variable-rate source is conformed by the `fps` filter, and its picture stays with its sound
+  (#512).** The re-encoding tools that conform a VFR source through `cfr_args` (`broll`,
+  `caption`, `color`, `crop`, `cut`, `deinterlace`, `denoise`, `export`, `fit`, `freeze`,
+  `graphics`, `loop`, `overlay`, `pad`, `proxy`, `redact`, `sphere`, `stabilize`, `straighten`) left the conform to the encoder line's `-fps_mode cfr -r`, which let a frame fall
+  up to about two frames behind its slot before it dropped one: on a 30 fps clip with frames
+  dropped to an average of 27 fps, flashes came out 18 and 56 ms after their beeps and the picture
+  ran 74 ms longer than the source's. The `fps` filter now takes the nearest frame for each slot,
+  and on that clip each of those tools wrote every flash 18-19 ms after its beep, within half a
+  frame (FFmpeg 6.1.1). `speedramp.py` and `freeze.py` inside the clip closed their graph on the
+  source's nominal rate and let `-r` resample it (`speedramp.py`'s flash after a slowed segment
+  came 74 ms late, 114 ms against the sound); they close on the delivered rate. `freeze.py` counted a VFR hold in average-rate frames spaced at the nominal rate (0.9 s of
+  picture against 1 s of sound for `--hold 1`). `fit.py --method speed` puts its retimed picture
+  back on the grid the same way (a 1.11x speed-up of a constant-rate clip showed each flash 50 ms
+  late); with `--fps` it goes straight to the rate asked (a 2x speed-up of a 30 fps clip to
+  `--fps 60` went through `fps=30`, keeping 60 of its 120 pictures, then `fps=60`). The rate
+  comes first in a `-vf` that is a split/overlay or maskedmerge graph (`fit.py --fit blur` and
+  `--pad-fill blur`, `export.py`'s pad with `--pad-fill blur` or a `--pad-color` with chroma),
+  after any retiming: FFmpeg 6.1's overlay ends at its last frame's start, and an `fps` filter
+  after it lost that frame (`export.py --preset reels --pad-fill blur` wrote 119 frames of a 4 s
+  30 fps picture, `fit.py --fit blur --fps 60` 238 of 240, `--fit blur` on the 27 fps clip 107
+  of 108). `speedramp.py` gives each segment the frames between its retimed ends on the whole
+  output's grid and joins the picture and the sound by separate concats: each segment's own
+  length rounded to the grid drifted, eight 0.5 s segments at 1x of the 27 fps clip ran 4.148 s
+  and put the last flash, and its beep, at 3.630 s for 3.5. The joined picture's timestamps are
+  then rebuilt from its frame count: FFmpeg 6.1.1's video-only concat gave a one-frame segment
+  no length, and three of them in a row (`0-0.1:3`, `0.1-0.2:3`, `0.2-0.3:3` on a 30 fps clip)
+  put the rest of the picture a frame before its sound. Not changed: `speedramp.py` puts
+  its sound 21-40 ms early (atempo, also on a constant rate), a `freeze.py --at` inside a VFR
+  gap writes the picture after the hold early, and `reverse.py` still shows a reversed VFR
+  picture late (0.19 s on that clip); the three are filed as #523.
+- **`overlay.py` places an `--image` or `--video` layer at the pixel its position names (#512).**
+  `overlay` puts a layer on a 4:2:0 picture on the chroma grid, so `--position 11,13` drew the
+  logo at 10,12, and a right-aligned, bottom-aligned or centred layer whose position came out odd
+  moved one pixel left or up. The layer gets a transparent column or row where its position is
+  odd and is overlaid at the even one before it, so its luma lands where asked; the chroma sample
+  on that edge is shared with the pixel outside it. A dry run whose input does not exist yet
+  plans the old graph (no size to compute the position from). `--text` was already exact. An
+  `--image` that stores non-square pixels (a PNG's pHYs) is made square at its display aspect
+  first, as a `--video` layer is: its position was computed from its displayed size while it
+  was drawn at its stored one (a 100x100 PNG at SAR 2:1 drew 100 px wide at x=120 of a 320 px
+  main for `--position top-right --margin 0`).
+- **`fit.py --fit crop` keeps the edge or the centre `--crop-x`/`--crop-y` names (#512).** `crop`
+  floored the computed offset to the chroma grid, so over an odd margin `--crop-x 1` kept a column
+  of the margin and lost the source's last one, and a centred crop sat a pixel off. The scaled
+  frame's margin is now a multiple of 4 (at most 3 px wider on the cropped axis) and the offset
+  is computed to even, as `straighten.py --fit crop` does. An anchor whose offset is not even
+  (`--crop-x 0.25` over a 36 px margin asks for 9 px) gets the even one nearest it, and a
+  `notes` line names the axis, the offset asked and the one applied.
+- **`render.py --export-timeline` sizes a one-clip sequence by the project's `fit` object
+  (#506).** The render's fit stage reframes with the `fit` object's aspect, mode, sides and rate
+  and takes the frame's only where it has none; the export read the frame alone, so frame 16:9
+  with `fit` 1:1 rendered a square and exported a 16:9 sequence. A `fit.aspect` or `fit.fit`
+  that fit.py refuses is refused by the export under its own name. A project of several clips
+  is unchanged (its join is sized from the frame first; which of `frame` and `fit` wins there is
+  deferred, see `docs/design-decisions.md`).
 
 ## 3.8.15
 

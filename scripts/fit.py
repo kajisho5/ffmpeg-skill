@@ -38,9 +38,9 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
@@ -162,6 +162,7 @@ def main() -> int:
     post: List[str] = []
     factor = 1.0
     tc_first = None  # seconds from the source's first frame to the output's, when a trim moves it
+    regridded = False  # a speed change already put the picture on the delivered grid
 
     # ---- rotate / flip
     if args.rotate == 90:
@@ -204,6 +205,15 @@ def main() -> int:
                 elif factor < 1.0 and args.smooth == "blend":
                     vf.append(f"fps={src_fps:g}")
                     vf.append("tblend=all_mode=average")
+                elif not args.fps:
+                    # the retimed frames are put back on the output's grid by the fps filter, the
+                    # nearest frame for each slot: left to the encoder line's rate, a 1.11x speed-up
+                    # showed every picture up to two frames late against its sound (#512's class).
+                    # A rate the caller names is that grid (the conform below): conformed here to
+                    # the source's 30 first, a 2x speed-up to --fps 60 dropped every other picture
+                    # and the second fps filter repeated the rest
+                    vf.append(frame_durations(meta, delivered_rate(meta) or frame_rate(meta) or src_fps))
+                    regridded = True
                 if has_audio:
                     af.append(atempo_chain(factor))
             # atempo's sound is not the input's length over the factor (it comes out some
@@ -243,11 +253,43 @@ def main() -> int:
             else:
                 info(f"source ({src_dur:.2f}s) is already shorter than {target:.2f}s; trim does nothing")
 
+    # ---- the output's rate: after any retiming, ahead of the frame's own filters. --fit blur and
+    # --pad-fill blur are a split/overlay graph, and FFmpeg 6.1's overlay ends its output at its
+    # last frame's start, so an fps filter after it lost the last frame (#512's placement).
+    # A speed change without --fps has already been put on the delivered grid above
+    if args.fps:
+        vf.append(f"fps={args.fps:g}")
+    elif meta["video"].get("variable_frame_rate_suspected") and not regridded:
+        info("source looks variable-frame-rate; conforming to constant fps automatically")
+        # the conform is the fps filter, as --fps is: -fps_mode cfr alone let a frame run up to
+        # two frames late against the sound (#512)
+        vf.append(cfr_filter(meta))
+
     # ---- aspect / size
     if args.aspect or args.width or args.height:
         # the one sizing rule, shared with render.py --export-timeline's sequence frame
         out_w, out_h = frame_size(parse_aspect(args.aspect) if args.aspect else None, args.width, args.height, sw, sh)
-        if args.fit == "crop":
+        if args.fit == "crop" and sw and sh:
+            # The scaled frame's margin on each axis is a multiple of 4 and the offset is computed
+            # here, to even: crop floors an odd offset to the chroma grid of a 4:2:0 frame, so
+            # --crop-x 1 lost the source's last column and showed one column of the margin, and a
+            # centred crop sat a pixel left of / above the centre (#512). exact=1 would put the
+            # chroma half a sample off the luma instead. The size is the one
+            # force_original_aspect_ratio=increase gives (av_rescale rounds half away from zero),
+            # widened by at most 3 px on the cropped axis.
+            sc_w = max(out_w, (2 * out_h * sw + sh) // (2 * sh))
+            sc_h = max(out_h, (2 * out_w * sh + sw) // (2 * sw))
+            mx, my = (-(-(sc - o) // 4) * 4 for sc, o in ((sc_w, out_w), (sc_h, out_h)))
+            ox, oy = (int(m * f / 2 + 0.5) * 2 for m, f in ((mx, args.crop_x), (my, args.crop_y)))
+            for axis, m, f, got in (("x", mx, args.crop_x, ox), ("y", my, args.crop_y, oy)):
+                if abs(m * f - got) > 1e-9:
+                    # the offset is kept even (the chroma grid); a caller who asked for another one
+                    # is told which it got, as proxy.py says which width it wrote
+                    note(f"--crop-{axis} {f:g}: crop offset {got}px, not {m * f:g}px: the offset is kept even "
+                         f"(4:2:0 chroma), on a {m}px margin")
+            vf.append(f"scale={out_w + mx}:{out_h + my}")
+            vf.append(f"crop={out_w}:{out_h}:{ox}:{oy}")
+        elif args.fit == "crop":  # a dry run's pending input has no size: the expressions, planned only
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
         elif args.fit == "blur":
@@ -272,10 +314,6 @@ def main() -> int:
             vf.insert(0, square_pixels(meta["video"]))
             note(square_pixels_note(meta["video"]))
 
-    if args.fps:
-        vf.append(f"fps={args.fps:g}")
-    elif meta["video"].get("variable_frame_rate_suspected"):
-        info("source looks variable-frame-rate; conforming to constant fps automatically")
     # the start timecode is counted at the rate the output is delivered at: a --fps that changes
     # the rate relabels it (01:00:00:12 at 25 fps is 01:00:00:24 at 50) even with no trim, which
     # is also how a render.py clip cut at its own rate reaches the project's frame.fps

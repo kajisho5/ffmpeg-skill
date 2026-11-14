@@ -83,7 +83,7 @@ from _common.decision import (
     BEAT_REFRACTORY_S, BEAT_WINDOW_S, BEAT_SUPPORT_DIVISOR, BEAT_ALIGN_DIVISOR,
     BEAT_Z_FLOOR, BEAT_Z_SPAN,
     _onset_strength, _pick_onsets, _autocorrelation_peak, _grid_score,
-    brand_states_font, cfr_args, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
+    brand_states_font, cfr_args, cfr_at_input, cfr_filter, graph_with_cfr, with_cfr, concat_list_line, db_to_linear, default_output, encoder_args, escape_filter_path,
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
@@ -182,7 +182,7 @@ __all__ = [
     "platform", "re", "shutil", "subprocess", "sys", "unicodedata",
     "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "LEGAL_RANGE_CHOICES", "LEGAL_RANGES", "legal_limits", "measure_signal_range", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
     "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
-    "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_matrix_args", "bt709_matrix_filter", "bt709_tag_args", "cfr_args", "_char_em",
+    "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_matrix_args", "bt709_matrix_filter", "bt709_tag_args", "cfr_args", "cfr_at_input", "cfr_filter", "graph_with_cfr", "with_cfr", "_char_em",
     "char_script", "_check_existing_output", "refuse_existing_outputs", "guard_sidecar", "_check_no_overwrite_input", "_check_output_path", "child_args", "option_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",
     "concat_list_line", "Context", "_CURRENT_CTX", "db_to_linear", "decode_pcm_mono", "description_block", "_evidence_rank", "fmt_chapter_time", "propose_chapters",

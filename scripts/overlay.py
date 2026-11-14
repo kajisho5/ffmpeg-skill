@@ -29,13 +29,14 @@ A VP9 --video layer stored with an alpha layer (a WebM from export.py --preset v
 with libvpx-vp9, so its transparency reaches the composite (FFmpeg's own VP9 decoder drops it).
 """
 import argparse
+import ast
 import re
 import sys
 from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
-from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, cfr_filter, cfr_at_input, with_cfr, default_output, die, escape_drawtext, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb
 from _common.decision import length_output_t, window_expr, windowed_overlay_x
@@ -84,6 +85,56 @@ def position_exprs(pos: str, margin: int, text_mode: bool, margins: Optional[dic
         x = x.replace("main_text_w", "main_w").replace("main_text_h", "main_h")
         y = y.replace("main_text_w", "main_w").replace("main_text_h", "main_h")
     return x, y
+
+
+def _scaled_height(w: int, src_w: int, src_h: int, factor: int) -> int:
+    """The height scale=W:-1 (factor 1) or scale=W:-2 (factor 2) gives a src_w x src_h picture:
+    av_rescale(w, ih, iw * factor) * factor, rounded half away from zero as FFmpeg rounds it."""
+    den = src_w * factor
+    return max(factor, (2 * w * src_h + den) // (2 * den) * factor)
+
+
+def on_grid(x: str, y: str, main: "tuple", layer: "tuple") -> "Optional[tuple]":
+    """Where the layer goes so its top-left pixel is at (x, y) in luma, x and y being the overlay
+    expressions position_exprs() gives, as overlay evaluates them (the integer part).
+
+    overlay places a layer on a 4:2:0 picture on the chroma grid: an odd x or y is taken down to
+    the even one before it (#512: --position 11,13 drew the logo at 10,12, and a centred or
+    right-aligned layer whose position came out odd moved the same way). So the layer gets one
+    transparent column/row on the left/top where x/y is odd, and is overlaid at the even position
+    before it: its luma lands where it was asked, and the chroma sample on that edge is shared
+    with the pixel outside it. Returns (x_even, y_even, pad filter or ""), or None when a size is
+    unknown (a dry run's pending input): the overlay then gets the expressions, as before."""
+    (mw, mh), (lw, lh) = main, layer
+    if not (mw and mh and lw and lh):
+        return None
+
+    def arith(node: Any) -> float:
+        # the four operations on whole numbers position_exprs() writes, and nothing else
+        if isinstance(node, ast.Expression):
+            return arith(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            return -arith(node.operand) if isinstance(node.op, ast.USub) else arith(node.operand)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+            a, b = arith(node.left), arith(node.right)
+            return {ast.Add: a + b, ast.Sub: a - b, ast.Mult: a * b}.get(type(node.op), a / b if b else 0.0)
+        raise ValueError(f"not a position: {ast.dump(node)}")
+
+    def value(expr: str, big: int, small: int, axis: str) -> Optional[int]:
+        num = re.sub(axis.upper(), str(big), re.sub(axis, str(small), expr))
+        try:
+            return int(arith(ast.parse(num, mode="eval")))  # the integer part, as overlay's (int) cast takes it
+        except (SyntaxError, ValueError):
+            return None
+
+    px, py = value(x, mw, lw, "w"), value(y, mh, lh, "h")
+    if px is None or py is None:
+        return None
+    ox, oy = px & 1, py & 1  # two's complement: -3 is one column right of -4
+    pad = f"pad=iw+{ox}:ih+{oy}:{ox}:{oy}:color=black@0" if ox or oy else ""
+    return px - ox, py - oy, pad
 
 
 def _wrap_to_frame(args, frame_w: int, margins: Optional[dict], frame_h: int = 0) -> str:
@@ -443,11 +494,22 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input]
 
     if args.image:
-        refuse_not_a_still(args.image, probe(args.image), "--image",
+        image_meta = probe(args.image)
+        refuse_not_a_still(args.image, image_meta, "--image",
                            "--video composites a moving layer; `look.py FILE --at T` writes one frame of it as a PNG")
         chain: List[str] = ["format=rgba"]
+        # a still that stores non-square pixels (a PNG's pHYs, a JPEG's density) is made square at
+        # its display aspect first, as a --video layer is: its size and position are computed in
+        # that frame, and placed from it at its stored size a 100x100 PNG at SAR 2:1 drew 100 px
+        # wide at x=120 of a 320 px main for top-right, 100 px short of the edge
+        if square_pixels(image_meta.get("video")):
+            chain.append(square_pixels(image_meta.get("video")))
+            note(square_pixels_note(image_meta.get("video"), "the --image"))
+        iw, ih = display_size(image_meta.get("video"))
+        lw = int(vw * args.scale_percent / 100) if args.scale_percent else args.scale or iw
+        lh = _scaled_height(lw, iw, ih, 1) if lw != iw and iw and ih else ih
         if args.scale_percent:
-            chain.append(f"scale={int(vw * args.scale_percent / 100)}:-1")
+            chain.append(f"scale={lw}:-1")
         elif args.scale:
             chain.append(f"scale={args.scale}:-1")
         if args.opacity < 1:
@@ -461,6 +523,11 @@ def main() -> int:
             if end is not None and end > args.fade:
                 chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
+        grid = on_grid(x, y, (vw, vh), (lw, lh))
+        if grid:
+            # padded in RGBA, where a one-pixel offset is exact, before the layer is made YUV
+            x, y = grid[0], grid[1]
+            chain += [grid[2]] if grid[2] else []
         # a 10-bit main on a 10-bit line is composited at 10 bits in YUV: format=auto with an RGBA
         # still took the whole picture through 8-bit RGB (overlay_format)
         # a --start/--end window is in the layer's position, which is evaluated on the main
@@ -510,8 +577,11 @@ def main() -> int:
             if main_dur and at >= main_dur:
                 die(f"--place {a:g}-{b:g}@{at:g}: starts after the main video ends ({main_dur:.3f} s)")
         chain = [square_pixels(pip_meta["video"])] if square_pixels(pip_meta["video"]) else []
+        iw, ih = display_size(pip_meta["video"])
+        lw = int(vw * args.scale_percent / 100) if args.scale_percent else args.scale or iw
+        lh = _scaled_height(lw, iw, ih, 2) if (args.scale_percent or args.scale) and iw and ih else ih
         if args.scale_percent:
-            chain.append(f"scale={int(vw * args.scale_percent / 100)}:-2")
+            chain.append(f"scale={lw}:-2")
         elif args.scale:
             chain.append(f"scale={args.scale}:-2")
         # an alpha line composites at 4:4:4: the layer is not taken through 4:2:0 on the way
@@ -544,6 +614,15 @@ def main() -> int:
             # which came back BT.601 under the BT.709 tag (#333's defect, on this path)
             chain.append(f"lut=y=val:u=val:v=val:a=val*{args.opacity:g}")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
+        grid = on_grid(x, y, (vw, vh), (lw, lh))
+        if grid:
+            x, y = grid[0], grid[1]
+            if grid[2]:
+                # padded at 4:4:4, where a one-pixel offset is exact; overlay takes the layer back
+                # to the main's 4:2:0 on its own grid, as the layer is now aligned with it
+                if not any(c.endswith("yuva444p") or c.endswith("yuva444p10le") for c in chain):
+                    chain.append("format=yuva444p10le" if deep else "format=yuva444p")
+                chain.append(grid[2])
         # a --start/--end window is in the layer's position, which is evaluated on the main
         # picture's frames; overlay's enable is evaluated on the layer's frames too
         ov = f"overlay={windowed_overlay_x(x, enable) if enable else x}:{y}" + (overlay_format(meta) or ":format=auto")
@@ -646,6 +725,15 @@ def main() -> int:
     else:
         cmd += video_args(meta, args.crf, args.preset, convert_matrix=not args.video) + cfr_args(meta)
         cmd += aac_args() if meta.get("audio") else ["-an"]
+    if cfr_filter(meta):
+        # the conform of a VFR source is the fps filter (in a graph, on the main picture as it is
+        # decoded): the encoder line's -fps_mode cfr alone let a frame run up to two frames late (#512)
+        if "-filter_complex" in cmd:
+            i = cmd.index("-filter_complex") + 1
+            cmd[i] = cfr_at_input(cmd[i], meta)
+        else:
+            i = cmd.index("-vf") + 1
+            cmd[i] = with_cfr(cmd[i], meta)
     dropped_streams = run_keeping_subtitles(cmd, output)
     if not STATE.dry_run:
         result = probe(output, role="output")

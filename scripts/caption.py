@@ -46,7 +46,7 @@ from _ass_overlay import (EMOJI_SENTINEL, emoji_placeholder, ass_escape_markup,
                           strip_srt_markup, reinsert_srt_markup, carry_srt_markup, srt_alignment)
 from _common.emit import refuse  # noqa: E402
 from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
-from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, NO_SPACE_SCRIPTS, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, layer_base_chain, load_brand, overlay_format, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
+from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_asset_for, emoji_codepoint_name, emoji_support, resolve_emoji_assets, NO_SPACE_SCRIPTS, char_script, text_width_em, emoji_clusters, has_emoji, detect_script, BIDI_SCRIPTS, STATE, brand_states_font, script_font_for_text, signed_time_arg, brand_caption_style, color_hex, drawn_chain, layer_base_chain, load_brand, overlay_format, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, fmt_smpte_time, info, MissingFpsError, parse_time, probe, run, X264_PRESETS, read_text_or_die, fmt_secs, refuse_existing_outputs, guard_sidecar
 # The line breaker, lifted into _common/text.py in 1.16.0 so graphics.py can use the same rules.
 # The ASR bridge and the SRT reader/writer live in _common.asr since 1.17 (silence.py --filler
 # shares them). They stay caption.py's public names -- every caller and test that reached for
@@ -2082,10 +2082,11 @@ def main() -> int:
             asset = spec[-1]
             if asset not in STATE.plan_inputs:
                 STATE.plan_inputs.append(asset)
-        graph = ";".join([f"[0:v]{vf}[vsub]"] + chains)
+        # the conform of a VFR source is the fps filter at the end of the chain (#512)
+        graph = cfr_at_input(";".join([f"[0:v]{vf}[vsub]"] + chains), meta)
         cmd += ["-filter_complex", graph, "-map", "[vout]"]
     else:
-        cmd += ["-map", "0:v:0", "-vf", vf]
+        cmd += ["-map", "0:v:0", "-vf", with_cfr(vf, meta)]
     if meta.get("audio"):
         cmd += ["-map", f"0:a:{args.audio_stream}"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)

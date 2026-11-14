@@ -117,8 +117,18 @@ wrong frame — respect the automatic re-encode rather than forcing the copy.
 
 ### Variable frame rate
 `probe.py` sets `variable_frame_rate_suspected` when `r_frame_rate` and
-`avg_frame_rate` disagree (phone and screen recordings). Every re-encoding
-script then adds `-fps_mode cfr` at the source's average rate. That flag is a
+`avg_frame_rate` disagree (phone and screen recordings). On that flag `crop`, `denoise`,
+`deinterlace`, `proxy`, `sphere`, `stabilize`, `straighten`, `redact`, `overlay`, `caption`,
+`color`, `graphics`, `pad`, `freeze`, `loop`, `broll`, `cut` (a re-encode, `--segments`),
+`export`, `fit` and `speedramp` conform the picture with the `fps` filter (the nearest frame
+for each slot; `-fps_mode cfr` alone let a frame run up to two frames late against the sound,
+#512); `join`, `multicam` and `grid` put each input on the output's rate with their own `fps`
+filter. `reverse.py` is not changed: its `fps` filter comes after `reverse`, which hands the frames
+the forward timestamps in order, so a reversed VFR picture keeps its gaps where they were in
+forward time (each flash 0.19 s late on
+a 27 fps average clip; see docs/design-decisions.md). The rate is `cfr_args()`'s: the probed
+average, written as the nearest whole number when it is within 0.02 of one (29.98 is
+conformed to 30, 29.97 stays 29.97), and 30 when no average was probed. That flag is a
 whole-file average, and a phone clip at 29.98 against a nominal 30 trips it, so
 `cut.py` decides on packet timestamps sampled in up to five windows (`vfr_check`)
 instead: by default (`--vfr-guard sampled`, since 3.0.0) it switches to

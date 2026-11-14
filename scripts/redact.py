@@ -27,7 +27,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, overlay_format, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, overlay_format, apply_common, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note
 from _common.probe import display_size, square_pixels, square_pixels_note
 
@@ -98,7 +98,8 @@ def main() -> int:
     output = args.output or default_output(args.input, "redact")
     if args.mode == "delogo":
         cmd = ffmpeg_base() + ["-i", args.input, "-vf",
-                               (square + "," if square else "") + f"delogo=x={args.x}:y={args.y}:w={args.width}:h={args.height}",
+                               with_cfr((square + "," if square else "") + f"delogo=x={args.x}:y={args.y}:w={args.width}:h={args.height}",
+                                        meta, args.fps),
                                "-map", "0:v:0"]
     else:
         # exact=1: crop rounds an odd x/y down to the chroma grid of a 4:2:0 frame otherwise, and
@@ -127,6 +128,8 @@ def main() -> int:
                        f"pad={args.width + 2 * ox}:{args.height + 2 * oy}:{ox}:{oy}:color=black@0")
         fc = (f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];"
               f"[base][patched]overlay={args.x - ox}:{args.y - oy}{overlay_format(meta)}[out]")
+        # a VFR source (or --fps) is conformed by the fps filter as it is decoded (#512)
+        fc = cfr_at_input(fc, meta, args.fps)
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", fc, "-map", "[out]"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]
