@@ -699,10 +699,15 @@ def main() -> int:
     created = [d for d in (outdir, work) if not d.exists()]
     outdir.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
-    if STATE.dry_run and created:
+    # a real run that is refused before any item starts (--jobs, an output collision, a final path
+    # that is an input) leaves nothing behind either (A187, #465: it left out/ and out/.work)
+    item_started = {"item": False}
+    if created:
         import atexit
 
         def _remove_empty_dirs() -> None:
+            if not STATE.dry_run and item_started["item"]:
+                return
             for d in sorted(created, key=lambda p: len(str(p)), reverse=True):
                 try:
                     if not any(d.iterdir()):
@@ -850,6 +855,7 @@ def main() -> int:
         def run_item(i: int, src: Path) -> Dict[str, Any]:
             """process() in the item's own work directory, which goes when it ends, however it ends."""
             import shutil
+            item_started["item"] = True
             iw = item_work(i, src)
             try:
                 return process(src, recipe, outdir, iw, deadline)

@@ -372,9 +372,38 @@ def validate_color(value: str, flag: str = "--color") -> str:
     demonstrated filter-graph injection: --color "black,drawtext=text=..." renders arbitrary burnt-in
     text), not just an odd colour. This is the same "no filter graph accepted from the caller"
     invariant every other typed flag in this codebase already holds to."""
-    if not _COLOR_TOKEN_RE.match(value):
+    m = _COLOR_TOKEN_RE.match(value)
+    if not m:
         die(f"{flag} must be a plain colour (a name, 0xRRGGBB[AA], or #RRGGBB[AA], optionally @alpha), got '{value}'")
+    word = m.group(1)
+    if word[0] not in "#0" and word.lower() not in FFMPEG_COLOR_NAMES and not _BARE_HEX.match(word):
+        # A189 (#465): any word passed, and an unknown name failed inside ffmpeg ("Cannot find
+        # color") as kind ffmpeg, after a dry run that had said completed. ffmpeg reads a word as
+        # one of its names, or else as bare hex digits.
+        die(f"{flag} {value!r}: {word!r} is not a colour name ffmpeg knows (`ffmpeg -colors` lists them) "
+            "nor six or eight hex digits; use a name such as white, or 0xRRGGBB")
     return value
+
+
+# The names av_parse_color() looks up, case-insensitively (`ffmpeg -colors`, the same list in 6.1
+# through 8), plus the two it treats as a random colour. A word that is none of them is read as
+# hex digits without a prefix, which works for six or eight of them.
+FFMPEG_COLOR_NAMES = frozenset((
+    "aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown "
+    "burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan "
+    "darkgoldenrod darkgray darkgreen darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred "
+    "darksalmon darkseagreen darkslateblue darkslategray darkturquoise darkviolet deeppink deepskyblue dimgray "
+    "dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green "
+    "greenyellow honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon "
+    "lightblue lightcoral lightcyan lightgoldenrodyellow lightgreen lightgrey lightpink lightsalmon "
+    "lightseagreen lightskyblue lightslategray lightsteelblue lightyellow lime limegreen linen magenta maroon "
+    "mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen "
+    "mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive "
+    "olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff "
+    "peru pink plum powderblue purple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell "
+    "sienna silver skyblue slateblue slategray snow springgreen steelblue tan teal thistle tomato turquoise "
+    "violet wheat white whitesmoke yellow yellowgreen random bikeshed").split())
+_BARE_HEX = re.compile(r"^(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
 
 
 # The tonemap filter reads linear light in units of 100 nits (1.0 = SDR white; its default peak,

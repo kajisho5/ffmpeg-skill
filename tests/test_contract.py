@@ -10599,5 +10599,333 @@ class Audit467Tests(unittest.TestCase):
         self.assertFalse((repo / "ran.txt").exists(), "the agent did not run")
 
 
+class SharedCodeAudit465Tests(unittest.TestCase):
+    """The open items of audit #465 (shared code and the MCP server), one test per defect class:
+    A181, A184, A183, A189, A7, A5, A186, A11, A187, A6, A4, A22, A24, A23. Each fails on 3.8.11's
+    scripts. docs/design-decisions.md, "After 3.8.11 -- shared code and the MCP server (#465)"."""
+
+    class Refused(Exception):
+        pass
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=3",
+               "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def doc(self, name, *args, cwd=None):
+        proc = tool(name, *args, "--json", check=False, cwd=cwd)
+        try:
+            return json.loads(proc.stdout)
+        except ValueError:
+            self.fail(f"{name} printed no JSON document (exit {proc.returncode}):\n{proc.stderr[-800:]}")
+
+    def test_a_plan_made_with_json_brief_executes(self):
+        """A181: --json-brief stayed in the plan's argv, so render.py ran the tool for the brief
+        document and crashed on its `commands` count. A plan no longer records it, and a plan an
+        earlier version recorded with it runs."""
+        plan, out = self.work / "brief_plan.json", self.work / "brief_cut.mp4"
+        doc = self.doc("cut", self.clip, "--start", "0.5", "--end", "2", "-o", out, "--plan", plan, "--json-brief", "--dry-run")
+        self.assertEqual(doc["status"], "completed", doc)
+        recorded = json.loads(plan.read_text(encoding="utf-8"))
+        self.assertFalse([a for a in recorded["argv"] if a.startswith("--json")], recorded["argv"])
+        recorded["argv"].append("--json-brief")  # what 3.8.11 wrote
+        plan.write_text(json.dumps(recorded), encoding="utf-8")
+        done = self.doc("render", plan)
+        self.assertEqual(done["status"], "completed", done)
+        self.assertTrue(out.is_file())
+        self.assertIsInstance(done["commands"], list)
+
+    def test_a_command_with_a_line_break_in_an_argument_stays_one_command(self):
+        """A4: render.py rebuilt a stage's commands from its stderr lines, so a tag with two lines
+        split one ffmpeg command into two records, the second passed on as prose."""
+        from _common.emit import stderr_records
+        stderr = "$ ffmpeg -i a.mp4 -metadata 'title=one\ntwo' b.mp4\nwrote b.mp4\n$ ffmpeg -i b.mp4 c.mp4\n"
+        self.assertEqual(stderr_records(stderr), [(True, "ffmpeg -i a.mp4 -metadata 'title=one\ntwo' b.mp4"),
+                                                  (False, "wrote b.mp4"), (True, "ffmpeg -i b.mp4 c.mp4")])
+        # an unclosed quote (a cut-off stderr) leaves the lines as they were
+        self.assertEqual(stderr_records("$ ffmpeg 'x\nnext\n"), [(True, "ffmpeg 'x"), (False, "next")])
+        plan, out = self.work / "tag_plan.json", self.work / "tagged.mp4"
+        self.doc("metadata", self.clip, "--title", "one\ntwo", "-o", out, "--plan", plan, "--dry-run")
+        done = self.doc("render", plan)
+        self.assertEqual(done["status"], "completed", done)
+        self.assertEqual(len(done["commands"]), 1, done["commands"])
+        self.assertIn("title=one\ntwo", done["commands"][0])
+
+    def test_a_file_named_as_an_image_that_is_not_one_is_refused(self):
+        """A184: a text file named .png probed as a 0x0 picture: probe.py exited 0, check.py and
+        insert.py died with a traceback, other tools failed inside ffmpeg."""
+        fake = self.work / "not_a_picture.png"
+        fake.write_text("hello, not an image\n", encoding="utf-8")
+        for name, args in (("probe", []), ("check", ["--platform", "youtube"]),
+                           ("insert", ["--duration", "1", "-o", self.work / "card.mp4"]),
+                           ("look", ["-o", self.work / "look.png"]),
+                           ("color", ["--correct", "--contrast", "1.1", "-o", self.work / "c.mp4"])):
+            with self.subTest(name):
+                doc = self.doc(name, fake, *args)
+                self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["reason"]),
+                                 ("failed", "input", "still_unreadable"), doc)
+        self.assertEqual(self.doc("probe", self.clip)["video"]["width"], 160, "a real file still probes")
+
+    @unittest.skipIf(platform.system() == "Windows", "terminate() is TerminateProcess there: no handler runs")
+    def test_a_child_past_its_ceiling_is_stopped_and_cleans_up(self):
+        """A183: run_tool() SIGKILLed a sibling script past its outer ceiling, which left its partial
+        output under the final name and its output lock, under a document saying kind timeout. It
+        is sent SIGTERM first, which the script handles by stopping ffmpeg and removing both."""
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        out = self.work / "slow.mp4"
+        child = self.work / "slow_child.py"
+        child.write_text(
+            "import sys\nsys.path.insert(0, sys.argv[1])\nimport _common\nfrom _common import runner\n"
+            "runner.install_signal_handlers()\n"
+            "_common.run(_common.ffmpeg_base() + ['-re', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=25:d=60',"
+            " '-c:v', 'libx264', '-preset', 'ultrafast', sys.argv[2]])\n", encoding="utf-8")
+        with mock.patch.object(runner, "child_limit", lambda per_call=None: 3.0):
+            proc = runner.run_tool([str(child), str(SCRIPTS), str(out)])
+        doc = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, doc["error"]["kind"]), (124, "timeout"))
+        self.assertIn("was stopped", doc["error"]["message"])
+        self.assertEqual(sorted(p.name for p in self.work.iterdir() if "slow." in p.name), [],
+                         "the partial output and the output lock are gone")
+        # the sibling the sweep found: verify.py's step timeout (subprocess.run's SIGKILL) left
+        # each timed-out step's partial output and output lock in --out
+        big, outdir = self.work / "verify_big.mp4", self.work / "verify_out"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:d=12", "-f", "lavfi", "-i", "sine=d=12",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(big))
+        doc = self.doc("verify", big, "--out", outdir, "--timeout", "1")
+        steps = doc["files"][0]["steps"]
+        self.assertTrue([s for s in steps if s.get("reason") == "step_timeout"], steps)
+        self.assertEqual([p.name for p in outdir.iterdir() if p.name.endswith(".ffskill-lock")], [],
+                         "a timed-out step left its output lock")
+
+    def test_an_unknown_colour_name_is_refused_before_ffmpeg(self):
+        """A189: validate_color() took any word, so `grey` (ffmpeg says gray) failed inside ffmpeg
+        as kind ffmpeg after a dry run that had completed."""
+        listed = sh("ffmpeg", "-hide_banner", "-colors").stdout.split("\n")[1:]
+        names = {line.split()[0].lower() for line in listed if line.strip()}
+        color = sys.modules["_common.color"]
+        self.assertEqual(names, color.FFMPEG_COLOR_NAMES - {"random", "bikeshed"}, "the table is ffmpeg's")
+        for good in ("DarkSlateGray", "red@0.5", "ffd200", "FFD200AA", "0x101010", "#ffd200", "random"):
+            self.assertEqual(_common.validate_color(good), good)
+        for bad in ("grey", "notacolor", "abc", "lightgray@0.5"):
+            with self.subTest(bad), self.assertRaises(SystemExit):
+                _common.validate_color(bad, "--color")
+        doc = self.doc("pad", self.clip, "--end", "0.5", "--color", "grey", "-o", self.work / "p.mp4", "--dry-run")
+        self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"), doc)
+
+    def test_a_percent_in_a_still_path_never_opens_another_file(self):
+        """A7: the emoji overlay PNGs (and grid.py's, broll.py's and join.py's stills) reached
+        ffmpeg without `-pattern_type none`, so `%d` in the path made image2 open a different file.
+        run() adds it to every such input now."""
+        runner = sys.modules["_common.runner"]
+        plan = {"overlays": [{"asset": "/e%d/1f600.png", "box": 32, "x": 0, "y": 0, "start": 0.0, "end": 1.0},
+                             {"asset": "/e%d/1f601.png", "box": 32, "x": 0, "y": 0, "start": 0.0, "end": 1.0,
+                              "fade_in": 0.2}]}
+        _, inputs = _common.emoji_filter_chain(plan, "v", "out")
+        cmd = runner.guard_still_patterns(["ffmpeg", "-i", "in.mp4"] + [a for spec in inputs for a in spec] + ["out.mp4"])
+        for asset in ("/e%d/1f600.png", "/e%d/1f601.png"):
+            at = cmd.index(asset)
+            self.assertEqual(cmd[at - 1], "-i")
+            self.assertIn("-pattern_type", cmd[at - 6:at], cmd)
+        guarded = ["ffmpeg", "-pattern_type", "none", "-i", "a%d.png", "out.mp4"]
+        self.assertEqual(runner.guard_still_patterns(guarded), guarded, "an input that has one keeps one")
+        self.assertEqual(runner.guard_still_patterns(["ffprobe", "-v", "error", "a%d.png"]),
+                         ["ffprobe", "-v", "error", "-pattern_type", "none", "a%d.png"])
+        # the real thing: grid.py with a still named st%d.png beside a decoy st1.png
+        ffmpeg("-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "green.png"))
+        os.replace(self.work / "green.png", self.work / "st%d.png")
+        ffmpeg("-f", "lavfi", "-i", "color=c=0xff0000:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "st1.png"))
+        out = self.work / "grid.mp4"
+        doc = self.doc("grid", self.work / "st%d.png", self.clip, "--cols", "2", "--rows", "1", "--label", "none", "-o", out)
+        self.assertEqual(doc["status"], "completed", doc)
+        px = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-vf", "crop=8:8:236:131,scale=1:1", "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, check=True).stdout
+        self.assertGreater(px[1], px[0], f"the cell shows the decoy's red, not the still's green: {list(px)}")
+
+    def test_a_second_name_for_the_input_is_refused(self):
+        """A5: run()'s output-is-input guard compared resolved path strings only, so a hard link
+        (and, on a case-insensitive volume, the same name in another case) was not refused, and
+        --overwrite replaced it. Files are compared by identity too, in every path guard."""
+        link = self.work / "hard_link.mp4"
+        try:
+            os.link(self.clip, link)
+        except (OSError, AttributeError) as exc:
+            self.skipTest(f"no hard links here: {exc}")
+        for name, args in (("reverse", []), ("pad", ["--end", "0.5"])):
+            with self.subTest(name):
+                doc = self.doc(name, self.clip, *args, "-o", link, "--overwrite", "--dry-run")
+                self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_is_input"), doc)
+        runner = sys.modules["_common.runner"]
+        self.assertTrue(runner.same_file(str(self.clip), str(link)))
+        self.assertFalse(runner.same_file(str(self.clip), str(self.work / "nothing_here.mp4")))
+
+    def test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it(self):
+        """A186: two runs that judged the same stale lock both removed "it" -- the second removed the
+        first's new lock -- and both wrote the output. The takeover happens under a second lock, and
+        the lock is judged again there."""
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        out = str(self.work / "locked.mp4")
+        lock = self.work / ".locked.mp4.ffskill-lock"
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lock.write_text(str(dead.pid), encoding="utf-8")
+        first = runner._OutputLock(out)
+        second = runner._OutputLock(out)
+        real_holder = runner._OutputLock._holder
+        calls = {"n": 0}
+
+        def racing(self_):
+            judged = real_holder(self_)
+            if self_ is first and calls["n"] == 0:
+                calls["n"] += 1
+                second.__enter__()  # the other run takes the stale lock over between our look and our removal
+            return judged
+
+        def refuse(kind, reason, msg, **kw):
+            raise self.Refused(reason, kw)
+        try:
+            with mock.patch.object(runner._OutputLock, "_holder", racing), mock.patch.object(runner, "refuse", refuse):
+                with self.assertRaises(self.Refused) as caught:
+                    first.__enter__()
+            self.assertEqual(caught.exception.args[0], "output_locked")
+            self.assertEqual(lock.read_text(encoding="utf-8"), str(os.getpid()), "the second run still holds its lock")
+            self.assertFalse(Path(str(lock) + ".takeover").exists())
+        finally:
+            second.__exit__()
+
+    def test_slicing_a_long_hyphenated_word_measures_linearly(self):
+        """A11: _slice_atom() measured every prefix of the remaining word for each piece it cut, so
+        a 4 KB hyphenated cue took minutes in caption.py's own process. The characters it measures
+        grow linearly now, and the pieces are the ones it cut before."""
+        wrap = sys.modules["_common.wrap"]
+        real = wrap.text_width_em
+        measured = {"chars": 0}
+
+        def counting(text, *a, **k):
+            measured["chars"] += len(text)
+            return real(text, *a, **k)
+        with unittest.mock.patch.object(wrap, "text_width_em", counting):
+            for n in (1024, 2048):
+                measured["chars"] = 0
+                word = "ab-" * (n // 3)
+                pieces = wrap._slice_atom(word, 10.0)
+                self.assertEqual("".join(pieces), word)
+                self.assertTrue(all(real(p) <= 10.0 for p in pieces))
+                self.assertLess(measured["chars"], 60 * n, f"{n} characters measured {measured['chars']} times over")
+        self.assertEqual(wrap._slice_atom("well-known-fact", 4.0), ["well-", "known-", "fact"])
+        self.assertEqual(wrap._slice_atom("short", 40.0), ["short"])
+
+    def test_a_refused_batch_leaves_no_directories(self):
+        """A187: batch.py created out/ and out/.work and left them behind when it refused --jobs or
+        an output collision on a real run; verify.py left a new --out folder the same way."""
+        folder = self.work / "batch_in"
+        folder.mkdir()
+        shutil.copy(self.clip, folder / "a.mp4")
+        shutil.copy(self.clip, folder / "a.mov")
+        recipe = self.work / "batch_recipe.json"
+        recipe.write_text(json.dumps({"glob": "*", "ext": "mp4", "steps": [["probe.py", "{in}"], ["loudness.py", "{in}", "-o", "{out}"]]}),
+                          encoding="utf-8")
+        for label, args in (("--jobs 0", ["--jobs", "0"]), ("collision", [])):
+            with self.subTest(label):
+                doc = self.doc("batch", folder, "--recipe", recipe, *args)
+                self.assertEqual(doc["status"], "failed", doc)
+                self.assertFalse((folder / "out").exists(), sorted(str(p) for p in folder.rglob("*")))
+        # the sibling: verify.py made a new --out folder before its --report guard refused the run
+        new_out = self.work / "verify_new" / "out"
+        doc = self.doc("verify", self.clip, "--out", new_out, "--report", self.clip)
+        self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_is_input"), doc)
+        self.assertFalse((self.work / "verify_new").exists(), "a refused verify left its new --out folder")
+
+    def test_a_metadata_side_file_at_the_default_output_name_is_refused(self):
+        """A6: --chapters-out and --description-out were checked against -o only, so with the
+        default output name the chapter text replaced the video just written."""
+        long_clip = self.work / "long.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:d=6", "-f", "lavfi", "-i", "sine=d=6",
+               "-c:v", "libx264", "-c:a", "aac", "-shortest", str(long_clip))
+        default = self.work / "long_meta.mp4"
+        for flag in ("--chapters-out", "--description-out"):
+            with self.subTest(flag):
+                doc = self.doc("metadata", long_clip, "--auto-chapters", "--min-chapter", "1", flag, default)
+                self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_path_taken"), doc)
+                self.assertFalse(default.exists())
+
+    def test_mcp_failure_document_reaches_a_2024_11_05_client(self):
+        """A22: a failed call carried its failure document only in structuredContent, a field of a
+        later protocol revision than the one the server negotiates; `content` held stderr lines."""
+        result = mcp_server.call_tool("cut", {"input": str(self.work / "missing.mp4"), "start": "0", "end": "1",
+                                               "output": str(self.work / "never.mp4")})
+        self.assertTrue(result["isError"])
+        texts = [c["text"] for c in result["content"] if c["type"] == "text"]
+        self.assertIn("cut failed (exit", texts[0])
+        self.assertEqual(json.loads(texts[-1]), result["structuredContent"])
+        self.assertEqual(json.loads(texts[-1])["error"]["kind"], "input")
+
+    def test_mcp_answers_a_ping_and_cancels_a_call_while_a_tool_runs(self):
+        """A24: the server read one request at a time and ignored notifications/cancelled: a ping
+        waited for the running tool, and a cancelled call ran on and wrote its output."""
+        big = self.work / "big.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:d=20", "-c:v", "libx264", "-preset", "ultrafast", str(big))
+        out = self.work / "mcp_cancelled.mp4"
+        srv = subprocess.Popen([sys.executable, str(ROOT / "mcp" / "server.py")], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        import queue
+        import threading
+        lines: "queue.Queue[str]" = queue.Queue()
+        threading.Thread(target=lambda: [lines.put(l) for l in srv.stdout], daemon=True).start()
+
+        def send(obj):
+            srv.stdin.write(json.dumps(obj) + "\n")
+            srv.stdin.flush()
+        try:
+            send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "denoise", "arguments": {
+                "argv": [str(big), "--strength", "high", "--preset", "veryslow", "-o", str(out)]}}})
+            time.sleep(2)
+            send({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+            first = json.loads(lines.get(timeout=10))
+            self.assertEqual(first, {"jsonrpc": "2.0", "id": 2, "result": {}}, "the ping is answered while the tool runs")
+            send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1, "reason": "test"}})
+            send({"jsonrpc": "2.0", "id": 3, "method": "ping"})
+            self.assertEqual(json.loads(lines.get(timeout=10))["id"], 3)
+            srv.stdin.close()
+            self.assertEqual(srv.wait(timeout=60), 0)
+            time.sleep(0.2)
+            self.assertTrue(lines.empty(), "no response for the cancelled call")
+            if platform.system() != "Windows":  # TerminateProcess runs no handler there
+                self.assertFalse(out.exists(), "the cancelled call wrote its output")
+        finally:
+            if srv.poll() is None:
+                srv.kill()
+                srv.wait()
+            for pipe in (srv.stdin, srv.stdout):
+                try:
+                    pipe.close()
+                except (OSError, ValueError):
+                    pass
+
+    def test_mcp_hdr_prompt_strip_dovi_changes_the_recipe(self):
+        """A23: the hdr prompt took strip_dovi and filled the same message with or without it."""
+        def text(args):
+            return _contract.mcp_prompt_get("hdr", args)["messages"][0]["content"]["text"]
+        plain = text({"input": "/abs/a.mov"})
+        self.assertIn("--to-sdr", plain)
+        for no in ("false", "0", "no"):
+            self.assertEqual(text({"input": "/abs/a.mov", "strip_dovi": no}), plain)
+        stripped = text({"input": "/abs/a.mov", "strip_dovi": "true"})
+        self.assertNotEqual(stripped, plain)
+        self.assertIn("color.py /abs/a.mov --strip-dovi", stripped)
+        self.assertNotIn("--to-sdr", stripped)
+        with self.assertRaises(ValueError):
+            _contract.mcp_prompt_get("hdr", {"input": "/abs/a.mov", "strip_dovi": "maybe"})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

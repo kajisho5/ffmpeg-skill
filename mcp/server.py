@@ -19,6 +19,8 @@ Claude Desktop / Claude Code config example:
 import json
 import os
 import sys
+import queue
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -149,7 +151,9 @@ def timeout_from_call(args: Dict[str, Any]) -> float:
         return _common._env_timeout()
 
 
-def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+def call_tool(name: str, args: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
+    """tools/call. `on_start(child)` is handed the tool's process once it runs (the stdio loop
+    keeps it, to stop the call if the client cancels it)."""
     script = SCRIPTS / f"{name}.py"
     if name not in specs() or not script.exists():
         return {"isError": True, "content": [{"type": "text", "text": f"unknown tool {name}"}]}
@@ -165,7 +169,8 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     env = {k: v for k, v in os.environ.items() if k != _contract.READ_ONLY_ENV}
     if _contract.mcp_read_only(specs()[name]):
         env[_contract.READ_ONLY_ENV] = "1"
-    proc = _common.run_tool([str(script)] + argv, per_call=per_call, env=env)
+    started = {"on_start": on_start} if on_start is not None else {}
+    proc = _common.run_tool([str(script)] + argv, per_call=per_call, env=env, **started)
     stdout = proc.stdout.strip()
     text = stdout
     structured = None
@@ -179,9 +184,13 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         failed: Dict[str, Any] = {"isError": True, "content": [{"type": "text", "text": f"{name} failed (exit {proc.returncode})\n{tail}"}]}
         # The child's own failure document (status, error.kind/code/hint, commands) is the
         # machine-readable half of the contract; dropping it here left an MCP caller regex-
-        # parsing prose to tell a timeout from a missing binary.
+        # parsing prose to tell a timeout from a missing binary. structuredContent is a field of
+        # protocol revisions after the 2024-11-05 this server negotiates, so a client of that
+        # revision reads only `content`: the document is also a second text block there (A22,
+        # #465), as a success's document is the text block.
         if isinstance(structured, dict):
             failed["structuredContent"] = structured
+            failed["content"].append({"type": "text", "text": stdout})
         return failed
     if structured is None:
         text = stdout or "\n".join(proc.stderr.strip().splitlines()[-5:])
@@ -206,7 +215,7 @@ def tool_list() -> List[Dict[str, Any]]:
     return [_contract.mcp_tool(all_specs[name]) for name in names]
 
 
-def handle(req: Dict[str, Any]) -> Dict[str, Any]:
+def handle(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
     method = req.get("method")
     params = req.get("params") or {}
     if method == "initialize":
@@ -219,7 +228,7 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
     if method == "tools/list":
         return {"tools": tool_list()}
     if method == "tools/call":
-        return call_tool(params.get("name", ""), params.get("arguments") or {})
+        return call_tool(params.get("name", ""), params.get("arguments") or {}, on_start=on_start)
     if method == "prompts/list":
         # roadmap 1.20.0: the five workflow recipes (reel, podcast, multicam, delivery_check, hdr)
         return {"prompts": _contract.mcp_prompt_list()}
@@ -234,6 +243,87 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
     if method == "ping":
         return {}
     raise KeyError(method)
+
+
+# A24 (#465): tools/call runs on a worker thread, so the loop that reads requests keeps reading
+# while a tool runs -- a ping is answered at once, and `notifications/cancelled` stops the call it
+# names (its tool gets SIGTERM, stops its ffmpeg and removes its partial output, as on any SIGTERM)
+# and no response is sent for it, as the protocol asks. The tools still run one at a time, in the
+# order they were called, and answer in that order (one encode at a time, as before); a call
+# cancelled while it waits for its turn never starts.
+_QUEUE: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
+_CALLS: Dict[str, Dict[str, Any]] = {}  # request id (as JSON) -> {"proc": Popen or None, "cancelled": bool}
+_CALLS_LOCK = threading.Lock()
+_WRITE_LOCK = threading.Lock()
+
+
+def _key(request_id: Any) -> str:
+    return json.dumps(request_id, sort_keys=True)
+
+
+def _write(out: Any, resp: Dict[str, Any]) -> None:
+    with _WRITE_LOCK:
+        out.write((json.dumps(resp) + "\n").encode("utf-8"))
+        out.flush()
+
+
+def _stop(proc: Any) -> None:
+    try:
+        if proc.poll() is None:
+            proc.terminate()  # the tool's SIGTERM handler stops its ffmpeg and removes the partial output
+    except OSError:
+        pass
+
+
+def cancel(params: Any) -> None:
+    """notifications/cancelled: stop the named call if it is running, or keep it from starting."""
+    if not isinstance(params, dict) or "requestId" not in params:
+        return
+    with _CALLS_LOCK:
+        entry = _CALLS.get(_key(params["requestId"]))
+        if entry is None:
+            return  # finished already, or never seen: nothing to stop
+        entry["cancelled"] = True
+        proc = entry.get("proc")
+    if proc is not None:
+        _stop(proc)
+
+
+def _respond(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
+    try:
+        return {"jsonrpc": "2.0", "id": req["id"], "result": handle(req, on_start=on_start)}
+    except KeyError as exc:
+        return {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32601, "message": f"method not found: {exc}"}}
+    except Exception as exc:  # noqa: BLE001
+        return {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32000, "message": str(exc)}}
+
+
+def _call_worker(out: Any) -> None:
+    """Run the queued tools/call requests one at a time until the None that ends the input."""
+    while True:
+        item = _QUEUE.get()
+        if item is None:
+            return
+        req, entry = item["req"], item["entry"]
+
+        def started(proc: Any, entry: Dict[str, Any] = entry) -> None:
+            with _CALLS_LOCK:
+                entry["proc"] = proc
+                cancelled = entry["cancelled"]
+            if cancelled:
+                _stop(proc)
+
+        resp = None
+        try:
+            if not entry["cancelled"]:
+                resp = _respond(req, on_start=started)
+        finally:
+            with _CALLS_LOCK:
+                key = _key(req["id"])
+                if _CALLS.get(key) is entry:
+                    del _CALLS[key]
+        if resp is not None and not entry["cancelled"]:
+            _write(out, resp)
 
 
 def version() -> str:
@@ -256,6 +346,8 @@ def main() -> int:
         return 0
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
+    worker = threading.Thread(target=_call_worker, args=(stdout,), daemon=True)
+    worker.start()
     for raw in stdin:
         line = raw.decode("utf-8", errors="replace").strip()
         if not line:
@@ -279,16 +371,18 @@ def main() -> int:
         if not isinstance(req, dict):
             continue
         if "id" not in req:  # notification
+            if req.get("method") == "notifications/cancelled":
+                cancel(req.get("params"))
             continue
-        try:
-            result = handle(req)
-            resp = {"jsonrpc": "2.0", "id": req["id"], "result": result}
-        except KeyError as exc:
-            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32601, "message": f"method not found: {exc}"}}
-        except Exception as exc:  # noqa: BLE001
-            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32000, "message": str(exc)}}
-        stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
-        stdout.flush()
+        if req.get("method") == "tools/call":
+            entry = {"proc": None, "cancelled": False}
+            with _CALLS_LOCK:
+                _CALLS[_key(req["id"])] = entry
+            _QUEUE.put({"req": req, "entry": entry})
+            continue
+        _write(stdout, _respond(req))
+    _QUEUE.put(None)  # end of input: the calls already queued run and answer before the server exits
+    worker.join()
     return 0
 
 

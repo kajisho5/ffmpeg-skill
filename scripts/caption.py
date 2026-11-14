@@ -55,7 +55,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
 from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import carried_stream_maps, subtitle_codec_for, subtitle_container_holds
+from _common.runner import carried_stream_maps, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -1587,7 +1587,7 @@ def main() -> int:
         if args.ass and args.offset and os.path.exists(args.ass):
             up_front.append((os.path.splitext(planned_out)[0] + "_offset.ass", "offset ASS"))
         # -o naming the input itself keeps its own, more specific refusal (_check_no_overwrite_input)
-        if os.path.realpath(planned_out) != os.path.realpath(args.input):
+        if not same_file(planned_out, args.input):
             up_front.append((planned_out, "video"))
     claim(up_front)
     if args.transcribe:

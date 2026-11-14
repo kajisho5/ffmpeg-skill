@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
+from _common.runner import _stop_child
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -140,10 +141,15 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         if not ok:
             r.update(kind="verification", reason="hdr_lost", message=r["error"])
         return r
+    child = subprocess.Popen([sys.executable, str(HERE / argv[0])] + argv[1:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     try:
-        proc = subprocess.run([sys.executable, str(HERE / argv[0])] + argv[1:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, encoding="utf-8", errors="replace", timeout=timeout or None)
+        out, err = child.communicate(timeout=timeout or None)
+        proc = subprocess.CompletedProcess(child.args, child.returncode, out, err)
     except subprocess.TimeoutExpired:
+        # stopped as run_tool() stops a sibling script past its ceiling (#465 A183's sweep): the
+        # SIGKILL subprocess.run() sent left the step's partial output and output lock in --out
+        _stop_child(child)
         msg = f"timeout after {timeout:.0f}s"
         return {"step": name, "ok": False, "seconds": round(time.time() - t0, 1), "error": msg,
                 "kind": "timeout", "reason": "step_timeout", "message": msg}
@@ -198,10 +204,27 @@ def main() -> int:
     files = collect(args.paths)
     FORWARD.update(overwrite=STATE.overwrite, fast=STATE.fast)
     tmp = None
+    started = {"step": False}
     if args.out:
         # made first, so a --report inside a new --out folder passes the guard below (#413 review)
         outdir = Path(args.out)
+        made = [d for d in (outdir, *outdir.parents) if not d.exists()]
         outdir.mkdir(parents=True, exist_ok=True)
+        if made:
+            import atexit
+
+            def _remove_unused_dirs() -> None:
+                # a run refused before its first step (a --report guard) leaves no empty --out
+                # folder behind, as batch.py leaves no out/ (#465 A187's sibling); once a step has
+                # run the folder is the caller's, empty or not
+                if started["step"]:
+                    return
+                for d in made:  # deepest first
+                    try:
+                        d.rmdir()
+                    except OSError:
+                        pass
+            atexit.register(_remove_unused_dirs)
     if args.report:
         # a file this run writes itself (#408): not one of the media it verifies (a folder's
         # files included), nor an existing file without --overwrite
@@ -301,6 +324,7 @@ def main() -> int:
             refuse_output_is_input(out, *every_input, why=f"it is where verify writes the {name!r} step's output for {str(f)!r}")
 
     results = []
+    started["step"] = True
     for f, entry, plan, cues in jobs:
         info(f"=== {f}")
         if cues:
