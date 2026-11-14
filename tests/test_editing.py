@@ -406,6 +406,18 @@ class EditingTests(MediaFixtures):
         self.assertGreater(avg, 20); self.assertGreater(spread, 10)
         script("fit.py", self.src, "--aspect", "9:16", "--pad-fill", "blur", "--pad-blur", "0", "--dry-run", expect_fail=True)
 
+    def test_blur_fill_on_a_small_frame(self):
+        """--fit blur and --pad-fill blur on a 160x120 source: 9:16 is a 68x120 frame, where the
+        blur radius the luma plane holds (20) is too big for the half-size 4:2:0 chroma planes and
+        ffmpeg refused the graph ("chroma_param radius 20 ... must be <= 17", #527)."""
+        src = tiny_clip(OUT / "small_160x120.mp4", "testsrc2=size=160x120:rate=25")
+        for flags in (["--fit", "blur"], ["--fit", "pad", "--pad-fill", "blur"]):
+            with self.subTest(flags=flags):
+                out = OUT / f"small_{flags[-1]}_{len(flags)}.mp4"
+                script("fit.py", src, "--aspect", "9:16", *flags, "--fast", "-o", out)
+                m = probe(str(out))
+                self.assertEqual((m["video"]["width"], m["video"]["height"]), (68, 120))
+
     def test_fit_trim_and_crop_square(self):
         out = OUT / "fit2.mp4"
         script("fit.py", self.src, "--duration", "4", "--method", "trim", "--from-center", "--aspect", "1:1", "--fit", "crop", "-o", out)
