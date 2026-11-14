@@ -33,7 +33,7 @@ import sys
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
-from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames, frame_flow
+from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames
 from _common.emit import note, warn
 from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note
 

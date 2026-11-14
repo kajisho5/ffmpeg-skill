@@ -3,6 +3,7 @@
 
     python3 scripts/_contract.py --json              # the contract, with detected capabilities
     python3 scripts/_contract.py --json --static     # same, without environment detection
+    python3 scripts/_contract.py --json --tool cut   # only cut under `tools` (repeatable)
     python3 scripts/_contract.py doctor [--json]     # which required capabilities this machine has
     ffmpeg-skill contract --json                     # the same through the npm entry point
 
@@ -21,7 +22,6 @@ import argparse
 import functools
 import importlib.util
 import json
-import os
 import platform
 import re
 import shutil
@@ -1039,11 +1039,6 @@ def _ff_listing(binary: str, flag: str) -> Dict[str, Any]:
     if not names:
         return {"names": [], "status": "unparsed", "detail": f"no row recognised in `{binary} {flag}` output ({len(proc.stdout.splitlines())} lines)"}
     return {"names": names, "status": "parsed", "detail": f"{len(names)} entries"}
-
-
-def _ff_list(binary: str, flag: str) -> List[str]:
-    """Names from `ffmpeg -encoders` / `-filters` / `-bsfs` (empty list when ffmpeg is missing or unparsed)."""
-    return _ff_listing(binary, flag)["names"]
 
 
 # GPU-backed encoders are named `<codec>_<backend>` by every ffmpeg build (h264_nvenc,
@@ -2181,7 +2176,19 @@ def main() -> int:
     ap.add_argument("command", nargs="?", choices=["contract", "doctor"], default="contract")
     ap.add_argument("--json", action="store_true", help="JSON on stdout (the contract is always JSON)")
     ap.add_argument("--static", action="store_true", help="omit environment detection (available / missing capabilities)")
+    ap.add_argument("--tool", action="append", metavar="NAME",
+                    help="only this tool's entry under `tools` (repeatable; `cut` or `cut.py`); every other key is "
+                         "unchanged. The whole contract is about 950 KB; with one tool, 55-85 KB")
     args = ap.parse_args()
+    wanted: List[str] = []
+    for name in args.tool or []:
+        name = name[:-3] if name.endswith(".py") else name
+        if name not in public_tools():
+            ap.error(f"--tool {name}: no such tool (one of: {', '.join(public_tools())})")
+        if name not in wanted:
+            wanted.append(name)
+    if wanted and args.command == "doctor":
+        ap.error("--tool selects from the contract; doctor --json lists every tool under `tools`")
     if args.command == "doctor":
         d = doctor()
         # On stderr in both modes, so `doctor --json`'s stdout stays one JSON document: an
@@ -2227,7 +2234,12 @@ def main() -> int:
         # 1: something required is missing; 2: nothing proven missing but a required capability is unknown
         # an unsupported Python/FFmpeg is a known failure, like a missing capability (not "unknown")
         return 1 if d["missing"] or d.get("unsupported") else 2
-    print(json.dumps(build(detect=not args.static), indent=2, sort_keys=True, ensure_ascii=False))
+    doc = build(detect=not args.static)
+    if wanted:
+        # in the order asked; `provides` and `capability_map` stay whole (a few KB): they map ids
+        # to tools across the skill, which one tool's entry does not change (#467 A220)
+        doc["tools"] = sorted((t for t in doc["tools"] if t["name"] in wanted), key=lambda t: wanted.index(t["name"]))
+    print(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 

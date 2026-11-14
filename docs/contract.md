@@ -7,6 +7,11 @@ dry-run, input preservation and repeatability. It is the interface a planning ag
 consumes instead of reading `SKILL.md`, which stays written for a coding agent that
 follows the workflow by hand.
 
+The whole document is about 950 KB, almost all of it the 42 `tools` entries. `--tool NAME`
+(repeatable; `cut` or `cut.py`) keeps only the named tools under `tools`, in the order given,
+and every other key as it is: about 55 to 85 KB for one tool. An unknown name is refused (exit
+2) with the list of tools, and `doctor` does not take the flag.
+
 The contract is derived from the code that runs, not maintained beside it:
 
 - the tool list is every script in `scripts/` that does not start with `_`;

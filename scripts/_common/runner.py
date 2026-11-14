@@ -2634,7 +2634,6 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     with os.replace() under the lock instead of copied -- a checked `cut.py --segments` join was
     copied whole, about 2 s for 240 MB. A rename that fails (another filesystem) falls back to
     the copy."""
-    import shutil
     cmd = ["ffmpeg", dst]
     _check_output_path(cmd)
     _check_existing_output(cmd)

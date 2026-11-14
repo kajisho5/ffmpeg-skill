@@ -53,7 +53,7 @@ from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_
 from _common.emit import file_identity, own_length
 from _common.probe import PROBED_AUDIO
 from _common.probe import display_size as shown_size, shorter_than_a_loudness_block
-from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
+from _common import STATE, add_common, apply_common, die, emit, probe, require_tool, run_analysis, dry_run_input_pending
 
 # The one delivery table (scripts/_platforms.py): check.py's rows, export.py's presets and the
 # render.py templates all read it, so a platform's loudness spec is stated once. Only the

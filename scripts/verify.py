@@ -18,7 +18,6 @@ import argparse
 import contextlib
 import io
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -26,10 +25,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe
+from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, MEDIA_EXT as _MEDIA_EXT
 
 HERE = Path(__file__).resolve().parent
-MEDIA_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".mxf", ".wav", ".m4a", ".mp3", ".flac", ".aac"}
+# _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
+# and a folder walk skipped .ts, .3gp, .wmv, .gif, .ogg, .opus, .aif/.aiff, .caf and .wma (#467 A218)
+MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}
 
 
 def unique_stems(files: List[Path]) -> Dict[Path, str]:

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from _common.probe import PROBED_VIDEO
 from _common.runner import ffmpeg_failure_extra, default_selection_maps, require_filter
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
 def main() -> int:

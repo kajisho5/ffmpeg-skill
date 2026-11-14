@@ -10,6 +10,8 @@ import math
 import os
 import re
 import statistics
+import sys
+from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, warn
@@ -70,15 +72,13 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
         if check:
             die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr.decode(errors="replace")))
         return []
-    import array
-    import sys
     data, proc = proc.stdout, None
-    pcm = array.array("h")
+    pcm = array("h")
     pcm.frombytes(memoryview(data)[: len(data) // 2 * 2])
     del data
     if sys.byteorder == "big":
         pcm.byteswap()  # s16le on the pipe
-    return array.array("f", (v / 32768.0 for v in pcm))
+    return array("f", (v / 32768.0 for v in pcm))
 
 
 def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool = False, remove_mean: bool = False) -> List[float]:

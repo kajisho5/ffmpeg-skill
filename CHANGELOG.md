@@ -191,6 +191,33 @@ _Automated release: version and notes generated from pull requests merged since 
   `--keep` without `--out` kept nothing (the temporary folder was deleted at exit) and named no
   folder; it keeps the outputs in a new folder, named in the new `out_dir` (also set for `--out`,
   `null` when the outputs were deleted) and on stderr.
+- **One tool's contract without the other 41** (#467: A220). SKILL.md and `references/flags.md`
+  sent an agent to `contract --json`, about 950 KB, for one tool's `dry_run`. `contract --json
+  --tool NAME` keeps only the named tools under `tools` (repeatable; `cut` or `cut.py`), in the
+  order given, and every other key as it is: about 55 to 85 KB for one tool. An unknown name is
+  refused (exit 2) with the list of tools; the two pages now name the flag.
+- **`verify.py` walks every media extension the skill reads** (#467: A218). A folder argument
+  skipped `.ts`, `.3gp`, `.wmv`, `.gif`, `.ogg`, `.opus`, `.aif`/`.aiff`, `.caf` and `.wma`: verify
+  kept a list of its own. It uses `_common`'s list less the stills, as `batch.py` does.
+- **The npm package no longer ships Python bytecode** (#467: A222, A27, A36). With npm 10,
+  `package.json`'s `files` wins over `.npmignore`, so a checkout that had run the tests packed
+  59 `scripts/__pycache__/*.pyc` files carrying the machine's paths. `files` ends with negated
+  entries for them, and `tests/release_check.sh` fails a tarball that has one.
+- **Dead code and unused imports in the runtime** (#467: A224): 39 unused imports, the unused
+  `loudness.py` loudnorm string and `graphics.py` list, and two functions nothing called
+  (`_platforms.has_frame`, `_contract._ff_list`) are gone, and a test fails on an import a shipped
+  module never uses.
+- **The gallery prints the command its picture was made with** (#467: A243, A244).
+  `cropdetect_crop` read the rectangle from the wrong level of cropdetect's document and cropped a
+  hard-coded one labelled "detected"; `scenes_highlights` printed a cut list (`0.00-1.50,4.00-5.50`)
+  the build never ran. Both run the measured value, `docs/demos.md` prints the one the build
+  measures (`0.00-2.00,2.00-4.00`), and a build that measures anything else stops.
+- **The agent eval runs the shipped skill and notices a changed checkout** (#467: A271, A274).
+  `evals/run_agents_25.sh` linked the whole repository in as the skill, the eval's answer keys
+  included, and with every permission check off a run could edit the tracked tree unnoticed. It
+  installs the skill with `bin/install.js --dir`, and exits 1 naming the runs during which the
+  checkout's `git status` changed.
+
 
 
 ## 3.8.12

@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
-from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_analysis, time_arg
+from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, ffmpeg_base, info, probe, run, run_analysis, time_arg
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402

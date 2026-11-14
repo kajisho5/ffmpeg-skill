@@ -27,6 +27,12 @@ if echo "$LIST" | grep -qx "package/references/process-pitfalls.md"; then
   echo "FAIL: references/process-pitfalls.md must not be in the npm package"
   exit 1
 fi
+# bytecode a local run left under scripts/ (#467 A222): "files" wins over .npmignore, so only its
+# negated entries keep it out, and a checkout that has run the tests is where it shows up
+if echo "$LIST" | grep -Eq '(__pycache__/|\.py[co]$)'; then
+  echo "FAIL: compiled Python bytecode in the npm package: $(echo "$LIST" | grep -E '(__pycache__/|\.py[co]$)' | head -3 | tr '\n' ' ')"
+  exit 1
+fi
 echo "   ok ($(echo "$LIST" | wc -l | tr -d ' ') files)"
 
 echo "== 2. install from the tarball into a temp HOME"

@@ -91,6 +91,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
 - [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
 - [After 3.8.12 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3812--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
+- [After 3.8.12 — tests, CI, distribution and the site (#467)](#after-3812--tests-ci-distribution-and-the-site-467)
 <!-- contents:end -->
 
 ## Time limits
@@ -4480,3 +4481,53 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   picture's timeline is untouched", above). A cue that runs past the trim is kept whole, as
   export's platform trim keeps it, so the container can be longer than the picture by the rest
   of that cue. Test: `EditingTests.test_fit_trim_from_the_start_keeps_the_subtitle_track`.
+
+## After 3.8.12 — tests, CI, distribution and the site (#467)
+
+- **Decoded audio is still the whole file, at 4 bytes a sample** (A217). `decode_pcm_mono()` returns
+  an `array('f')` instead of a list of Python floats: about 8 bytes a sample at the peak (the
+  decoder's s16 bytes, a 16-bit copy, the floats) against about 72 to 81, so an hour at 8 kHz
+  peaks at about 230 MB, not 2.3 GB, and an hour of `scenes.py --beats` at 22.05 kHz at about
+  640 MB; 4 bytes a sample are held after the decode. It is not
+  streamed: `scenes.py`'s speech ratio and onset refinement, `loop.py`'s seam and `sync.py`'s
+  correlation read the samples themselves, not only an envelope, and a streamed envelope for some
+  callers would be a second decode path with its own clock. Every value is the float the list
+  held (a 16-bit sample divided by 32768 is exact in a float32). Code: `_common/probe.py`
+  `decode_pcm_mono()`. Test: `test_decoded_pcm_is_four_bytes_a_sample_and_the_same_values`.
+- **`contract --json --tool NAME` narrows `tools` and nothing else** (A220). The other keys stay
+  whole, `provides` and `capability_map` included (a few KB together; they map ids to tools across
+  the skill), so a consumer reads the same document shape with or without the flag and the 3.x
+  promise that no key of `contract --json` is removed holds for it. One tool is about 55 to 85 KB
+  against about 950 KB. An unknown name is refused with the list; `doctor` refuses the flag, since
+  `doctor --json .tools` is already one short entry per tool. Code: `_contract.main()`. Test:
+  `test_contract_tool_selects_entries_and_refuses_an_unknown_name`.
+- **The lint for unused imports is a test, not a CI step** (A224). `tests/test_contract.py` walks
+  the shipped modules (`scripts/`, `scripts/_common/`, `mcp/server.py`) with `ast`, so it runs in
+  every job that runs the contract tests, on every OS, and needs no linter: a pip-installed one in
+  CI would be the first third-party tool the gate depends on, and its version would move the
+  result. `_common/__init__.py` and `_common/text.py` are left out: they import names for their
+  callers. A `noqa` comment on the import line exempts it. Unused variables and dead functions are
+  not checked (A224's two of each were removed by hand). Test:
+  `test_the_runtime_imports_nothing_it_does_not_use`.
+- **Bytecode is kept out of the npm package by `files`, not by `.npmignore`** (A222). With `files`
+  set, npm 10 packs everything under a listed directory whatever `.npmignore` says, so the negated
+  entries `!**/__pycache__/**`, `!**/*.pyc` and `!**/*.pyo` end `files` and `release_check.sh`
+  fails a tarball with a `.pyc` in it. `.npmignore` stays, saying why it is not enough. Test:
+  `test_npm_package_leaves_out_python_bytecode`.
+- **A demo whose second command uses a measured value runs that value and stops when the gallery
+  prints another** (A243, A244). `docs/demos.md` is written by replaying the builders with nothing
+  run, so it can print only a constant (`CROPDETECT_GALLERY_RECT`, `SCENES_GALLERY_SEGMENTS` in
+  `demos/build.py`). A real build reads the measurement (cropdetect's `crop`, the `--edl` ranges),
+  and nothing measured or a value other than the constant is a `BuildError`, so the command under
+  a picture is the one that made it. A different FFmpeg that measures the synthetic fixtures
+  differently fails the build until the constant and the page are updated; that is the intent.
+  Test: `test_a_demo_runs_the_measured_value_and_the_gallery_prints_it`.
+- **The agent eval installs the shipped skill and watches the checkout; it does not sandbox the
+  agent** (A271, A274). `evals/run_agents_25.sh` installs each run's skill with `bin/install.js
+  --dir` (the set `npx ffmpeg-skill` installs: no evals, answer keys or tests) instead of linking the
+  checkout, and compares the checkout's `git status --porcelain` before and after every run: a run
+  that changed it is named in `RUN_DIR/<id>/.tree_changed` and the script exits 1. The agent still
+  runs as the caller, with the caller's HOME and environment and `bypassPermissions`: `claude -p`
+  reads its sign-in from HOME, and a headless run cannot answer a permission prompt. Run it in a
+  container or a throwaway account when that matters. Test:
+  `test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout`.

@@ -10305,5 +10305,203 @@ class FlagValueTests(unittest.TestCase):
                 self.assertEqual(doc["status"], "completed", label)
 
 
+def _unused_imports(path: Path) -> "list":
+    """Names a module imports and never reads: an ast walk, standard library only (the runtime
+    takes no dependency, and the tests take none either). A name counts as read when it is a
+    `Name` anywhere, inside a string annotation, or listed in `__all__`; a line with `noqa`
+    and `from __future__` imports are skipped."""
+    import ast
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    lines = src.splitlines()
+    bound: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if (isinstance(node, ast.ImportFrom) and node.module == "__future__") or "noqa" in lines[node.lineno - 1]:
+                continue
+            for alias in node.names:
+                if alias.name != "*":
+                    bound.setdefault(alias.asname or alias.name.split(".")[0], node.lineno)
+    used, annotations = set(), []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = node.args
+            annotations += [x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None]
+            annotations.append(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            annotations.append(node.annotation)
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
+            used.update(c.value for c in ast.walk(node.value) if isinstance(c, ast.Constant))
+    for ann in annotations:
+        for c in (ast.walk(ann) if ann is not None else ()):
+            if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                used.update(n.id for n in ast.walk(ast.parse(c.value, mode="eval")) if isinstance(n, ast.Name))
+    return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
+
+
+class Audit467Tests(unittest.TestCase):
+    """The items of audit #467 still open at 3.8.10: memory, distribution, the contract's size,
+    the demo gallery and the agent eval runner."""
+
+    def test_decoded_pcm_is_four_bytes_a_sample_and_the_same_values(self):
+        """A217: decode_pcm_mono returned a list of Python floats built from struct.unpack's tuple,
+        about 81 bytes a sample at its peak (2.3 GB for an hour at 8 kHz in scenes.py). It returns
+        an array('f') now; a 16-bit sample / 32768 is exact in a float32, so the values are equal."""
+        import array
+        import struct
+        probe_mod = sys.modules["_common.probe"]
+        raw = struct.pack("<6h", 0, 1, -1, 32767, -32768, 12345) + b"\x07"  # an odd trailing byte
+        done = subprocess.CompletedProcess([], 0, raw, b"")
+        with unittest.mock.patch.object(probe_mod, "run_analysis", return_value=done), \
+                unittest.mock.patch.object(probe_mod, "require_tool", return_value="ffmpeg"):
+            samples = probe_mod.decode_pcm_mono("x.wav", 8000)
+        self.assertIsInstance(samples, array.array)
+        self.assertEqual(samples.itemsize, 4)
+        self.assertEqual(list(samples), [v / 32768.0 for v in struct.unpack("<6h", raw[:12])])
+        # what the callers do with it: slices, len, truthiness, the envelope
+        self.assertEqual(_common.rms_envelope(samples, 3), _common.rms_envelope(list(samples), 3))
+
+    def test_verify_walks_every_media_extension_the_skill_reads(self):
+        """A218: verify.py kept a list of its own, so a folder walk skipped .ts, .3gp, .wmv, .gif,
+        .ogg, .opus, .aif/.aiff, .caf and .wma. It walks _common's list less the stills, as
+        batch.py does."""
+        import verify
+        import batch
+        self.assertEqual(verify.MEDIA_EXT, batch.MEDIA_EXT)
+        self.assertLessEqual(_common.AUDIO_MEDIA_EXT, verify.MEDIA_EXT)
+        for ext in (".ts", ".3gp", ".wmv", ".gif", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma", ".mxf"):
+            self.assertIn(ext, verify.MEDIA_EXT)
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("a.ts", "b.OGG", "c.wma", "d.gif", "e.png", "f.txt"):
+                (Path(tmp) / name).write_bytes(b"")
+            self.assertEqual(sorted(p.name for p in verify.collect([tmp])), ["a.ts", "b.OGG", "c.wma", "d.gif"])
+
+    def test_contract_tool_selects_entries_and_refuses_an_unknown_name(self):
+        """A220: the whole contract is about 950 KB and SKILL.md sends an agent to it for one
+        tool's `dry_run`. `--tool NAME` keeps the named entries under `tools`, in the order given,
+        and every other key; an unknown name is refused before anything is built."""
+        whole = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
+        out = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static", "--tool", "probe", "--tool", "cut.py").stdout
+        doc = json.loads(out)
+        self.assertEqual([t["name"] for t in doc["tools"]], ["probe", "cut"])
+        by_name = {t["name"]: t for t in whole["tools"]}
+        self.assertEqual(doc["tools"], [by_name["probe"], by_name["cut"]])
+        self.assertEqual({k: v for k, v in doc.items() if k != "tools"}, {k: v for k, v in whole.items() if k != "tools"})
+        self.assertLess(len(out), 200_000)
+        for argv in (["--json", "--tool", "nope"], ["doctor", "--tool", "cut"]):
+            proc = sh(sys.executable, SCRIPTS / "_contract.py", *argv, check=False)
+            self.assertEqual(proc.returncode, 2, argv)
+            self.assertEqual(proc.stdout, "", argv)
+        for doc_path in ("SKILL.md", "references/flags.md", "docs/contract.md", "README.md"):
+            self.assertIn("--tool", (ROOT / doc_path).read_text(encoding="utf-8"), doc_path)
+
+    def test_the_runtime_imports_nothing_it_does_not_use(self):
+        """A224: 38 unused imports and two never-read variables in scripts/ and mcp/, with no
+        lint step in CI. This is that lint, for the imports, on the shipped modules. The two
+        re-export modules (_common/__init__.py and _common/text.py) import names for callers."""
+        shims = {SCRIPTS / "_common" / "__init__.py", SCRIPTS / "_common" / "text.py"}
+        found = {}
+        for path in sorted([*SCRIPTS.glob("*.py"), *(SCRIPTS / "_common").glob("*.py"), ROOT / "mcp" / "server.py"]):
+            if path not in shims and _unused_imports(path):
+                found[str(path.relative_to(ROOT))] = _unused_imports(path)
+        self.assertEqual(found, {}, "imported and never used")
+        # the checker itself finds one
+        with tempfile.TemporaryDirectory() as tmp:
+            probe_file = Path(tmp) / "m.py"
+            probe_file.write_text("import os, sys\nfrom typing import List, Optional\n"
+                                  "def f(x: 'Optional[int]') -> None:\n    print(sys.argv)\n", encoding="utf-8")
+            self.assertEqual(_unused_imports(probe_file), ["List (line 2)", "os (line 1)"])
+
+    def test_npm_package_leaves_out_python_bytecode(self):
+        """A222: "files" wins over .npmignore, so with npm 10 a checkout that had run the tests
+        packed 59 scripts/__pycache__/*.pyc files. The negated "files" entries keep them out and
+        release_check.sh fails a tarball that has one. The live `npm pack --dry-run` runs where
+        npm can be spawned (not on Windows, not on the debian-trixie job, which has no npm)."""
+        files = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["files"]
+        for neg in ("!**/__pycache__/**", "!**/*.pyc", "!**/*.pyo"):
+            self.assertIn(neg, files)
+        self.assertIn("__pycache__/|\\.py[co]$", (ROOT / "tests" / "release_check.sh").read_text(encoding="utf-8"))
+        npm = shutil.which("npm")
+        if not npm or os.name == "nt":
+            raise unittest.SkipTest("npm cannot be spawned here; the static half ran")
+        import py_compile
+        py_compile.compile(str(SCRIPTS / "probe.py"), doraise=True)  # a __pycache__ to leave out
+        self.assertTrue(list((SCRIPTS / "__pycache__").glob("*.pyc")))
+        proc = subprocess.run([npm, "pack", "--dry-run", "--json"], cwd=ROOT, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        packed = [f["path"] for f in json.loads(proc.stdout)[0]["files"]]
+        self.assertIn("scripts/probe.py", packed)
+        self.assertEqual([p for p in packed if "__pycache__" in p or p.endswith((".pyc", ".pyo"))], [])
+
+    def _demo_build(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("demo_build_467", ROOT / "demos" / "build.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_demo_runs_the_measured_value_and_the_gallery_prints_it(self):
+        """A243, A244: cropdetect_crop read the rectangle off the document's top level (it is
+        under `crop`) and cropped a hard-coded one labelled "detected"; scenes_highlights' gallery
+        printed a placeholder cut list while the build cut the measured one. A real build now runs
+        the measured value and stops when it is not the one the gallery prints, or when nothing
+        was measured; the gallery prints that value."""
+        build = self._demo_build()
+
+        class Fake(build.Ctx):
+            answers: dict = {}
+
+            def script(self, tool, *args, capture=False):
+                super_cmd = ["python3", "scripts/" + tool] + [str(a) for a in args]
+                self.commands.append(" ".join(super_cmd))
+                answer = self.answers.get(tool)
+                if tool == "scenes.py" and answer is not None:
+                    Path(args[args.index("--edl") + 1]).write_text(answer, encoding="utf-8")
+                    return None
+                return answer
+
+        rect = build.CROPDETECT_GALLERY_RECT
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(build, "OUT", Path(tmp)):
+            def run(name, answers):
+                for stale in Path(tmp).iterdir():  # as build_demo() clears a demo's own files
+                    stale.unlink()
+                ctx = Fake(name, verbose=False)
+                ctx.answers = answers
+                build.BY_NAME[name].builder(ctx)
+                return ctx.commands[-1]
+            good = json.dumps({"crop": dict(rect), "x": 999})
+            self.assertIn("--x %(x)s --y %(y)s --width %(width)s --height %(height)s" % rect,
+                          run("cropdetect_crop", {"cropdetect.py": good}))
+            for label, out in (("another rectangle", json.dumps({"crop": dict(rect, y=rect["y"] + 8)})),
+                               ("no bars", json.dumps({"crop": None})), ("no document", "")):
+                with self.subTest(label), self.assertRaises(build.BuildError):
+                    run("cropdetect_crop", {"cropdetect.py": out})
+            segments = build.SCENES_GALLERY_SEGMENTS
+            self.assertIn("--segments " + segments,
+                          run("scenes_highlights", {"scenes.py": segments.replace(",", "\n") + "\n"}))
+            for label, edl in (("another list", "0.00-1.50\n4.00-5.50\n"), ("no EDL", None)):
+                with self.subTest(label), self.assertRaises(build.BuildError):
+                    run("scenes_highlights", {"scenes.py": edl})
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        self.assertIn("--segments %s " % segments, page)
+        self.assertIn("--x %(x)s --y %(y)s --width %(width)s --height %(height)s" % rect, page)
+
+    def test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout(self):
+        """A271, A274: run_agents_25.sh linked the whole checkout in as the skill (the eval's own
+        answer keys included) and ran the agent with every permission check off, so a run could
+        edit the tracked tree and nothing noticed. It installs the shipped set with the npm
+        installer and compares the checkout's `git status` before and after every run."""
+        script = (ROOT / "evals" / "run_agents_25.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotIn("ln -s", code)
+        self.assertIn('node "$REPO/bin/install.js" --dir "$d/.claude/skills"', code)
+        self.assertIn('git -C "$REPO" status --porcelain', code)
+        self.assertIn('if [ "$before" != "$after" ]', code)
+        self.assertIn("exit 1", code)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

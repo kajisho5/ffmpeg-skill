@@ -52,7 +52,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
 from _common.emit import file_identity, input_length, own_length
 from check import SPECS as PLATFORMS, measure_loudness
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block

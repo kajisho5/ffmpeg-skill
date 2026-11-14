@@ -53,7 +53,10 @@
     "docs/contract.md",
     "SKILL.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "!**/*.pyo"
   ],
   "scripts": {
     "test": "python3 tests/run_parallel.py && python3 tests/test_contract.py",
