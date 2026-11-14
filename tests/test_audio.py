@@ -1218,7 +1218,9 @@ class Audit459AudioTests(MediaFixtures):
 
     @classmethod
     def _pcm(cls, path, af="anull"):
-        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:a:0",
+        # -f wav: FFmpeg 9.0.2 probes some of these tone mixes as MPEG-TS (see riff_wave_args)
+        fmt = ["-f", "wav"] if str(path).lower().endswith(".wav") else []
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", *fmt, "-i", str(path), "-map", "0:a:0",
                               "-af", af, "-ac", "1", "-ar", str(cls.RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
                              stdout=subprocess.PIPE, check=True).stdout
         import array
@@ -1228,66 +1230,20 @@ class Audit459AudioTests(MediaFixtures):
             pcm.byteswap()
         return pcm
 
-    def test_zz_diagnose_the_empty_mix_on_ffmpeg_9(self):
-        """TEMPORARY (removed before merge): FFmpeg 9.0.2 writes an empty file for --voice strong
-        with --music. Runs variants of that graph and fails with the table, on FFmpeg 9+ only."""
+    def test_a_written_wav_is_probed_as_a_wav(self):
+        """FFmpeg 9.0.2 read the mix of test_a_limiter_is_the_ceiling_of_the_mix_it_delivers as
+        MPEG-TS (its probe outscores WAV's when the PCM holds 0x47 at a packet's spacing), so the
+        run failed its own output check with "End of file". A file that opens with a RIFF/WAVE
+        header is probed with -f wav; nothing else is."""
         sys.path.insert(0, str(SCRIPTS))
-        from _common.runner import ffmpeg_version
-        if ffmpeg_version()[0] < 9:
-            self.skipTest("diagnostic for FFmpeg 9+")
-        hp, de1, nr = "highpass=f=80", "deesser=i=0.4", "afftdn=nf=-25:tn=1"
-        c1 = "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
-        de2, c2 = "deesser=i=0.6", "acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3"
-        lim = "alimiter=limit=0.891251:level=disabled:latency=1"
-        tail = "aformat=sample_rates=48000,apad=whole_len=288000,atrim=end_sample=288000,atrim=end=6.000010"
-        bed = "[1:a:0]volume=-3dB,atrim=0:6.000000[music]"
-        mix = "[main][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mix]"
-
-        def g(chain, post=f"{lim},{tail}", mixer=mix):
-            return f"[0:a:0]{','.join(chain)}[main];{bed};{mixer};[mix]{post}[out]"
-        full = [hp, de1, nr, c1, de2, c2]
-        variants = {
-            "A full": g(full),
-            "B no limiter": g(full, tail),
-            "C no tail": g(full, lim),
-            "D no afftdn": g([hp, de1, c1, de2, c2]),
-            "E no deessers": g([hp, nr, c1, c2]),
-            "F no compressors": g([hp, de1, nr, de2]),
-            "G highpass only": g([hp]),
-            "H afftdn only": g([nr]),
-            "I deesser only": g([de1]),
-            "J compressor only": g([c1]),
-            "K limiter no latency": g(full, f"alimiter=limit=0.891251:level=disabled,{tail}"),
-            "L mix longest": g(full, mixer=mix.replace("duration=first", "duration=longest")),
-            "M limiter before mix": g(full + [lim], tail),
-            "N dbl before limiter": g(full, f"aformat=sample_fmts=dbl,{lim},{tail}"),
-            "O asetpts before limiter": g(full, f"asetpts=N/SR/TB,{lim},{tail}"),
-            "P aresample before limiter": g(full, f"aresample=48000,{lim},{tail}"),
-            "Q no apad": g(full, f"{lim},aformat=sample_rates=48000,atrim=end_sample=288000"),
-            "R chain then flt": g(full + ["aformat=sample_fmts=flt"]),
-            "S chain, no mix": f"[0:a:0]{','.join(full)},{lim},{tail}[out]",
-        }
-        rows = []
-        keep = ("A full", "B no limiter", "D no afftdn", "E no deessers", "F no compressors", "G highpass only", "S chain, no mix")
-        for name, graph in variants.items():
-            if name not in keep:
-                continue
-            out = OUT / "a459_diag.wav"
-            if out.exists():
-                out.unlink()
-            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(self.voice),
-                            "-i", str(self.bed), "-filter_complex", graph, "-map", "[out]", "-c:a", "pcm_s16le", str(out)],
-                           capture_output=True, text=True)
-            raw = out.read_bytes() if out.exists() else b""
-            pr = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
-                                 "-show_chapters", str(out)], capture_output=True, text=True)
-            pv = subprocess.run(["ffprobe", "-v", "debug", "-show_format", str(out)], capture_output=True, text=True)
-            pf = subprocess.run(["ffprobe", "-v", "error", "-f", "wav", "-show_format", str(out)], capture_output=True, text=True)
-            dec = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(out), "-f", "null", "-"], capture_output=True, text=True)
-            rows.append(f"{name}: bytes={len(raw)} head={raw[:96].hex()} probe_rc={pr.returncode} probe_err={pr.stderr.strip()[-200:]!r} "
-                        f"forced_wav_rc={pf.returncode} forced_err={pf.stderr.strip()[-200:]!r} decode_rc={dec.returncode} "
-                        f"decode_err={dec.stderr.strip()[-200:]!r} debug_tail={pv.stderr.strip()[-900:]!r}")
-        self.fail("\n".join(rows))
+        from _common.probe import probe, riff_wave_args
+        self.assertEqual(riff_wave_args(str(self.voice)), ["-f", "wav"])
+        self.assertEqual(riff_wave_args(str(self.src)), [])
+        self.assertEqual(riff_wave_args(str(OUT / "a459_absent.wav")), [])
+        named = OUT / "a459_named.dat"  # the header decides, not the name
+        named.write_bytes(self.voice.read_bytes())
+        self.assertEqual(riff_wave_args(str(named)), ["-f", "wav"])
+        self.assertEqual(probe(str(named))["audio"]["codec"], "pcm_s16le")
 
     @staticmethod
     def _db(value):
@@ -1316,11 +1272,6 @@ class Audit459AudioTests(MediaFixtures):
         # without a bed the limiter still runs on the main track, where it always ran
         _, data = self._audio_filters(self.voice, "--limit", "-o", OUT / "a459_limit_alone.wav")
         self.assertIn("[0:a:0]alimiter=", data["commands"][-1])
-        # one mapped stream, already ended with the main track and conformed: no -shortest (the
-        # --voice strong case above wrote an empty file with it under FFmpeg 9.0.2)
-        _, data = self._audio_filters(self.voice, "--music", self.bed, "--music-loop", "--voice", "strong",
-                                      "-o", OUT / "a459_limit_loop.wav")
-        self.assertNotIn("-shortest", data["commands"][-1])
 
     def test_duck_amount_is_the_depth_in_db(self):
         """A134: --duck-amount was a compressor ratio (max(2, amount/3)): 0 and 3 ducked the same

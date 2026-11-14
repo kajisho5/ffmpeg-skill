@@ -575,12 +575,6 @@ def main() -> int:
             kind="input", hint="add --sample-rate 48000 and give the length in 48 kHz samples, or write .wav/.flac")
 
     graph: List[str] = []
-    if args.music or args.effects:
-        # the beds are mixed in float, whatever the main chain ends in: after --voice's compressors
-        # (double) amix ran in double straight into the mix's limiter, and that graph wrote an empty
-        # file with exit 0 on FFmpeg 9.0.2 (Windows and macOS CI), where the same mix of a plain
-        # track (amix in float, converted before alimiter) wrote the sound
-        fx = fx + ["aformat=sample_fmts=flt"]
     graph.append(f"[{main_src}]{','.join(fx) if fx else 'anull'}[main]")
     last = "main"
 
@@ -666,9 +660,9 @@ def main() -> int:
     elif has_video:
         cmd += ["-vn"]  # audio extension: the picture is dropped, not copied into a container that cannot hold it
     cmd += audio_codec_for(output, args.bitrate)
-    # No -shortest: the output maps one stream, and the graph already ends with the main track (a
-    # bed, looped or not, is trimmed to it and mixed with amix duration=first), then is conformed to
-    # its sample count, so -shortest had nothing to end.
+    if not keep_video:
+        # audio-only outputs: a looped music bed is infinite, -shortest ends the run with the main track
+        cmd.append("-shortest")
     if keep_video:
         dropped_streams = run_keeping_subtitles(cmd, output)
     else:

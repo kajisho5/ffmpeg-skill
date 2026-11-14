@@ -124,10 +124,12 @@
   note, and a run where none fits is refused (`kind: input`) before any `--edl` is written.
 - **`waveform.py -o` refuses every audio-only extension** (`.aif`, `.aiff`, `.caf`, `.wma` too),
   a dry run as well; they failed in ffmpeg's muxer, or were planned.
-- **`audio.py` writes the sound of `--voice` with `--music`/`--effects` on FFmpeg 9.0.2**: the mix
-  ran in double precision straight into its limiter and wrote an empty file with exit 0 there; the
-  beds are mixed in float, as a plain track's always were. An audio-only output no longer passes
-  `-shortest` (one mapped stream, already ended with the main track). Not run on 9.0.2 here.
+- **A WAV this skill has just written is read as a WAV on FFmpeg 9.0.2.** Its MPEG-TS probe outscores
+  the WAV one when the PCM holds `0x47` at a transport packet's spacing (a steady tone can), so
+  ffprobe read the finished file as a broken transport stream and the run failed with "output
+  verification failed ... End of file" (`audio.py --voice strong --music` on the test's sines). The
+  probe is given `-f wav` for a file that opens with a RIFF/WAVE header. A WAV like that given as an
+  input still meets the same misread inside ffmpeg on 9.0.2 (#518).
 
 
 ## 3.8.12

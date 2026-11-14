@@ -214,6 +214,21 @@ def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
     return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
 
 
+def riff_wave_args(path: str) -> List[str]:
+    """`-f wav` for a file that opens with a RIFF/WAVE header. FFmpeg 9.0.2 scores its MPEG-TS
+    probe above the WAV one when the PCM happens to hold 0x47 at a transport packet's spacing (a
+    steady tone can): ffprobe then reads a file this skill has just written as a broken transport
+    stream and fails with "End of file". The header says what the file is, so the probe is told.
+    Measured on 9.0.2 (CI): the same file fails unforced and reads with `-f wav`; 6.1 to 8.0 read
+    it either way."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return []
+    return ["-f", "wav"] if head[:4] == b"RIFF" and head[8:12] == b"WAVE" else []
+
+
 def probe(path: str, role: str = "input") -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -240,7 +255,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", *still_input_args(path),
+        [ffprobe, "-v", "error", *still_input_args(path), *riff_wave_args(path),
          "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
