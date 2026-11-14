@@ -1277,8 +1277,9 @@ class EditingTests(MediaFixtures):
         the last frame and showed the next repeat's first frame on 1.20 s and 1.24 s, a frame
         before its time (FFmpeg 7.1 and 8 held the last frame instead). The graph ends on the
         clip's rate now: frames 0-24, frame 24 until the repeat, and the repeat's frame 0 on
-        1.24 s, the first tick at or after its sound. The packet count is not pinned (the 7.1 and
-        8 behaviour is seen in CI only)."""
+        1.24 s, the tick nearest its sound. `fps` rounds to the nearest tick, so a repeat is within
+        half a frame of its sound on either side: sound at 1.21 s puts frame 0 on 1.20 s (#514
+        review). The packet count is not pinned (the 7.1 and 8 behaviour is seen in CI only)."""
         gap = numbered_clip(OUT / "fl_gap.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1.23425")
         flush = numbered_clip(OUT / "fl_flush.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1")
         out = OUT / "fl_out.mp4"
@@ -1287,6 +1288,11 @@ class EditingTests(MediaFixtures):
         self.assertEqual(shown[:31], list(range(25)) + [24] * 6)
         self.assertEqual(shown[31:40], list(range(9)), "each frame of the next repeat once, from 1.24 s")
         self.assertIn("setpts=PTS-0.000000/TB,fps=25/1[v]", doc["commands"][-1])
+        near = numbered_clip(OUT / "fl_near.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1.21")
+        script("loop.py", near, "--duration", "2.21", "-o", out, "--overwrite")
+        shown = frame_numbers(out)
+        self.assertEqual(shown[:30], list(range(25)) + [24] * 5)
+        self.assertEqual(shown[30:39], list(range(9)), "the repeat's frame 0 on 1.20 s, the tick nearest 1.21 s")
         doc = json.loads(script("loop.py", flush, "--duration", "2.5", "-o", out, "--json").stdout)
         self.assertNotIn(",fps=", doc["commands"][-1], "a clip whose repeats meet keeps the command it had")
         self.assertEqual(frame_numbers(out)[20:30], [20, 21, 22, 23, 24, 0, 1, 2, 3, 4])

@@ -4215,7 +4215,10 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   starts at 1.23425 s (a 1 s 25 fps clip with 1.23425 s of sound); FFmpeg 7.1 and 8 held the
   last frame (50 packets for 6.1's 56; seen in CI). The graph now ends on `fps=<clip's rate>`
   when the file outlasts the picture by more than half a frame: the last frame is repeated in the
-  graph and each later repeat's frames sit on the grid once (its first on 1.24 s). The number of
+  graph and each later repeat's frames sit on the grid once (its first on 1.24 s). `fps` rounds
+  to the nearest tick, so a repeat's first frame is within half a frame of its sound on either
+  side (1.20 s for sound at 1.21 s); rounding up would never be early and could be a whole frame
+  late, and half a frame is the bound the other time tools hold. The number of
   frames is then the graph's, not the FFmpeg version's default; that is measured on 6.1.1 only,
   and 7.1 and 8 are expected, not seen, to write the same 56. A clip whose repeats meet, a
   `--crossfade` repeat and a variable-rate source (conformed by `-fps_mode cfr -r`) write the
