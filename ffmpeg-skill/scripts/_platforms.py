@@ -230,11 +230,6 @@ ALIASES: Dict[str, str] = {"youtube-shorts": "shorts", "yt-shorts": "shorts", "y
 PLATFORM_CHOICES: List[str] = sorted({n for n in PLATFORMS if PLATFORMS[n]["check"] == n} | set(ALIASES))
 
 
-def has_frame(name: str) -> bool:
-    """True when this destination has a frame, and therefore a safe zone to place text inside."""
-    return bool(PLATFORMS.get(resolve(name) or "", {}).get("frame"))
-
-
 def spec_of(name: str) -> Dict[str, Any]:
     """check.py's compliance row values for a destination."""
     return dict(PLATFORMS[name]["spec"])

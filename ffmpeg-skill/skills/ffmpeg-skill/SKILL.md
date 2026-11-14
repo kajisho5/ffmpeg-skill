@@ -23,7 +23,7 @@ Shared flags (the rest, codec defaults and `--hw`: `references/flags.md`):
 
 Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `check`, `sync`, `multicam`,
 `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `overlay`, `metadata`, `cut`, `render`,
-`batch`) may still run ffmpeg/ffprobe without writing artifacts; `verify` ignores the flag. Per tool: `contract --json` `dry_run`.
+`batch`) may still run ffmpeg/ffprobe without writing artifacts; `verify` ignores the flag. Per tool: `contract --json --tool NAME` `dry_run`.
 
 Audio-only files work in the audio tools; picture tools refuse them (`references/workflow.md#audio-only-files`).
 

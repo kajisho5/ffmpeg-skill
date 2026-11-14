@@ -3,6 +3,7 @@
 
     python3 scripts/_contract.py --json              # the contract, with detected capabilities
     python3 scripts/_contract.py --json --static     # same, without environment detection
+    python3 scripts/_contract.py --json --tool cut   # only cut under `tools` (repeatable)
     python3 scripts/_contract.py doctor [--json]     # which required capabilities this machine has
     ffmpeg-skill contract --json                     # the same through the npm entry point
 
@@ -21,7 +22,6 @@ import argparse
 import functools
 import importlib.util
 import json
-import os
 import platform
 import re
 import shutil
@@ -442,6 +442,7 @@ ERROR_REASONS = {
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
+    "output_extension_missing": "a media output with no file extension (and no -f naming its format), so ffmpeg could not choose a container; refused before ffmpeg runs, dry runs included; details: {output}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
     "output_container_codecs": "a .webm output whose command encodes video or sound WebM cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
@@ -775,7 +776,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]},
                  "files": {"type": "array", "description": "one entry per file: {file, probe, steps, skipped}. A step is {step, ok, seconds, error (one line, for the table)}, plus the tool's verified when it completed, and on a failure its own kind, reason, message, details and exit_code (reason step_timeout or step_output_unparsed when the tool printed no failure document); skipped lists the steps that do not apply as {step, reason: quick|no_video|no_audio|not_hdr|not_multichannel|input_unreadable, message}"},
-                 "failed": {"type": "integer"}, "total": {"type": "integer"}}
+                 "failed": {"type": "integer"}, "total": {"type": "integer"},
+                 "out_dir": {"type": ["string", "null"], "description": "the folder the steps' outputs are in when they are kept: --out, or with --keep alone a new folder that outlives the run; null when they were written to a temporary folder and deleted"}}
     elif name == "batch":
         extra = {"results": {"type": "array", "description": "one row per input, every input (an interrupted batch included): ok (every step completed), verified (every step also verified what it wrote; false under --dry-run) and unverified ([{step, tool, failed}] naming the steps that did not); a failed row's error {step, tool, kind, message, code, reason, details, hint, exit_code} from the failing step's own document; diagnostics from its steps (tagged with step); cache_miss {reason: output_missing|output_changed|entry_unverifiable, ...} when a cache entry was not served; skipped \"timeout\" or \"interrupted\" for an item that never started and interrupted true for one stopped while running; under --watch, skipped \"settling\" (ok false, not cached) for a source that changed since the previous poll, or, first seen, was modified within one poll interval: it is processed on a later pass. A row whose recipe ran cut.py carries cut_reencoded (each cut.py call's reencoded) and cut_reencode_reasons (each reason those calls named, once per call)"},
                  "processed": {"type": "integer"}, "total": {"type": "integer"},
@@ -1037,11 +1039,6 @@ def _ff_listing(binary: str, flag: str) -> Dict[str, Any]:
     if not names:
         return {"names": [], "status": "unparsed", "detail": f"no row recognised in `{binary} {flag}` output ({len(proc.stdout.splitlines())} lines)"}
     return {"names": names, "status": "parsed", "detail": f"{len(names)} entries"}
-
-
-def _ff_list(binary: str, flag: str) -> List[str]:
-    """Names from `ffmpeg -encoders` / `-filters` / `-bsfs` (empty list when ffmpeg is missing or unparsed)."""
-    return _ff_listing(binary, flag)["names"]
 
 
 # GPU-backed encoders are named `<codec>_<backend>` by every ffmpeg build (h264_nvenc,
@@ -2179,7 +2176,19 @@ def main() -> int:
     ap.add_argument("command", nargs="?", choices=["contract", "doctor"], default="contract")
     ap.add_argument("--json", action="store_true", help="JSON on stdout (the contract is always JSON)")
     ap.add_argument("--static", action="store_true", help="omit environment detection (available / missing capabilities)")
+    ap.add_argument("--tool", action="append", metavar="NAME",
+                    help="only this tool's entry under `tools` (repeatable; `cut` or `cut.py`); every other key is "
+                         "unchanged. The whole contract is about 950 KB; with one tool, 55-85 KB")
     args = ap.parse_args()
+    wanted: List[str] = []
+    for name in args.tool or []:
+        name = name[:-3] if name.endswith(".py") else name
+        if name not in public_tools():
+            ap.error(f"--tool {name}: no such tool (one of: {', '.join(public_tools())})")
+        if name not in wanted:
+            wanted.append(name)
+    if wanted and args.command == "doctor":
+        ap.error("--tool selects from the contract; doctor --json lists every tool under `tools`")
     if args.command == "doctor":
         d = doctor()
         # On stderr in both modes, so `doctor --json`'s stdout stays one JSON document: an
@@ -2225,7 +2234,12 @@ def main() -> int:
         # 1: something required is missing; 2: nothing proven missing but a required capability is unknown
         # an unsupported Python/FFmpeg is a known failure, like a missing capability (not "unknown")
         return 1 if d["missing"] or d.get("unsupported") else 2
-    print(json.dumps(build(detect=not args.static), indent=2, sort_keys=True, ensure_ascii=False))
+    doc = build(detect=not args.static)
+    if wanted:
+        # in the order asked; `provides` and `capability_map` stay whole (a few KB): they map ids
+        # to tools across the skill, which one tool's entry does not change (#467 A220)
+        doc["tools"] = sorted((t for t in doc["tools"] if t["name"] in wanted), key=lambda t: wanted.index(t["name"]))
+    print(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 

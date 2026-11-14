@@ -34,14 +34,13 @@ Examples:
   python3 fit.py input.mp4 --flip h                              # mirror horizontally
 """
 import argparse
-import math
 import sys
 from fractions import Fraction
 from typing import List
 
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
@@ -227,7 +226,9 @@ def main() -> int:
                 # after it (a B-frame HEVC source) and lose the frames before it, so the first
                 # picture would not be the one the start timecode below names
                 m = min(SEEK_MARGIN, round(start, 3))
-                pre_input += ["-ss", f"{start - m:.3f}"]
+                # a trim from the start seeks nowhere: no -ss, so the timeline stays where it is and
+                # a subtitle/data track is kept below (`-ss 0.000` dropped it, A158)
+                pre_input += ["-ss", f"{start - m:.3f}"] if round(start, 3) > 0 else []
                 # without sound the -t only counts frames (picture_output_t). Not from the centre:
                 # there the output's clock starts at the seek, between two frames, and the encoder
                 # rounds each frame to its own tick

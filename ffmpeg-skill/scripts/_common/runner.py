@@ -511,6 +511,11 @@ def apply_common(args: "argparse.Namespace") -> None:
     # --json-brief is a shorter --json, not a second output mode: it implies it, so a caller that
     # passes only --json-brief still gets a JSON document (and --json --json-brief is the brief one).
     STATE.json = bool(getattr(args, "json", False)) or STATE.json_brief
+    if hasattr(args, "json"):
+        # and a tool that branches on args.json reads the same mode: through 3.8.13, probe --field,
+        # check, cropdetect, silence --list, report and verify printed text (or a bare document,
+        # or a document and then a path) under --json-brief alone (review of #521)
+        args.json = STATE.json
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
@@ -991,7 +996,7 @@ def _refuse_output_is_input(output: str, inp: str, real: str, why: str) -> None:
            **details)
 
 
-def refuse_output_is_input(output: str, *inputs: str) -> None:
+def refuse_output_is_input(output: str, *inputs: str, why: str = "the result would replace the source") -> None:
     """Tool-level twin of the run() guard, for tools whose final ffmpeg command does not name
     the user's input at all. `cut.py --segments` cuts each part into a temp dir and then concats
     a list file: the last command's only `-i` is that list, so `-o` equal to the input sailed
@@ -1009,7 +1014,7 @@ def refuse_output_is_input(output: str, *inputs: str) -> None:
         except OSError:
             continue
         if same:
-            _refuse_output_is_input(output, inp, out_real, "the result would replace the source")
+            _refuse_output_is_input(output, inp, out_real, why)
 
 
 def _check_output_path(cmd: Sequence[str]) -> None:
@@ -1038,6 +1043,24 @@ def _check_output_path(cmd: Sequence[str]) -> None:
                output=output, directory=parent)
     if not os.access(parent, os.W_OK):
         refuse("input", "output_dir_not_writable", f"output directory {parent!r} is not writable", output=output, directory=parent)
+
+
+def _check_output_extension(cmd: Sequence[str]) -> None:
+    """An ffmpeg output with no file extension and no `-f` after its last input leaves the muxer
+    nothing to choose a container by: refused as `kind: input` before anything runs, dry runs
+    included. Through 3.8.8 every tool that writes media handed it on and failed as `kind: ffmpeg`
+    ("Unable to choose an output format", audit A159's sweep). Only the ffmpeg commands run()
+    executes are checked: a sidecar (a report, an SRT) is a plain file and needs no extension,
+    and look.py takes an -o without an image extension as a stem (docs/design-decisions.md)."""
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:") or len(os.path.splitext(output)[1]) > 1:
+        return
+    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    if "-f" in cmd[last_input + 2:-1]:
+        return
+    refuse("input", "output_extension_missing",
+           f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
+           f"name it with one (for example {output + '.mp4'!r})", output=output)
 
 
 # What the WebM muxer takes (6.1: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and
@@ -2017,6 +2040,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _refuse_url_media(cmd)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
+        _check_output_extension(cmd)
         _check_container_codecs(cmd)
         _check_build_components(cmd)
         _check_existing_output(cmd)
@@ -2615,7 +2639,6 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     with os.replace() under the lock instead of copied -- a checked `cut.py --segments` join was
     copied whole, about 2 s for 240 MB. A rename that fails (another filesystem) falls back to
     the copy."""
-    import shutil
     cmd = ["ffmpeg", dst]
     _check_output_path(cmd)
     _check_existing_output(cmd)

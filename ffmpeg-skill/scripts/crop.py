@@ -12,7 +12,8 @@ The rectangle must lie entirely inside the source frame after accounting for
 any display rotation, and --width/--height must be even (required for 4:2:0
 chroma subsampling, the pixel format every encoder here uses) -- given values
 are validated and refused, never silently rounded, since a caller-specified
-rectangle should do exactly what was asked or fail loudly.
+rectangle should do exactly what was asked or fail loudly. An odd --x/--y is
+taken as given (the crop starts on that pixel), not moved to the chroma grid.
 
 Examples:
   python3 crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920
@@ -63,7 +64,7 @@ def main() -> int:
 
     output = args.output or default_output(args.input, "crop")
     # exact=1: without it crop rounds an odd --x/--y down to the chroma grid of a 4:2:0 frame,
-    # and the rectangle written was one pixel left of / above the one asked for (A170's sibling)
+    # and the rectangle written was one pixel left of / above the one asked for (A170's sibling, A157)
     vf = [f"crop={args.width}:{args.height}:{args.x}:{args.y}:exact=1", "setsar=1"]
     if square_pixels(meta["video"]):
         vf.insert(0, square_pixels(meta["video"]))

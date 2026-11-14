@@ -695,6 +695,16 @@ def _vt_bt709(codec: str) -> List[str]:
     return ["-bsf:v", f"{codec}_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"]
 
 
+def source_transfer(v: Dict[str, Any]) -> str:
+    """The transfer a 10-bit re-encode of a BT.2020 / HDR source is tagged with: the source's own
+    tag, or, when it has none, what probe() read it as. BT.2020 primaries with no transfer tag are
+    `hdr_format` "BT.2020 SDR" (not an HDR signal), so they are tagged bt2020-10, the SDR curve
+    BT.2020 defines; through 3.8.8 every such re-encode came out tagged HLG (audit A153). An
+    HDR signal with no transfer tag (Dolby Vision whose base layer is untagged) keeps the HLG
+    default it always had."""
+    return v.get("color_transfer") or ("arib-std-b67" if v.get("hdr_signal") else "bt2020-10")
+
+
 def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: bool) -> Optional[List[str]]:
     """VideoToolbox encoder options for `codec`, or None (with a note in STATE.hw_notes) when the
     request stays on the CPU: no VideoToolbox encoder for the codec, this machine cannot, or the
@@ -716,7 +726,7 @@ def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: b
     v = (meta or {}).get("video") or {}
     hdr = bool(v.get("bt2020_or_hdr"))
     hdr_tags = ["-colorspace", v.get("color_space") or "bt2020nc", "-color_primaries", v.get("color_primaries") or "bt2020",
-                "-color_trc", v.get("color_transfer") or "arib-std-b67"]
+                "-color_trc", source_transfer(v)]
     if codec == "prores":
         return ["-c:v", name, "-profile:v", "hq", "-pix_fmt", "p210le"] + (hdr_tags if hdr else [])
     # The HDR curve was fitted on the Main10 HEVC line; an 8-bit H.264 line (an export preset on
@@ -847,7 +857,7 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
     hdr = bool(v.get("bt2020_or_hdr"))
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
-    trc = v.get("color_transfer") or "arib-std-b67"
+    trc = source_transfer(v)
     hdr_tags = ["-colorspace", cs, "-color_primaries", prim, "-color_trc", trc]
     if codec == "h264":
         if hdr:
@@ -1152,7 +1162,7 @@ def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, prese
 def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
     cs = v.get("color_space") or "bt2020nc"
     prim = v.get("color_primaries") or "bt2020"
-    trc = v.get("color_transfer") or "arib-std-b67"
+    trc = source_transfer(v)
     x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"
     return ["-c:v", "libx265", "-preset", preset, "-crf", str(min(51, crf + 2)), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
             "-x265-params", x265, "-colorspace", cs, "-color_primaries", prim, "-color_trc", trc, "-movflags", "+faststart"]

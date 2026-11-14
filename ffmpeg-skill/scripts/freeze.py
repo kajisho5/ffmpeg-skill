@@ -20,7 +20,7 @@ import argparse
 import sys
 
 from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length
 
 

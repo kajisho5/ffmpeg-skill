@@ -1098,7 +1098,7 @@ def transcribe_words_result(video: str, language: "Optional[str]" = None, model:
     _shutil = SafeShutil(_shutil)  # look engines up and launch them by full path, never from the working directory
     import subprocess as _subprocess
     import tempfile as _tempfile
-    from _common import require_tool, run_analysis, STATE
+    from _common import require_tool, STATE
     ffmpeg = require_tool("ffmpeg")
     wanted = requested_engine(engine)
     language = engine_language(language)
