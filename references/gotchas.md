@@ -193,7 +193,8 @@ libass and drawtext draw an empty box per character they have no glyph for, and
 ffmpeg still exits 0 — a video full of tofu is the classic "it worked" failure.
 Since 1.12 `caption.py`, `graphics.py` and `overlay.py --text` detect the script
 of the text they are about to draw (Japanese, Chinese, Korean, Arabic, Hebrew,
-Devanagari, Bengali, Tamil, Thai, Lao, Cyrillic, Greek) and resolve a font file that covers it,
+Devanagari, Bengali, Tamil, Thai, Lao, Cyrillic, Greek; after 3.8.7 also Gurmukhi, Gujarati,
+Telugu, Kannada, Malayalam, Sinhala, Khmer and Myanmar) and resolve a font file that covers it,
 printing one line — `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`.
 **No font for the script is a failed job** (`kind: input`), not a warning.
 

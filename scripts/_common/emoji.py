@@ -383,7 +383,9 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True, fonts_dir:
         mode = "png"
     elif family and libass_glyph is False:
         mode = "none"
-    elif family:
+    elif family or libass_glyph:
+        # a face libass draws the emoji from, colour family listed or not (A64, #457: a glyph from
+        # a monochrome face was answered `none`, against this docstring and libass_glyph: true)
         mode = "mono"
     elif not fc_answered:
         # No fontconfig to ask (a static ffmpeg build, a bare container): the PNG path needs none,
@@ -404,6 +406,8 @@ def emoji_support(assets: "Optional[str]" = None, probe: bool = True, fonts_dir:
         detail = f"{family} installed; the colour render probe was not run"
     elif assets_dir:
         detail = "no colour emoji family installed; using the PNG assets directory"
+    elif libass_glyph:
+        detail = "no colour emoji family installed; libass draws the emoji monochrome from an installed face"
     else:
         detail = "no colour emoji family installed and no --emoji-assets directory"
     result = {"mode": mode, "color_font": family, "color_font_file": file,

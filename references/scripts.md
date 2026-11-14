@@ -1740,7 +1740,9 @@ paraphrase a caption to make it fit. Below the floor the cue is split exactly as
 before and `fit_exhausted: true` says so, with `--min-size` named as the flag
 that would go smaller and `|` as the manual break. `--min-size` above `--size`
 is a `kind: input` refusal. `--mode mux` is unaffected: soft subtitles carry no
-size, so the SRT is the one 1.16 wrote.
+size, so a muxed track is neither fitted, wrapped nor split (a player wraps it at
+the size it draws it; through 3.8.7 it was wrapped at the burn-in size), and
+`--max-lines` or `--wrap measured` with `--mode mux` is refused.
 
 Results, alongside the existing caption stats:
 `fit_size`, `size_requested`, `size_used`, `size_floor`, `size_pct_height`,
@@ -1846,10 +1848,14 @@ never changes: **R1** never inside a word, and a hyphenated token may break only
 after its hyphen (never after a non-breaking `‑`, nor a leading/trailing
 one); **R2** no line that is a lone digit, one or two punctuation characters, or
 a single kana, checked at every boundary rather than only the last; **R3** for
-Japanese and Chinese, a break is preferred after `。、！？」』）` and (Japanese
+Japanese and Chinese, a break is preferred after `。、！？」』），；：` and (Japanese
 only) after a particle — a particle attaches to the word before it, so kinsoku
 forbids opening a line with one — discouraged between a kanji stem and its
-okurigana, and forbidden before a small kana, `ー` or a closing bracket; **R4**
+okurigana, and forbidden before a small kana, `ー`, a closing bracket or the
+fullwidth `，；：．` (and after an opening bracket); in `phrase` mode the first
+fill does not take such a break either while a permitted one fits, so a cue of three or more lines, and each
+piece of a cue split past `--max-lines`, keeps the punctuation on the line it
+ends; **R4**
 for en/es/pt/fr/de/it, an article or preposition is kept with the phrase it
 governs: the break before it is preferred and the break after it penalised (a
 frozen table, matched case-folded; `--lang`, else the script detector, picks the
@@ -1868,9 +1874,10 @@ toggleable streams and copies the video and audio bit for bit. The suffix splits
 on the last colon, and only when the tail is a BCP-47-shaped code *and* the whole
 token is not itself a file on disk, so `C:\subs\en.srt` and a file named
 `a:b.srt` are never mangled; a single `--srt` with no suffix still takes
-`--language`. `--offset` shifts every added track (each later one as a
-`<output>_trackN.srt` copy); `--max-lines` and `--min-duration` lay out the first
-`--srt` only, and a note says so when they changed it. `--track-title` names a track (repeated in `--srt` order;
+`--language` (in a mux only: a burn reads `--language` as the script and wrap
+hint, not as a track tag). `--offset` shifts every added track (each later one as a
+`<output>_trackN.srt` copy); `--min-duration` lengthens the first `--srt`'s cues
+only, and a note says so when it changed them. `--track-title` names a track (repeated in `--srt` order;
 otherwise a frozen display-name table, and a code the table does not know gets
 the code itself — never a guessed or translated name), `--default-track LANG`
 marks one for auto-selection. Every other new track is explicitly marked *not*
@@ -1893,7 +1900,9 @@ language.
 
 Fonts by script (1.12): with no `--font` and no font named in your brand file, the
 script of the cue text (Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari,
-Thai, Cyrillic, Greek) picks a font file that covers it, logged as `font: <file>
+Bengali, Gurmukhi, Gujarati, Tamil, Telugu, Kannada, Malayalam, Sinhala, Thai,
+Lao, Khmer, Myanmar, Cyrillic, Greek) picks a font file
+that covers it, logged as `font: <file>
 (covers ko)`. Han-only text is read as Chinese unless `--lang ja|ko` (or
 brand.json `"lang"`) says otherwise; `--language` is the same flag, and still
 tags the subtitle stream under `--mode mux` and sets `--transcribe`'s language.
@@ -1907,7 +1916,14 @@ does not cover the script gets one line and a font resolved by script anyway. `d
 
 `--karaoke` uses real per-word timings when the transcript has them (a whisper
 `<stem>.json` or `<stem>.words.json` next to the SRT, `{"segments": [{"words":
-[{"word", "start", "end"}]}]}`); otherwise `--karaoke-timing` decides.
+[{"word", "start", "end"}]}]}`); otherwise `--karaoke-timing` decides. The
+highlight waits for the first word (the silence before it is an empty `\k` in
+`sweep`, an event with no active word in `word`), and `--offset` moves the word
+timings with the cues. With `--karaoke-style word` each word is its own event, and
+`--animate` is spread over them as the cue's one envelope: it fades in at the
+first event and out at the last, and a slide or a pop carries on across them.
+`--animate slide` ends on the line's own anchor (`--position`, a cue's `{\anN}`,
+the side margins).
 
 `--mode burn` (default) renders subtitles into the picture and always
 re-encodes both streams. `--mode mux` copies video and audio untouched and
