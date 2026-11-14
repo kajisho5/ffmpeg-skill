@@ -113,6 +113,9 @@
 - **`multicam.py --write-project` states a cut between its clips** (`"transition": {"type":
   "none"}`). It named no transition, so render.py crossfaded 0.5 s at every switch: the project
   ran 0.5 s a switch short of the direct render and each later switch came early.
+- **`multicam.py --switch` refuses a range shorter than a millisecond** (`kind: input`): the cut
+  list is written to the millisecond, so it was a `0.000-0.000` line that `cut.py --segments`
+  refuses (the sibling of the `scenes.py --highlights` range above).
 - **`scenes.py --sheet --dry-run` on an input an earlier step has yet to write plans its one tile**
   instead of a traceback (no scene was measured, and the sheet's select recursed on an empty list).
 - **`scenes.py --highlights` never writes an empty range**: a pick shorter than the hundredth it is

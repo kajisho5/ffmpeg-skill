@@ -586,6 +586,20 @@ class OrchestrationTests(MediaFixtures):
         hangs forever instead of erroring on invalid input. Must be refused up front instead."""
         script("multicam.py", self.src, self.src, "--auto", "-1", "--fast", "-o", OUT / "mc_auto_neg.mp4", expect_fail=True)
 
+    def test_multicam_switch_range_under_a_millisecond_is_refused(self):
+        """The sibling of scenes.py --highlights' 0.00-0.00: --switch "0-0.0004:1" passed (end is
+        after start) and the cut list, written to the millisecond, held "0.000-0.000", which
+        cut.py --segments refuses."""
+        edl = OUT / "mc_tiny.txt"
+        for extra in ([], ["--dry-run"]):
+            with self.subTest(extra=extra):
+                r = script("multicam.py", self.src, self.src, "--switch", "0-0.0004:1,0.0004-3:0", "--edl", edl,
+                           "-o", OUT / "mc_tiny.mp4", "--json", *extra, expect_fail=True)
+                doc = json.loads(r.stdout)
+                self.assertEqual(doc["error"]["kind"], "input")
+                self.assertIn("millisecond", doc["error"]["message"])
+                self.assertFalse(edl.exists())
+
     def test_multicam_switch_ranges_that_overlap_are_refused(self):
         """A132: two --switch ranges over the same reference time were both rendered, so the
         overlap's picture played twice beside sound that played once, and every later cut ran

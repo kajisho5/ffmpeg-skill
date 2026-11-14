@@ -60,6 +60,11 @@ def parse_switch(spec: str, n: int) -> List[Tuple[float, float, int]]:
             die(f"camera {c} does not exist (inputs are 0..{n - 1})")
         if e <= s:
             die(f"switch entry '{raw}': end must be after start")
+        if round(e, 3) <= round(s, 3):
+            # the cut list (--edl, `cuts`) is written to the millisecond: this range was its
+            # "0.000-0.000", a line cut.py --segments refuses (the scenes.py --edl sibling)
+            die(f"switch entry '{raw}': shorter than a millisecond, the precision the cut list is written in",
+                kind="input")
         out.append((s, e, c))
     out.sort()
     # A132: ranges on one timeline cannot overlap. The fill below kept both, so the picture of the
