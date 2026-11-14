@@ -26,7 +26,7 @@ from _common.decision import (av_trim, conform_output_t, conform_to_length, fram
                               grid_at_or_after, silence_filter, stream_starts, window_expr, windowed_overlay_x)
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import display_size, is_still_input, square_pixels, square_pixels_note, still_loop_args
 from _common.emit import input_length
 
 
@@ -139,6 +139,10 @@ def main() -> int:
     output = args.output or default_output(args.input, "broll")
     cmd = ffmpeg_base() + ["-i", args.input]
     for c in cutaways:
+        # a still B-roll is one frame to a plain -i: it showed for one frame of the cutaway and A
+        # came back under it (#510). Looped, it lasts the window it is trimmed to.
+        if is_still_input(c["meta"]):
+            cmd += still_loop_args(c["path"], c["from"] + c["length"])
         cmd += ["-i", c["path"]]
 
     # Picture: each B window is trimmed, normalised to A's frame and fps, shifted to start at its

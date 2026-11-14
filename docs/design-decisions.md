@@ -94,6 +94,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.13 — tests, CI, distribution and the site (#467)](#after-3813--tests-ci-distribution-and-the-site-467)
 - [After 3.8.14 — odd positions, the CFR conform and the timeline's aspect (#512, #506)](#after-3814--odd-positions-the-cfr-conform-and-the-timelines-aspect-512-506)
 - [After 3.8.16 — shared code and the MCP server (#465)](#after-3816--shared-code-and-the-mcp-server-465)
+- [After 3.8.17 — leftovers of the old grouped issues (#510)](#after-3817--leftovers-of-the-old-grouped-issues-510)
 <!-- contents:end -->
 
 ## Time limits
@@ -3995,7 +3996,8 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   video or a GIF (one frame or many) is refused, as `-loop 1` always refused it, and `waveform.py` reads the plate under `--dry-run` too. `silence.py --words`
   warns about timings past the input rather than refusing: a transcript longer than a trimmed
   input is a caller's choice. Tests: `WrongFormatFileTests`, `WordsFileTests`.
-- **Seen, verified and left for their own change:** `broll.py --insert` with a still shows it for
+- **Seen, verified and left for their own change** (the first four are fixed in the #510 section
+  below): `broll.py --insert` with a still shows it for
   one frame (the input has no `-loop 1`); `--font-file` given a file that is not a font draws a
   fontconfig fallback with `font_used.substituted: false` (FFmpeg 6.1.1); unknown keys in a
   `--brand` file are ignored; `report.py --pack` takes any Markdown with a table;
@@ -4807,3 +4809,58 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   cuts the same pieces (compared on 20000 random strings of Latin, kana, Thai, combining marks,
   ZWJ emoji and flags) and measures only up to the first prefix that is too wide. Code:
   `_common.wrap._slice_atom()`. Test: `test_slicing_a_long_hyphenated_word_measures_linearly`.
+
+## After 3.8.17 — leftovers of the old grouped issues (#510)
+
+- **A still picture given where a clip is taken is shown for as long as the clip would be.** Read
+  with a plain `-i`, an image demuxer gives one frame: `broll.py --insert logo.png --from 0.5` showed
+  none of it (the trim starts past its one frame; with `--from 0` it was one frame through 3.8.11,
+  and 3.8.12's `eof_action=repeat` holds it), and `grid.py CLIP logo.png` counted the cell as
+  0 s long, so the grid was 0 s and the run ended in a traceback on the empty file. The still is opened with
+  `-loop 1` and a `-t` that bounds it (the window's `--from` plus its length; the grid's length),
+  and a grid cell that is a still takes no part in choosing the grid's length; a grid of stills
+  only is refused (`kind: input`), naming `insert.py`, which makes a clip of a still. Still means
+  what `probe._is_still()` means: one picture read by an image demuxer, so a GIF is a clip here
+  as it is to `--image` (a one-frame GIF is still one frame). Code: `probe.is_still_input()`,
+  `probe.still_loop_args()`, `overlay.main()`. The other way round, a still as `overlay.py`'s main picture under a
+  looped `--image` is one picture out: with no duration to bound by `-t`, the overlay filter
+  takes `shortest=1` (`-shortest` alone never ended it, and the run went on to its timeout).
+  Test: `StillAsClipTests`. Seen and not changed here: `cut.py`, `join.py` and a render clip read a still as one frame
+  (`cut.py STILL --start 0 --end 2` writes 0.04 s with `verified: true`, as it clamps any `--end`
+  past an input; `join.py --transition none` joins one frame; a render clip with `in`/`out` on a
+  still is cut to one frame and then refused by the join's transition). What a still means
+  there (refused, naming `insert.py`, or held for the window asked) is a decision of its own.
+- **A font file the caller names is refused when it is not there or not a font**, from
+  `--font-file` (`overlay.py`, `graphics.py`) and from a brand file's `font_file` (those two and
+  `caption.py` when it burns, which hands libass its folder; `--mode mux` draws nothing). On FFmpeg 6.1.1 drawtext that cannot load its
+  `fontfile=` asks fontconfig for a default face and exits 0 (a missing file did the same), and
+  libass finds no face in the folder and does the same: the run completed with
+  `font_used.substituted: false`. The file is read by its first bytes (TrueType, OpenType/CFF,
+  collection, WOFF/WOFF2, Type 1, BDF, PCF), not its extension; a `.dfont` and a gzipped PCF pass
+  by name, unread. A brand `font_file` is checked only where text is drawn with it, so
+  `overlay.py --image --brand` does not read it. Code: `fonts.require_font_file()`. Test:
+  `test_a_font_file_that_is_not_a_font_is_refused`.
+- **A brand file key no tool reads is refused** (`kind: input`, with the nearest known key), in
+  every block: the top level, `colors`, `caption`, `styles` and `styles.caption` (the last two take
+  the same keys, since `brand_caption_style()` merges them). render.py has refused an unknown
+  project key since review 9 for the same reason: a misspelt `"safe_margn"` drew the default.
+  `colors.accent` is accepted: `BRAND_DEFAULTS` and `examples/brand.json` carry it as a palette
+  entry, though no tool draws with it. `loudness` is read by no tool (A107) but the example
+  carried it until 3.8.8, so it is not refused: it gets a note. Code: `decision.BRAND_KEYS`,
+  `check_brand_keys()`. Test: `test_a_brand_key_no_tool_reads_is_refused`.
+- **`report.py --pack` takes the table `render.py --template all` writes, and nothing else.** The
+  first table's header must be that table's five columns in its order and every row must have
+  five cells; a later table in the file ends the pack instead of joining it. Any Markdown with a
+  table was rendered and reported `verified: true` (the step only says the HTML was written).
+  Code: `report.PACK_HEADER`, `pack_report()`. Test: `test_report_pack_takes_only_the_pack_table`.
+- **A silent output's loudness step is pinned by a test.** `loudness.py` has reported it not ok
+  with `reason: not_measured: ...` and no `lufs` since 3.6.7. No real input reaches it (a silent
+  or too-short input is refused before the encode), so the test replaces only the output's
+  measurement, in a child process. Test: `SilentOutputLoudnessTests`.
+- **Left for a product decision, not changed:** `render.py` still finds a filter the build lacks
+  at the stage that needs it (its `--dry-run` finds it first); `look.py` still has no HDR path
+  without zscale (this build's only other PQ/HLG-capable filters are GPU ones: libplacebo,
+  `tonemap_opencl`, `tonemap_vaapi`; `colorspace` has no PQ or HLG transfer); `cut.py --dry-run`
+  still plans `mode: copy` for a copy the real run re-encodes past `--tolerance`; and the four
+  #429 items (a batch step that writes without `{out}`, an intermediate's caption sidecars,
+  placeholder side inputs in the cache key, Ctrl-C during a render stage).

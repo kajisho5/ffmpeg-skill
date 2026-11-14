@@ -656,6 +656,7 @@ ends -- a cutaway, not a splice, so the output is exactly as long as A. One
 `--insert`/`--at` pair per cutaway (`--duration`, `--end`, `--from` are per
 cutaway too, or given once for all; defaults 4 s and 0); windows may not
 overlap or run past A's end, and B must have enough material from `--from`.
+A still picture as B is shown for the whole window.
 `--audio a` (default) keeps A's audio untouched and stream-copied; `b` replaces
 it inside each window with B's; `mix` plays both. The output's length is
 verified against A's.
@@ -717,7 +718,8 @@ bottom-right corner; `--label none` skips it. No audio unless `--audio-from`
 picks one input's track by index -- mixing every clip's audio together is
 rarely useful for a comparison grid, so this tool never does that silently.
 Runs only as long as the shortest clip by default; `--pad` instead holds
-each shorter clip's last frame (with silence) out to the longest.
+each shorter clip's last frame (with silence) out to the longest. A still
+picture fills its cell for the grid's length; a grid of stills only is refused.
 
 ### silence.py — remove dead air / jump cuts
 ```
@@ -1192,7 +1194,8 @@ hand-built step:
 and `check.py --platform podcast`. `--template all` renders `tiktok, reels, shorts, youtube, x,
 linkedin, facebook` (not the audio template, not the `youtube-shorts` alias) into
 `<stem>_<platform>.mp4`, runs each platform's check and writes `<stem>_pack.md` with one row per
-destination; `report.py --pack <stem>_pack.md` renders that table as a single HTML page. A pack
+destination; `report.py --pack <stem>_pack.md` renders that table (and refuses a file whose first
+table has other columns) as a single HTML page. A pack
 whose destinations did not all pass exits non-zero with the per-destination rows in `pack`.
 
 `audiogram` (1.16) is the one-call form of the podcast-to-video job: an `audiogram` stage runs
@@ -1607,7 +1610,9 @@ like column; `--margin PX` sets all four edges and wins over `--platform`.
 read by `caption.py` and, for `font` and `colour`, by `graphics.py`; it wins
 over the older top-level `caption` block where both set the same key, and that
 block still carries the burn-in-only defaults (`animate`, `karaoke`, `bold`,
-`outline`). `"lang"` is the script hint `--lang` would give. When a
+`outline`). `"lang"` is the script hint `--lang` would give. A key no tool
+reads is refused, naming it (`loudness`, read by none, gets a note), and a
+`font_file` that is not a font is refused where text is drawn with it. When a
 user mentions brand guidelines, colours, "our font" or a logo, ask for or
 write a brand.json once and reuse it across every output.
 

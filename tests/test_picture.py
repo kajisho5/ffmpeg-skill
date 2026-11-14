@@ -7317,6 +7317,114 @@ class WrongFormatFileTests(unittest.TestCase):
         (twemoji / "31-20e3.png").write_bytes(b"png")
         self.assertEqual(os.path.basename(emoji.emoji_asset_for("1\ufe0f\u20e3", str(twemoji))), "31-20e3.png")
 
+    def failed_input(self, tool, *args):
+        proc = script(tool, *args, "--json", expect_fail=True)
+        doc = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, doc["status"], doc["error"]["kind"]), (1, "failed", "input"), doc)
+        return doc["error"]
+
+    def test_a_font_file_that_is_not_a_font_is_refused(self):
+        """#510: drawtext that cannot load its fontfile= asks fontconfig for a default face and exits
+        0, and libass finds no face in the brand font's folder and does the same: a text file named
+        .ttf drew DejaVu Sans with font_used.substituted false. Every tool that draws with a named
+        font file, from the flag and from a brand file, refuses one that is not there or not a font."""
+        fake = self.write("fake.ttf", "this is not a font\n")
+        missing = self.dir / "missing.ttf"
+        brand = self.dir / "fake_font_brand.json"
+        brand.write_text(json.dumps({"font_file": fake.name}), encoding="utf-8")
+        srt = self.write("font.srt", "1\n00:00:00,500 --> 00:00:01,500\nHello\n")
+        cases = [  # label, tool, arguments, the name the message gives the file
+            ("overlay --font-file", "overlay.py", [self.src, "--text", "Hi", "--font-file", fake], "--font-file"),
+            ("overlay --font-file missing", "overlay.py", [self.src, "--text", "Hi", "--font-file", missing], "--font-file"),
+            ("overlay brand", "overlay.py", [self.src, "--text", "Hi", "--brand", brand], "font_file"),
+            ("graphics --font-file, drawtext", "graphics.py", [self.src, "--template", "title", "--title", "Hi", "--font-file", fake,
+                                                              "--text-render", "drawtext"], "--font-file"),
+            ("graphics brand, libass", "graphics.py", [self.src, "--template", "title", "--title", "Hi", "--brand", brand,
+                                                       "--text-render", "ass"], "font_file"),
+            ("caption brand", "caption.py", [self.src, "--srt", srt, "--brand", brand], "font_file"),
+        ]
+        for label, tool, args, named in cases:
+            for dry in ([], ["--dry-run"]):
+                with self.subTest(case=label, dry_run=bool(dry)):
+                    out = self.dir / ("font_" + re.sub(r"\W+", "_", label) + ".mp4")
+                    out.unlink(missing_ok=True)
+                    err = self.failed_input(tool, *args, "-o", out, *dry)
+                    self.assertIn(named, err["message"])
+                    self.assertFalse(out.exists())
+        # a real font is drawn with as before, and a brand font is not read where nothing is drawn
+        real = default_font_file("DejaVu Sans")
+        if real and os.path.isfile(real):
+            doc = json.loads(script("overlay.py", self.src, "--text", "Hi", "--font-file", real, "-o", self.dir / "font_ok.mp4",
+                                    "--dry-run", "--json").stdout)
+            self.assertEqual((doc["status"], doc["font_used"]["how"]), ("completed", "font_file"))
+        plate = self.dir / "font_plate.png"
+        if not plate.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", plate)
+        doc = json.loads(script("overlay.py", self.src, "--image", plate, "--brand", brand, "-o", self.dir / "font_img.mp4",
+                                "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        # nor where a soft subtitle track is muxed: nothing is drawn
+        doc = json.loads(script("caption.py", self.src, "--srt", srt, "--brand", brand, "--mode", "mux",
+                                "-o", self.dir / "font_mux.mkv", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        from _common import fonts
+        for magic in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOF2"):
+            with self.subTest(magic=magic):
+                f = self.dir / "magic.bin"
+                f.write_bytes(magic + b"\x00" * 12)
+                self.assertEqual(fonts.require_font_file(str(f)), str(f))
+
+    def test_a_brand_key_no_tool_reads_is_refused(self):
+        """#510: a misspelt brand key ("safe_margn", "colours", "styles.caption.colr") was dropped and
+        the default drawn, as a project's was until review 9. Every block is checked; a key the
+        shipped example carries is still read, and `loudness`, which no tool reads, gets a note."""
+        for label, doc, where in (("top level", {"safe_margn": 10}, "safe_margn"),
+                                  ("a whole block", {"colours": {"primary": "FF0000"}}, "colours"),
+                                  ("colors", {"colors": {"primay": "FF0000"}}, "colors.primay"),
+                                  ("caption", {"caption": {"sise": 30}}, "caption.sise"),
+                                  ("styles", {"styles": {"captions": {}}}, "styles.captions"),
+                                  ("styles.caption", {"styles": {"caption": {"colr": "00FF00"}}}, "styles.caption.colr"),
+                                  # the caller's key is quoted as JSON: a line break stays on the message's one line
+                                  ("a line break", {"safe\nmargin": 10}, "safe\\nmargin")):
+            for tool, args in (("graphics.py", [self.src, "--template", "title", "--title", "Hi"]),
+                               ("caption.py", [self.src, "--text", self.write("brand_cues.txt", "0:00-0:01 Hello\n")])):
+                with self.subTest(case=label, tool=tool):
+                    brand = self.dir / "unknown_key_brand.json"
+                    brand.write_text(json.dumps(doc), encoding="utf-8")
+                    err = self.failed_input(tool, *args, "--brand", brand, "-o", self.dir / "brand_key.mp4", "--dry-run")
+                    self.assertIn(f'unknown key "{where}"', err["message"])
+        example = json.loads((SCRIPTS.parent / "examples" / "brand.json").read_text(encoding="utf-8"))
+        example["logo"] = None
+        example["loudness"] = {"lufs": -14}
+        brand = self.dir / "example_brand.json"
+        brand.write_text(json.dumps(example), encoding="utf-8")
+        doc = json.loads(script("graphics.py", self.src, "--template", "title", "--title", "Hi", "--brand", brand,
+                                "-o", self.dir / "brand_ok.mp4", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertTrue(any('"loudness" is read by no tool' in n for n in doc.get("notes", [])), doc.get("notes"))
+
+    def test_report_pack_takes_only_the_pack_table(self):
+        """#510: report.py --pack took the first Markdown table of any file, and every table after
+        it, and reported the HTML verified. It takes the table render.py --template all writes."""
+        row = "| youtube | a.mp4 | 1.0 MB | 2.00 s | pass |\n"
+        pack = self.write("talk_pack.md", "# Social pack \u2014 talk\n\n| platform | file | size | duration | check |\n"
+                                          "|---|---|---|---|---|\n" + row + "\n| other | table |\n|---|---|\n| 1 | 2 |\n")
+        doc = json.loads(script("report.py", "--pack", pack, "-o", self.dir / "pack.html", "--json").stdout)
+        self.assertEqual([r["platform"] for r in doc["pack"]], ["youtube"], "a later table is not part of the pack")
+        for label, text in (("any table", "# Notes\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"),
+                            ("columns renamed", "| platform | file | size | length | check |\n|---|---|---|---|---|\n" + row),
+                            ("a short row", "| platform | file | size | duration | check |\n|---|---|---|---|---|\n| youtube | a.mp4 |\n"),
+                            ("no table", "just prose\n")):
+            with self.subTest(case=label):
+                out = self.dir / "not_pack.html"
+                out.unlink(missing_ok=True)
+                err = self.failed_input("report.py", "--pack", self.write("not_pack.md", text), "-o", out)
+                self.assertIn("not_pack.md", err["message"])
+                self.assertFalse(out.exists())
+        import report
+        render_src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
+        self.assertIn('"| ' + " | ".join(report.PACK_HEADER) + ' |"', render_src, "report.py reads the header render.py writes")
+
 
 class EmojiClaimTests(unittest.TestCase):
     """#403: what an emoji diagnostic and the result's emoji block say is what the route draws."""

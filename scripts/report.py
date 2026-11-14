@@ -145,6 +145,10 @@ def md_cells(line: str) -> List[str]:
     return cells
 
 
+# the columns of render.py's render_pack() table, in its order
+PACK_HEADER = ["platform", "file", "size", "duration", "check"]
+
+
 def pack_report(args) -> int:
     """render.py --template all writes <stem>_pack.md: one row per destination. This renders the
     same rows as HTML, so a pack can be handed over the way a single delivery report is -- no
@@ -155,6 +159,8 @@ def pack_report(args) -> int:
     for line in text.split("\n"):
         line = line.strip()
         if not line.startswith("|"):
+            if header:
+                break  # the table ended: a later table in the file is not the pack's
             continue
         cells = md_cells(line)
         if all(set(c) <= set("-: ") for c in cells):
@@ -163,8 +169,16 @@ def pack_report(args) -> int:
             header = cells
         else:
             rows.append(cells)
+    # the table render.py --template all writes, and only that one: any Markdown table was taken
+    # and handed over as a pack report with `verified: true` (#510)
+    if header and header != PACK_HEADER:
+        die(f"{args.pack}: its table's columns are {' | '.join(header)}, not the pack table's "
+            f"({' | '.join(PACK_HEADER)}) that render.py --template all writes", kind="input")
+    bad = next((i for i, r in enumerate(rows) if len(r) != len(PACK_HEADER)), None)
+    if bad is not None:
+        die(f"{args.pack}: row {bad + 1} of the pack table has {len(rows[bad])} cells, not {len(PACK_HEADER)}", kind="input")
     if not rows:
-        die(f"{args.pack}: no pack table found (expected the Markdown table render.py --template all writes)")
+        die(f"{args.pack}: no pack table found (expected the Markdown table render.py --template all writes)", kind="input")
     title = args.title or f"Social pack — {Path(args.pack).stem.replace('_pack', '')}"
     output = args.output or str(Path(args.pack).with_suffix(".html"))
     guard_sidecar(output, args.pack)

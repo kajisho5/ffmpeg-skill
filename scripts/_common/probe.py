@@ -905,6 +905,20 @@ def refuse_not_a_still(path: str, meta: Dict[str, Any], flag: str, instead: str)
         + (f" ({length:.3f}s)" if length else "") + f", and {flag} is read as one picture", kind="input", hint=instead)
 
 
+def is_still_input(meta: Dict[str, Any]) -> bool:
+    """A probe document of one picture read by an image demuxer (_is_still()'s rule, on the
+    document): a still given where a clip is taken. Read with a plain `-i` it is one frame, so a
+    tool that shows it for a while opens it with still_loop_args() (#510)."""
+    fmt = str((meta or {}).get("format") or "")
+    return not (meta or {}).get("dry_run") and (fmt == "image2" or fmt.endswith("_pipe"))
+
+
+def still_loop_args(path: str, seconds: float) -> List[str]:
+    """The input options that show a still picture for `seconds`: `-loop 1` repeats its one frame
+    (the image demuxers' option) and `-t` ends the repeat, so the input is bounded."""
+    return ["-loop", "1", *still_input_args(path), "-t", f"{max(seconds, 0.001):.3f}"]
+
+
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
     """Sample luma/saturation statistics (signalstats) and guess whether the picture is Log-encoded.
 

@@ -56,7 +56,7 @@ from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
-from _common.fonts import font_choice, record_font_choice
+from _common.fonts import font_choice, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
 from _common.asr import srt_blocks
@@ -1327,6 +1327,10 @@ def main() -> int:
     if args.brand and bcap.get("karaoke") and not args.karaoke:
         args.karaoke = True
     if args.brand and brand.get("font_file") and not args.fonts_dir:
+        # the brand's face is found in its directory by libass, so a file there that is no font
+        # left libass to another face without a word (#510); a soft track (--mode mux) draws nothing
+        if args.mode != "mux":
+            require_font_file(brand["font_file"], "the --brand file's font_file")
         args.fonts_dir = str(Path(brand["font_file"]).parent)
     if not (args.srt or args.ass or args.text or args.transcribe):
         die("give one of --srt, --ass, --text or --transcribe")

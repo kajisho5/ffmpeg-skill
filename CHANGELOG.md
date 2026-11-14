@@ -4,7 +4,31 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **What was left of the old grouped issues #402, #403, #404 and #429 (#510).**
+  - `broll.py --insert` with a still picture and a `--from` past 0 shows it for the whole
+    cutaway; A showed instead, since the still is one frame at 0 and the trim kept nothing (with
+    `--from 0` it was one frame through 3.8.11; 3.8.12 holds B's last frame). `grid.py` with a
+    still as one cell fills that cell for the grid's length; the still was counted as 0 s, so the
+    grid was 0 s long and
+    the run ended in a traceback. A grid of stills only is refused, naming `insert.py`.
+    `overlay.py STILL --image LOGO` (a still as the main picture) writes one picture; it ran until
+    its timeout, since `-shortest` never ended the looped layer over a main without a duration.
+  - A font file that is not there or is not a font is refused (`kind: input`) by `overlay.py
+    --text` and `graphics.py`, from `--font-file` or a brand file's `font_file`, and by
+    `caption.py --mode burn` from a brand file's `font_file`. On FFmpeg 6.1.1 the text was drawn in a
+    fontconfig default face and the result said `font_used.substituted: false`.
+  - A brand file key that no tool reads is refused (`kind: input`, with the nearest known key),
+    in every block, as render.py refuses an unknown project key. A misspelt key (`"safe_margn"`,
+    `"colours"`) was dropped and the default drawn. `loudness`, which no tool reads and the shipped
+    example carried until 3.8.8, is not refused: it gets a note. A brand file that relied on an
+    ignored key being accepted now fails until the key is removed.
+  - `report.py --pack` takes only the table `render.py --template all` writes (its five columns,
+    five cells a row, the first table in the file); any Markdown with a table was rendered as a
+    pack and reported `verified: true`.
+  - A test now pins that an output with no integrated loudness gets a `loudness` step that is not
+    ok and says `not_measured` (the behaviour since 3.6.7).
 
 ## 3.8.17
 
