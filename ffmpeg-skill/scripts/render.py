@@ -76,7 +76,7 @@ from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, remember_written
-from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
+from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import rebase_project_paths
 import subprocess
 from _contract import CONTRACT_VERSION
@@ -405,9 +405,7 @@ def render_pack(names: List[str], args) -> int:
             doc = {}
         # the child ran with --json, so its planned commands come back in the document: the pack
         # is the one path that writes seven files, and --dry-run has to show all of them
-        for line in proc.stderr.splitlines():
-            if line.startswith("$ ") or line.startswith("[dry-run]"):
-                STATE.commands.append(line[2:] if line.startswith("$ ") else line)
+        STATE.commands.extend(text for is_command, text in stderr_records(proc.stderr) if is_command)
         STATE.commands.extend(str(c) for c in (doc.get("commands") or []))
         absorb_stage(name, doc)
         out = doc.get("output") or dest_out
@@ -806,9 +804,9 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
     cmd = [str(HERE / script)] + [str(a) for a in argv] + (extra or []) + own + child_args() + ["--json"]
     info("→ " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd[:-1])))
     proc = run_tool(cmd)
-    for line in proc.stderr.splitlines():
-        if line.startswith("$ ") or line.startswith("[dry-run]"):
-            STATE.commands.append(line[2:] if line.startswith("$ ") else line)
+    for is_command, line in stderr_records(proc.stderr):
+        if is_command:
+            STATE.commands.append(line)
         elif line.strip():
             info("    " + line)
     try:
@@ -1212,7 +1210,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         os.chdir(plan["cwd"])
     if not isinstance(plan.get("argv"), list):
         _reject_plan(path, digest, "plan_argv_invalid", f"{path}: argv must be a list", argv_type=type(plan.get("argv")).__name__)
-    argv = [str(a) for a in plan["argv"]]
+    # a plan an earlier version recorded with --json-brief (A181): the tool is run for its full
+    # document, as every plan written now asks for
+    argv = [str(a) for a in plan["argv"] if not is_output_shape_flag(str(a))]
     if STATE.dry_run:
         for c in plan.get("commands") or []:
             STATE.commands.append(c)
@@ -1226,9 +1226,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         return 0
     info(f"executing plan {path}: {tool} " + " ".join(argv))
     proc = run_tool([str(script)] + argv + child_args() + ["--json"])
-    for line in proc.stderr.splitlines():
-        if line.startswith("$ "):
-            STATE.commands.append(line[2:])
+    for is_command, line in stderr_records(proc.stderr):
+        if is_command and not line.startswith("[dry-run]"):
+            STATE.commands.append(line)
         elif line.strip():
             info("    " + line)
     try:

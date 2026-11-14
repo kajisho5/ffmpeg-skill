@@ -29,7 +29,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
 from _common import asr as _asr
 from _common.emit import warn
 from _common.asr import _dicts
-from _common.runner import parse_json, replace_checked
+from _common.runner import parse_json, replace_checked, same_file
 from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
@@ -672,7 +672,7 @@ def main() -> int:
         # --overwrite allows replacing an old map, never the source, the cut or the EDL
         refuse_output_is_input(args.timemap, *[p for p in (args.input, args.words, args.filler_words) if p])
         for flag, other in (("-o", args.output), ("--edl", args.edl), ("--plan", getattr(args, "plan", None))):
-            if other and os.path.realpath(other) == os.path.realpath(args.timemap):
+            if other and same_file(other, args.timemap):
                 refuse("input", "timemap_path_taken",
                        f"--timemap {args.timemap} is the same file as {flag}; give the map its own path",
                        timemap=args.timemap, flag=flag, path=other)

@@ -14,7 +14,7 @@ import sys
 from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.emit import die, warn
+from _common.emit import die, refuse, warn
 from _common.runner import ffmpeg_failure_extra, STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
@@ -348,6 +348,18 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         fps = float(avg_rate) if avg_rate else (float(r_rate) if r_rate else None)
         vfr = bool(r_rate and avg_rate and abs(float(r_rate) - float(avg_rate)) > 0.01)
         w, h = _to_int(video.get("width")), _to_int(video.get("height"))
+        if not (w and h) and _is_still(fmt, video):
+            # audit A184 (#465): a text file named .png reaches the image demuxer, which lists a
+            # png stream it could not decode as 0x0. That was reported as a measured picture
+            # (probe.py exit 0) and divided by in insert.py and check.py (tracebacks, no JSON).
+            # A video container's stream with no size is left to the tool that reads it.
+            msg = (f"{path} is not a picture ffmpeg can decode: its image demuxer ({fmt.get('format_name')}) found a "
+                   f"{video.get('codec_name') or 'picture'} stream with no frame size"
+                   + (f"\n{proc.stderr.strip()}" if proc.stderr.strip() else ""))
+            if role == "output":
+                _output_failed(path, msg)
+            refuse("input", "still_unreadable", msg, path=path, format=fmt.get("format_name"),
+                   codec=video.get("codec_name"))
         rotation = 0
         for sd in video.get("side_data_list", []) or []:
             if "rotation" in sd:
@@ -1459,6 +1471,7 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
            "-filter_complex", graph, "-map", "[o]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     # read frame by frame as ffmpeg writes them: 1728 bytes a frame is 187 MB for an hour at
     # 30 fps, and only the frames with a changed tile are kept. Same wall-clock limit as run_analysis()
+    cmd = _runner.guard_still_patterns(cmd)  # a still named with a % is that one file (#465 A7)
     _runner._refuse_url_media(cmd)
     limit = _runner._limit_for(cmd)
     size, tiles = gw * gh * 3, gw * gh

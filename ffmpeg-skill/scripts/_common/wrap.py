@@ -282,16 +282,32 @@ def _slice_atom(atom: str, max_em: float) -> "List[str]":
     No dictionary, no hyphenation library: an existing hyphen is preferred as the cut (the same
     break R1 already allows), then whatever is left is cut again at exactly the widest prefix
     that still measures within `max_em`, one character at a time. The characters themselves are
-    never rewritten -- every piece concatenates back to the original atom exactly."""
-    if text_width_em(atom) <= max_em:
-        return [atom]
-    for i in range(len(atom) - 2, 0, -1):
-        # latest hyphen whose left side still fits -- keeps the left half as large as possible
-        if atom[i] in _HYPHENS and text_width_em(atom[:i + 1]) <= max_em:
-            return [atom[:i + 1]] + _slice_atom(atom[i + 1:], max_em)
+    never rewritten -- every piece concatenates back to the original atom exactly.
+
+    Iterative, and each piece measures only the prefixes up to the first that is too wide (a
+    prefix is never narrower than a shorter one): the recursive form measured every prefix of the
+    remaining atom for each piece it cut, so a 1 KB hyphenated cue took seconds and 4 KB minutes
+    (A11, #465), in caption.py's own process, which --timeout (a limit on each ffmpeg call) does
+    not bound. The pieces are the ones the recursive form cut."""
     pieces: "List[str]" = []
+    rest = atom
+    while True:
+        # latest hyphen whose left side still fits -- keeps the left half as large as possible;
+        # a rest whose every prefix fits, itself included, is the last piece
+        cut = 0
+        for end in range(1, len(rest) + 1):
+            if text_width_em(rest[:end]) > max_em:
+                break
+            if 1 <= end - 1 <= len(rest) - 2 and rest[end - 1] in _HYPHENS:
+                cut = end
+        else:
+            return pieces + [rest]
+        if not cut:
+            break
+        pieces.append(rest[:cut])
+        rest = rest[cut:]
     cur = ""
-    for ch in atom:
+    for ch in rest:
         candidate = cur + ch
         if cur and text_width_em(candidate) > max_em:
             pieces.append(cur)
