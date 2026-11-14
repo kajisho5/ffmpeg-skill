@@ -85,6 +85,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.6 — the contract says what a dry run decodes, and a pending input has no length (#466)](#after-386--the-contract-says-what-a-dry-run-decodes-and-a-pending-input-has-no-length-466)
 - [After 3.8.7 — render.py, batch.py and sequence.py, the audit's remaining findings (#458)](#after-387--renderpy-batchpy-and-sequencepy-the-audits-remaining-findings-458)
 - [After 3.8.8 — four old grouped issues, item by item (#402, #403, #404, #429)](#after-388--four-old-grouped-issues-item-by-item-402-403-404-429)
+- [After 3.8.9 — captions and text drawing (audit #457, #505)](#after-389--captions-and-text-drawing-audit-457-505)
 <!-- contents:end -->
 
 ## Time limits
@@ -3792,11 +3793,12 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 - **A template pack refuses the flags of one render and forwards `--audit-log`.** `--stop-after`,
   `--cache`, `--from`, `--work`, `--keep` and `--export-timeline` name one render's stages, work
   folder or timeline; a pack is several full renders, and sharing them was never built.
-- **In a multi-track `--mode mux`, `--offset` is every track's and the layout is the first
-  track's.** An offset corrects the sync of the file, so it shifts each added `--srt`; wrapping,
-  `--max-lines` and `--min-duration` are computed for the first track (its language, the burn-in
-  size fit), so the others keep their own lines and the result says so in a note. Test:
-  `test_offset_shifts_every_track_of_a_multi_track_mux`.
+- **In a multi-track `--mode mux`, `--offset` is every track's and `--min-duration` is the first
+  track's.** An offset corrects the sync of the file, so it shifts each added `--srt`;
+  `--min-duration` lengthens the first track's cues only, so the others keep their own lengths and
+  the result says so in a note. (As written for 3.8.6 this said wrapping and `--max-lines` were
+  computed for the first track at the burn-in size; after 3.8.7 no muxed track is wrapped or split,
+  see the next section.) Test: `test_offset_shifts_every_track_of_a_multi_track_mux`.
 - **`cropdetect.py --limit 1` is written as the top pixel code of the source's bit depth**, since
   FFmpeg reads a limit of 1 or more as a code. Test: `test_cropdetect_limit_1_is_the_top_of_its_range`.
 - **A `batch.py` recipe's unknown key is refused**, as `render.py` refuses a project's
@@ -3980,3 +3982,72 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `independent_measurement` is in the provenance enum and no step writes it; and the four items of #429 (a step that writes without `{out}`, caption sidecars in
   a batch, placeholder side inputs in the cache key, Ctrl-C during a render stage), each of
   which changes the contract.
+
+## After 3.8.9 — captions and text drawing (audit #457, #505)
+
+- **A muxed subtitle track is neither wrapped nor split, and `--max-lines`/`--wrap` are refused
+  with `--mode mux`** (A55). A soft track is drawn by the player at a size this run does not know;
+  wrapping it at the burn-in size (24 of 288 lines) turned one cue on a 360x640 video into three
+  consecutive cues of two words each. `--offset` and `--min-duration` still apply. A layout flag is
+  recognised by its default (`--max-lines 2` and `--wrap phrase` given explicitly are accepted), as
+  the 3.8.5 section's flags are. Code: `caption.main()` (`lay_out`). Test:
+  `test_a_soft_subtitle_is_not_wrapped_at_the_burn_in_size`.
+- **Word timings move with `--offset`** (#505). `--offset` exists because a transcript runs early or
+  late against the sound, and the word timings come from the same transcript, so they are shifted
+  by the same amount, for an `--srt` sidecar and for `--transcribe`. Word timings that are absolute
+  to the media and must not move are not supported; a caller who has them passes no `--offset`.
+  Code: `caption.shift_words()`. Test: `test_caption_karaoke_keeps_source_word_timings_after_srt_layout`.
+- **The karaoke highlight waits for the first word** (A59). With real word timings the silence
+  between the cue's start and its first word is an empty `\k` syllable (`sweep`) or an event with
+  no active word (`word`); the energy and even splits have no lead and share the cue from its
+  start, as before. Code: `caption.word_durations_from_timings()`. Test:
+  `test_karaoke_waits_for_the_first_word_and_moves_with_offset`.
+- **Under `--karaoke-style word`, `--animate` is one envelope spread over the word events** (A57).
+  Each event gets the part of the cue's fade that falls inside it, as a `\fade` started at the
+  alpha the event before ended on; a pop and a slide are carried on from where they are at the
+  event's start (`\fscx` at the interpolated scale, `\move` from the interpolated point, `\pos`
+  once the slide is over). A whole-cue event keeps the exact override it had, so `sweep`, a
+  one-word cue and a run without karaoke write the ASS they wrote. The issue's simpler proposal
+  (`\fad(in,0)` on the first event, `\fad(0,out)` on the last) left a step in the alpha when the
+  first word is shorter than the fade-in, which this does not. Code: `caption.animate_fx()`. Test:
+  `test_word_karaoke_takes_one_envelope_across_its_word_events`.
+- **`--animate slide` ends on the line's own anchor** (A56): `--position`, a cue's `{\anN}` and the
+  Style's MarginL/MarginR/MarginV, which is where libass draws the line without the slide; it
+  rises 30 script lines into place for every position, as it did at the bottom. The bottom-centre
+  slide with symmetric margins writes the `\move` it wrote. Code: `caption.line_anchor()`. Test:
+  `test_animate_slide_ends_where_the_line_is_drawn_without_it`.
+- **An SRT burn whose cue text holds `{...}` goes through the generated ASS** (A68). ffmpeg's SRT
+  reader removes `{\...}` blocks itself and passes `{curly}` on to libass, where it is an override
+  block and nothing of it is drawn; the generated-ASS route draws the braces and their text, so
+  that route is taken, as an emoji overlay takes it, and a note says so. A cue with only `{\...}`
+  blocks or a MicroDVD `{y:i}` code stays on the SRT route (ffmpeg removes those as markup, which
+  `text_unchanged` does not count), and on the generated-ASS route a `{\...}` block in the same cue
+  is drawn as text, as the 1.15.0 entry decided. Code: `caption.SRT_HIDDEN_BRACES_RE`. Test:
+  `test_an_srt_burn_draws_the_text_in_braces`.
+- **The kinsoku joins are phrase mode's** (A54). The first fill joins a no-line-start character
+  (now including the fullwidth `，；：．`) to the atom before it and a no-line-end one to the atom
+  after it, so the greedy fill can no longer open a line with `、` or `，` where no later pass
+  reconsidered the break, and the orphan and weak-line passes move such a mark down only with the
+  character it closes. A break after `，；：` is preferred as one after `、` is (it also settles the
+  case where the other break would open a line with a particle). `--wrap measured` keeps 1.15's
+  fill, so an older split still reproduces, and `phrase_breaks` still counts against it. Where no
+  allowed break fits, a forbidden one is still taken: a bracketed run wider than the line, a line
+  of about 3 em, two such characters in a row (`。ょ`). Measured on random kana and Han strings at
+  4 to 12 em, not on a corpus. Code: `_common.wrap._kinsoku_atoms()`. Test:
+  `test_no_line_opens_with_punctuation_that_may_not_start_one`.
+- **`font_used.file` under `--bold` is the face `fc-match FAMILY:bold` names** (A70): what libass
+  asks fontconfig for, the bold face where the family has one and the regular face (emboldened by
+  libass) where it does not. Not measured from libass itself, and not on Windows, where nothing is
+  resolved for libass. `graphics.py --template meme` draws its lines bold on the ASS route and
+  reports the regular face; that is left for its own change. Code: `_common.fonts.font_choice()`.
+  Test: `test_font_used_names_the_bold_face_libass_draws`.
+- **In a burn, `--language` is a hint and is not checked as a track tag** (A71). It picks the
+  script's font and the wrap's rules, both of which read `ja_JP` as `ja` (the wrap split on `-`
+  only until now); a value neither knows changes nothing, as an absent one does. Only `--mode mux`
+  writes it into the file, so only there is it refused when it is not a language code, under its
+  own name, for an `--srt` track and a `--text`/`--transcribe` one alike. Code: `caption.main()`
+  (`tagged_by_language`). Test: `test_language_is_a_track_tag_only_where_there_is_a_track`.
+- **The emoji placeholder restores what it changed, not the Style** (A69): the four alphas (the box
+  colour's at the Style's own value) and a letter spacing of 0. `{\r}` also dropped the pop, a
+  per-cue `\fs` and a cue's `<i>`/`<b>`/colour for the text after an emoji. Code:
+  `_ass_overlay.emoji_placeholder()`. Test: `test_the_emoji_placeholder_keeps_the_lines_own_animation`.

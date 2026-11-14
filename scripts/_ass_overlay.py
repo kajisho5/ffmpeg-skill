@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 EMOJI_SENTINEL = "\ue000"
 
 
-def emoji_placeholder(box_px: float) -> str:
+def emoji_placeholder(box_px: float, back_alpha: int = 0) -> str:
     r"""The ASS override that reserves exactly `box_px` of advance and draws nothing.
 
     Measured, not assumed (1.15 spec, open question 2). U+2588 FULL BLOCK is NOT 1.0 em: its
@@ -40,9 +40,12 @@ def emoji_placeholder(box_px: float) -> str:
     whitespace carried by `\fsp` (letter spacing, in script pixels) on a zero-width space: the
     next glyph starts exactly `box_px` later, with no font dependence at all (verified by render,
     including inside a karaoke run, where the placeholder is its own zero-duration \kf segment).
-    `\r` restores the style for the rest of the line.
+    The text after it gets back exactly what this override changed -- the four alphas (the box
+    colour's is `back_alpha`, the Style's own) and a letter spacing of 0, which every Style here
+    has. A `\r` did the same and also reset everything before it on the line: the pop's
+    \fscx/\t, a per-cue \fs, a cue's <i>/<b> and colour (A69, #457).
     """
-    return "{\\alpha&HFF&\\fsp%.1f}\u200b{\\r}" % box_px
+    return "{\\alpha&HFF&\\fsp%.1f}\u200b{\\alpha&H00&\\4a&H%02X&\\fsp0}" % (box_px, int(back_alpha) & 0xFF)
 
 
 def ass_time(sec: float) -> str:
@@ -381,7 +384,7 @@ def text_overlay_ass(elements: Sequence[Dict[str, Any]], *, play_w: int, play_h:
         events.append(
             f"Dialogue: 0,{ass_time(el['start'])},{ass_time(el['end'])},{name},,0,0,0,,"
             "{" + "".join(tags) + "}" + ass_text(el["text"]).replace(
-                EMOJI_SENTINEL, emoji_placeholder(el.get("box_px") or el["size"])))
+                EMOJI_SENTINEL, emoji_placeholder(el.get("box_px") or el["size"], int(el.get("box_alpha", 0)))))
     body = "\n".join(header + ["", "[Events]",
                                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
                                "MarginV, Effect, Text"] + events) + "\n"

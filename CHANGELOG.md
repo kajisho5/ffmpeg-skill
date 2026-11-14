@@ -4,7 +4,56 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Captions and text drawing: the thirteen open items of audit #457, and #505.**
+  - Gurmukhi, Gujarati, Telugu, Kannada, Malayalam, Sinhala, Khmer and Myanmar text is detected
+    (A65). It was read as Latin, so `caption.py`, `graphics.py` and `overlay.py --text` drew it in
+    the Latin font and reported the run verified; now a font that covers the script is picked (or
+    the job is refused when none is installed), `graphics.py` renders it through libass, and
+    `overlay.py --text` refuses it as it refuses Devanagari. A `grid.py` label in one of them is
+    drawn with a font that covers it (by drawtext, unshaped, as a Thai label is). `doctor --json`
+    lists the eight under `fonts.scripts`.
+  - `--wrap phrase` treats the fullwidth `，；：．` as the kinsoku table treats `、` and `。` (A54: a
+    line opened with `，`). Its first fill no longer breaks before one of those characters (or after
+    an opening bracket), and the orphan and weak-line passes no longer move one down to open a
+    line: both happened in cues of three or more lines and in the pieces of a cue split past
+    `--max-lines`. A break after `，；：` is preferred, as after `、`. Where no allowed break fits
+    (a bracketed run wider than the line, a line of about 3 em, two such characters in a row) a
+    forbidden one is still taken. `--wrap measured` is unchanged. `graphics.py`'s wrapped titles
+    go through the same wrap and get the same fix.
+  - `caption.py`: an emoji PNG in a left- or right-aligned caption is placed from the Style's side
+    margins, not `--margin` (A62): on the left it covered the first words.
+  - `--karaoke` with real word timings waits for the first word (A59) instead of leading the
+    speech by the cue's opening silence, and `--offset` moves the word timings with the cues
+    (#505): `--offset 0.05` had cut the first word short and `0.2` dropped the timings for an even
+    split.
+  - `--animate slide` ends where the line is drawn without it, for every `--position`, a cue's
+    `{\anN}` and a platform's side margins (A56); it always ended at the bottom centre.
+  - `--karaoke-style word` with `--animate`: the caption fades out at the cue's end, not at the
+    end of the first word, and a slide or a pop carries on across the word events instead of
+    jumping (A57).
+  - The size fit measures against the `--karaoke-style word` budget (A58), so a cue reported as
+    fitting is not split.
+  - `--mode mux` adds a soft subtitle track without wrapping or splitting it at the burn-in size
+    (A55; one cue on a 360x640 video became three); `--max-lines` or `--wrap measured` with
+    `--mode mux` is refused.
+  - The emoji placeholder no longer resets the line's own overrides for the text after an emoji
+    (A69): the pop animation, a per-cue size and a cue's italics, bold and colour now carry past
+    it (`caption.py` and `graphics.py`'s ASS route).
+  - `doctor --json` `fonts.emoji.mode` is `mono` when libass draws an emoji glyph and no colour
+    emoji family is installed (A64); it said `none`, and a `caption.py --emoji auto` run left the
+    emoji out of the text.
+  - `font_used.file` under `caption.py --bold` names the face fontconfig matches for the family at
+    bold weight (A70), on Linux and macOS; it named the regular face.
+  - In a burn, `--language` is the script and wrap hint only (A71): `--language ja_JP` was refused
+    as `--srt: 'ja_JP' is not a language code`; the wrap now reads `ja_JP` as `ja`, as the font
+    pick already did. With `--mode mux` the refusal names `--language`,
+    and a `--text`/`--transcribe` track's tag is checked as an `--srt` one is.
+  - An SRT burn draws text in braces (A68): ffmpeg's SRT reader hands `{curly}` to libass as an
+    override block, which draws nothing, while the result said `text_unchanged: true`. Such cues
+    are drawn through the generated ASS, braces included, and a note says so; `{\...}` blocks on
+    their own are left to ffmpeg's reader as before.
 
 ## 3.8.9
 

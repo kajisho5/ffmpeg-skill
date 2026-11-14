@@ -7788,7 +7788,9 @@ class DoctorDetectionTests(unittest.TestCase):
         d = json.loads(proc.stdout)
         expected = {s for s in DETECTED_SCRIPTS if s != "latin"}
         self.assertEqual(set(d["fonts"]["scripts"]), expected)
-        self.assertEqual(len(expected), 12, "ja zh ko ar he hi bn ta th lo ru el (bn/ta/lo added in 1.15)")
+        self.assertEqual(expected, {"ja", "zh", "ko", "ar", "he", "hi", "bn", "ta", "th", "lo", "ru", "el",
+                                    "pa", "gu", "te", "kn", "ml", "si", "km", "my"},
+                         "bn/ta/lo added in 1.15; pa gu te kn ml si km my after 3.8.7 (A65, #457)")
         for name, entry in d["fonts"]["scripts"].items():
             with self.subTest(script=name):
                 self.assertIn(entry["status"], ("available", "missing", "unknown"))
