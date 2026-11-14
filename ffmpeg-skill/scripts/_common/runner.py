@@ -2109,11 +2109,56 @@ def _set_refusal_note(ctx: "Context", reason: str, outcome: str) -> None:
     ctx.hw_notes.append(reason + outcome)
 
 
+# A filter graph longer than this is handed to ffmpeg in a file (A138). Linux refuses any single
+# argument over 128 KiB (MAX_ARG_STRLEN) and Windows a whole command line over 32767 characters, and
+# a graph grows with the items it is built from: scenes.py --sheet's select expression is ~56
+# characters a scene, so ~2,340 scenes raised OSError E2BIG before ffmpeg ran, with a traceback and
+# no JSON. A graph under the limit is passed as it always was.
+LONG_FILTER_CHARS = 8000 if os.name == "nt" else 100_000
+_FILTER_OPTION_RE = re.compile(r"^-(?:filter_complex|lavfi|vf|af|filter(?::[^\s]+)?)$")
+
+
+def _filter_file_option(option: str) -> str:
+    """The option that reads `option`'s value from a file: `-/OPTION` from FFmpeg 7.0, which
+    deprecated the `_script` spellings, and `-filter_complex_script` / `-filter_script[:spec]`
+    before it (6.x, the oldest CI runs)."""
+    complex_graph = option in ("-filter_complex", "-lavfi")
+    spec = {"-vf": ":v", "-af": ":a"}.get(option, option[len("-filter"):] if option.startswith("-filter:") else "")
+    if ffmpeg_version() >= (7, 0):
+        return "-/filter_complex" if complex_graph else "-/filter" + spec
+    return "-filter_complex_script" if complex_graph else "-filter_script" + spec
+
+
+@contextlib.contextmanager
+def long_filters_in_files(cmd: Sequence[str]) -> "Any":
+    """`cmd` with every filter graph longer than LONG_FILTER_CHARS moved into a temp file read by
+    ffmpeg's file form of the same option; the files are removed when the block ends. The command a
+    run records and prints is the caller's own, with the graph inline."""
+    import tempfile
+    out = list(cmd)
+    made: List[str] = []
+    try:
+        if _is_ffmpeg(out):
+            for i in range(1, len(out) - 1):
+                if _FILTER_OPTION_RE.match(out[i]) and len(out[i + 1]) > LONG_FILTER_CHARS:
+                    fd, path = tempfile.mkstemp(prefix="ffmpeg-skill-graph-", suffix=".txt")
+                    made.append(path)
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        fh.write(out[i + 1])
+                    out[i], out[i + 1] = _filter_file_option(out[i]), path
+        yield out
+    finally:
+        for path in made:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+
+
 def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
     """One attempt, never exiting on failure (run() decides after its retries)."""
-    if STATE.progress and _is_ffmpeg(exec_cmd) and exec_cmd[-1] != "-":
-        return _run_with_progress(exec_cmd, False)
-    return _run_captured(exec_cmd, False)
+    with long_filters_in_files(exec_cmd) as cmd:
+        if STATE.progress and _is_ffmpeg(cmd) and cmd[-1] != "-":
+            return _run_with_progress(cmd, False)
+        return _run_captured(cmd, False)
 
 
 def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False) -> subprocess.CompletedProcess:
@@ -2134,7 +2179,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
         # input filename on stderr, and loudness/check parse the loudnorm JSON out of it. The
         # encoding kwargs are rejected with text=False, so they are only passed for text mode.
         text_kw = {"encoding": "utf-8", "errors": "replace"} if text else {}
-        proc = subprocess.run(list(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, **text_kw, timeout=limit)
+        with long_filters_in_files(cmd) as exec_cmd:
+            proc = subprocess.run(exec_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, **text_kw, timeout=limit)
     except subprocess.TimeoutExpired:
         _timed_out(cmd, limit or 0)
     if check and proc.returncode != 0:

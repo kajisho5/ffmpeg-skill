@@ -24,8 +24,9 @@ from _platforms import TP_TOLERANCE_DB
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
-from _common.emit import refuse
+from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
+from _common.decision import LOSSLESS_AUDIO_EXT
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -121,7 +122,12 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     sr = args.sample_rate or meta["audio"].get("sample_rate") or 48000
     ext = os.path.splitext(output)[1].lower()
     bitrate_pinned = args.audio_bitrate is not None
-    bitrate = args.audio_bitrate or "192k"
+    # an AAC audio extension starts at its own rate (256k for .m4a/.aac), which is what it was
+    # written at: a pinned --audio-bitrate and the raised retries below never reached it, so the
+    # retries re-encoded at 256k and audio_bitrate_used said 192k, then 256k and 320k (A143)
+    codec = AUDIO_CODECS.get(ext, [])
+    own_rate = codec[codec.index("-b:a") + 1] if "aac" in codec and "-b:a" in codec else None
+    bitrate = args.audio_bitrate or own_rate or "192k"
 
     dropped_streams = False
     # loudnorm emits its last block whole, and through the AAC encoder that came out as 0.1 s more
@@ -142,7 +148,9 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             af += f",atrim=duration={float(in_audio):.6f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
-            cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn"] + audio_codec_for(output, bitrate)
+            # the rate reaches an audio extension's codec when it was pinned or is AAC's (an
+            # .mp3/.ogg/.opus left alone keeps its own setting, as it always has)
+            cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn"] + audio_codec_for(output, bitrate if ext not in AUDIO_CODECS or bitrate_pinned or own_rate else None)
         else:
             cmd += probed_maps(meta) + ["-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
             if ext in (".mp4", ".mov", ".m4v"):
@@ -185,7 +193,8 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
         info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {lufs} LUFS, TP <= {tp_max:g})")
     result = {k: after[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")}
     result["tp_ceiling_used"] = round(ceiling, 2)
-    if ext not in AUDIO_CODECS or "aac" in AUDIO_CODECS[ext]:
+    if ext not in AUDIO_CODECS or "aac" in AUDIO_CODECS[ext] or bitrate_pinned:
+        # a pinned rate reaches an .mp3/.ogg/.opus codec too (A143); unpinned, those keep their own
         result["audio_bitrate_used"] = bitrate
     result["encodes"] = rounds + 1
     # the mode of the last encode: its ceiling is the one the file was made with
@@ -277,7 +286,8 @@ def main() -> int:
     ap.add_argument("--tp", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
-    ap.add_argument("--audio-bitrate", default=None, help="AAC bitrate when the container is video (default 192k; raised to 256k/320k only when the encoder overshoots the true-peak ceiling and you did not pin it)")
+    ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container (default 192k), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
+                         "refused for .wav/.flac. Raised to 256k/320k for AAC only when the encoder overshoots the true-peak ceiling and you did not pin it")
     ap.add_argument("--versions", metavar="LIST",
                     help="write one normalised file per target from this master, each measured after: a comma list of "
                          + ", ".join(f"{n} ({i:g} LUFS / {t:g} dBTP)" for n, (i, t) in VERSION_TARGETS.items())
@@ -303,6 +313,10 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("audio"):
         die("input has no audio stream")
+    out_ext = os.path.splitext(args.output or default_output(args.input, "loudnorm"))[1].lower()
+    if args.audio_bitrate is not None and not args.measure_only and out_ext in LOSSLESS_AUDIO_EXT:
+        # A143: the rate was dropped without a word; a lossless codec has none to set
+        die(f"--audio-bitrate has no effect on a lossless {out_ext} output; drop it, or write a lossy one (.m4a, .mp3, ...)")
     if plan is not None and not args.measure_only:
         # each version measures the master against its own target (loudnorm's offset depends on
         # it): a pass against -I/--tp first would be one more full decode whose result is unused
@@ -349,8 +363,7 @@ def audio_length(meta: dict) -> "Optional[float]":
     """The sound's own length: the stream's duration, else Matroska's DURATION tag. Never the
     container's, which is the picture's when the picture runs longer (and would fail a correct
     output against an expected length the sound never had)."""
-    audio = meta.get("audio") or {}
-    return audio.get("duration") or audio.get("tagged_duration")
+    return own_length(meta.get("audio"))
 
 
 def _kbps(value: str) -> int:

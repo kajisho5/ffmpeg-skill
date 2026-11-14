@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.8.12`) | any release |
+| `skill.version` | the npm / package.json version (`3.8.13`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.8.12", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.8.13", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -689,7 +689,8 @@ says "output audio is silent" instead of recommending `loudness.py`.
 Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — the
 `--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
 `--music` the `music_volume` plus a `duck` object naming the threshold (dB and
-linear), ratio, attack and release actually used, or `null` when `--duck` was not
+linear), ratio (the sidechain gate's 9000 since A134), attack, release and `amount_db`
+(the depth in dB the bed is lowered under speech) actually used, or `null` when `--duck` was not
 given. Since #486 `audio.py` also reports `timing`, `{tempo, atempo, length_samples, sample_rate}`:
 the `--tempo` factor and the atempo stages (each 0.5..2.0) it was built from, `--length-samples`,
 and the rate that count is in (`null` before a pending input is measured); with
@@ -814,7 +815,7 @@ pointer to cuts that may sit in a breath):
 
 | key | tool | what it holds |
 |---|---|---|
-| `timemap` | `silence.py --timemap FILE` | the path the time map was written to (`.json`: `{kept: [{source_start, source_end, output_start, output_end}], removed: [{source_start, source_end, output_time}]}`; `.csv`: `type,source_start,source_end,output_start,output_end` rows, a removed row's output columns both its cut point). Output times are computed from the millisecond-rounded cut bounds, not measured on the written file: the render keeps whole video frames and audio blocks, so each kept range can differ by up to one frame (about 20-40 ms) and the difference can add up over many cuts. Nothing is written under `--dry-run` |
+| `timemap` | `silence.py --timemap FILE` | the path the time map was written to (`.json`: `{kept: [{source_start, source_end, output_start, output_end}], removed: [{source_start, source_end, output_time}]}`; `.csv`: `type,source_start,source_end,output_start,output_end` rows, a removed row's output columns both its cut point). Output times are the sums of the ranges the render cuts on (with a picture each bound moved to its nearest frame time, never before 0; with sound alone the range as asked), unrounded until they are written to the millisecond, so no error adds up over many cuts. They are computed, not measured on the written file. Nothing is written under `--dry-run` |
 | `cut_points` | `silence.py` (every run that cuts) | per cut, `{source_time, output_time, edge, rms_dbfs}`: the RMS level 50 ms either side of the cut on the source, the loudest channel (`null` for digital silence), `edge` `out` where the source is left and `in` where it is picked up; `filler: true` on an edge that sits on a removed filler word. The whole key is `null` when the source could not be decoded for the measurement (`cut_levels_unmeasured` warning): unmeasured, not silent |
 | `cut_warnings` | `silence.py` | the `cut_points` (not filler cuts) whose level is within `silence.CUT_SOUND_MARGIN_DB` (10 dB) of `--threshold`: a breath or a word's weak tail may be cut there. A `cut_near_sound` warning names them. `verified` is unchanged: this is where to listen, not a measured failure |
 

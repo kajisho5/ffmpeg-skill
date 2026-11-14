@@ -1173,10 +1173,27 @@ AUDIO_CODECS = {
 }
 
 
-def audio_codec_for(output_path: str, default_bitrate: str = "192k") -> List[str]:
-    """Pick an audio codec that the output container can actually hold."""
+LOSSLESS_AUDIO_EXT = {".wav", ".flac"}  # the AUDIO_CODECS whose codec takes no bitrate
+
+
+def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str]:
+    """Pick an audio codec that the output container can actually hold.
+
+    `bitrate` is one the caller asked for: it replaces the rate or quality an audio extension
+    names (`-q:a 0` for .mp3, 256k for .m4a), which through 3.8.8 it never reached (A143), and is
+    the AAC rate of any other container (192k when it is None). A lossless extension takes none;
+    the caller refuses a bitrate for it."""
     ext = os.path.splitext(output_path)[1].lower()
-    return list(AUDIO_CODECS.get(ext, ["-c:a", "aac", "-b:a", default_bitrate]))
+    if ext not in AUDIO_CODECS:
+        return ["-c:a", "aac", "-b:a", bitrate or "192k"]
+    args = list(AUDIO_CODECS[ext])
+    if bitrate is None or ext in LOSSLESS_AUDIO_EXT:
+        return args
+    for flag in ("-b:a", "-q:a"):
+        if flag in args:
+            i = args.index(flag)
+            del args[i:i + 2]
+    return args + ["-b:a", bitrate]
 
 
 def is_audio_output(output_path: str) -> bool:
@@ -1590,7 +1607,7 @@ def _refine_grid(onset_times: "Sequence[float]", strengths: "Sequence[float]", i
     it), and onset_time = phase + k * interval is solved for both unknowns with each pair weighted
     by its onset strength squared; the pairing is then redone against the refitted grid, until it
     stops moving (three passes at most). This only sharpens the grid the autocorrelation chose --
-    the tempo cannot leave `bpm_range`, an octave cannot flip (a refit that moves the interval by
+    the tempo cannot leave `bpm_range` (a fit beyond a bound is held on it), an octave cannot flip (a refit that moves the interval by
     more than interval/BEAT_ALIGN_DIVISOR is discarded), and fewer than four paired grid points
     keep the original: the fit needs evidence, and an onset-free stretch gives it none.
     Returns phase in [0, interval).
@@ -1613,8 +1630,13 @@ def _refine_grid(onset_times: "Sequence[float]", strengths: "Sequence[float]", i
         if sxx <= 0:
             break
         new_iv = sum(w * (k - mk) * (t - mt) for k, t, w in pairs) / sxx
-        if not (60.0 / hi_bpm <= new_iv <= 60.0 / lo_bpm) or abs(new_iv - interval) > interval / BEAT_ALIGN_DIVISOR:
+        if abs(new_iv - interval) > interval / BEAT_ALIGN_DIVISOR:
             break
+        # A146: a fit just outside `bpm_range` is held on its bound, not discarded. A tempo that
+        # sits on the bound (90 BPM under --beat-range 60-90) fits a hair beyond it as often as
+        # inside, and discarding the fit kept the step-rounded interval (89.76 BPM), whose grid
+        # was 80 ms off a 30 s click track by its end
+        new_iv = min(max(new_iv, 60.0 / hi_bpm), 60.0 / lo_bpm)
         new_ph = mt - new_iv * mk
         moved = abs(new_iv - iv) < 1e-9 and abs(new_ph - ph) < 1e-7
         iv, ph = new_iv, new_ph

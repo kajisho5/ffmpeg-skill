@@ -36,7 +36,7 @@ from _common import STATE, concat_list_line, add_common, aac_args, apply_common,
 from _common.emit import warn
 from _common.decision import HELD_FRAMES_WARN_BYTES, av_trim, held_frames_bytes, length_output_t, stream_starts
 from _common.probe import decode_gray_frames, decode_pcm_mono
-from _common.emit import input_length
+from _common.emit import input_length, own_length
 
 
 # The loop filter's size is capped at 32767 frames, so one boomerang cycle (2N-2 frames) must fit.
@@ -131,7 +131,7 @@ def _conformed_frames(v, rate: float, src_dur: float) -> int:
     its length are counted in these, or a repeat is a frame or more off the length planned."""
     # the video stream's length, else Matroska's tag, else the container's (main() refuses a source
     # without one): never the stored frame count, which is what fps= does not keep
-    d = v.get("duration") or v.get("tagged_duration") or src_dur
+    d = own_length(v) or src_dur
     return int(round(float(d) * rate))
 
 
