@@ -1040,6 +1040,24 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "output_dir_not_writable", f"output directory {parent!r} is not writable", output=output, directory=parent)
 
 
+def _check_output_extension(cmd: Sequence[str]) -> None:
+    """An ffmpeg output with no file extension and no `-f` after its last input leaves the muxer
+    nothing to choose a container by: refused as `kind: input` before anything runs, dry runs
+    included. Through 3.8.8 every tool that writes media handed it on and failed as `kind: ffmpeg`
+    ("Unable to choose an output format", audit A159's sweep). Only the ffmpeg commands run()
+    executes are checked: a sidecar (a report, an SRT) is a plain file and needs no extension,
+    and look.py takes an -o without an image extension as a stem (docs/design-decisions.md)."""
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:") or len(os.path.splitext(output)[1]) > 1:
+        return
+    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    if "-f" in cmd[last_input + 2:-1]:
+        return
+    refuse("input", "output_extension_missing",
+           f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
+           f"name it with one (for example {output + '.mp4'!r})", output=output)
+
+
 # What the WebM muxer takes (6.1: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and
 # WebVTT subtitles are supported for WebM"), by the encoder a command names (#488).
 _WEBM_VIDEO_ENCODER_RE = re.compile(r"^(?:libvpx(?:-vp9)?|vp8|vp9|libaom-av1|libsvtav1|librav1e|av1|vp8_\w+|vp9_\w+|av1_\w+)$")
@@ -2017,6 +2035,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _refuse_url_media(cmd)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
+        _check_output_extension(cmd)
         _check_container_codecs(cmd)
         _check_build_components(cmd)
         _check_existing_output(cmd)

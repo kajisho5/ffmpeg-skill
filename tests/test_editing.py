@@ -450,6 +450,26 @@ class EditingTests(MediaFixtures):
     def test_fit_refuses_extreme_speed(self):
         script("fit.py", self.src, "--duration", "1", expect_fail=True)
 
+    def test_fit_trim_from_the_start_keeps_the_subtitle_track(self):
+        """Audit A158 (class: a step that moves nothing is treated as moving the timeline):
+        --method trim from the start added `-ss 0.000`, and the tool then dropped the subtitle
+        track as it does for a seek that moves the cues. --from-center still seeks and drops."""
+        srt = OUT / "fit_trim_subs.srt"
+        srt.write_text("1\n00:00:00,200 --> 00:00:00,800\nhello\n", encoding="utf-8")
+        src = OUT / "fit_trim_subs.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264",
+           "-preset", "ultrafast", "-c:a", "aac", "-c:s", "mov_text", src)
+        out = OUT / "fit_trim_subs_out.mp4"
+        doc = json.loads(script("fit.py", src, "--duration", "1.5", "--method", "trim", "--fast", "--json", "-o", out).stdout)
+        self.assertEqual(probe(str(out))["subtitle_streams"], 1)
+        self.assertFalse(doc["dropped_non_av_streams"])
+        mid = OUT / "fit_trim_subs_mid.mp4"
+        doc = json.loads(script("fit.py", src, "--duration", "1.5", "--method", "trim", "--from-center", "--fast", "--json",
+                                "-o", mid).stdout)
+        self.assertEqual(probe(str(mid))["subtitle_streams"], 0)
+        self.assertTrue(doc["dropped_non_av_streams"])
+
     def test_fit_crop_anchor_keeps_a_chosen_edge_not_just_the_centre(self):
         """A centre crop can cut a subject held to one side; --crop-x/-y say what to keep."""
         left = OUT / "fit_crop_left.mp4"
@@ -568,6 +588,29 @@ class EditingTests(MediaFixtures):
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (1920, 1080))
         self.assertIsNone(m["audio"])
 
+    def test_sphere_default_view_has_square_pixels(self):
+        """Audit A163 (class: a default fixed apart from the values it has to agree with): the
+        vertical FOV defaulted to 60 whatever --h-fov and the frame, and 90 x 60 at 16:9 squashed
+        the view 2.6 % vertically. Without --v-fov the view is the square-pixel one: the written
+        frame is the one an explicit --v-fov of 2 atan(tan(h/2) H/W) writes, and not the 60 one."""
+        src = tiny_clip(OUT / "sphere_square_src.mp4", "testsrc2=s=640x320:r=25", seconds=0.2)
+
+        def frame(*extra):
+            out = OUT / f"sphere_square{'_'.join(extra)}.mp4"
+            doc = json.loads(script("sphere.py", src, "--width", "320", "--height", "180", "--quality", "0", "--json",
+                                    *extra, "-o", out).stdout)
+            pic = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1", "-f", "rawvideo",
+                                  "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+            return pic, doc
+
+        square = math.degrees(2 * math.atan(math.tan(math.radians(45)) * 180 / 320))
+        default, doc = frame()
+        self.assertFalse(doc.get("notes"))
+        self.assertEqual(default, frame("--v-fov", f"{square:.4f}")[0])
+        sixty, doc60 = frame("--v-fov", "60")
+        self.assertNotEqual(default, sixty)
+        self.assertTrue(any("not square-pixel" in n for n in doc60.get("notes") or []), doc60.get("notes"))
+
     def test_sphere_yaw_out_of_range_refused(self):
         script("sphere.py", self.src, "--yaw", "200", expect_fail=True)
 
@@ -614,6 +657,58 @@ class EditingTests(MediaFixtures):
         self.assertEqual((v["width"], v["height"]), (322, 184))
         for x, y in ((0, 0), (v["width"] - 1, 0), (0, v["height"] - 1), (v["width"] - 1, v["height"] - 1)):
             self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
+
+    def test_straighten_crop_fit_writes_the_source_frame_size(self):
+        """Audit A154 (class: a written frame is not the size the tool says it writes): --fit crop
+        promises the original W:H, and the crop was the scaled size divided back and floored, two
+        pixels short on each axis at every angle (1920x1080 -> 1918x1078). Wide, tall and 4:3
+        frames at a small, a negative and the largest angle."""
+        for size in ("320x180", "180x320", "320x240"):
+            src = tiny_clip(OUT / f"straighten_size_{size}.mp4", f"testsrc2=s={size}:r=25", seconds=0.3)
+            w, h = (int(n) for n in size.split("x"))
+            for degrees in ("0.5", "-3", "45"):
+                with self.subTest(size=size, degrees=degrees):
+                    out = OUT / f"straighten_size_{size}_{degrees}.mp4"
+                    script("straighten.py", src, "--degrees", degrees, "--fast", "-o", out)
+                    v = probe(str(out))["video"]
+                    self.assertEqual((v["width"], v["height"]), (w, h))
+
+    def test_a_caller_pixel_offset_is_not_moved_to_the_chroma_grid(self):
+        """Audit A157 (class: a filter's own rounding moves a pixel offset the caller gave): the
+        crop filter rounds x/y down to even on a 4:2:0 frame unless told exact=1, so crop.py
+        --x 1 --y 1 cut the rectangle at (0,0), and redact.py blurred or pixelated a region one
+        pixel up and left of the one asked (crop and overlay both round), leaving the asked
+        rectangle's last column readable. Measured on lossless luma."""
+        src = tiny_clip(OUT / "odd_offset_src.mp4", "testsrc2=s=160x90:r=25", seconds=0.2)
+
+        def luma(path, vf=None):
+            # the stored Y plane (extractplanes), not a conversion to gray, which depends on the
+            # file's colour tags on FFmpeg 8 and later
+            cmd = ["ffmpeg", "-v", "error", "-i", str(path), "-vf", (vf + "," if vf else "") + "extractplanes=y",
+                   "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+            return subprocess.run(cmd, stdout=subprocess.PIPE, check=True).stdout
+
+        out = OUT / "odd_offset_crop.mp4"
+        script("crop.py", src, "--x", "1", "--y", "1", "--width", "40", "--height", "20", "--quality", "0", "-o", out)
+        self.assertEqual(luma(out), luma(src, "crop=40:20:1:1:exact=1"))
+        self.assertNotEqual(luma(out), luma(src, "crop=40:20:0:0"))
+        # a white column at x=4, the last column of a 4-wide rectangle at x=1: redacted from x=0
+        # (rounded) it was left as it was, a white line beside a black one. Blurred, it is no
+        # longer white; pixelated in 2 px blocks, it is the same as the other column of its block
+        # (x=3: the blocks are counted from the rectangle's own first column)
+        line = tiny_clip(OUT / "odd_offset_line.mp4", "color=black:s=64x32:r=25,drawbox=x=4:y=0:w=1:h=32:color=white:t=fill",
+                         seconds=0.2)
+        self.assertGreater(min(luma(line, "crop=1:30:4:1:exact=1")), 220)  # white, as stored (limited range)
+        for mode in ("blur", "pixelate"):
+            with self.subTest(mode=mode):
+                red = OUT / f"odd_offset_redact_{mode}.mp4"
+                script("redact.py", line, "--mode", mode, "--block-size", "2", "--x", "1", "--y", "1", "--width", "4",
+                       "--height", "30", "--quality", "0", "-o", red)
+                col4 = luma(red, "crop=1:30:4:1:exact=1")
+                if mode == "blur":
+                    self.assertLess(max(col4), 200)
+                else:
+                    self.assertEqual(col4, luma(red, "crop=1:30:3:1:exact=1"))
 
     def test_straighten_pad_fit_grows_the_frame(self):
         out = OUT / "straighten2.mp4"

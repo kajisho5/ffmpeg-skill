@@ -80,6 +80,18 @@ class AnalysisTests(MediaFixtures):
         out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()
         self.assertClose(float(out), 12.0, 0.1)
 
+    def test_probe_field_prints_json_not_python(self):
+        """Audit A123 (class: a value printed for a caller is Python's repr): --field printed
+        True, None and {'codec': ...}, which no caller can parse, with or without --json."""
+        self.assertEqual(script("probe.py", self.src, "--field", "video.hdr").stdout.strip(), "false")
+        audio = json.loads(script("probe.py", self.src, "--field", "audio").stdout)
+        self.assertIsInstance(audio, dict)
+        self.assertEqual(script("probe.py", self.src, "--field", "video.codec").stdout.strip(), "h264")
+        self.assertEqual(script("probe.py", self.src, "--field", "nothing.here").stdout.strip(), "")
+        for field, value in (("video.codec", "h264"), ("nothing.here", None), ("video.hdr", False)):
+            with self.subTest(field=field):
+                self.assertEqual(json.loads(script("probe.py", self.src, "--json", "--field", field).stdout), value)
+
     def test_probe_missing_file_fails(self):
         proc = script("probe.py", OUT / "nope.mp4", expect_fail=True)
         self.assertIn("not found", proc.stderr)
@@ -1147,6 +1159,23 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("HDR10/PQ", text)
         script("verify.py", OUT / "does_not_exist", expect_fail=True)
 
+    def test_look_takes_an_o_without_an_image_extension_as_a_stem_in_every_mode(self):
+        """Audit A159 (class: an output path the muxer cannot name a format for reaches ffmpeg):
+        look.py --compare and the contact sheet used an -o without an image extension verbatim and
+        failed as kind ffmpeg, though --at takes such an -o as a stem (docs/design-decisions.md)."""
+        a = tiny_clip(OUT / "look_stem_a.mp4", "testsrc2=s=160x90:r=25", seconds=1)
+        b = tiny_clip(OUT / "look_stem_b.mp4", "color=c=red:s=160x90:r=25", seconds=1)
+        stem = OUT / "look_stem_out"
+        for args, name in ((("--at", "0.5", "--compare", b), "look_stem_out_vs_look_stem_b_0_0.500s.png"),
+                           ((), "look_stem_out_sheet.png"), (("--at", "0.5"), "look_stem_out_0.500s.png")):
+            with self.subTest(args=args):
+                (OUT / name).unlink(missing_ok=True)
+                doc = json.loads(script("look.py", a, *args, "--json", "-o", stem).stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertEqual(doc["outputs"], [str(OUT / name)])
+                self.assertGreater(png_size(OUT / name)[0], 0)
+        self.assertFalse(stem.exists())
+
     def test_verify_disambiguates_same_named_files_from_different_folders(self):
         """Every file's outputs share one flat --out directory keyed only on stem = outdir /
         f.stem -- two files with the same basename from different subfolders (entirely normal for
@@ -1169,6 +1198,31 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(len(cut_files), 2, f"expected two distinct 'cut' outputs, one per same-named source file, got {cut_files}")
         cap_files = sorted(p.name for p in out.glob("clip*_cap.mp4"))
         self.assertEqual(len(cap_files), 2, f"expected two distinct 'caption' outputs, got {cap_files}")
+
+    def test_verify_stems_never_collide_and_its_outputs_are_where_it_says(self):
+        """Audit A121, A119, A120 (class: a run that writes several files does not keep them apart,
+        or keep them, as it says). unique_stems gave two clip.mp4 and a clip_1.mp4 the stem
+        clip_1 twice; a rerun into the same --out failed every step, since --overwrite never
+        reached a step; --keep without --out kept nothing (the temporary folder was deleted at
+        exit) and named no folder. Measured on the folders and files the runs leave."""
+        import verify
+        stems = verify.unique_stems([Path("a/clip.mp4"), Path("b/clip.mp4"), Path("c/clip_1.mp4"), Path("d/Clip.MOV")])
+        self.assertEqual(len({v.casefold() for v in stems.values()}), 4, stems)
+        clip = tiny_clip(OUT / "verify_keep_src.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        doc = json.loads(script("verify.py", clip, "--quick", "--keep", "--json").stdout)
+        kept = Path(doc["out_dir"])
+        try:
+            self.assertTrue((kept / "verify_keep_src_cut.mp4").is_file(), sorted(p.name for p in kept.iterdir()))
+        finally:
+            shutil.rmtree(kept, ignore_errors=True)
+        out = OUT / "verify_rerun_out"
+        shutil.rmtree(out, ignore_errors=True)
+        for run in (1, 2):
+            with self.subTest(run=run):
+                doc = json.loads(script("verify.py", clip, "--quick", "--out", out, "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["failed"], doc["out_dir"]), ("completed", 0, str(out)))
+        doc = json.loads(script("verify.py", clip, "--quick", "--json").stdout)
+        self.assertIsNone(doc["out_dir"])
 
     def test_verify_full_plan_hdr_surround_broken_file_and_timeout(self):
         """verify.py's non---quick plan (overlay, look sheet, probe --analyze, loudness, silence,

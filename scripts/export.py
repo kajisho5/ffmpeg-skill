@@ -43,6 +43,7 @@ import re
 import os
 import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -442,6 +443,32 @@ SIZE_MIN_VIDEO_KBPS = 100   # below this the picture is not worth delivering; re
 SIZE_MAX_VIDEO_KBPS = 400_000  # 400 Mb/s: above any delivery line, and libx264 refuses far larger values
 
 
+def _platform_rate_args(preset: str, meta: Dict) -> List[str]:
+    """A platform preset that keeps the source's frame rate (the youtube family) conforms a source
+    faster than the platform's fps_max to the source rate divided by the smallest whole number that
+    brings it within the limit (120 -> 60, 119.88 -> 59.94, 100 -> 50), so every frame of the
+    output is one of the source's own. Through 3.8.8 a 120 fps source kept 120 fps and the
+    platform's own check FAILed the export (audit A115). [] when the preset has no limit or the
+    source is within it (cfr_args() then decides, as before)."""
+    platform = PLATFORM_OF.get(preset)
+    fps_max = (PLATFORMS.get(platform) or {}).get("fps_max") if platform else None
+    v = meta.get("video") or {}
+    src = v.get("fps")
+    if not fps_max or not src or src <= fps_max + 0.01:
+        return []
+    try:
+        exact = Fraction(v.get("avg_frame_rate") or "0")
+    except (ValueError, ZeroDivisionError):
+        exact = Fraction(0)
+    if not exact or abs(float(exact) - src) > 0.01:
+        exact = Fraction(src).limit_denominator(1001)
+    n = math.ceil(float(exact) / (fps_max + 0.01))
+    rate = exact / n
+    note(f"source is {src:g} fps, above {platform}'s limit of {fps_max:g}: exported at {float(rate):.6g} fps, "
+         f"one source frame in {n}")
+    return ["-fps_mode", "cfr", "-r", str(rate.numerator) if rate.denominator == 1 else f"{rate.numerator}/{rate.denominator}"]
+
+
 def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool) -> List[str]:
     """--max-mb: the preset's x264 line with its CRF replaced by the bitrate that fits the size,
     for a two-pass encode. Refused where that cannot be done honestly: another codec, --crf, --hw,
@@ -669,7 +696,7 @@ def main() -> int:
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
         if "-r" not in video:
-            cmd += cfr_args(meta)
+            cmd += _platform_rate_args(args.preset, meta) or cfr_args(meta)
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
         if not p.get("intermediate"):
@@ -767,7 +794,13 @@ def main() -> int:
                 # a private name: <stem>_loudnorm.<ext> is loudness.py's own default output, so a
                 # real file of that name next to the export was overwritten and renamed away (review 7)
                 tmp = str(Path(output).with_name(f".{Path(output).stem}.normalize-{os.getpid()}{Path(output).suffix}"))
-                proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json"] + child_args())
+                # under --max-mb the sound is re-encoded at the bitrate the size budget was built on
+                # (the preset's); loudness.py's own 192k, raised to 256k/320k on an overshoot, put
+                # the file over the limit it had been encoded to meet (through 3.8.8, audit A112)
+                pinned = (["--audio-bitrate", p["audio"][p["audio"].index("-b:a") + 1]]
+                          if args.max_mb is not None and "-b:a" in p["audio"] else [])
+                proc = run_tool([str(HERE / "loudness.py"), output, "-I", f"{spec['lufs']:g}", "--tp", f"{spec['tp']:g}", "-o", tmp, "--json"]
+                                + pinned + child_args())
                 try:
                     child = json.loads(proc.stdout)
                 except ValueError:

@@ -39,18 +39,31 @@ def unique_stems(files: List[Path]) -> Dict[Path, str]:
     resolve to the identical output prefix. Each file's own steps still ran correctly in isolation,
     but with --keep the second file's outputs silently overwrote the first file's on disk, and the
     report showed PASS for both without ever flagging the collision (same bug class already fixed
-    in batch.py). Disambiguate every colliding stem with a stable per-collision index instead."""
+    in batch.py). Disambiguate every colliding stem with a stable per-collision index instead.
+
+    A stem is compared case-folded (clip.mp4 and Clip.MOV share one name on a case-insensitive
+    disk), and an indexed name skips any stem already taken, a file's own included: through 3.8.8
+    two clip.mp4 and a clip_1.mp4 gave "clip_1" twice (audit A121)."""
     counts: Dict[str, int] = {}
     for f in files:
-        counts[f.stem] = counts.get(f.stem, 0) + 1
+        counts[f.stem.casefold()] = counts.get(f.stem.casefold(), 0) + 1
+    taken = {f.stem.casefold() for f in files if counts[f.stem.casefold()] == 1}
     seen: Dict[str, int] = {}
     stems: Dict[Path, str] = {}
     for f in files:
-        if counts[f.stem] > 1:
-            seen[f.stem] = seen.get(f.stem, 0) + 1
-            stems[f] = f"{f.stem}_{seen[f.stem]}"
-        else:
+        key = f.stem.casefold()
+        if counts[key] == 1:
             stems[f] = f.stem
+            continue
+        n = seen.get(key, 0)
+        while True:
+            n += 1
+            name = f"{f.stem}_{n}"
+            if name.casefold() not in taken:
+                break
+        seen[key] = n
+        taken.add(name.casefold())
+        stems[f] = name
     return stems
 
 
@@ -96,6 +109,20 @@ def _probe_capturing(path: str) -> "Tuple[Optional[Dict[str, Any]], Dict[str, An
         STATE.json = was_json
 
 
+# The shared flags given to verify.py that every step receives as well (set in main())
+FORWARD: Dict[str, bool] = {"overwrite": False, "fast": False}
+
+
+def _forwarded(argv: List[str]) -> List[str]:
+    """--overwrite and --fast as the caller gave them to verify.py: through 3.8.8 neither reached
+    a step, so a rerun into the same --out failed every step on its own earlier output (audit
+    A119). The steps' --timeout is verify's own per-step limit (step()'s `timeout`)."""
+    out = ["--overwrite"] if FORWARD["overwrite"] else []
+    if FORWARD["fast"] and "--fast" not in argv:
+        out.append("--fast")
+    return out
+
+
 def step(name: str, argv: List[str], timeout: float) -> Dict:
     """Run one step and keep what its tool said: `ok` (it completed), and on a failure the tool's
     own `kind`, `reason` and `message` (its --json failure document), `error` being that message
@@ -113,7 +140,7 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
             r.update(kind="verification", reason="hdr_lost", message=r["error"])
         return r
     try:
-        proc = subprocess.run([sys.executable, str(HERE / argv[0])] + argv[1:] + ["--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        proc = subprocess.run([sys.executable, str(HERE / argv[0])] + argv[1:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, encoding="utf-8", errors="replace", timeout=timeout or None)
     except subprocess.TimeoutExpired:
         msg = f"timeout after {timeout:.0f}s"
@@ -146,7 +173,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help="media files and/or folders")
     ap.add_argument("--out", help="directory for outputs (default: temp dir, deleted unless --keep)")
-    ap.add_argument("--keep", action="store_true", help="keep the outputs")
+    ap.add_argument("--keep", action="store_true", help="keep the outputs (without --out: in a new folder, named as out_dir and on stderr)")
     ap.add_argument("--quick", action="store_true", help="probe, copy cut, fit, caption, export only")
     ap.add_argument("--seconds", type=float, default=6.0, help="length of the test cut taken from each file (default 6)")
     ap.add_argument("--timeout", type=float, default=600.0, help="per-step timeout in seconds (default 600; 0 = no limit, as everywhere else)")
@@ -168,6 +195,7 @@ def main() -> int:
         # fault ("9 of 11 verification steps failed") rather than the flag's
         die(f"--seconds must be more than 0 (the length of the test cut), got {args.seconds:g}")
     files = collect(args.paths)
+    FORWARD.update(overwrite=STATE.overwrite, fast=STATE.fast)
     tmp = None
     if args.out:
         # made first, so a --report inside a new --out folder passes the guard below (#413 review)
@@ -177,9 +205,15 @@ def main() -> int:
         # a file this run writes itself (#408): not one of the media it verifies (a folder's
         # files included), nor an existing file without --overwrite
         guard_sidecar(args.report, *args.paths, *map(str, files))
-    if not args.out:
+    if not args.out and args.keep:
+        # --keep without --out: a folder of its own that outlives the run, named in the document
+        # (`out_dir`) and on stderr; through 3.8.8 it was the temporary directory, deleted at exit
+        # whatever --keep said, and never named (audit A120)
+        outdir = Path(tempfile.mkdtemp(prefix="ffskill_verify_"))
+    elif not args.out:
         tmp = tempfile.TemporaryDirectory(prefix="ffskill_verify_")
         outdir = Path(tmp.name)
+    kept_dir = None if tmp else str(outdir)
 
     stem_for = unique_stems(files)
     results = []
@@ -275,14 +309,16 @@ def main() -> int:
         info(f"wrote {args.report}")
     if not args.json:
         print(report)
-    if tmp and not args.keep:
+    if tmp:
         tmp.cleanup()
+    if kept_dir:
+        info(f"step outputs kept in {kept_dir}")
     notes = (["--dry-run is ignored by verify.py: its steps ran and wrote their outputs"] if ignored_dry_run else [])
     if failed:
         die(f"{failed} of {total} verification steps failed", kind="verification", output=None, dry_run=STATE.dry_run,
-            report=args.report, files=results, failed=failed, total=total, **({"notes": notes} if notes else {}))
+            report=args.report, files=results, failed=failed, total=total, out_dir=kept_dir, **({"notes": notes} if notes else {}))
     if args.json:
-        emit(None, report=args.report, files=results, failed=failed, total=total, **({"notes": notes} if notes else {}))
+        emit(None, report=args.report, files=results, failed=failed, total=total, out_dir=kept_dir, **({"notes": notes} if notes else {}))
     return 0
 
 

@@ -1033,6 +1033,25 @@ class DeliveryTests(MediaFixtures):
         self.assertTrue(m["video"]["hdr"])
         self.assertEqual(m["video"]["codec"], "hevc")
 
+    def test_proxy_is_never_wider_than_its_source(self):
+        """Audit A162 (class: a written frame is not the size the tool says it writes): the default
+        --width 640 upscaled a 320-wide source, and a --scale that rounded to 0 became scale=0,
+        which ffmpeg reads as the input's width (a full-size proxy). Measured on the written files."""
+        src = OUT / "proxy_small_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=0.4",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src)
+        for flags, width, said in (((), 320, "not upscaled"), (("--width", "1920"), 320, "not upscaled"),
+                                   (("--scale", "0.001"), 2, "smallest width"), (("--width", "100"), 100, None)):
+            with self.subTest(flags=flags):
+                out = OUT / f"proxy_small_{'_'.join(flags) or 'default'}.mp4"
+                doc = json.loads(script("proxy.py", src, *flags, "--json", "-o", out).stdout)
+                self.assertEqual(probe(str(out))["video"]["width"], width)
+                notes = " ".join(doc.get("notes") or [])
+                if said:
+                    self.assertIn(said, notes)
+                else:
+                    self.assertNotIn("proxy width", notes)
+
     def test_proxy_rejects_bad_scale_and_width(self):
         script("proxy.py", self.src, "--scale", "1.5", expect_fail=True)
         script("proxy.py", self.src, "--scale", "0", expect_fail=True)
@@ -1049,6 +1068,44 @@ class DeliveryTests(MediaFixtures):
         out = OUT / "hdr_youtube.mp4"
         proc = script("export.py", self.hdr, "--preset", "x", "-o", out)
         self.assertIn("HDR", proc.stderr)
+
+    def test_a_platform_preset_writes_what_its_platform_check_passes(self):
+        """Audit A115 (class: a preset writes a value its own platform's check FAILs): the youtube
+        presets keep the source's frame rate, so a 120 fps source was exported at 120 fps and
+        `check.py --platform youtube` failed the fps row (<= 60). A faster source is conformed to
+        its rate over the smallest whole divisor within the limit (120 -> 60)."""
+        src = OUT / "export_120fps.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=120:d=1",
+           "-f", "lavfi", "-i", "sine=d=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-shortest", src)
+        self.assertEqual(probe(str(src))["video"]["fps"], 120)
+        for preset in ("youtube",):
+            with self.subTest(preset=preset):
+                out = OUT / f"export_120fps_{preset}.mp4"
+                doc = json.loads(script("export.py", src, "--preset", preset, "--fast", "--json", "-o", out).stdout)
+                self.assertEqual(probe(str(out))["video"]["fps"], 60)
+                self.assertTrue(any("one source frame in 2" in n for n in doc.get("notes") or []), doc.get("notes"))
+                check = json.loads(script("check.py", out, "--platform", "youtube", "--json", expect_fail=True).stdout)
+                fps_row = next(r for r in check["checks"] if r["check"] == "fps")
+                self.assertEqual(fps_row["status"], "PASS", fps_row)
+
+    def test_export_max_mb_with_normalize_stays_under_the_limit(self):
+        """Audit A112 (class: a second pass re-encodes a stream without the settings the first
+        pass's budget assumed): --max-mb budgets the preset's 128k sound, and --normalize then
+        re-encoded it at loudness.py's 192k, so the file missed the limit it had been encoded to
+        meet. The written file's size and its sound's bitrate are measured."""
+        src = OUT / "export_maxmb_noisy.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=6",
+           "-f", "lavfi", "-i", "anoisesrc=d=6:a=0.05", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-b:a", "256k", "-shortest", src)
+        out = OUT / "export_maxmb_normalize.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "reels", "--max-mb", "1", "--normalize", "--json", "-o", out).stdout)
+        self.assertTrue(doc["loudness"].get("normalized"), doc["loudness"])
+        self.assertLessEqual(out.stat().st_size, 1024 * 1024)
+        rate = sh("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=bit_rate", "-of", "csv=p=0", out).stdout
+        self.assertLess(int(rate.strip()), 140000, rate)
+        size_step = next(v for v in doc["verification"] if v["step"] == "file_size")
+        self.assertTrue(size_step["ok"], size_step)
 
     def test_export_normalize_meets_the_platform_loudness_in_one_call(self):
         """Eval 7: every platform job ran export -> loudness.py -> export again. --normalize runs

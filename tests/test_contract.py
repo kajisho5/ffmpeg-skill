@@ -4255,6 +4255,31 @@ class ContractTests(unittest.TestCase):
         tool("render", "--init", old, "--overwrite")
         self.assertNotEqual(old.read_text(encoding="utf-8"), "keep me\n", "--overwrite replaces an old side file")
 
+    def test_a_media_output_with_no_extension_is_refused_before_ffmpeg(self):
+        """Audit A159's sweep (class: an output path the muxer cannot name a format for reaches
+        ffmpeg): every tool that writes media failed an -o with no extension as kind ffmpeg
+        ("Unable to choose an output format") after its work had started, and its dry run said
+        completed. Refused as input, dry runs included, for every tool in tests/sweep.py's table
+        that takes -o, except look.py, which takes such an -o as a stem (design-decisions)."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        work = self.out("noext_guard"); work.mkdir(exist_ok=True)
+        facts = sweep.facts_for(str(self.src), str(work))
+        tools = [t for t, (_args, ext) in sweep.TABLE.items() if ext and t != "look"]
+        self.assertGreater(len(tools), 20)
+        for t in tools:
+            name, (args, _ext) = t.split()[0], sweep.TABLE[t]
+            with self.subTest(tool=t):
+                target = work / f"noext_{name}"
+                proc = tool(name, self.src, *[a.format(**facts) for a in args], "-o", target, "--dry-run", "--json", check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_extension_missing"), proc.stderr[-300:])
+        proc = tool("crop", self.src, "--x", "0", "--y", "0", "--width", "64", "--height", "64", "-o", work / "noext_real",
+                    "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_extension_missing")
+        self.assertFalse((work / "noext_real").exists())
+        self.assertEqual(sorted(p.name for p in work.glob("noext_*")), [])
+
     def test_a_playlist_input_and_an_option_shaped_output_are_refused(self):
         """A playlist (HLS .m3u8, ffconcat) is not media: ffmpeg and ffprobe follow it to the files
         it names, so a "video" handed to the skill could read any file the user can. It is refused

@@ -951,7 +951,7 @@ A refusal also carries `error.reason`, a stable snake_case code for *why*
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
 `output_container_codecs` (a `.webm` output for an H.264/HEVC or AAC encode, which WebM cannot hold),
 `media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold),
-`output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
+`output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_extension_missing` (a media output with no file extension, which leaves ffmpeg no container to choose), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
 `render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and
 `encoder_list_unreadable`, and `--transcribe`'s `asr_engine_missing`, `no_speech`, `engine_failed`
 and `english_only`), and `error.details`, the facts the message is written from, so a

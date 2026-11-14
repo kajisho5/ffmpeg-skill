@@ -96,7 +96,10 @@ def main() -> int:
                 die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
 
         crop_mode = {"keep": 0, "black": 1}[args.crop]
-        transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"
+        # optzoom=0: the zoom is --zoom and nothing else. vidstab's default (optzoom=1) adds its own
+        # "optimal" zoom on top, so --zoom 0 did not keep the original framing and --crop black
+        # rarely had an edge to fill (through 3.8.8, audit A156)
+        transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=0"
         if args.tripod:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.

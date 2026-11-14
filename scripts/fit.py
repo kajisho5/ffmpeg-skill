@@ -227,7 +227,9 @@ def main() -> int:
                 # after it (a B-frame HEVC source) and lose the frames before it, so the first
                 # picture would not be the one the start timecode below names
                 m = min(SEEK_MARGIN, round(start, 3))
-                pre_input += ["-ss", f"{start - m:.3f}"]
+                # a trim from the start seeks nowhere: no -ss, so the timeline stays where it is and
+                # a subtitle/data track is kept below (`-ss 0.000` dropped it, A158)
+                pre_input += ["-ss", f"{start - m:.3f}"] if round(start, 3) > 0 else []
                 # without sound the -t only counts frames (picture_output_t). Not from the centre:
                 # there the output's clock starts at the seek, between two frames, and the encoder
                 # rounds each frame to its own tick

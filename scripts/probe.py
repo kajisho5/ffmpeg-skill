@@ -15,6 +15,7 @@ Examples:
 points a stream copy can start at, and where cut.py --smart's re-encode around a cut ends.
 """
 import argparse
+import json
 import math
 import sys
 
@@ -87,7 +88,15 @@ def main() -> int:
             cur = r
             for key in args.field.split("."):
                 cur = cur.get(key) if isinstance(cur, dict) else None
-            print(cur if cur is not None else "")
+            # a string as itself; anything else as JSON (true, null, {"codec": ...}), not Python's
+            # repr (True, None, {'codec': ...}), which no caller can parse (through 3.8.8, A123).
+            # Under --json a missing field is null and a string is quoted: every line is JSON
+            if isinstance(cur, str) and not args.json:
+                print(cur)
+            elif cur is None and not args.json:
+                print("")
+            else:
+                print(json.dumps(cur, ensure_ascii=False))
         return 0
 
     if args.compact:

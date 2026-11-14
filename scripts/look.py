@@ -30,6 +30,8 @@ from _common.emit import input_length  # noqa: E402
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
 # Action and title safe are SMPTE ST 2046-1's 93 % and 90 % of a 16:9 picture; the 4:3 centre cut
 # is the 4:3 window of a 16:9 frame with SD's own 90 % action / 80 % title safe inside it.
+# the extensions an -o is taken verbatim with (one picture); any other -o is a stem
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 GUIDES = {"action": 0.93, "title": 0.90}
 GUIDE_43 = {"action": 0.90, "title": 0.80}
 GUIDE_COLOURS = {"action": "yellow", "title": "cyan", "4:3": "white"}
@@ -319,7 +321,7 @@ def main() -> int:
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
         for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
-            if args.output and len(args.at) == 1:
+            if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in IMAGE_EXTS:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
                 # several frames, or -o given as a stem/prefix: an occurrence index keeps every
@@ -352,7 +354,7 @@ def main() -> int:
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             if dur and sec > dur:
                 die(f"--at {t} is beyond the duration ({dur:.2f}s)")
-            if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in IMAGE_EXTS:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
                 # several frames, or -o given as a stem/prefix without an image extension
@@ -382,7 +384,10 @@ def main() -> int:
             info(f"only {frames_avail} frame(s) available; sheet reduced to {cols}x{rows}")
         step = dur / n
         tile_w = max(2, (args.width // cols) // 2 * 2)
-        out = args.output or os.path.join(outdir, f"{stem}_sheet.png")
+        # -o without an image extension is a stem here too (<stem>_sheet.png), as for --at and
+        # --compare: given verbatim, ffmpeg could not choose a muxer for it (kind ffmpeg, A159)
+        out = (args.output if args.output and Path(args.output).suffix.lower() in IMAGE_EXTS
+               else os.path.join(outdir, f"{(args.output and Path(args.output).stem) or stem}_sheet.png"))
         # sample at the middle of each slice so the first/last tiles are not black lead-in/out frames
         # with only a handful of frames a mid-slice seek skips past them all: start at 0 instead
         seek = 0.0 if frames_avail < 4 else step / 2

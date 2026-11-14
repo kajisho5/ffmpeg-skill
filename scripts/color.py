@@ -581,7 +581,13 @@ def main() -> int:
         else:
             vf = hdr_to_sdr_chain(meta, args.tonemap, args.peak, args.desat)
             sdr_path = "tonemap"
-            sdr_note = f"tone-mapped {v.get('hdr_format') or 'untagged input as PQ (--force)'} to SDR BT.709 with {args.tonemap}"
+            # the note names what hdr_to_sdr_chain read the source as: its own tags, PQ / BT.2020
+            # only where a tag is missing. Through 3.8.8 any non-HDR file was called "untagged
+            # input as PQ", a BT.709-tagged one included, which the chain linearised as BT.709 (A161)
+            read_as = v.get("hdr_format") or (
+                f"a non-HDR input read as transfer {v.get('color_transfer') or 'smpte2084 (untagged, taken as PQ)'}, "
+                f"primaries {v.get('color_primaries') or 'bt2020 (untagged)'} (--force)")
+            sdr_note = f"tone-mapped {read_as} to SDR BT.709 with {args.tonemap}"
         info(f"note: {sdr_note}")
         sdr_extra = {"sdr_path": sdr_path, "notes": [sdr_note]}
         output = args.output or default_output(args.input, "sdr")

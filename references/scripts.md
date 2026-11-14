@@ -131,7 +131,10 @@ JSON with `duration`, `video{codec,width,height,fps,pix_fmt,color_space,rotation
 (`hdr`, and `hdr_signal` equal to it, is true only for a PQ / HLG transfer or Dolby Vision -- since 2.0;
 `bt2020_or_hdr` also counts BT.2020 primaries on an SDR transfer, which `hdr_format` names "BT.2020 SDR"),
 `audio{codec,channels,sample_rate,start_time}` (`start_time`: where the stream starts on the file's
-own clock, `null` when unknown). `--compact` gives one line per file.
+own clock, `null` when unknown). `--compact` gives one line per file. `--field` prints one line
+per file: a string as itself and any other value as JSON (`true`, `{"codec": ...}`), an empty
+line for a field that is not there; with `--json` every line is JSON (a string quoted, a
+missing field `null`).
 
 ### cut.py — cut / join segments
 ```
@@ -338,7 +341,7 @@ the rectangle for you. Use this when the rectangle is already known (a
 face-detection box, a saved crop, a hand-picked region). The rectangle must
 lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
-rounded, if they aren't.
+rounded, if they aren't; an odd `--x`/`--y` is taken as given.
 
 ### cropdetect.py — measure black bars, report the crop rectangle
 ```
@@ -429,7 +432,9 @@ Wraps FFmpeg's `v360` filter to bake out an ordinary flat clip pointed at a
 fixed direction — the same "look this way" operation a VR headset or a 360
 player's viewport does. `--yaw`/`--pitch`/`--roll` aim the camera (each
 -180..180, default 0); `--h-fov`/`--v-fov` set how wide the view is (each
-1..170, default 90/60). `--input-projection` must match the source's own
+1..170; `--h-fov` defaults to 90, and without `--v-fov` the vertical view is the
+one that keeps the output's pixels square, 58.7 at 90 and 1920x1080; a pair that
+is not square-pixel is drawn as given and said in `notes`). `--input-projection` must match the source's own
 projection (default `equirect`, the most common capture/export format) —
 this tool cannot detect it from the pixels, so a wrong value produces a
 distorted or garbled output, not an error. There is no subject detection or
@@ -502,7 +507,9 @@ a temporary transforms file (deleted after the run), pass 2 smooths and
 re-renders. `--shakiness` (default 5) trades analysis time for how much
 motion it looks for; `--smoothing` (default 15) is how many neighbouring
 frames the camera path is averaged over; `--zoom` crops in slightly to hide
-the black edges stabilizing can introduce. Needs an ffmpeg built with
+the black edges stabilizing can introduce, and is the only zoom applied (0, the
+default, keeps the original framing and lets the edges show: vidstab's own
+"optimal zoom" is off). Needs an ffmpeg built with
 `--enable-libvidstab`; `doctor` reports this tool `usable: no` when that's
 missing (a plain Homebrew ffmpeg build, for example) rather than failing at
 run time.
@@ -1669,14 +1676,17 @@ Each step runs with `--json`, and a failed one keeps its tool's own `kind`,
 completed one carries the tool's `verified`. Steps that do not apply are listed
 under the file's `skipped` (`quick`, `no_video`, `no_audio`, `not_hdr`,
 `not_multichannel`, `input_unreadable`) and as SKIP rows in the report.
+`--overwrite` and `--fast` given to verify.py reach every step, so a rerun into the same
+`--out` replaces the earlier outputs. The outputs are kept in `--out`, or with `--keep` alone
+in a new folder; either is the result's `out_dir` (`null` when they were deleted).
 Run this first when a user hands over footage from a device you have not
 seen before, and fix or report what fails.
 
 ### look.py — see the result
 ```
-look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes
+look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes (-o basename -> basename_sheet.png)
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
-look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame
+look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame (-o basename -> basename_vs_AFTER_0_4.000s.png)
 look.py INPUT --safe tiktok [--at 3]                              # shade what the app's UI covers
 look.py INPUT --guides title,action,4:3 [--at 3]                  # broadcast safe-area outlines
 ```
@@ -2370,7 +2380,8 @@ neither.
 proxy.py INPUT [--width W | --scale F] [--quality N] [--fps N] [--no-audio] [-o OUT]
 ```
 Not a delivery preset: resizes to `--width` (default 640) or by `--scale`
-factor, re-encodes at a proxy-grade `--quality` (default 30) with the fastest
+factor, never wider than the source and never under 2 px (a `notes` line says
+when either caps the width asked), re-encodes at a proxy-grade `--quality` (default 30) with the fastest
 x264/x265 preset, keeps the source's own dynamic range (HDR stays HDR;
 run `color.py --to-sdr` first if SDR is wanted) and keeps a subtitle/data
 track when the container can hold it (`dropped_non_av_streams`). Only executes the spec

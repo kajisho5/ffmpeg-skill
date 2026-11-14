@@ -442,6 +442,7 @@ ERROR_REASONS = {
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
+    "output_extension_missing": "a media output with no file extension (and no -f naming its format), so ffmpeg could not choose a container; refused before ffmpeg runs, dry runs included; details: {output}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
     "output_container_codecs": "a .webm output whose command encodes video or sound WebM cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
@@ -775,7 +776,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]},
                  "files": {"type": "array", "description": "one entry per file: {file, probe, steps, skipped}. A step is {step, ok, seconds, error (one line, for the table)}, plus the tool's verified when it completed, and on a failure its own kind, reason, message, details and exit_code (reason step_timeout or step_output_unparsed when the tool printed no failure document); skipped lists the steps that do not apply as {step, reason: quick|no_video|no_audio|not_hdr|not_multichannel|input_unreadable, message}"},
-                 "failed": {"type": "integer"}, "total": {"type": "integer"}}
+                 "failed": {"type": "integer"}, "total": {"type": "integer"},
+                 "out_dir": {"type": ["string", "null"], "description": "the folder the steps' outputs are in when they are kept: --out, or with --keep alone a new folder that outlives the run; null when they were written to a temporary folder and deleted"}}
     elif name == "batch":
         extra = {"results": {"type": "array", "description": "one row per input, every input (an interrupted batch included): ok (every step completed), verified (every step also verified what it wrote; false under --dry-run) and unverified ([{step, tool, failed}] naming the steps that did not); a failed row's error {step, tool, kind, message, code, reason, details, hint, exit_code} from the failing step's own document; diagnostics from its steps (tagged with step); cache_miss {reason: output_missing|output_changed|entry_unverifiable, ...} when a cache entry was not served; skipped \"timeout\" or \"interrupted\" for an item that never started and interrupted true for one stopped while running; under --watch, skipped \"settling\" (ok false, not cached) for a source that changed since the previous poll, or, first seen, was modified within one poll interval: it is processed on a later pass. A row whose recipe ran cut.py carries cut_reencoded (each cut.py call's reencoded) and cut_reencode_reasons (each reason those calls named, once per call)"},
                  "processed": {"type": "integer"}, "total": {"type": "integer"},

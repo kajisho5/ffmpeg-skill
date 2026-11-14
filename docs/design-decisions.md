@@ -90,6 +90,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
 - [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
 - [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
+- [After 3.8.12 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3812--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
 <!-- contents:end -->
 
 ## Time limits
@@ -4406,3 +4407,76 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
   the tools that always write a picture refuse an audio-only input. Test:
   `test_waveform_of_an_audio_input_is_a_video_by_default`.
+## After 3.8.12 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)
+
+- **A BT.2020 source with no transfer tag is re-encoded as `bt2020-10`, not HLG** (A153).
+  `probe()` reads BT.2020 primaries without a transfer tag as `hdr: false`, "BT.2020 SDR"; the
+  10-bit line filled the missing tag with `arib-std-b67`, so the output read back as HLG, an HDR
+  signal the source never was. Leaving the tag out would also be honest, but the x265 VUI needs a
+  value and every other tag on the line is written; `bt2020-10` is the SDR curve BT.2020 defines
+  (the same function as BT.709's) and reads back as what probe called the source. An HDR signal
+  with no transfer tag (Dolby Vision whose base layer is untagged) keeps the HLG default it had.
+  Code: `_common.decision.source_transfer()`. Test:
+  `PictureTests.test_an_untagged_transfer_is_not_written_as_another_signal`.
+- **`color.py --to-sdr --force` labels a frame missing a colour tag with what the chain assumes**
+  (A161's sibling): on FFmpeg 6.1 zscale's `pin` does not reach a frame whose own primaries are
+  unspecified ("no path between colorspaces"), so a file with no tags failed as `kind: ffmpeg`.
+  A `setparams` with the chain's assumptions (PQ, BT.2020) comes first when a tag is missing; a
+  fully tagged source's chain is unchanged. The note names the transfer and primaries the chain
+  read. Code: `_common.color.hdr_to_sdr_chain()`. Test:
+  `PictureTests.test_to_sdr_force_on_a_non_hdr_file_says_what_it_read_it_as`.
+- **A pixel offset the caller gives is not moved by a filter's chroma rounding** (A157): fixed
+  for `crop.py` and `redact.py` in 3.8.11 ("After 3.8.10", A170: `crop=...:exact=1`, and the
+  redaction patch padded by a transparent column/row so the luma of exactly the asked rectangle
+  is replaced). A layer `overlay.py --position x,y` places at an odd x or y still lands one pixel
+  up or left on 4:2:0 (FFmpeg 6.1.1's overlay at 1,1 draws at 0,0): #512.
+- **A media output with no file extension is refused before ffmpeg** (the sweep of A159): every
+  tool that writes media gave it to ffmpeg, which failed as `kind: ffmpeg` after the run had
+  started, and the dry run completed. `run()` refuses it as `kind: input`,
+  `output_extension_missing`, unless the command names a format with `-f` after its last input.
+  An unknown extension (`out.xyz`) is still left to the muxer: telling which of FFmpeg's 200-odd
+  muxers a build has would cost a process per run. Side files are not checked, and `look.py` takes
+  an `-o` without an image extension as a stem in every mode (`<stem>_sheet.png`,
+  `<stem>_vs_<other>_<i>_<t>s.png`, `<stem>_<t>s.png`), as the decision above already said for
+  `--at`. Code: `runner._check_output_extension()`. Tests:
+  `ContractTests.test_a_media_output_with_no_extension_is_refused_before_ffmpeg`,
+  `AnalysisTests.test_look_takes_an_o_without_an_image_extension_as_a_stem_in_every_mode`.
+- **A proxy is never wider than its source, and never under 2 px** (A162). A proxy exists to be
+  smaller; the default `--width 640` upscaled a smaller source, and an explicit `--width` above the
+  source width is capped too, with a `notes` line, rather than refused: the caller's intent ("at
+  most this wide") is met. Test: `DeliveryTests.test_proxy_is_never_wider_than_its_source`.
+- **`sphere.py`'s vertical field of view follows from the others unless given** (A163):
+  `2 atan(tan(h/2) H/W)`, which keeps the pixels square. A pair the caller gives is drawn as
+  given (a squeezed view can be what is wanted) with a `notes` line saying how far from square it
+  is, past 0.5 %. Test: `EditingTests.test_sphere_default_view_has_square_pixels`.
+- **`stabilize.py --zoom` is the only zoom** (A156): vidstab's `optzoom` is 0. Its default (1)
+  adds an "optimal" static zoom on top of `--zoom`, which made `--zoom 0` ("keep the original
+  framing") and `--crop black` mean nothing. The default output changes: it keeps the framing and
+  shows (stretched, or black with `--crop black`) the edges stabilizing reveals; `--zoom N` crops
+  them away. Test: `PictureTests.test_stabilize_zoom_zero_keeps_the_framing_and_shows_the_edges`.
+- **A platform preset that keeps the source's frame rate conforms one above the platform's
+  `fps_max`** (A115) to the source rate over the smallest whole divisor within it (120 to 60,
+  119.88 to 59.94, 100 to 50), so each output frame is a source frame and motion keeps its
+  cadence. Today that is the youtube family; the other platform presets already write 30 fps.
+  Test: `DeliveryTests.test_a_platform_preset_writes_what_its_platform_check_passes`.
+- **`export.py --max-mb --normalize` re-encodes the sound at the preset's bitrate** (A112), the
+  one the size budget subtracted. loudness.py's own true-peak bitrate raise is off there: a file
+  over the size the caller set is the larger miss, and a true peak still over the ceiling is
+  reported as before. Without `--max-mb` nothing changes. Test:
+  `DeliveryTests.test_export_max_mb_with_normalize_stays_under_the_limit`.
+- **`probe.py --field` prints a string as itself and anything else as JSON** (A123); with `--json`
+  every line is JSON. A string stays bare without `--json` so `$(probe.py f --field video.codec)`
+  keeps working. Test: `AnalysisTests.test_probe_field_prints_json_not_python`.
+- **`verify.py` forwards `--overwrite` and `--fast` to its steps, and `--keep` alone keeps the
+  outputs in a folder it names** (A119, A120); stems never collide, compared case-folded (A121).
+  `--hw` is not forwarded: verify.py has no such flag. Without `--overwrite` a rerun into the same
+  `--out` still fails each step on its existing output (every tool refuses to replace one). Test:
+  `AnalysisTests.test_verify_stems_never_collide_and_its_outputs_are_where_it_says`.
+- **`straighten.py --fit crop` writes the displayed frame's own size** (A154): fixed in 3.8.11
+  ("After 3.8.10", A235). `EditingTests.test_straighten_crop_fit_writes_the_source_frame_size`
+  pins it at every angle tried.
+- **`fit.py --method trim` from 0 does not seek** (A158), so its subtitle and data tracks are
+  kept as for any tool that leaves the timeline alone ("Subtitle/data tracks are kept where the
+  picture's timeline is untouched", above). A cue that runs past the trim is kept whole, as
+  export's platform trim keeps it, so the container can be longer than the picture by the rest
+  of that cue. Test: `EditingTests.test_fit_trim_from_the_start_keeps_the_subtitle_track`.

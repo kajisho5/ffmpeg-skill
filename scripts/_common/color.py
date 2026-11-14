@@ -395,8 +395,13 @@ def hdr_to_sdr_chain(meta: dict, tonemap: str, peak: float = 1000.0, desat: floa
     prim = v.get("color_primaries") or "bt2020"
     space = v.get("color_space") or "bt2020nc"
     source_peak = HLG_PEAK_NITS if trc == "arib-std-b67" else peak
-    # zscale needs explicit input tags when the file lacks them
-    chain: List[str] = [
+    # zscale needs explicit input tags when the file lacks them, and on 6.1 its `pin` does not
+    # reach a frame whose own primaries are unspecified ("no path between colorspaces", kind
+    # ffmpeg: --to-sdr --force on an untagged file failed through 3.8.8), so a frame missing a tag
+    # is labelled with what the chain reads it as first
+    missing = not (v.get("color_transfer") and v.get("color_primaries") and v.get("color_space"))
+    label = [f"setparams=color_primaries={prim}:color_trc={trc}:colorspace={space}"] if missing else []
+    chain: List[str] = label + [
         f"zscale=tin={trc}:pin={prim}:min={space}:rin={v.get('color_range') or 'tv'}:t=linear"
         f":npl={TONEMAP_REFERENCE_NITS:g}",
         "format=gbrpf32le",
