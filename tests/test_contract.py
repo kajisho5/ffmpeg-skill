@@ -4384,12 +4384,15 @@ class ContractTests(unittest.TestCase):
             return m.group(1)
         # the same file, whatever spelling (a Windows 8.3 short name) the temp directory has
         self.assertTrue(os.path.samefile(forwarded_path("waveform.py", "--image"), img), proc.stderr)
-        # an overlay font_file reaches overlay.py resolved the same way
+        # an overlay font_file reaches overlay.py resolved the same way (a file that starts as a
+        # TrueType font does: overlay.py refuses one that is not a font, #510)
+        face = work / "face.ttf"
+        face.write_bytes(b"\x00\x01\x00\x00" + b"\x00" * 12)
         ov = work / "p_font.json"
         ov.write_text(json.dumps({"output": "f.mp4", "clips": [{"src": str(self.src)}],
-                                  "overlays": [{"text": "hi", "font_file": "brand.json"}]}), encoding="utf-8")
+                                  "overlays": [{"text": "hi", "font_file": "face.ttf"}]}), encoding="utf-8")
         proc = tool("render", ov, "--dry-run", "--json", cwd=self.work)
-        self.assertTrue(os.path.samefile(forwarded_path("overlay.py", "--font-file"), brand), proc.stderr)
+        self.assertTrue(os.path.samefile(forwarded_path("overlay.py", "--font-file"), face), proc.stderr)
         # and the project file itself is an input: its own output may not replace it
         selfout = work / "selfout.json"
         selfout.write_text(json.dumps({"output": "selfout.json", "clips": [{"src": str(self.src)}]}), encoding="utf-8")

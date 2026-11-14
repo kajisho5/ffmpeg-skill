@@ -1435,5 +1435,51 @@ class Audit459AudioTests(MediaFixtures):
                     self.assertFalse(out.exists())
 
 
+class SilentOutputLoudnessTests(unittest.TestCase):
+    """#403/#510: an output with no integrated loudness (silent, or shorter than one 400 ms block)
+    is not measured against the target, so its loudness step is not ok and says not_measured
+    (3.6.7; through 3.6 it passed with -inf in its numbers). No real input reaches it: a silent or
+    too-short input is refused before the encode. So the output's measurement is replaced, in a
+    child process, by each of the two readings, and the real input and encode run as they do."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "silent_output_loudness"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.src = cls.dir / "tone.wav"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", cls.src)
+
+    CHILD = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import loudness\n"
+        "real, reading = loudness.measure, json.loads(sys.argv[2])\n"
+        "def measure(path, *a):\n"
+        "    return dict(reading) if path == sys.argv[3] else real(path, *a)\n"
+        "loudness.measure = measure\n"
+        "sys.argv = ['loudness.py', sys.argv[4], '-o', sys.argv[3], '--overwrite', '--json']\n"
+        "sys.exit(loudness.main())\n")
+
+    def test_an_output_with_no_integrated_loudness_is_not_measured(self):
+        silent = {"input_i": "-inf", "input_tp": "-inf", "input_lra": "0.0", "input_thresh": "-inf", "target_offset": "inf",
+                  "silent": True, "too_short": False}
+        short = dict(silent, input_tp="-6.0", silent=False, too_short=True)
+        for label, reading, why in (("silent", silent, "silent"), ("too short", short, "400 ms")):
+            with self.subTest(output=label):
+                out = self.dir / "out.wav"
+                proc = subprocess.run([sys.executable, "-c", self.CHILD, str(SCRIPTS), json.dumps(reading), str(out), str(self.src)],
+                                      capture_output=True, text=True, encoding="utf-8")
+                doc = json.loads(proc.stdout)
+                step = next(s for s in doc["verification"] if s["step"] == "loudness")
+                self.assertFalse(step["ok"], step)
+                self.assertTrue(step["reason"].startswith("not_measured:"), step)
+                self.assertIn(why, step["reason"])
+                self.assertNotIn("lufs", step, "no number stands for a reading that was not made")
+                self.assertFalse(doc["verified"], doc)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

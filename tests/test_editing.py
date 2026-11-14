@@ -4899,5 +4899,117 @@ class CompositingAndEdgeInputTests(unittest.TestCase):
                 self.assertIn(v.get("sample_aspect_ratio"), ("1:1", None, "0:1"))
 
 
+class StillAsClipTests(unittest.TestCase):
+    """#510: a still picture given where a clip is taken. A plain `-i` reads it as one frame: as a
+    B-roll it showed for one frame of the cutaway, and as a grid cell it made the grid 0 s long
+    (a traceback on the empty file). It is looped for as long as it is shown."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "still_as_clip"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.a = cls.dir / "black.mp4"
+        if not cls.a.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=160x90:r=30:d=3", "-f", "lavfi",
+               "-i", "sine=f=440:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.a)
+        # a TGA is read by image2 with a duration of one frame (0.04 s), where a PNG or a JPEG has none
+        cls.stills = []
+        for ext in (".png", ".jpg", ".tga"):
+            p = cls.dir / f"white{ext}"
+            if not p.exists():
+                sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=160x90", "-frames:v", "1", p)
+            cls.stills.append(p)
+
+    def bright_seconds(self, path, crop=None):
+        """How long the stored luma is bright (mean above 128), from the frame count at the clip's rate."""
+        vf = (f"crop={crop}," if crop else "") + "extractplanes=y,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+        proc = sh("ffmpeg", "-v", "error", "-i", path, "-vf", vf, "-f", "null", "-")
+        values = [float(m) for m in re.findall(r"YAVG=([\d.]+)", proc.stdout)]
+        self.assertTrue(values, proc.stdout)
+        fps = probe(str(path))["video"]["fps"]
+        return sum(1 for v in values if v > 128) / fps
+
+    def test_a_still_is_shown_for_as_long_as_its_clip_would_be(self):
+        for still in self.stills:
+            with self.subTest(tool="broll", still=still.name):
+                fmt = str(probe(str(still))["format"])  # the fixture is read as a still, by an image demuxer
+                self.assertTrue(fmt == "image2" or fmt.endswith("_pipe"), fmt)
+                out = self.dir / f"broll_{still.suffix[1:]}.mp4"
+                doc = json.loads(script("broll.py", self.a, "--insert", still, "--at", "1", "--duration", "1.5",
+                                        "--from", "0.5", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                # to the frame: every frame of the window is B's
+                self.assertAlmostEqual(self.bright_seconds(out), 1.5, delta=0.5 / 30)
+                self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+            with self.subTest(tool="grid", still=still.name):
+                for pad in ([], ["--pad"]):
+                    out = self.dir / f"grid_{still.suffix[1:]}{'_pad' if pad else ''}.mp4"
+                    doc = json.loads(script("grid.py", self.a, still, "--cols", "2", "--rows", "1", "--label", "none",
+                                            "--cell-width", "160", "--cell-height", "90", *pad, "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+                    self.assertAlmostEqual(self.bright_seconds(out, crop="160:90:160:0"), 3.0, delta=0.1)
+        # a still as the main picture under a looped --image: one picture out, not a run that only
+        # its timeout ended (-shortest never ended it on FFmpeg 6.1)
+        for still in self.stills:
+            with self.subTest(tool="overlay", main=still.name):
+                out = self.dir / f"overlay_main_{still.suffix[1:]}.mp4"
+                doc = json.loads(script("overlay.py", still, "--image", self.stills[0], "--scale", "32", "--timeout", "60",
+                                        "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertLess(probe(str(out))["duration"] or 0.0, 0.5, "it ends with the main picture")
+        # a grid of stills only has no clip to take its length from: refused by name, nothing written
+        out = self.dir / "grid_stills.mp4"
+        out.unlink(missing_ok=True)
+        proc = script("grid.py", *self.stills[:2], "--cols", "2", "--rows", "1", "-o", out, "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("still picture", err["message"])
+        self.assertFalse(out.exists())
+
+    def test_a_short_cutaway_from_a_still_keeps_its_frame(self):
+        """Review of #532: the looped still was bounded at --from + --duration, but the trim takes
+        B's first frame at or after --from, on the still's own 25 fps grid. --from 0.041 puts that
+        frame at 0.08, past a 0.074 s bound: one A-roll frame of cutaway showed no B. A still B
+        shows on as many frames as a clip B does, for each window."""
+        clip = self.dir / "white_clip.mp4"
+        if not clip.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=160x90:r=30:d=5", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", clip)
+        for window in (("--at", "1", "--from", "0.041", "--duration", "0.033"),
+                       ("--at", "1.01", "--from", "0.33", "--duration", "0.07"),
+                       ("--at", "2", "--from", "3.7", "--duration", "0.9")):
+            want = None
+            for b in [clip] + self.stills:
+                with self.subTest(window=" ".join(window), insert=b.name):
+                    out = self.dir / f"broll_short_{b.suffix[1:]}.mp4"
+                    doc = json.loads(script("broll.py", self.a, "--insert", b, *window, "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    frames = round(self.bright_seconds(out) * 30)
+                    if want is None:
+                        want = frames
+                        self.assertGreater(want, 0, "fixture: the clip B shows in the window")
+                    self.assertEqual(frames, want)
+
+    def test_a_grid_whose_first_cell_is_a_still_is_named_as_a_video(self):
+        """Review of #532: with no -o the grid was named after its first cell, white_grid.png for a
+        still, and the image muxer could not write the grid's frames to one file name."""
+        still = self.dir / "first_cell.png"
+        shutil.copy(self.stills[0], still)
+        out = self.dir / "first_cell_grid.mp4"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("grid.py", still, self.a, "--cols", "2", "--rows", "1", "--label", "none",
+                                "--cell-width", "160", "--cell-height", "90", "--json").stdout)
+        self.assertEqual((doc["status"], doc["output"]), ("completed", str(out)))
+        self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+        # a video first cell keeps its own extension, as before
+        doc = json.loads(script("grid.py", self.a, still, "--cols", "2", "--rows", "1", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["output"], str(self.dir / "black_grid.mp4"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

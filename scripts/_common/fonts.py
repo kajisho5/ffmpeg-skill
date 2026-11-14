@@ -278,6 +278,37 @@ _SCRIPT_RANGES = (
 )
 
 
+# The first bytes of the font files FreeType opens (drawtext and libass both load through it):
+# TrueType, OpenType/CFF, Apple 'true'/'typ1', a collection, WOFF/WOFF2, PostScript Type 1 (PFA
+# text, PFB segment marker), BDF and PCF bitmap fonts.
+_FONT_MAGIC = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"typ1", b"ttcf", b"wOFF", b"wOF2",
+               b"%!PS-AdobeFont", b"%!FontType1", b"\x80\x01", b"STARTFONT", b"\x01fcp")
+
+
+def require_font_file(path: str, label: str = "--font-file") -> str:
+    """Refuse a font file that is not there or is not a font, before anything is drawn with it
+    (#510). drawtext that cannot load its `fontfile=` asks fontconfig for a default face instead
+    and exits 0, and libass given the file's directory finds no face in it and does the same, so a
+    text file named `brand.ttf` drew DejaVu Sans with `font_used.substituted: false`. Read by the
+    first bytes, not the extension; a gzipped PCF (`.pcf.gz`) and a Mac `.dfont` (no signature)
+    pass by name."""
+    shown_path = str(path)
+    if not os.path.isfile(shown_path):
+        die(f"{label} {shown_path}: no such file", kind="input")
+    try:
+        with open(shown_path, "rb") as fh:
+            head = fh.read(16)
+    except OSError as exc:
+        die(f"{label} {shown_path} cannot be read: {exc.strerror or exc}", kind="input")
+    lower = shown_path.lower()
+    if head.startswith(_FONT_MAGIC) or lower.endswith(".dfont") or (lower.endswith(".pcf.gz") and head.startswith(b"\x1f\x8b")):
+        return shown_path
+    die(f"{label} {shown_path} is not a font file (it starts with {head[:8]!r}, which no TrueType, OpenType, "
+        "WOFF, Type 1, BDF or PCF font does): drawing with it would fall back to another face without a word",
+        kind="input", hint="name a .ttf, .otf or .ttc file (fc-list lists the installed ones), or --font FAMILY")
+    return shown_path
+
+
 def font_family_of_file(path: str) -> "Optional[str]":
     """The family name of a font FILE -- what libass wants, given a --font-file. `fc-scan` reads
     the file directly; without fontconfig the file stem is the honest best guess."""
