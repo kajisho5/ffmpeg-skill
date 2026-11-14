@@ -3684,6 +3684,11 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             _common.validate_color("red@2")
         self.assertIn("boxblur=7:2", _common.pad_filters(16, 16, "blur", "black", 20))
+        # the chroma planes of 4:2:0 get their own radius (#527): the luma one where it fits,
+        # clamped to the half-size plane (68x120: luma 20, chroma 16), 0 on a plane too small
+        self.assertIn("boxblur=20:2:20:2", _common.pad_filters(1080, 1920, "blur", "black", 20))
+        self.assertIn("boxblur=20:2:16:2", _common.pad_filters(68, 120, "blur", "black", 20))
+        self.assertIn("boxblur=1:2:0:2", _common.pad_filters(4, 4, "blur", "black", 20))
         import sequence as seq_mod  # noqa: E402
         self.assertEqual(sorted(["img10.png", "img2.png", "img1.png"], key=seq_mod.natural_key), ["img1.png", "img2.png", "img10.png"])
         # 6 -- karaoke never emits a non-positive word length

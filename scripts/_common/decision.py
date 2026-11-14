@@ -41,9 +41,13 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
         radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
+        # the chroma planes of 4:2:0 are half-size and boxblur checks them on their own ("chroma_param
+        # radius 20 ... must be <= 17" on a 68x120 frame): the same radius where it fits, clamped to
+        # the chroma plane otherwise, and 0 on a plane too small for any (as redact.py does)
+        chroma = max(0, min(radius, (min(out_w, out_h) // 2 - 1) // 2))
         return (f"split[__fitfg][__fitbg];"
                 f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
-                f"boxblur={radius}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
+                f"boxblur={radius}:2:{chroma}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
                 f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
                 f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
     pad = f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color="
