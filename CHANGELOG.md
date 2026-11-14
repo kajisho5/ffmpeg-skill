@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.11
+
+_Automated release: version and notes generated from pull requests merged since 3.8.10._
+
 ### Fixed
 
 - **Compositing and time tools** (#460: A168, A169, A170, A173, A174, A177, A178, A179, A180).
@@ -35,6 +41,7 @@
   no other picture or sound source. README and the contract's `commands` description say that a
   line naming a file the tool removed at exit (a concat list, an ffmetadata file, ...) cannot be
   run again as printed.
+- fix: compositing, time and edge-input findings of the audit (#460, #461) (#513)
 
 ## 3.8.10
 
