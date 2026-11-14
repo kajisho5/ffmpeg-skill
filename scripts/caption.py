@@ -56,7 +56,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
 from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import subtitle_codec_for, subtitle_container_holds
+from _common.runner import carried_stream_maps, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -1787,7 +1787,7 @@ def main() -> int:
         if meta.get("audio"):
             maps += ["-map", f"0:a:{args.audio_stream}"]
         if existing_subs:
-            maps += ["-map", "0:s?"]
+            maps += ["-map", "0:s?"] + carried_stream_maps(args.input, output, chapters=False)  # their fonts (A256)
         for n in range(len(added)):
             maps += ["-map", f"{n + 1}:0"]
         cmd += maps + ["-c:v", "copy"] + (["-c:a", "copy"] if meta.get("audio") else [])

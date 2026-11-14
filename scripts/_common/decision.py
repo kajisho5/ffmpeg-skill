@@ -385,6 +385,25 @@ def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
     return out[0], out[1]
 
 
+# The size of the decoded clip above which a tool that holds every frame (reverse, a boomerang)
+# says `memory_heavy`.
+HELD_FRAMES_WARN_BYTES = 2 * 1024 ** 3
+
+
+def held_frames_bytes(v: Dict[str, Any], frames: float) -> int:
+    """About how many bytes `frames` decoded frames of the picture `v` (a probe()'s `video`) take:
+    the picture's size, its chroma planes (4:2:0 1.5x, 4:2:2 2x, 4:4:4 3x, an alpha plane one
+    more) and 2 bytes a sample above 8 bits. The one estimate reverse.py and loop.py --boomerang
+    warn from: reverse.py's was the clip's duration alone, so a 30 s 4K60 clip (tens of GB) got
+    no warning and a 61 s 320x180 one did (A174)."""
+    pix = str(v.get("pix_fmt") or "")
+    planes = 3.0 if "444" in pix or pix.startswith(("gbr", "rgb", "bgr")) else 2.0 if "422" in pix else 1.5
+    if pix.startswith(("yuva", "gbra", "rgba", "bgra", "argb", "abgr", "ya")):
+        planes += 1.0
+    depth = 2 if (v.get("bit_depth") or 8) > 8 else 1
+    return int((v.get("width") or 0) * (v.get("height") or 0) * planes * depth * max(0.0, frames))
+
+
 def frame_rate(meta: Optional[Dict[str, Any]]) -> float:
     """The video's frame rate as cut.py's grid takes it: r_frame_rate, else fps; 0.0 when unknown."""
     v = (meta or {}).get("video") or {}

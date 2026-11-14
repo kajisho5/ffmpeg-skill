@@ -441,7 +441,7 @@ Without the other 30, an agent writes raw ffmpeg for those jobs, and a mistake t
 - `join.py` puts transitions between clips that differ in size, frame rate or audio layout. Done by hand, those clips have to be normalised first or xfade fails.
 - `sync.py` and `multicam.py` find the offset between two recordings by audio cross-correlation. No ffmpeg filter measures it.
 
-Every command a tool ran is in its `--json` `commands`, shell-quoted so it can be pasted and run again, and `--dry-run` prints the commands without running anything. In the 100-prompt agent eval (1.17.0, [Tested on real footage](#tested-on-real-footage)) the agent made no raw ffmpeg calls and reported no false successes.
+Every command a tool records as run is in its `--json` `commands` (`batch.py` lists none of its steps' commands, and a measurement pass is listed only where the tool records it), shell-quoted so it can be pasted and run again, except a line that names a file the tool wrote for the run and removed when it exited (such as a concat list, an ffmetadata file, a drawtext text file, a two-pass log or a stage's intermediate), and `--dry-run` on a writing tool prints the commands without writing the output (some dry runs still run a measurement, and `verify.py` ignores `--dry-run`: see below). In the 100-prompt agent eval (1.17.0, [Tested on real footage](#tested-on-real-footage)) the agent made no raw ffmpeg calls and reported no false successes.
 
 ### What does `verified` check, and what can it not tell me?
 

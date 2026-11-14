@@ -1404,6 +1404,65 @@ class SourceCarryTests(MediaFixtures):
         self.assertNotIn("source_carry", doc)
         self.assertNotIn("source_items_dropped", codes)
 
+    def test_attachments_and_a_second_picture_are_kept_or_reported(self):
+        """A256, A258: a Matroska subtitle track's fonts are attachments, which no `-map 0:s?`/`0:d?`
+        selects, so every tool that kept the subtitles dropped them; and a second playable video
+        stream, which the tools leave out (they write the one probe() describes), was not compared
+        at all. Both results said nothing was dropped. Into Matroska the fonts are now copied; into
+        a container that holds none, and for the second picture, source_carry lists them dropped
+        with a source_items_dropped warning. The attachment is any file (Matroska does not read it)."""
+        from _common.probe import carry_inventory
+        srt = OUT / "carry_att.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:01,500\nhi\n", encoding="utf-8")
+        font = OUT / "carry_att_font.ttf"
+        font.write_bytes(b"\x00\x01\x00\x00" + b"not a real font" * 8)
+        fonts = OUT / "carry_att.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264",
+           "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "srt", "-attach", font,
+           "-metadata:s:t", "mimetype=font/ttf", fonts)
+        two = OUT / "carry_twov.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=2",
+           "-f", "lavfi", "-i", "color=c=red:s=640x360:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+           "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", two)
+
+        def kinds(path):
+            return sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", path).stdout.split()
+
+        self.assertEqual(kinds(fonts), ["video", "audio", "subtitle", "attachment"], "fixture")
+        self.assertEqual(kinds(two), ["video", "video", "audio"], "fixture")
+
+        def run(tool, *args):
+            doc = json.loads(script(tool, *args, "--overwrite", "--json").stdout)
+            warned = [w for w in (doc.get("diagnostics") or {}).get("warnings", []) if w["code"] == "source_items_dropped"]
+            return doc, (warned[0]["dropped"] if warned else [])
+
+        # into Matroska: the written file holds the font (run_keeping_subtitles, export's ladder,
+        # caption --mode mux beside an existing track)
+        for n, (tool, args) in enumerate((("denoise.py", ["--fast"]), ("export.py", ["--preset", "youtube", "--fast"]),
+                                          ("export.py", ["--preset", "copy"]), ("caption.py", ["--srt", srt, "--mode", "mux"]))):
+            with self.subTest(tool=tool, args=args):
+                out = OUT / f"carry_att_{n}.mkv"
+                doc, warned = run(tool, fonts, *args, "-o", out)
+                self.assertIn("attachment", kinds(out), doc)
+                self.assertIn("attachments", doc["source_carry"]["kept"], doc)
+                self.assertNotIn("attachments", warned, doc)
+        # into MP4, which holds no attachments: said
+        doc, warned = run("export.py", fonts, "--preset", "youtube", "--fast", "-o", OUT / "carry_att_export.mp4")
+        self.assertIn("attachments", doc["source_carry"]["dropped"], doc)
+        self.assertIn("attachments", warned, doc)
+        # a second picture the tool left out: said, by a re-encode and by a stream copy
+        probe(str(two))
+        self.assertEqual(carry_inventory(str(two))["video_streams"], 2, "fixture")
+        for tool, args in (("denoise.py", ["--fast"]), ("cut.py", ["--start", "0.5", "--end", "1.5"])):
+            with self.subTest(tool=tool):
+                out = OUT / f"carry_twov_{tool[:-3]}.mp4"
+                doc, warned = run(tool, two, *args, "-o", out)
+                self.assertEqual(kinds(out).count("video"), 1, doc)
+                self.assertIn("video_streams", doc["source_carry"]["dropped"], doc)
+                self.assertIn("video_streams", warned, doc)
+
     def test_a_tool_that_moves_the_start_moves_the_start_timecode(self):
         """cut, fit --method trim and sync --trim-second wrote the source's start timecode on a
         file that starts later (a cut from 1 s stamped 01:00:00:00 on frame 30: FFmpeg copies the

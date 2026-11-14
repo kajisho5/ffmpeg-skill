@@ -564,7 +564,9 @@ def main(force_route: Optional[str] = None) -> int:
         rise = int(fs * 0.5)
         pop = f"min(1,(t-{s:.3f})/0.25)"
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
-        ye = (f"{m_top}+{rise}*(1-{pop})" if "top" in pos else f"h-text_h-{m_bottom}-{rise}*(1-{pop})")
+        # every position rises into place, on both routes: a bottom chip started `rise` px above
+        # its rest on drawtext and dropped, where the ASS \move below rises (A177)
+        ye = (f"{m_top}+{rise}*(1-{pop})" if "top" in pos else f"h-text_h-{m_bottom}+{rise}*(1-{pop})")
         alpha = f"min({pop},{fade_a})"
         align = (7 if "left" in pos else 9) if "top" in pos else (1 if "left" in pos else 3)
         y_rest = m_top if "top" in pos else H - m_bottom

@@ -1998,6 +1998,65 @@ class DemoGalleryTests(unittest.TestCase):
                           f"demo) or, if it only ever prints a table, add it to INSPECTION")
 
 
+class RenderSourceCarryTests(unittest.TestCase):
+    """A255: render.py's stages run as their own tools, so its own result never carried
+    source_carry: a one-clip render that lost its source's subtitle track said nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+
+    def test_a_one_source_render_says_what_its_output_lost(self):
+        srt = OUT / "rcarry.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:02,500\nhi\n", encoding="utf-8")
+        src = OUT / "rcarry_src.mp4"  # an MP4 throughout: with no export stage the delivery is the clip stage's file
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=3",
+           "-f", "lavfi", "-i", "sine=d=3", "-i", srt, "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264",
+           "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text", "-timecode", "01:00:00:00", src)
+        music = OUT / "rcarry_music.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=220:d=3", music)
+
+        def render(name, clip, *flags, **more):
+            proj = OUT / f"rcarry_{name}.json"
+            out = OUT / f"rcarry_{name}.mp4"
+            proj.write_text(json.dumps({"output": str(out), "clips": [clip], **more}), encoding="utf-8")
+            doc = json.loads(script("render.py", proj, "--fast", *flags, "--json").stdout)
+            kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", out).stdout.split()
+            tc = (probe(str(out)).get("timecode") or {}).get("value")
+            warned = [w["dropped"] for w in (doc.get("diagnostics") or {}).get("warnings", []) if w["code"] == "source_items_dropped"]
+            return doc, kinds, tc, warned
+
+        # the whole clip: the subtitle track and the timecode are in the written file, and said kept
+        doc, kinds, tc, warned = render("whole", {"src": str(src)})
+        self.assertIn("subtitle", kinds)
+        self.assertEqual(tc, "01:00:00:00")
+        self.assertEqual(sorted(doc["source_carry"]["kept"]), ["subtitles", "timecode"], doc.get("source_carry"))
+        self.assertEqual(warned, [])
+        # from 1 s: the cut's re-encode drops the track (said, with the warning), and the timecode
+        # written is the label of the source frame the output starts on, so it is kept
+        doc, kinds, tc, warned = render("late", {"src": str(src), "in": "1"})
+        self.assertNotIn("subtitle", kinds)
+        self.assertEqual(tc, "01:00:01:00")
+        self.assertIn("subtitles", doc["source_carry"]["dropped"], doc.get("source_carry"))
+        self.assertIn("timecode", doc["source_carry"]["kept"], doc.get("source_carry"))
+        self.assertEqual(warned, [["subtitles"]])
+        # served from --cache, the stages' own verdicts are replayed: the moved label is still kept
+        cdir = OUT / "rcarry_cache"
+        shutil.rmtree(cdir, ignore_errors=True)
+        render("cached", {"src": str(src), "in": "1"}, "--cache", cdir)
+        doc, _kinds, tc, _warned = render("cached", {"src": str(src), "in": "1"}, "--cache", cdir)
+        self.assertTrue(doc["cache"]["hits"], doc.get("cache"))
+        self.assertEqual(tc, "01:00:01:00")
+        self.assertIn("timecode", doc["source_carry"]["kept"], doc.get("source_carry"))
+        shutil.rmtree(cdir, ignore_errors=True)
+        # a second sound source: which one's items the output carries is the project's choice
+        doc, _kinds, _tc, _warned = render("music", {"src": str(src)}, audio={"music": str(music)})
+        self.assertNotIn("source_carry", doc)
+
 
 class CommonFacadeTests(unittest.TestCase):
     """`_common` is a package with a facade since the refactor release after 1.15.0. A name

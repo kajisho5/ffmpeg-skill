@@ -5185,6 +5185,23 @@ def garbage_payload(p):
                              stdout=subprocess.PIPE, check=True).stdout.decode("utf-8")
         self.assertEqual(got.split("\0")[:-1], names)
 
+    def test_printed_commands_say_which_name_a_removed_temp_file(self):
+        """A238: README and the contract said every printed command could be pasted and run again,
+        but a line that names a file the tool wrote for the run (here metadata.py's ffmetadata
+        file) names a path that is gone once the tool exits. The claim is now as narrow as that."""
+        chapters = self.out("a238_chapters.txt")
+        Path(chapters).write_text("0:00 Intro\n0:01 End\n", encoding="utf-8")
+        doc = json.loads(tool("metadata", self.src, "--chapters", chapters, "-o", self.out("a238_ch.mp4"),
+                              "--overwrite", "--json").stdout)
+        named = [a for c in doc["commands"] for a in shlex.split(c) if a.endswith((".txt", ".ffmeta", ".meta"))
+                 or "ffmetadata" in a.lower()]
+        named = [a for a in named if os.path.abspath(a) != os.path.abspath(chapters)]
+        self.assertTrue(named, doc["commands"])
+        self.assertFalse(any(os.path.exists(a) for a in named), named)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("except a line that names a file the tool wrote for the run and removed when it exited", readme)
+        self.assertIn("cannot be run again as printed", sh(sys.executable, SCRIPTS / "_contract.py", "--json").stdout)
+
     def test_join_reports_which_clips_got_generated_silence(self):
         """The VDC paper's join finding: a clip with no audio stream is joined over anullsrc silence
         (right), and the result said verified with no note (wrong: the sound of that span is not

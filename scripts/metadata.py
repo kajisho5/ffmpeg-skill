@@ -35,6 +35,7 @@ from _common import (guard_sidecar, add_common, apply_common, default_output, de
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
                      STATE, read_text_or_die)
 from _common.emit import input_length
+from _common.runner import carried_stream_maps
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
 TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
@@ -267,6 +268,9 @@ def main() -> int:
         cmd += ["-map", "0", "-map_metadata", "0", "-map_chapters", "-1"]
     else:
         cmd += ["-map", "0", "-map_metadata", "0", "-map_chapters", "0"]
+    # not the source's MP4/MOV chapter track: the muxer writes one from the chapters it is given,
+    # and the copy was a stray data track holding the old titles (A173)
+    cmd += carried_stream_maps(args.input, output, attachments=False)
     for key, value in tags.items():
         cmd += ["-metadata", f"{key}={value}"]
     cmd += ["-c", "copy"]

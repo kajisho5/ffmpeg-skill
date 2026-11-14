@@ -101,7 +101,14 @@ def main() -> int:
                                (square + "," if square else "") + f"delogo=x={args.x}:y={args.y}:w={args.width}:h={args.height}",
                                "-map", "0:v:0"]
     else:
-        crop = f"crop={args.width}:{args.height}:{args.x}:{args.y}"
+        # exact=1: crop rounds an odd x/y down to the chroma grid of a 4:2:0 frame otherwise, and
+        # overlay always does, so an odd rectangle was taken from and put back one pixel up and
+        # left (its last column and row left as they were, one outside it changed: A170). The
+        # patch is taken exactly, given a transparent first column/row where x/y is odd, and put
+        # at the even position before it: the luma inside the rectangle is replaced, the luma
+        # outside is not (the chroma pair on an odd edge is shared, so it is half mixed)
+        crop = f"crop={args.width}:{args.height}:{args.x}:{args.y}:exact=1"
+        ox, oy = args.x % 2, args.y % 2
         if args.mode == "blur":
             # boxblur refuses a radius above half the plane: the chroma planes of 4:2:0 are half-size,
             # so they get their own (halved) radius; a 30 px region with the default 20 used to fail
@@ -110,7 +117,12 @@ def main() -> int:
             region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
         else:
             region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"
-        fc = f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];[base][patched]overlay={args.x}:{args.y}{overlay_format(meta)}[out]"
+        if ox or oy:
+            deep = overlay_format(meta)
+            region += (f",format=yuva444p{'10le' if deep else ''},"
+                       f"pad={args.width + 2 * ox}:{args.height + 2 * oy}:{ox}:{oy}:color=black@0")
+        fc = (f"[0:v]{square + ',' if square else ''}split=2[base][region];[region]{region}[patched];"
+              f"[base][patched]overlay={args.x - ox}:{args.y - oy}{overlay_format(meta)}[out]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", fc, "-map", "[out]"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]

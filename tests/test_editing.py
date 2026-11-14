@@ -583,8 +583,9 @@ class EditingTests(MediaFixtures):
         out = OUT / "straighten1.mp4"
         script("straighten.py", self.src, "--degrees", "10", "--fit", "crop", "-o", out)
         m = probe(str(out))
-        self.assertLess(m["video"]["width"], 1280)
-        self.assertLess(m["video"]["height"], 720)
+        # scaled up and cropped back to the frame's own size: the 2 px each axis lost to two
+        # roundings (1278x718 here) was A235, not the border the crop gives up
+        self.assertEqual((m["video"]["width"], m["video"]["height"]), (1280, 720))
         self.assertEqual(m["video"]["width"] % 2, 0)
         self.assertEqual(m["video"]["height"] % 2, 0)
         frame = OUT / "straighten1_corner.raw"
@@ -601,6 +602,15 @@ class EditingTests(MediaFixtures):
         script("straighten.py", src, "--degrees", "10", "-o", out, "--overwrite")
         v = probe(str(out))["video"]
         for x, y in ((1, 1), (v["width"] - 2, 1), (1, v["height"] - 2), (v["width"] - 2, v["height"] - 2)):
+            self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
+        # a size whose centred crop offset was odd (322x184 at -45: 153,87): crop floored it to the
+        # chroma grid and the window moved a pixel towards the top-left fill
+        src = tiny_clip(OUT / "straighten_white_322.mp4", "color=c=white:s=322x184:r=30", seconds=0.5)
+        out = OUT / "straighten_white_322_45.mp4"
+        script("straighten.py", src, "--degrees", "-45", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (322, 184))
+        for x, y in ((0, 0), (v["width"] - 1, 0), (0, v["height"] - 1), (v["width"] - 1, v["height"] - 1)):
             self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
 
     def test_straighten_pad_fit_grows_the_frame(self):
@@ -4073,6 +4083,173 @@ class WordsFileTests(unittest.TestCase):
                     self.assertEqual((result["status"], result["filler"]["lang"]), ("completed", "en"), result)
                     self.assertEqual([s["word"] for s in result["filler"]["removed"]], ["er"])
                 self.assertFalse(out.exists())
+
+
+class CompositingAndEdgeInputTests(unittest.TestCase):
+    """Issues #460 and #461 (audit 2026-11): a cutaway order, a hold that moves nothing, a chapter
+    track copied as data, what reverse holds in memory and how it ends on a variable rate, and
+    straighten's crop window. Every fixture is a lavfi clip of a few seconds built here."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.clip = tiny_clip(OUT / "a460_clip.mp4", "testsrc2=s=320x180:r=25", seconds=3, audio=True)
+
+    @staticmethod
+    def _counts(path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_entries",
+                              "stream=codec_type,codec_tag_string,nb_read_frames,duration", "-of", "json", str(path)],
+                             stdout=subprocess.PIPE, text=True, check=True).stdout
+        return json.loads(out)["streams"]
+
+    def test_broll_judges_overlap_by_time_not_by_the_order_given(self):
+        """A179: cutaways that do not overlap, given later one first, were refused as 'overlaps the
+        previous one'. Both windows are now written, and an overlap is still refused, naming both."""
+        out = OUT / "a460_broll_order.mp4"
+        # the cutaway is plain red, which the main clip (testsrc2) never is at the pixel read: one
+        # sample of two moving test patterns could not tell them apart on every encoder
+        red = tiny_clip(OUT / "a460_broll_red.mp4", "color=c=red:s=320x180:r=25", seconds=1, audio=True)
+        doc = json.loads(script("broll.py", self.clip, "--insert", red, "--at", "2", "--duration", "0.5",
+                                "--insert", red, "--at", "0.4", "--duration", "0.5", "--fast", "-o", out,
+                                "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertEqual([round(c["at"], 3) for c in doc["cutaways"]], [2.0, 0.4])
+
+        def is_red(t):
+            r, g, b = frame_rgb(out, t, 160, 90)
+            return r > 150 and g < 90 and b < 90
+
+        for at in (0.4, 2.0):
+            self.assertTrue(is_red(at + 0.2), f"the cutaway at {at}s must show the inserted clip: {frame_rgb(out, at + 0.2, 160, 90)}")
+        for t in (0.1, 1.4, 2.8):
+            self.assertFalse(is_red(t), f"the main clip must show at {t}s: {frame_rgb(out, t, 160, 90)}")
+        proc = script("broll.py", self.clip, "--insert", self.clip, "--at", "2", "--duration", "0.5",
+                      "--insert", self.clip, "--at", "1.8", "--duration", "0.5", "-o", OUT / "a460_broll_bad.mp4",
+                      "--json", expect_fail=True)
+        self.assertIn("overlaps cutaway 2", json.loads(proc.stdout)["error"]["message"])
+
+    def test_freeze_of_the_last_frame_keeps_the_subtitle_track(self):
+        """A180: a hold of the last frame (the default with no --at) moves no cue, but the track was
+        dropped as for a hold that pushes the rest of the clip later. It is kept now; a hold inside
+        the clip still drops it (decided: its cues would fire early)."""
+        srt = OUT / "a460_cue.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:01,500\nhello\n", encoding="utf-8")
+        subs = OUT / "a460_subs.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.clip, "-i", srt, "-map", "0", "-map", "1",
+           "-c", "copy", "-c:s", "srt", subs)
+        out = OUT / "a460_freeze_end.mkv"
+        doc = json.loads(script("freeze.py", subs, "--hold", "0.5", "--fast", "-o", out, "--json").stdout)
+        self.assertIn("subtitle", [s["codec_type"] for s in self._counts(out)])
+        self.assertFalse(doc.get("dropped_non_av_streams"))
+        self.assertEqual(doc["source_carry"]["dropped"], [])
+        mid = OUT / "a460_freeze_mid.mkv"
+        script("freeze.py", subs, "--at", "1", "--hold", "0.5", "--fast", "-o", mid)
+        self.assertNotIn("subtitle", [s["codec_type"] for s in self._counts(mid)])
+
+    def test_a_chapter_track_is_not_copied_as_a_data_stream(self):
+        """A173: an MP4's chapter text track (a data stream FFmpeg reads with the tag `text`) was
+        copied by `-map 0` / `-map 0:d?` as a stray `gpmd` data track holding the old titles:
+        --clear-chapters left them in the file and every pass added a track. The written file holds
+        no data track but the chapter track its own chapters make."""
+        chapters = OUT / "a460_chapters.txt"
+        chapters.write_text("0:00 Intro\n0:01 Middle\n0:02 End\n", encoding="utf-8")
+        tagged = OUT / "a460_chapters.mp4"
+        script("metadata.py", self.clip, "--chapters", chapters, "-o", tagged)
+        self.assertEqual([s["codec_tag_string"] for s in self._counts(tagged) if s["codec_type"] == "data"], ["text"])
+        cleared = OUT / "a460_cleared.mp4"
+        script("metadata.py", tagged, "--clear-chapters", "-o", cleared)
+        self.assertEqual([s for s in self._counts(cleared) if s["codec_type"] == "data"], [])
+        self.assertNotIn(b"Middle", cleared.read_bytes(), "the old chapter titles must not stay in the file")
+        again = OUT / "a460_again.mp4"
+        script("metadata.py", tagged, "--chapters", chapters, "-o", again)
+        self.assertEqual([s["codec_tag_string"] for s in self._counts(again) if s["codec_type"] == "data"], ["text"])
+        for tool, args, name in (("denoise.py", ["--fast"], "a460_denoise.mp4"),
+                                 ("export.py", ["--preset", "youtube", "--fast"], "a460_export.mp4")):
+            with self.subTest(tool=tool):
+                out = OUT / name
+                script(tool, tagged, *args, "-o", out)
+                self.assertEqual([s["codec_tag_string"] for s in self._counts(out) if s["codec_type"] == "data"], ["text"])
+
+    def test_reverse_warns_from_what_it_holds_not_from_the_length(self):
+        """A174: memory_heavy was keyed on a length above 60 s, so a 30 s 4K60 clip (about 21 GiB of
+        decoded frames) got no warning and a 61 s 320x180 one (about 0.1 GiB) did. 5 s of 4K60 is
+        about 3.5 GiB of 4:2:0 frames."""
+        big = OUT / "a460_4k60.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=3840x2160:r=60:d=5",
+           "-c:v", "libx264", "-preset", "ultrafast", "-qp", "40", big)
+        small = OUT / "a460_small61.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=320x180:r=25:d=61",
+           "-c:v", "libx264", "-preset", "ultrafast", "-qp", "40", small)
+        for path, heavy in ((big, True), (small, False)):
+            with self.subTest(clip=path.name):
+                doc = json.loads(script("reverse.py", path, "--dry-run", "-o", OUT / "a460_rev_plan.mp4", "--json").stdout)
+                codes = [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])]
+                self.assertEqual("memory_heavy" in codes, heavy, codes)
+        big.unlink()
+
+    def test_reverse_of_a_variable_rate_clip_ends_with_its_sound(self):
+        """A234: on a variable frame rate the graph closed on r_frame_rate and the output's -r then
+        resampled it to the average rate, so reverse wrote 51 frames for 49 that ran 81 ms past its
+        sound. The graph now closes on the rate the encoder line delivers. The picture's length is
+        measured, not its frame count (which is the FFmpeg's)."""
+        vfr = OUT / "a460_vfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-vf", "select='not(between(n,10,15))*not(between(n,40,44))'",
+           "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", vfr)
+        src = probe(str(vfr))
+        self.assertTrue(src["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        out = OUT / "a460_vfr_rev.mp4"
+        script("reverse.py", vfr, "--fast", "-o", out)
+        streams = {s["codec_type"]: s for s in self._counts(out)}
+        frame = 1 / float(probe(str(out))["video"]["fps"])
+        self.assertLess(abs(float(streams["video"]["duration"]) - float(streams["audio"]["duration"])), frame / 2, streams)
+        self.assertLess(abs(float(streams["video"]["duration"]) - float(src["video"]["duration"])), frame / 2, streams)
+
+    def test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame(self):
+        """#513 review: with the closing rate the delivered one (about 20 fps here), the trim that
+        drops the hold's spare clones cut half a DELIVERED frame before the end, and a real last
+        frame nearer the end than that (1.983 s on the source's 1/60 grid) was dropped before the
+        reversal, which then opened on the frame before it. The last frame is the only white one."""
+        vfr = OUT / "a460_vfr_last.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=160x120:r=60:d=2",
+           "-f", "lavfi", "-i", "sine=d=2",
+           "-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='eq(n,119)',select='not(mod(n,3))+eq(n,119)'",
+           "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", vfr)
+        self.assertTrue(probe(str(vfr))["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        out = OUT / "a460_vfr_last_rev.mp4"
+        script("reverse.py", vfr, "--fast", "-o", out)
+        self.assertGreater(min(frame_rgb(out, 0, 80, 60)), 200, "the reversed clip must open on the source's last frame")
+
+    def test_loop_crossfade_keeps_a_late_picture_with_its_sound(self):
+        """A168: the crossfade's unit rebased each stream to its own start (the picture's setpts,
+        the sound's aresample first_pts=0), so a picture that starts 0.2 s after its sound came out
+        200 ms behind it in every repeat. Both are now shifted by the picture's start. The first
+        flash is the faded-in tail's, which no beep marks."""
+        for name, kw in (("vlate", {"video_late": 0.2}), ("alate", {"audio_late": 0.2}), ("sync", {})):
+            with self.subTest(source=name):
+                src = make_flash_beep(OUT / f"a460_loop_{name}.mp4", **kw)
+                out = OUT / f"a460_loop_{name}_x.mp4"
+                script("loop.py", src, "--crossfade", "0.5", "--times", "2", "--fast", "-o", out)
+                offsets = av_offsets_ms(out)[1:]
+                self.assertTrue(offsets, name)
+                for o in offsets:
+                    self.assertLessEqual(abs(o), 5, f"{name}: flash minus beep {offsets} ms")
+
+    def test_straighten_crop_writes_the_source_size_with_square_pixels(self):
+        """A235: --fit crop scaled by s and cropped back to trunc(iw/s/2)*2, two roundings that
+        wrote 1920x1080 as 1918x1078 (and, on other angles, a SAR such as 6112:6111)."""
+        hd = tiny_clip(OUT / "a460_hd.mp4", "testsrc2=s=1920x1080:r=25", seconds=0.4)
+        for degrees in ("3", "-7", "12"):
+            with self.subTest(degrees=degrees):
+                out = OUT / "a460_straight.mp4"
+                script("straighten.py", hd, "--degrees", degrees, "--fit", "crop", "--fast", "-o", out)
+                v = probe(str(out))["video"]
+                self.assertEqual((v["width"], v["height"]), (1920, 1080))
+                self.assertIn(v.get("sample_aspect_ratio"), ("1:1", None, "0:1"))
 
 
 if __name__ == "__main__":

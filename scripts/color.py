@@ -32,7 +32,7 @@ import os
 import sys
 from typing import List, Optional
 
-from _common.runner import fail_if_classified
+from _common.runner import carried_stream_maps, fail_if_classified
 from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
@@ -329,7 +329,8 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool, src_alpha=lambd
     ext = os.path.splitext(output)[1].lower()
     tags = ["-colorspace", names[0], "-color_primaries", names[1], "-color_trc", names[2]]
     bsf = retag_bsf(meta, args.retag)
-    cmd = ffmpeg_base() + ["-i", args.input, "-map", "0", "-c", "copy"] + bsf + tags
+    cmd = (ffmpeg_base() + ["-i", args.input, "-map", "0"] + carried_stream_maps(args.input, output, attachments=False)
+           + ["-c", "copy"] + bsf + tags)
     if ext in (".mp4", ".mov", ".m4v"):
         cmd += ["-movflags", "+faststart"]
     cmd.append(output)
@@ -357,8 +358,9 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool, src_alpha=lambd
         info("re-encoding video/audio with the new tags (subtitles/data streams kept)")
         label = ["-vf", f"setparams=color_primaries={names[1]}:color_trc={names[2]}:colorspace={names[0]}"]
         enc = x264_args(args.crf, args.preset, keep_bt709=False) + (aac_args() if has_audio else [])
-        cmd = ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
-                                "-map", "0:s?", "-map", "0:d?"] + label + enc + ["-c:s", "copy", "-c:d", "copy", output]
+        cmd = (ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
+                                "-map", "0:s?", "-map", "0:d?"] + carried_stream_maps(args.input, output) + label + enc
+               + ["-c:s", "copy", "-c:d", "copy", output])
         proc2 = run(cmd, check=False)
         fail_if_classified(proc2)
         if proc2.returncode != 0:
@@ -552,7 +554,8 @@ def main() -> int:
             die("--strip-dovi only applies to HEVC (Dolby Vision) streams")
         if not v.get("dolby_vision"):
             warn("no Dolby Vision metadata detected; removing unregistered SEI anyway", "dovi_not_detected")
-        cmd = ffmpeg_base() + ["-i", args.input, "-map", "0", "-c", "copy", "-bsf:v", "filter_units=remove_types=62", "-tag:v", "hvc1"]
+        cmd = (ffmpeg_base() + ["-i", args.input, "-map", "0"] + carried_stream_maps(args.input, output, attachments=False)
+               + ["-c", "copy", "-bsf:v", "filter_units=remove_types=62", "-tag:v", "hvc1"])
         if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
             cmd += ["-movflags", "+faststart"]
         cmd.append(output)
