@@ -6,6 +6,7 @@
 """
 import json
 import math
+import os
 import re
 import shlex
 import shutil
@@ -147,7 +148,7 @@ class AudioTests(MediaFixtures):
         self.assertEqual(a["channels"], 2)
         out2 = OUT / "ducked.mp4"
         proc = script("audio.py", self.src, "--music", self.long_ref, "--duck", "--music-fade-out", "2", "-o", out2)
-        self.assertIn("sidechaincompress", proc.stderr)
+        self.assertIn("sidechaingate", proc.stderr)
         self.assertEqual(proc.stderr.count("afade=t=out"), 1, "only the bed fades, not the whole mix")
         proc_mix = script("audio.py", self.src, "--fade-out", "1", "--dry-run")
         self.assertEqual(proc_mix.stderr.count("afade=t=out"), 1)
@@ -191,19 +192,21 @@ class AudioTests(MediaFixtures):
             self.assertGreater(probe(str(real))["duration"], 1.0)
 
     def test_audio_duck_parameters_reach_the_sidechain_filter(self):
-        """1.13: the ducking knobs are sayable. The default command line must not move (the
-        threshold flag speaks dBFS, the filter takes the same 0.05 linear it always did), and
-        every flag must land in the filter string and in --json's audio block."""
+        """1.13: the ducking knobs are sayable. The default threshold is the 0.05 linear the bed
+        has used since 1.4 (the flag speaks dBFS), and every flag must land in the filter string
+        and in --json's audio block. Since A134 the duck is a sidechain gate whose passed part is
+        taken back off the bed by 1 - 10^(-amount/20): the depth is --duck-amount in dB."""
         out = OUT / "duck_params.mp4"
         default, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "-o", out)
-        self.assertIn("sidechaincompress=threshold=0.05:ratio=4.0:attack=20:release=400:makeup=1", default,
-                      "the default duck filter is unchanged")
+        self.assertIn("[mwet][key]sidechaingate=threshold=0.05:ratio=9000:range=0:attack=20:release=400[mspeech];"
+                      "[mspeech]volume=-0.748811[mcut]", default, "the default duck: 0.05 linear, 12 dB deep")
         self.assertEqual(data["audio"]["duck"]["threshold_linear"], 0.05)
         tuned, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "--duck-amount", "18",
                                           "--duck-threshold", "-30", "--duck-attack", "5", "--duck-release", "250", "-o", out)
-        self.assertIn("sidechaincompress=threshold=0.0316228:ratio=6.0:attack=5:release=250:makeup=1", tuned)
+        self.assertIn("sidechaingate=threshold=0.0316228:ratio=9000:range=0:attack=5:release=250[mspeech];"
+                      "[mspeech]volume=-0.874107[mcut]", tuned)
         self.assertEqual(data["audio"]["duck"], {"amount_db": 18.0, "threshold_db": -30.0, "threshold_linear": 0.0316228,
-                                                 "ratio": 6.0, "attack_ms": 5.0, "release_ms": 250.0})
+                                                 "ratio": 9000.0, "attack_ms": 5.0, "release_ms": 250.0})
         # no --duck: the block says so rather than describing settings nothing used
         _, data = self._audio_filters(self.src, "--music", self.long_ref, "-o", out)
         self.assertIsNone(data["audio"]["duck"])
@@ -287,7 +290,7 @@ class AudioTests(MediaFixtures):
                                           "--effects", self.mic, "--effects-volume", "-20", "-o", out)
         self.assertIn("volume=-20dB", graph)
         self.assertIn("[effects]", graph)
-        self.assertGreater(graph.index("[effects]"), graph.index("sidechaincompress"),
+        self.assertGreater(graph.index("[effects]"), graph.index("sidechaingate"),
                            "the effects bed is mixed after the duck, so the sidechain never sees it")
         self.assertTrue(data["audio"]["effects"])
         script("audio.py", self.src, "--effects", self.mic, "--effects-volume", "-20", "-o", out)
@@ -1184,6 +1187,166 @@ class DownmixLevelTests(unittest.TestCase):
         script("audio.py", fc, "--downmix", "-o", out_c)
         script("audio.py", fl, "--downmix", "-o", out_l)
         self.assertAlmostEqual(self._peak_db(out_l) - self._peak_db(out_c), 3.01, delta=0.2)
+
+
+class Audit459AudioTests(MediaFixtures):
+    """Issue #459's audio.py and waveform.py items, each measured on the written file: a limiter
+    that ran before the beds were mixed in (A129), a duck depth that was a compressor ratio
+    (A134), a bed's fade timed past the bed's end (A142), a bitrate that never reached an audio
+    codec (A143, and loudness.py's sibling), help that gave the filters' defaults wrongly (A135)
+    and a waveform named after an audio input (A137)."""
+
+    RATE = 48000
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+
+        def tone(name, graph):
+            path = OUT / name
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", graph, "-ac", "1",
+               "-c:a", "pcm_s16le", path)
+            return path
+        # lavfi's sine is 1/8 of full scale: volume=7 puts these at -1.16 dBFS
+        cls.voice = tone("a459_voice.wav", "sine=f=300:d=6:r=48000,volume=7")
+        cls.bed = tone("a459_bed.wav", "sine=f=500:d=8:r=48000,volume=7")
+        # speech (200 Hz) from 2 to 6 s and exact zeros around it, a bed (2 kHz) for 8 s
+        cls.speech = tone("a459_speech.wav", "sine=f=200:d=8:r=48000,volume='if(between(t,2,6),4,0)':eval=frame")
+        cls.bed_hi = tone("a459_bed_hi.wav", "sine=f=2000:d=8:r=48000,volume=2")
+        cls.silence = tone("a459_silence.wav", "anullsrc=r=48000:cl=mono,atrim=0:6")
+        cls.short_bed = tone("a459_short_bed.wav", "sine=f=500:d=3:r=48000,volume=4")
+
+    @classmethod
+    def _pcm(cls, path, af="anull"):
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-map", "0:a:0",
+                              "-af", af, "-ac", "1", "-ar", str(cls.RATE), "-f", "s16le", "-acodec", "pcm_s16le", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
+        import array
+        pcm = array.array("h")
+        pcm.frombytes(raw[:len(raw) // 2 * 2])
+        if sys.byteorder == "big":
+            pcm.byteswap()
+        return pcm
+
+    @staticmethod
+    def _db(value):
+        return 20 * math.log10(value) if value > 0 else -120.0
+
+    def _peak_db(self, pcm):
+        return self._db(max(abs(s) for s in pcm) / 32768.0)
+
+    def _rms_db(self, pcm, start, end):
+        block = pcm[int(start * self.RATE):int(end * self.RATE)]
+        return self._db(math.sqrt(sum(s * s for s in block) / max(1, len(block))) / 32768.0)
+
+    def test_a_limiter_is_the_ceiling_of_the_mix_it_delivers(self):
+        """A129: --limit (and --voice strong's limiter) ran on the voice before --music/--effects
+        were mixed in, so the delivered file peaked over the ceiling: -6 asked, 0 dBFS written."""
+        self.assertGreater(self._peak_db(self._pcm(self.voice)), -1.5, "fixture: a voice near full scale")
+        cases = ((("--music", self.bed, "--music-volume", "-3", "--limit", "--limit-ceiling", "-6"), -6.0),
+                 (("--effects", self.bed, "--effects-volume", "-3", "--limit", "--limit-ceiling", "-6"), -6.0),
+                 (("--music", self.bed, "--music-volume", "-3", "--duck", "--limit", "--limit-ceiling", "-6"), -6.0),
+                 (("--music", self.bed, "--music-volume", "-3", "--voice", "strong"), -1.0))
+        for n, (flags, ceiling) in enumerate(cases):
+            with self.subTest(flags=[str(f) for f in flags if str(f).startswith("--")]):
+                out = OUT / f"a459_limit_{n}.wav"
+                script("audio.py", self.voice, *flags, "-o", out)
+                self.assertLessEqual(self._peak_db(self._pcm(out)), ceiling + 0.1, "the written file holds the ceiling")
+        # without a bed the limiter still runs on the main track, where it always ran
+        _, data = self._audio_filters(self.voice, "--limit", "-o", OUT / "a459_limit_alone.wav")
+        self.assertIn("[0:a:0]alimiter=", data["commands"][-1])
+
+    def test_duck_amount_is_the_depth_in_db(self):
+        """A134: --duck-amount was a compressor ratio (max(2, amount/3)): 0 and 3 ducked the same
+        9.7 dB here and 60 ducked 18. The bed under the speech is now `amount` dB lower than in the
+        pauses, the bed's own level measured apart from the speech (a 1 kHz high-pass)."""
+        bed_only = "highpass=f=1000,highpass=f=1000,highpass=f=1000"
+        for amount in (0, 3, 12, 30):
+            with self.subTest(amount=amount):
+                out = OUT / f"a459_duck_{amount}.wav"
+                doc = json.loads(script("audio.py", self.speech, "--music", self.bed_hi, "--music-volume", "0", "--duck",
+                                        "--duck-amount", str(amount), "-o", out, "--json").stdout)
+                self.assertEqual(doc["audio"]["duck"]["amount_db"], amount)
+                pcm = self._pcm(out, bed_only)
+                depth = self._rms_db(pcm, 0.5, 1.5) - self._rms_db(pcm, 3.0, 5.0)
+                self.assertAlmostEqual(depth, amount, delta=0.5 if amount < 30 else 1.0)
+                # in the pauses the bed is left at its level, at the start (a key of zeros) as after the speech
+                self.assertAlmostEqual(self._rms_db(pcm, 0.5, 1.5), self._rms_db(pcm, 7.2, 7.9), delta=0.3)
+
+    def test_music_fade_out_ends_with_a_bed_shorter_than_the_output(self):
+        """A142: a 3 s bed under 6 s of sound faded from 5 s, after it had stopped at full level."""
+        out = OUT / "a459_short_bed_fade.wav"
+        script("audio.py", self.silence, "--music", self.short_bed, "--music-volume", "0", "--music-fade-out", "1", "-o", out)
+        pcm = self._pcm(out)
+        full = self._rms_db(pcm, 1.0, 1.9)
+        self.assertGreater(full, -12, "the bed plays at its level before the fade")
+        self.assertLess(self._rms_db(pcm, 2.85, 2.97), full - 20, "faded out by the bed's own end")
+
+    def test_bitrate_reaches_the_codec_of_an_audio_output(self):
+        """A143: --bitrate was ignored for every audio extension (.m4a stayed 256k, .mp3 -q:a 0);
+        loudness.py's --audio-bitrate likewise, and its retries re-encoded an .m4a at 256k."""
+        def kbps(path):
+            meta = probe(str(path))
+            return os.path.getsize(path) * 8 / meta["duration"] / 1000
+        for ext in (".m4a", ".mp3"):
+            with self.subTest(ext=ext):
+                out = OUT / f"a459_bitrate{ext}"
+                script("audio.py", self.voice, "--bitrate", "64k", "-o", out)
+                self.assertAlmostEqual(kbps(out), 64, delta=12)
+        # libopus is VBR and overshoots on a pure tone (99 kbps at 64k): two rates, compared
+        low, high = OUT / "a459_bitrate_32.opus", OUT / "a459_bitrate_160.opus"
+        script("audio.py", self.voice, "--bitrate", "32k", "-o", low)
+        script("audio.py", self.voice, "--bitrate", "160k", "-o", high)
+        self.assertLess(kbps(low), kbps(high) * 0.6)
+        out = OUT / "a459_loud_bitrate.m4a"
+        script("loudness.py", self.voice, "--audio-bitrate", "96k", "-o", out)
+        self.assertAlmostEqual(kbps(out), 96, delta=14)
+        out = OUT / "a459_loud_bitrate.mp3"
+        doc = json.loads(script("loudness.py", self.voice, "--audio-bitrate", "96k", "-o", out, "--json").stdout)
+        self.assertAlmostEqual(kbps(out), 96, delta=14)
+        self.assertEqual(doc["result"]["audio_bitrate_used"], "96k", "the result names the rate the .mp3 was written at")
+        for tool, flag in (("audio.py", "--bitrate"), ("loudness.py", "--audio-bitrate")):
+            with self.subTest(tool=tool, ext=".wav"):
+                doc = json.loads(script(tool, self.voice, flag, "64k", "-o", OUT / "a459_bitrate.wav", "--json",
+                                        expect_fail=True).stdout)
+                self.assertEqual(doc["error"]["kind"], "input")
+                self.assertIn("lossless", doc["error"]["message"])
+
+    def test_dynamics_help_gives_the_filters_own_defaults_in_the_flags_unit(self):
+        """A135: the help said acompressor's threshold defaults to -12.4 dB (it is 0.125, -18.06 dB),
+        agate's range to -6.1 dB (0.06125, -24.26 dB), and gave the knee's linear 1..8 and 2.83 as
+        dB. Each default is read from ffmpeg's own filter help and converted to the flag's dB."""
+        def default(filt, opt):
+            text = sh("ffmpeg", "-hide_banner", "-h", f"filter={filt}").stdout
+            return float(re.search(rf"^\s+{opt}\s+<double>.*\(default ([0-9.]+)\)", text, re.M).group(1))
+        help_text = " ".join(sh(sys.executable, SCRIPTS / "audio.py", "--help").stdout.split())
+        for flag, filt, opt in (("--comp-threshold", "acompressor", "threshold"), ("--comp-knee", "acompressor", "knee"),
+                                ("--gate-threshold", "agate", "threshold"), ("--gate-range", "agate", "range"),
+                                ("--gate-knee", "agate", "knee")):
+            with self.subTest(flag=flag):
+                said = re.search(rf"{flag} [A-Z_]+ [^\[\]]*?default (-?[0-9.]+)", help_text).group(1)
+                self.assertAlmostEqual(float(said), 20 * math.log10(default(filt, opt)), delta=0.01)
+        # the knee's whole range can be asked for: 18 dB is linear 7.94 (1..8 dB stopped at 2.51)
+        _, data = self._audio_filters(self.voice, "--compress", "--comp-knee", "18", "-o", OUT / "a459_knee.wav")
+        self.assertIn("knee=7.94328", data["commands"][-1])
+
+    def test_waveform_of_an_audio_input_is_a_video_by_default(self):
+        """A137: the default output kept the input's extension: a .wav input failed in the WAV
+        muxer and a .m4a input got an H.264 video named .m4a."""
+        for ext in (".wav", ".m4a"):
+            with self.subTest(ext=ext):
+                src = OUT / f"a459_wave_src{ext}"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.voice, "-t", "2", src)
+                want = OUT / "a459_wave_src_waveform.mp4"
+                if want.exists():
+                    want.unlink()
+                doc = json.loads(script("waveform.py", src, "--width", "320", "--height", "180", "--json").stdout)
+                self.assertEqual(Path(doc["output"]).name, want.name)
+                meta = probe(str(want))
+                self.assertIsNotNone(meta["video"])
+                self.assertIsNotNone(meta["audio"])
+        doc = json.loads(script("waveform.py", self.voice, "-o", OUT / "a459_wave.wav", "--json", expect_fail=True).stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
 
 
 if __name__ == "__main__":

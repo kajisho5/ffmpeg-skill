@@ -223,6 +223,60 @@ _Automated release: version and notes generated from pull requests merged since 
   (`words_outside_input`) when word timings start at or after the end of the input. Noto Emoji's file
   names (`emoji_u1f600.png`, a keycap's `emoji_u0031_20e3.png`) are found in `--emoji-assets`.
 - fix: refuse a component the build lacks before FFmpeg runs; say what was not measured; name a file in the wrong format (#402, #403, #404) (#509)
+- **`audio.py --duck-amount` is the depth in dB** (audit A134). It was a sidechain compressor's
+  ratio (`max(2, amount/3)`), so 0 and 3 ducked the same 9.7 dB on the test's speech and 60
+  ducked 18. The bed is now lowered by the amount under speech and left at its level in the
+  pauses (a sidechain gate keyed by the speech; measured 3.0, 12.0 and 30.1 dB for 3, 12 and 30),
+  also when the voice track starts with digital silence. The result's `duck.ratio` is the gate's
+  (9000); `--duck-threshold`, `--duck-attack` and `--duck-release` keep their meaning.
+- **`audio.py --limit` and `--voice strong`'s limiter hold their ceiling with `--music` or
+  `--effects`** (A129): they ran on the voice before the beds were mixed in, and
+  `--limit-ceiling -6` wrote a 0 dBFS file. With a bed they run on the mix.
+- **`audio.py --music-fade-out` fades a bed shorter than the output** (A142) at the bed's end; it
+  was timed on the output's end, after the bed had stopped at full level. A `--music-loop`ed bed
+  is faded at the output's end, as before.
+- **`audio.py --bitrate` and `loudness.py --audio-bitrate` reach an audio output's codec** (A143):
+  `.m4a`/`.aac` were 256k and `.mp3` `-q:a 0` whatever was asked. Given, the rate replaces the
+  extension's setting (`.mp3` is then CBR); not given, nothing changes. `.wav` and `.flac` refuse
+  it (`kind: input`). `loudness.py` reports an unpinned `.m4a` as the 256k it is written at (it
+  said 192k), its overshoot retry for one is 320k (it re-encoded at 256k), and a pinned rate is
+  reported as `audio_bitrate_used` for `.mp3`/`.ogg`/`.opus` too.
+- **`audio.py --help` gives the dynamics filters' own defaults in dB, and a knee's whole range can
+  be asked for** (A135): the compressor threshold default is -18.06 dB (not -12.4), the gate's
+  range -24.26 dB (not -6.1), and `--comp-knee`/`--gate-knee` take 0..18.06 dB, the filters'
+  linear 1..8 (default 9.03 dB); they took 1..8 dB, linear 1.12..2.51.
+- **`sync.py`'s confidence no longer takes the peak's own neighbour as the runner-up** (A126): an
+  exact match read 0.59 and a tie between two offsets 0.50. A file against itself or a shifted copy now reads
+  above 0.95 on the test's bursts, and a tie at most 0.5. `multicam.py`'s confidence is the same measurement. The benchmark figures in
+  `references/scripts.md` were measured before this and were not re-run.
+- **`sync.py --help` states the correction the code applies** (A133): a positive offset delays the
+  second file; the help said it is shifted earlier.
+- **`multicam.py --switch` refuses ranges that overlap** (A132, `kind: input`, a dry run too):
+  both were rendered, so the overlap's picture played twice and every later cut ran behind the
+  sound.
+- **`multicam.py --fix-drift` retimes a drifting camera's picture with its sound** (A130): the
+  sound was resampled to the reference clock and the picture was not, so a 2000 ppm camera's
+  59 s range ran 0.12 s long and the next cut came four frames late. `--write-project`'s clips
+  still carry no retiming.
+- **`scenes.py --highlights` ranges start at or after their scene's cut** (A139): a window could
+  start on the 0.5 s grid point before it, up to 0.5 s into the previous shot. The start and end
+  are rounded inward to the hundredth they are written in.
+- **`scenes.py --sheet` with thousands of scenes is written** (A138): its select expression passed
+  Linux's 128 KiB argument limit at about 2,400-3,000 scenes and the run ended in an OSError
+  traceback with no JSON. A filter graph over 100,000 characters (8,000 on Windows) in a command
+  the shared runner's `run()` or `run_analysis()` starts is now handed to ffmpeg in a temp file;
+  the recorded command keeps it inline. Run here on FFmpeg 6.1 only (`-filter_script:v`,
+  `-filter_complex_script`); 7.0 and later get `-/filter:v`, `-/filter_complex`, not run here.
+- **Decoded audio for analysis takes 4 bytes a sample, not ~32** (A140): `scenes.py` held a list
+  of Python floats for the whole file (~2.3 GB an hour by default), as did `multicam.py --switch
+  energy` per camera, `sync.py`, `cut.py --snap beats` and `loop.py`'s seam check. The values are
+  the same; the decode is still held whole.
+- **The beat grid keeps its refit when the tempo sits on a `--beat-range` bound** (A146): 90 BPM
+  under `--beat-range 60-90` was measured 89.76 BPM and ended 80 ms off a 30 s click track
+  (`scenes.py --beats`, and `cut.py --snap beats` through the same grid).
+- **`waveform.py` of an audio input writes `<name>_waveform.mp4` by default** (A137): a `.wav`
+  input failed in the WAV muxer and a `.m4a` one got an H.264 video named `.m4a`. `-o` with an
+  audio extension is refused (`kind: input`).
 
 ## 3.8.8
 

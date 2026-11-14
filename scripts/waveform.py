@@ -42,7 +42,8 @@ from _common import (add_common, apply_common, aac_args, default_output, die, dr
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, warn
-from _common.decision import length_output_t
+from _common.decision import is_audio_output, length_output_t
+from _common.probe import AUDIO_MEDIA_EXT
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
@@ -50,7 +51,7 @@ WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("-o", "--output", help="output file (default: <name>_waveform.<ext>)")
+    ap.add_argument("-o", "--output", help="output file, a video (default: <name>_waveform.<ext>, .mp4 for an audio input; an audio extension is refused)")
     ap.add_argument("--style", choices=["waveform", "spectrum"], default="waveform", help="waveform (default) or spectrum visualization")
     ap.add_argument("--width", type=int, default=1920, help="output width in px, must be even (default 1920)")
     ap.add_argument("--height", type=int, default=1080, help="output height in px, must be even (default 1080)")
@@ -170,7 +171,14 @@ def main() -> int:
                 die(f"{args.input} is silent (audio stream {args.audio_stream} peaks at {silent_peak:g} dBFS, at or below "
                     f"--silence-threshold {args.silence_threshold:g}): the visualisation would be a flat line",
                     kind="input", hint="check the audio, or pass --on-silent warn to render it anyway")
-    output = args.output or default_output(args.input, "waveform")
+    # A137: the output always holds a picture, so an audio input's extension is not the default:
+    # talk.wav made talk_waveform.wav, which the WAV muxer refused (kind ffmpeg), and talk.m4a an
+    # H.264 video named .m4a
+    in_ext = os.path.splitext(args.input)[1].lower()
+    output = args.output or default_output(args.input, "waveform", "mp4" if in_ext in AUDIO_MEDIA_EXT else None)
+    if is_audio_output(output):
+        die(f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
+            "name a video file (.mp4, .mov, .mkv)", kind="input")
 
     # The visualisation's own band. Without --image/--position it fills the frame, which is what
     # every 1.15 command line did, so the graph below is byte-identical when no new flag is given.

@@ -89,6 +89,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.10 — compositing, time and edge inputs (#460, #461)](#after-3810--compositing-time-and-edge-inputs-460-461)
 - [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
 - [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
+- [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
 <!-- contents:end -->
 
 ## Time limits
@@ -4314,3 +4315,81 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   kept, as before. `silence.py` is not changed by this: its last range past the picture is a
   range of the render, which ends the picture there as the source does. Code:
   `cut.keep_ranges_after_removing()`. Test: `test_remove_drops_a_leftover_with_no_picture_and_says_so`.
+## After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform
+
+- **`audio.py --duck-amount` is the depth in dB, made with a gate, not a compressor.** A
+  compressor's gain reduction is how far its key rises over the threshold times `1 - 1/ratio`, so
+  no ratio gives a stated depth: the ratio `max(2, amount/3)` used through 3.8.8 ducked 0 and 3
+  the same 9.7 dB on the test's speech and 60 by 18. The bed is now split: one copy goes through
+  `sidechaingate` keyed by the speech (`ratio=9000:range=0`: all of the bed above the threshold,
+  none below), that copy is scaled by `-(1 - 10^(-amount/20))` and added to the other, which
+  leaves `10^(-amount/20)` of the bed under speech and all of it in the pauses (measured: 3, 12
+  and 30 dB asked, 3.0, 12.0 and 30.1 written). The key gets `dcshift=shift=0.000001` (-120 dBFS):
+  agate's detector starts at zero and leaves the gate open while the key is exact zeros, so a
+  voice track that begins with digital silence ducked the bed until its first word. The
+  threshold, attack and release keep their meaning (the gate opens at the threshold over
+  `--duck-attack` and closes over `--duck-release`); the result's `duck.ratio` is the gate's 9000,
+  and `amount_db` is the depth. The default command line moved: the "unchanged to the byte" the
+  1.13 test pinned was a compressor string, and it now pins the gate's. Code: `audio.duck_graph()`.
+  Test: `test_duck_amount_is_the_depth_in_db`, `test_audio_duck_parameters_reach_the_sidechain_filter`.
+- **A limiter runs on what is delivered.** With `--music` or `--effects`, `--limit` and `--voice
+  strong`'s `alimiter` move from the main track to the mix, ahead of the fades and the conform; a
+  limiter on the voice let the beds added after it pass the ceiling (`--limit-ceiling -6` wrote 0
+  dBFS). The ducking key is the voice before that limiter, which only lowers peaks above the
+  ceiling. Without a bed the chain is the one it was. Code: `audio.py` (`post_limit`). Test:
+  `test_a_limiter_is_the_ceiling_of_the_mix_it_delivers`.
+- **A dynamics knee is 0..18.06 dB.** The filters take a linear knee of 1..8 (default 2.82843); the
+  flag converts dB to linear and accepted 1..8 *dB* (linear 1.12..2.51), so nothing from 2.51 up to
+  ffmpeg's own default could be asked for. The range is widened to the filter's, in dB, rounded
+  down to 18.06 so the linear value stays inside 8; a value that ran before still writes the same
+  knee. The help's defaults are ffmpeg's, converted (threshold -18.06, range -24.26, knee 9.03).
+  Test: `test_dynamics_help_gives_the_filters_own_defaults_in_the_flags_unit`.
+- **`--bitrate` (`loudness.py --audio-bitrate`) given for an audio output replaces that
+  extension's own setting; `.wav`/`.flac` refuse it.** `.mp3`'s `-q:a 0` becomes `-b:a`, CBR at
+  the rate asked; libopus and libvorbis keep their VBR around it. Not given, every extension keeps
+  the setting it had. `loudness.py`'s unpinned `.m4a`/`.aac` starts at the 256k it was always
+  written at and reports it (`audio_bitrate_used` said 192k), so its overshoot retry is 320k
+  only; a pinned rate is reported for `.mp3`/`.ogg`/`.opus` too, which had no
+  `audio_bitrate_used`. Code: `decision.audio_codec_for()`. Test: `test_bitrate_reaches_the_codec_of_an_audio_output`.
+- **A filter graph over 100,000 characters (8,000 on Windows) reaches ffmpeg in a file.** Linux
+  refuses one argument over 128 KiB and Windows a command line over 32,767 characters; a graph
+  built per item (`scenes.py --sheet`'s select, ~50 characters a scene) crossed it between 2,400 and
+  3,000 scenes and raised OSError with no JSON. `run()` and `run_analysis()` write the graph to a temp
+  file and pass `-/filter_complex`, `-/filter:v` ... on FFmpeg 7.0 and later and
+  `-filter_complex_script`, `-filter_script:v` ... before it, removing the file afterwards; the
+  command a run records and prints keeps the graph inline. Only the 6.1 spelling was run here.
+  Code: `runner.long_filters_in_files()`. Test: `test_scenes_sheet_of_thousands_of_scenes_is_written`.
+- **`decode_pcm_mono()` returns an `array('f')`.** Four bytes a sample instead of a Python
+  float's ~32, and every value is the double the list held (an s16 sample over 32768 is exact in
+  a float32). It is still the whole decode in memory, now about 0.3 GB an hour at scenes.py's
+  22.05 kHz (twice that while the decode is converted); streaming the envelope instead is a
+  larger change and was not made. Test: `test_decoded_pcm_takes_a_few_bytes_a_sample`.
+- **`sync.py`'s confidence penalises the best other peak.** The runner-up is the highest local
+  maximum more than five steps from the winner; the running "previous best" it was took the
+  winner's own neighbour, so an exact match read 0.59 and a tie 0.50. A file against itself or a
+  shifted copy now reads above 0.95 on the test's bursts; a tie stays at most 0.5 (the formula,
+  `min(1, 0.5 + margin)`, is unchanged). The benchmark sentences in references/scripts.md and
+  README ("misses flagged below 0.3", "4 of 5 misses flagged") were measured with the old
+  runner-up and could not be re-run here (no corpus); both now say so. Test:
+  `test_sync_confidence_tells_an_exact_match_from_a_tie`.
+- **`multicam.py --switch` ranges that overlap are refused** (`kind: input`) rather than merged or
+  resolved by order: which camera a caller meant for the overlap is theirs to say. Ranges that
+  touch run. **`--fix-drift` retimes the picture** with `setpts=(PTS-STARTPTS)/ratio`, as
+  `sync.py --trim-second` does; `--write-project`'s clips still name each camera's own in/out
+  with no retiming (render.py has no per-clip rate), so a drift-corrected project does not
+  reproduce the drift correction. Tests: `test_multicam_switch_ranges_that_overlap_are_refused`,
+  `test_multicam_fix_drift_retimes_the_picture_with_the_sound`.
+- **A `scenes.py --highlights` range lies inside its scene.** Its window starts at the scene's
+  start or on the 0.5 s grid after it and ends by the scene's end, and is written to the
+  hundredth rounded inward (3.333 is 3.34, not 3.33). A grid point before the cut was a candidate
+  and opened up to 0.5 s early. Test: `test_scenes_highlight_never_opens_before_its_scene`.
+- **The beat grid's refit is held on a `--beat-range` bound, not discarded.** A fit a hair past the
+  bound (90 BPM under 60-90) kept the step-rounded interval (89.76 BPM, 80 ms off by 30 s); the
+  tempo still cannot leave the range, and a fit more than an eighth of the interval away is
+  still discarded. Shared by `cut.py --snap beats`. Code: `decision._refine_grid()`. Test:
+  `test_scenes_beats_keep_their_refit_on_a_range_bound`.
+- **`waveform.py` of an audio input writes `<name>_waveform.mp4` by default**, and `-o` with an
+  audio extension is refused (`kind: input`): the output always has a picture. Other tools keep an
+  audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
+  the tools that always write a picture refuse an audio-only input. Test:
+  `test_waveform_of_an_audio_input_is_a_video_by_default`.

@@ -7,7 +7,9 @@ reduced to a loudness envelope, cross-correlated with an FFT implemented in
 Python (coarse, 20 ms), then refined by direct correlation at 1 ms.
 
 Offset semantics: a positive offset means the SECOND input starts LATER
-than the reference, i.e. `second` must be shifted earlier by that amount.
+than the reference (it began recording after it), so its sound is delayed by
+that amount (its head padded) to line up; a negative offset means it started
+earlier, and its first -offset seconds are dropped.
 
 This aligns two AUDIO tracks to each other; it does not check or guarantee
 lip sync (mouth movement matching the audio). It assumes each recording's
@@ -161,9 +163,14 @@ def cross_correlate(ref: List[float], other: List[float], max_lag: int):
 
         scores.append((val, lag))
         if val > best_val:
-            second = best_val
             best_val, best_lag = val, lag
-        elif val > second and abs(lag - best_lag) > 5:
+    # The runner-up is the best other PEAK more than 5 lags from the winner (A126). The running
+    # "previous best" this used to take was usually the winner's own neighbour, one lag away and
+    # on the same slope, so an exact match read 0.59 and could not be told from a tie (0.50).
+    by_lag = dict((lag, val) for val, lag in scores)
+    for val, lag in scores:
+        if abs(lag - best_lag) > 5 and val > second and \
+                val >= by_lag.get(lag - 1, -float("inf")) and val >= by_lag.get(lag + 1, -float("inf")):
             second = val
     # confidence: peak similarity, penalised when a distant runner-up is nearly as good
     conf = max(0.0, min(1.0, best_val))

@@ -62,6 +62,12 @@ def parse_switch(spec: str, n: int) -> List[Tuple[float, float, int]]:
             die(f"switch entry '{raw}': end must be after start")
         out.append((s, e, c))
     out.sort()
+    # A132: ranges on one timeline cannot overlap. The fill below kept both, so the picture of the
+    # overlap played twice while the sound played once, and every later cut ran behind it
+    for (s0, e0, _c0), (s1, e1, _c1) in zip(out, out[1:]):
+        if s1 < e0:
+            die(f"--switch ranges overlap: {fmt_secs(s0)}-{fmt_secs(e0)} and {fmt_secs(s1)}-{fmt_secs(e1)} "
+                "(on the reference timeline each moment has one camera)", kind="input")
     return out
 
 
@@ -315,7 +321,11 @@ def main() -> int:
             c, src_s, src_e = 0, s, e
         rendered.append((s, e, c))
         sq = (square_pixels(metas[c]["video"]) + ",") if square_pixels(metas[c]["video"]) else ""
-        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts=PTS-STARTPTS,{convert[c]}{sq}{geo}[v{i}]")
+        # A130: a drift-corrected camera's range is (e - s) * ratio of its own time; played at that
+        # rate it lasts e - s on the reference, as its sound does (asetrate) -- at its own rate the
+        # picture ran (ratio - 1) * (e - s) long and every later cut fell behind the sound
+        retime = f"(PTS-STARTPTS)/{ratios[c]:.9f}" if abs(ratios[c] - 1.0) > 1e-7 else "PTS-STARTPTS"
+        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts={retime},{convert[c]}{sq}{geo}[v{i}]")
         labels.append(f"[v{i}]")
         project_clips.append({"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)})
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")

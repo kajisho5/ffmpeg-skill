@@ -314,12 +314,22 @@ def main() -> int:
             if env and length < sc["duration"]:
                 best, best_s = -1.0, sc["start"]
                 win = max(1, int(length / step_s))
-                lo, hi = int(sc["start"] / step_s), max(int(sc["start"] / step_s) + 1, int(sc["end"] / step_s) - win)
-                for i in range(lo, hi + 1):
+                # A139: a window starts at the scene's start or on the step grid after it, and
+                # ends inside the scene. The grid point at or before the start (floor) was a
+                # candidate, so a pick opened up to one step (0.5 s) early, on the previous shot
+                latest = sc["end"] - length
+                starts = [sc["start"]] + [i * step_s for i in range(math.ceil(sc["start"] / step_s - 1e-9),
+                                                                      math.floor(latest / step_s + 1e-9) + 1)
+                                          if sc["start"] < i * step_s <= latest]
+                for t in starts:
+                    i = int(t / step_s + 1e-9)
                     val = sum(env[i:i + win])
                     if val > best:
-                        best, best_s = val, i * step_s
-            picks.append((round(best_s, 2), round(min(sc["end"], best_s + length), 2)))
+                        best, best_s = val, t
+            # to the hundredth the result and the EDL are written in, inward: a start of 3.333
+            # written as 3.33 opened on the frame before the cut
+            pick_s = math.ceil(best_s * 100 - 1e-6) / 100
+            picks.append((pick_s, math.floor(min(sc["end"], pick_s + length) * 100 + 1e-6) / 100))
         picks.sort()
         result["highlights"] = [{"start": s, "end": e, "duration": round(e - s, 2)} for s, e in picks]
         result["highlights_total"] = round(sum(e - s for s, e in picks), 2)

@@ -689,7 +689,8 @@ says "output audio is silent" instead of recommending `loudness.py`.
 Per-tool keys added in 1.13: `audio` (`audio.py`) reports the mix it built — the
 `--voice` level, `stereo_widen`, whether an `--effects` bed was mixed, and with
 `--music` the `music_volume` plus a `duck` object naming the threshold (dB and
-linear), ratio, attack and release actually used, or `null` when `--duck` was not
+linear), ratio (the sidechain gate's 9000 since A134), attack, release and `amount_db`
+(the depth in dB the bed is lowered under speech) actually used, or `null` when `--duck` was not
 given. Since #486 `audio.py` also reports `timing`, `{tempo, atempo, length_samples, sample_rate}`:
 the `--tempo` factor and the atempo stages (each 0.5..2.0) it was built from, `--length-samples`,
 and the rate that count is in (`null` before a pending input is measured); with
