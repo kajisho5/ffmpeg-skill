@@ -21,8 +21,8 @@
   back on the grid the same way (a 1.11x speed-up of a constant-rate clip showed each flash 50 ms
   late). Not changed: `speedramp.py` puts its sound 21-40 ms early (atempo, also on a constant
   rate), a `freeze.py --at` inside a VFR gap writes the picture after the hold early, and
-  `reverse.py` still shows a reversed VFR picture late (0.19 s on that clip; its fix is open in
-  #512).
+  `reverse.py` still shows a reversed VFR picture late (0.19 s on that clip); the three are filed
+  as #523.
 - **`overlay.py` places an `--image` or `--video` layer at the pixel its position names (#512).**
   `overlay` puts a layer on a 4:2:0 picture on the chroma grid, so `--position 11,13` drew the
   logo at 10,12, and a right-aligned, bottom-aligned or centred layer whose position came out odd
