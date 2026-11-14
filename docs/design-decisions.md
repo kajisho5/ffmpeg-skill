@@ -90,6 +90,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
 - [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
 - [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
+- [After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3813--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
+- [After 3.8.13 — tests, CI, distribution and the site (#467)](#after-3813--tests-ci-distribution-and-the-site-467)
 <!-- contents:end -->
 
 ## Time limits
@@ -4406,3 +4408,142 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
   the tools that always write a picture refuse an audio-only input. Test:
   `test_waveform_of_an_audio_input_is_a_video_by_default`.
+## After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)
+
+- **A BT.2020 source with no transfer tag is re-encoded as `bt2020-10`, not HLG** (A153).
+  `probe()` reads BT.2020 primaries without a transfer tag as `hdr: false`, "BT.2020 SDR"; the
+  10-bit line filled the missing tag with `arib-std-b67`, so the output read back as HLG, an HDR
+  signal the source never was. Leaving the tag out would also be honest, but the x265 VUI needs a
+  value and every other tag on the line is written; `bt2020-10` is the SDR curve BT.2020 defines
+  (the same function as BT.709's) and reads back as what probe called the source. An HDR signal
+  with no transfer tag (Dolby Vision whose base layer is untagged) keeps the HLG default it had.
+  Code: `_common.decision.source_transfer()`. Test:
+  `PictureTests.test_an_untagged_transfer_is_not_written_as_another_signal`.
+- **`color.py --to-sdr --force` labels a frame missing a colour tag with what the chain assumes**
+  (A161's sibling): on FFmpeg 6.1 zscale's `pin` does not reach a frame whose own primaries are
+  unspecified ("no path between colorspaces"), so a file with no tags failed as `kind: ffmpeg`.
+  A `setparams` with the chain's assumptions (PQ, BT.2020) comes first when a tag is missing; a
+  fully tagged source's chain is unchanged. The note names the transfer and primaries the chain
+  read. Code: `_common.color.hdr_to_sdr_chain()`. Test:
+  `PictureTests.test_to_sdr_force_on_a_non_hdr_file_says_what_it_read_it_as`.
+- **A pixel offset the caller gives is not moved by a filter's chroma rounding** (A157): fixed
+  for `crop.py` and `redact.py` in 3.8.11 ("After 3.8.10", A170: `crop=...:exact=1`, and the
+  redaction patch padded by a transparent column/row so the luma of exactly the asked rectangle
+  is replaced). A layer `overlay.py --position x,y` places at an odd x or y still lands one pixel
+  up or left on 4:2:0 (FFmpeg 6.1.1's overlay at 1,1 draws at 0,0): #512.
+- **A media output with no file extension is refused before ffmpeg** (the sweep of A159): every
+  tool that writes media gave it to ffmpeg, which failed as `kind: ffmpeg` after the run had
+  started, and the dry run completed. `run()` refuses it as `kind: input`,
+  `output_extension_missing`, unless the command names a format with `-f` after its last input.
+  An unknown extension (`out.xyz`) is still left to the muxer: telling which of FFmpeg's 200-odd
+  muxers a build has would cost a process per run. Side files are not checked, and `look.py` takes
+  an `-o` without an image extension as a stem in every mode (`<stem>_sheet.png`,
+  `<stem>_vs_<other>_<i>_<t>s.png`, `<stem>_<t>s.png`), as the decision above already said for
+  `--at`. Code: `runner._check_output_extension()`. Tests:
+  `ContractTests.test_a_media_output_with_no_extension_is_refused_before_ffmpeg`,
+  `AnalysisTests.test_look_takes_an_o_without_an_image_extension_as_a_stem_in_every_mode`.
+- **A proxy is never wider than its source, and never under 2 px** (A162). A proxy exists to be
+  smaller; the default `--width 640` upscaled a smaller source, and an explicit `--width` above the
+  source width is capped too, with a `notes` line, rather than refused: the caller's intent ("at
+  most this wide") is met. Test: `DeliveryTests.test_proxy_is_never_wider_than_its_source`.
+- **`sphere.py`'s vertical field of view follows from the others unless given** (A163):
+  `2 atan(tan(h/2) H/W)`, which keeps the pixels square. A pair the caller gives is drawn as
+  given (a squeezed view can be what is wanted) with a `notes` line saying how far from square it
+  is, past 0.5 %. Test: `EditingTests.test_sphere_default_view_has_square_pixels`.
+- **`stabilize.py --zoom` is the only zoom** (A156): vidstab's `optzoom` is 0. Its default (1)
+  adds an "optimal" static zoom on top of `--zoom`, which made `--zoom 0` ("keep the original
+  framing") and `--crop black` mean nothing. The default output changes: it keeps the framing and
+  shows (stretched, or black with `--crop black`) the edges stabilizing reveals; `--zoom N` crops
+  them away. Test: `PictureTests.test_stabilize_zoom_zero_keeps_the_framing_and_shows_the_edges`.
+- **A platform preset that keeps the source's frame rate conforms one above the platform's
+  `fps_max`** (A115) to the source rate over the smallest whole divisor within it (120 to 60,
+  119.88 to 59.94, 100 to 50), so each output frame is a source frame and motion keeps its
+  cadence. Today that is the youtube family; the other platform presets already write 30 fps.
+  Test: `DeliveryTests.test_a_platform_preset_writes_what_its_platform_check_passes`.
+- **`export.py --max-mb --normalize` re-encodes the sound at the preset's bitrate** (A112), the
+  one the size budget subtracted. loudness.py's own true-peak bitrate raise is off there: a file
+  over the size the caller set is the larger miss, and a true peak still over the ceiling is
+  reported as before. Without `--max-mb` nothing changes. Test:
+  `DeliveryTests.test_export_max_mb_with_normalize_stays_under_the_limit`.
+- **`probe.py --field` prints a string as itself and any other value present as JSON** (A123); a
+  missing field is an empty line, as it always was (kept for callers that test for one). With
+  `--json` or `--json-brief` every line is JSON: a string is quoted and a missing field is `null`.
+  A string stays bare without them so `$(probe.py f --field video.codec)` keeps working. Tests:
+  `AnalysisTests.test_probe_field_prints_json_not_python`,
+  `AnalysisTests.test_json_brief_alone_prints_the_json_document`.
+- **`verify.py` forwards `--overwrite` and `--fast` to its steps, and `--keep` alone keeps the
+  outputs in a folder it names** (A119, A120); stems never collide, compared case-folded (A121).
+  `--hw` is not forwarded: verify.py has no such flag. Without `--overwrite` a rerun into the same
+  `--out` still fails each step on its existing output (every tool refuses to replace one). A name
+  it generates that is another input (`clip.mp4`'s `clip_cut.mp4` beside it in a folder verified
+  into itself, a link or another case of the name included) refuses the whole run before anything
+  is written, `--overwrite` or not: each step checks its output against its own input only. Tests:
+  `AnalysisTests.test_verify_stems_never_collide_and_its_outputs_are_where_it_says`,
+  `AnalysisTests.test_verify_never_writes_a_name_that_is_another_input`.
+- **`straighten.py --fit crop` writes the displayed frame's own size** (A154): fixed in 3.8.11
+  ("After 3.8.10", A235). `EditingTests.test_straighten_crop_fit_writes_the_source_frame_size`
+  pins it at every angle tried.
+- **`fit.py --method trim` from 0 does not seek** (A158), so its subtitle and data tracks are
+  kept as for any tool that leaves the timeline alone ("Subtitle/data tracks are kept where the
+  picture's timeline is untouched", above). A cue that runs past the trim is kept whole, as
+  export's platform trim keeps it, so the container can be longer than the picture by the rest
+  of that cue. Test: `EditingTests.test_fit_trim_from_the_start_keeps_the_subtitle_track`.
+
+## After 3.8.13 — tests, CI, distribution and the site (#467)
+
+- **Decoded audio is still the whole file, at 4 bytes a sample** (A217). `decode_pcm_mono()` returns
+  an `array('f')` instead of a list of Python floats: about 8 bytes a sample at the peak (the
+  decoder's s16 bytes, a 16-bit copy, the floats) against about 72 to 81, so an hour at 8 kHz
+  peaks at about 230 MB, not 2.3 GB, and an hour of `scenes.py --beats` at 22.05 kHz at about
+  640 MB; 4 bytes a sample are held after the decode. It is not
+  streamed: `scenes.py`'s speech ratio and onset refinement, `loop.py`'s seam and `sync.py`'s
+  correlation read the samples themselves, not only an envelope, and a streamed envelope for some
+  callers would be a second decode path with its own clock. Every value is the float the list
+  held (a 16-bit sample divided by 32768 is exact in a float32). Code: `_common/probe.py`
+  `decode_pcm_mono()`. Test: `test_decoded_pcm_is_four_bytes_a_sample_and_the_same_values`.
+- **`contract --json --tool NAME` narrows `tools` and nothing else** (A220). The other keys stay
+  whole, `provides` and `capability_map` included (a few KB together; they map ids to tools across
+  the skill), so a consumer reads the same document shape with or without the flag and the 3.x
+  promise that no key of `contract --json` is removed holds for it. One tool is about 55 to 85 KB
+  against about 950 KB. An unknown name is refused with the list; `doctor` refuses the flag, since
+  `doctor --json .tools` is already one short entry per tool. Code: `_contract.main()`. Test:
+  `test_contract_tool_selects_entries_and_refuses_an_unknown_name`.
+- **The lint for unused imports is a test, not a CI step** (A224). `tests/test_contract.py` walks
+  the shipped modules (`scripts/`, `scripts/_common/`, `mcp/server.py`) with `ast`, so it runs in
+  every job that runs the contract tests, on every OS, and needs no linter: a pip-installed one in
+  CI would be the first third-party tool the gate depends on, and its version would move the
+  result. `_common/__init__.py` and `_common/text.py` are left out: they import names for their
+  callers. A `noqa` comment on the import line exempts it. Unused variables and dead functions are
+  not checked (A224's two of each were removed by hand). Test:
+  `test_the_runtime_imports_nothing_it_does_not_use`.
+- **Bytecode is kept out of the npm package by `files`, not by `.npmignore`** (A222). With `files`
+  set, npm 10 packs everything under a listed directory whatever `.npmignore` says, so the negated
+  entries `!**/__pycache__/**`, `!**/*.pyc` and `!**/*.pyo` end `files` and `release_check.sh`
+  fails a tarball with a `.pyc` in it. `.npmignore` stays, saying why it is not enough. Test:
+  `test_npm_package_leaves_out_python_bytecode`.
+- **A demo whose second command uses a measured value runs that value and stops when the gallery
+  prints another** (A243, A244). `docs/demos.md` is written by replaying the builders with nothing
+  run, so it can print only a constant (`CROPDETECT_GALLERY_RECT`, `SCENES_GALLERY_SEGMENTS` in
+  `demos/build.py`). A real build reads the measurement (cropdetect's `crop`, the `--edl` ranges),
+  and nothing measured or a value other than the constant is a `BuildError`, so the command under
+  a picture is the one that made it. A different FFmpeg that measures the synthetic fixtures
+  differently fails the build until the constant and the page are updated; that is the intent.
+  Test: `test_a_demo_runs_the_measured_value_and_the_gallery_prints_it`.
+- **The agent eval installs the shipped skill and watches the checkout; it does not sandbox the
+  agent** (A271, A274). `evals/run_agents_25.sh` installs each run's skill with `bin/install.js
+  --dir` (the set `npx ffmpeg-skill` installs: no evals, answer keys or tests) instead of linking the
+  checkout, and compares the checkout's state before and after every run (`git status
+  --porcelain`, the tracked files' diff against `HEAD` and the untracked files' hashes): a run
+  that changed it is named in `RUN_DIR/<id>/.tree_changed` and the script exits 1. A `RUN_DIR`
+  inside the checkout that git does not ignore is refused before anything is staged, rather than
+  left out of the comparison: leaving out a folder that holds tracked files would hide edits to
+  them. The state carries `HEAD` and the index as well (a run that commits its edit leaves the
+  status clean; one that only restages leaves the status line and the diff against `HEAD`), an
+  untracked link is hashed as its target's name without being followed,
+  and a snapshot git cannot take stops the script with exit 3 before the agent starts: two failed
+  snapshots are not an unchanged checkout. The agent still
+  runs as the caller, with the caller's HOME and environment and `bypassPermissions`: `claude -p`
+  reads its sign-in from HOME, and a headless run cannot answer a permission prompt. Run it in a
+  container or a throwaway account when that matters. Tests:
+  `test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout`,
+  `test_the_agent_eval_sees_a_second_edit_and_refuses_a_run_dir_it_would_see`.

@@ -114,11 +114,6 @@ def loudnorm_mode(stats: dict, lufs: float, tp: float, lra: float) -> str:
 
 def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output: str) -> dict:
     """One normalised file at `lufs` / `tp_max`, measured after: the keys emit() takes for it."""
-    af = (
-        f"loudnorm=I={lufs}:TP={tp_max}:LRA={args.lra}"
-        f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
-        f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
-    )
     sr = args.sample_rate or meta["audio"].get("sample_rate") or 48000
     ext = os.path.splitext(output)[1].lower()
     bitrate_pinned = args.audio_bitrate is not None

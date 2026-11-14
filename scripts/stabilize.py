@@ -29,7 +29,7 @@ from pathlib import Path
 
 from _common.probe import PROBED_VIDEO
 from _common.runner import ffmpeg_failure_extra, default_selection_maps, require_filter
-from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
 def main() -> int:
@@ -96,7 +96,10 @@ def main() -> int:
                 die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
 
         crop_mode = {"keep": 0, "black": 1}[args.crop]
-        transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"
+        # optzoom=0: the zoom is --zoom and nothing else. vidstab's default (optzoom=1) adds its own
+        # "optimal" zoom on top, so --zoom 0 did not keep the original framing and --crop black
+        # rarely had an edge to fill (through 3.8.8, audit A156)
+        transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=0"
         if args.tripod:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.

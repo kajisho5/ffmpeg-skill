@@ -4255,6 +4255,31 @@ class ContractTests(unittest.TestCase):
         tool("render", "--init", old, "--overwrite")
         self.assertNotEqual(old.read_text(encoding="utf-8"), "keep me\n", "--overwrite replaces an old side file")
 
+    def test_a_media_output_with_no_extension_is_refused_before_ffmpeg(self):
+        """Audit A159's sweep (class: an output path the muxer cannot name a format for reaches
+        ffmpeg): every tool that writes media failed an -o with no extension as kind ffmpeg
+        ("Unable to choose an output format") after its work had started, and its dry run said
+        completed. Refused as input, dry runs included, for every tool in tests/sweep.py's table
+        that takes -o, except look.py, which takes such an -o as a stem (design-decisions)."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        work = self.out("noext_guard"); work.mkdir(exist_ok=True)
+        facts = sweep.facts_for(str(self.src), str(work))
+        tools = [t for t, (_args, ext) in sweep.TABLE.items() if ext and t != "look"]
+        self.assertGreater(len(tools), 20)
+        for t in tools:
+            name, (args, _ext) = t.split()[0], sweep.TABLE[t]
+            with self.subTest(tool=t):
+                target = work / f"noext_{name}"
+                proc = tool(name, self.src, *[a.format(**facts) for a in args], "-o", target, "--dry-run", "--json", check=False)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_extension_missing"), proc.stderr[-300:])
+        proc = tool("crop", self.src, "--x", "0", "--y", "0", "--width", "64", "--height", "64", "-o", work / "noext_real",
+                    "--json", check=False)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_extension_missing")
+        self.assertFalse((work / "noext_real").exists())
+        self.assertEqual(sorted(p.name for p in work.glob("noext_*")), [])
+
     def test_a_playlist_input_and_an_option_shaped_output_are_refused(self):
         """A playlist (HLS .m3u8, ffconcat) is not media: ffmpeg and ffprobe follow it to the files
         it names, so a "video" handed to the skill could read any file the user can. It is refused
@@ -10278,6 +10303,300 @@ class FlagValueTests(unittest.TestCase):
                 (self.work / "p.json").write_text(json.dumps(body), encoding="utf-8")
                 doc = json.loads(tool("render", *argv, "--json", cwd=self.work).stdout)
                 self.assertEqual(doc["status"], "completed", label)
+
+
+def _unused_imports(path: Path) -> "list":
+    """Names a module imports and never reads: an ast walk, standard library only (the runtime
+    takes no dependency, and the tests take none either). A name counts as read when it is a
+    `Name` anywhere, inside a string annotation, or listed in `__all__`; a line with `noqa`
+    and `from __future__` imports are skipped."""
+    import ast
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    lines = src.splitlines()
+    bound: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if (isinstance(node, ast.ImportFrom) and node.module == "__future__") or "noqa" in lines[node.lineno - 1]:
+                continue
+            for alias in node.names:
+                if alias.name != "*":
+                    bound.setdefault(alias.asname or alias.name.split(".")[0], node.lineno)
+    used, annotations = set(), []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = node.args
+            annotations += [x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x is not None]
+            annotations.append(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            annotations.append(node.annotation)
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
+            used.update(c.value for c in ast.walk(node.value) if isinstance(c, ast.Constant))
+    for ann in annotations:
+        for c in (ast.walk(ann) if ann is not None else ()):
+            if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                used.update(n.id for n in ast.walk(ast.parse(c.value, mode="eval")) if isinstance(n, ast.Name))
+    return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
+
+
+class Audit467Tests(unittest.TestCase):
+    """The items of audit #467 still open at 3.8.10: memory, distribution, the contract's size,
+    the demo gallery and the agent eval runner."""
+
+    def test_decoded_pcm_is_four_bytes_a_sample_and_the_same_values(self):
+        """A217: decode_pcm_mono returned a list of Python floats built from struct.unpack's tuple,
+        about 81 bytes a sample at its peak (2.3 GB for an hour at 8 kHz in scenes.py). It returns
+        an array('f') now; a 16-bit sample / 32768 is exact in a float32, so the values are equal."""
+        import array
+        import struct
+        probe_mod = sys.modules["_common.probe"]
+        raw = struct.pack("<6h", 0, 1, -1, 32767, -32768, 12345) + b"\x07"  # an odd trailing byte
+        done = subprocess.CompletedProcess([], 0, raw, b"")
+        with unittest.mock.patch.object(probe_mod, "run_analysis", return_value=done), \
+                unittest.mock.patch.object(probe_mod, "require_tool", return_value="ffmpeg"):
+            samples = probe_mod.decode_pcm_mono("x.wav", 8000)
+        self.assertIsInstance(samples, array.array)
+        self.assertEqual(samples.itemsize, 4)
+        self.assertEqual(list(samples), [v / 32768.0 for v in struct.unpack("<6h", raw[:12])])
+        # what the callers do with it: slices, len, truthiness, the envelope
+        self.assertEqual(_common.rms_envelope(samples, 3), _common.rms_envelope(list(samples), 3))
+
+    def test_verify_walks_every_media_extension_the_skill_reads(self):
+        """A218: verify.py kept a list of its own, so a folder walk skipped .ts, .3gp, .wmv, .gif,
+        .ogg, .opus, .aif/.aiff, .caf and .wma. It walks _common's list less the stills, as
+        batch.py does."""
+        import verify
+        import batch
+        self.assertEqual(verify.MEDIA_EXT, batch.MEDIA_EXT)
+        self.assertLessEqual(_common.AUDIO_MEDIA_EXT, verify.MEDIA_EXT)
+        for ext in (".ts", ".3gp", ".wmv", ".gif", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma", ".mxf"):
+            self.assertIn(ext, verify.MEDIA_EXT)
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("a.ts", "b.OGG", "c.wma", "d.gif", "e.png", "f.txt"):
+                (Path(tmp) / name).write_bytes(b"")
+            self.assertEqual(sorted(p.name for p in verify.collect([tmp])), ["a.ts", "b.OGG", "c.wma", "d.gif"])
+
+    def test_contract_tool_selects_entries_and_refuses_an_unknown_name(self):
+        """A220: the whole contract is about 950 KB and SKILL.md sends an agent to it for one
+        tool's `dry_run`. `--tool NAME` keeps the named entries under `tools`, in the order given,
+        and every other key; an unknown name is refused before anything is built."""
+        whole = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
+        out = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static", "--tool", "probe", "--tool", "cut.py").stdout
+        doc = json.loads(out)
+        self.assertEqual([t["name"] for t in doc["tools"]], ["probe", "cut"])
+        by_name = {t["name"]: t for t in whole["tools"]}
+        self.assertEqual(doc["tools"], [by_name["probe"], by_name["cut"]])
+        self.assertEqual({k: v for k, v in doc.items() if k != "tools"}, {k: v for k, v in whole.items() if k != "tools"})
+        self.assertLess(len(out), 200_000)
+        for argv in (["--json", "--tool", "nope"], ["doctor", "--tool", "cut"]):
+            proc = sh(sys.executable, SCRIPTS / "_contract.py", *argv, check=False)
+            self.assertEqual(proc.returncode, 2, argv)
+            self.assertEqual(proc.stdout, "", argv)
+        for doc_path in ("SKILL.md", "references/flags.md", "docs/contract.md", "README.md"):
+            self.assertIn("--tool", (ROOT / doc_path).read_text(encoding="utf-8"), doc_path)
+
+    def test_the_runtime_imports_nothing_it_does_not_use(self):
+        """A224: 38 unused imports and two never-read variables in scripts/ and mcp/, with no
+        lint step in CI. This is that lint, for the imports, on the shipped modules. The two
+        re-export modules (_common/__init__.py and _common/text.py) import names for callers."""
+        shims = {SCRIPTS / "_common" / "__init__.py", SCRIPTS / "_common" / "text.py"}
+        found = {}
+        for path in sorted([*SCRIPTS.glob("*.py"), *(SCRIPTS / "_common").glob("*.py"), ROOT / "mcp" / "server.py"]):
+            if path not in shims and _unused_imports(path):
+                found[str(path.relative_to(ROOT))] = _unused_imports(path)
+        self.assertEqual(found, {}, "imported and never used")
+        # the checker itself finds one
+        with tempfile.TemporaryDirectory() as tmp:
+            probe_file = Path(tmp) / "m.py"
+            probe_file.write_text("import os, sys\nfrom typing import List, Optional\n"
+                                  "def f(x: 'Optional[int]') -> None:\n    print(sys.argv)\n", encoding="utf-8")
+            self.assertEqual(_unused_imports(probe_file), ["List (line 2)", "os (line 1)"])
+
+    def test_npm_package_leaves_out_python_bytecode(self):
+        """A222: "files" wins over .npmignore, so with npm 10 a checkout that had run the tests
+        packed 59 scripts/__pycache__/*.pyc files. The negated "files" entries keep them out and
+        release_check.sh fails a tarball that has one. The live `npm pack --dry-run` runs where
+        npm can be spawned (not on Windows, not on the debian-trixie job, which has no npm)."""
+        files = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["files"]
+        for neg in ("!**/__pycache__/**", "!**/*.pyc", "!**/*.pyo"):
+            self.assertIn(neg, files)
+        self.assertIn("__pycache__/|\\.py[co]$", (ROOT / "tests" / "release_check.sh").read_text(encoding="utf-8"))
+        npm = shutil.which("npm")
+        if not npm or os.name == "nt":
+            raise unittest.SkipTest("npm cannot be spawned here; the static half ran")
+        import py_compile
+        py_compile.compile(str(SCRIPTS / "probe.py"), doraise=True)  # a __pycache__ to leave out
+        self.assertTrue(list((SCRIPTS / "__pycache__").glob("*.pyc")))
+        proc = subprocess.run([npm, "pack", "--dry-run", "--json"], cwd=ROOT, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        packed = [f["path"] for f in json.loads(proc.stdout)[0]["files"]]
+        self.assertIn("scripts/probe.py", packed)
+        self.assertEqual([p for p in packed if "__pycache__" in p or p.endswith((".pyc", ".pyo"))], [])
+
+    def _demo_build(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("demo_build_467", ROOT / "demos" / "build.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_demo_runs_the_measured_value_and_the_gallery_prints_it(self):
+        """A243, A244: cropdetect_crop read the rectangle off the document's top level (it is
+        under `crop`) and cropped a hard-coded one labelled "detected"; scenes_highlights' gallery
+        printed a placeholder cut list while the build cut the measured one. A real build now runs
+        the measured value and stops when it is not the one the gallery prints, or when nothing
+        was measured; the gallery prints that value."""
+        build = self._demo_build()
+
+        class Fake(build.Ctx):
+            answers: dict = {}
+
+            def script(self, tool, *args, capture=False):
+                super_cmd = ["python3", "scripts/" + tool] + [str(a) for a in args]
+                self.commands.append(" ".join(super_cmd))
+                answer = self.answers.get(tool)
+                if tool == "scenes.py" and answer is not None:
+                    Path(args[args.index("--edl") + 1]).write_text(answer, encoding="utf-8")
+                    return None
+                return answer
+
+        rect = build.CROPDETECT_GALLERY_RECT
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(build, "OUT", Path(tmp)):
+            def run(name, answers):
+                for stale in Path(tmp).iterdir():  # as build_demo() clears a demo's own files
+                    stale.unlink()
+                ctx = Fake(name, verbose=False)
+                ctx.answers = answers
+                build.BY_NAME[name].builder(ctx)
+                return ctx.commands[-1]
+            good = json.dumps({"crop": dict(rect), "x": 999})
+            self.assertIn("--x %(x)s --y %(y)s --width %(width)s --height %(height)s" % rect,
+                          run("cropdetect_crop", {"cropdetect.py": good}))
+            for label, out in (("another rectangle", json.dumps({"crop": dict(rect, y=rect["y"] + 8)})),
+                               ("no bars", json.dumps({"crop": None})), ("no document", "")):
+                with self.subTest(label), self.assertRaises(build.BuildError):
+                    run("cropdetect_crop", {"cropdetect.py": out})
+            segments = build.SCENES_GALLERY_SEGMENTS
+            self.assertIn("--segments " + segments,
+                          run("scenes_highlights", {"scenes.py": segments.replace(",", "\n") + "\n"}))
+            for label, edl in (("another list", "0.00-1.50\n4.00-5.50\n"), ("no EDL", None)):
+                with self.subTest(label), self.assertRaises(build.BuildError):
+                    run("scenes_highlights", {"scenes.py": edl})
+        page = (ROOT / "docs" / "demos.md").read_text(encoding="utf-8")
+        self.assertIn("--segments %s " % segments, page)
+        self.assertIn("--x %(x)s --y %(y)s --width %(width)s --height %(height)s" % rect, page)
+
+    def test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout(self):
+        """A271, A274: run_agents_25.sh linked the whole checkout in as the skill (the eval's own
+        answer keys included) and ran the agent with every permission check off, so a run could
+        edit the tracked tree and nothing noticed. It installs the shipped set with the npm
+        installer and compares the checkout's `git status` before and after every run."""
+        script = (ROOT / "evals" / "run_agents_25.sh").read_text(encoding="utf-8")
+        code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+        self.assertNotIn("ln -s", code)
+        self.assertIn('node "$REPO/bin/install.js" --dir "$d/.claude/skills"', code)
+        self.assertIn('git -C "$REPO" status --porcelain', code)
+        self.assertIn('if [ "$before" != "$after" ]', code)
+        self.assertIn("exit 1", code)
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("sh") or not shutil.which("git"), "needs sh and git")
+    def test_the_agent_eval_sees_a_second_edit_and_refuses_a_run_dir_it_would_see(self):
+        """Review of #521. The checkout's state was `git status` alone, so a run that edited a
+        tracked file already modified left the same ` M` line and went unreported; and a RUN_DIR
+        inside the checkout that git does not ignore made the run's own transcript read as a
+        change (exit 1 on every run). The script is run, in a throwaway repository, with stub
+        `claude`, `node` and fixture writer; the stub agent does what each case says."""
+        tmp = Path(tempfile.mkdtemp(prefix="ffskill_eval25_"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo, stubs = tmp / "repo", tmp / "stubs"
+        (repo / "evals").mkdir(parents=True)
+        (repo / "bin").mkdir()
+        stubs.mkdir()
+        shutil.copy(ROOT / "evals" / "run_agents_25.sh", repo / "evals" / "run_agents_25.sh")
+        (repo / "evals" / "write_fixtures.py").write_text(
+            "import os, sys\nos.makedirs(os.path.join(sys.argv[1], 'a'), exist_ok=True)\n", encoding="utf-8")
+        (repo / "evals" / "agent_prompts_25.json").write_text('[{"id": "a", "prompt": "p"}]', encoding="utf-8")
+        (repo / "bin" / "install.js").write_text("", encoding="utf-8")
+        (repo / ".gitignore").write_text("runs/\n", encoding="utf-8")
+        (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+        (repo / "clean.txt").write_text("one\n", encoding="utf-8")
+        for name, body in (("node", 'mkdir -p "$3/ffmpeg-skill"\n'),
+                           ("claude", 'cd "$STUB_REPO" && eval "$STUB_ACTION"\n')):
+            (stubs / name).write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            (stubs / name).chmod(0o755)
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "init"], check=True)
+
+        def run(run_dir, action=":"):
+            env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}", STUB_REPO=str(repo), STUB_ACTION=action)
+            return subprocess.run(["sh", str(repo / "evals" / "run_agents_25.sh"), str(run_dir)], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        outside = tmp / "out_runs"
+        self.assertEqual(run(outside).returncode, 0, "nothing changed")
+        (repo / "tracked.txt").write_text("one\ntwo\n", encoding="utf-8")   # modified before the run
+        (repo / "scratch.txt").write_text("x\n", encoding="utf-8")          # untracked before the run
+        self.assertEqual(run(outside).returncode, 0, "a change made before the run is not the run's")
+        for label, action in (("a tracked file already modified", "echo three >> tracked.txt"),
+                              ("an untracked file already there", "echo y >> scratch.txt"),
+                              ("a new file", "touch new.txt")):
+            with self.subTest(label):
+                proc = run(outside, action)
+                self.assertEqual(proc.returncode, 1, proc.stderr)
+                self.assertTrue((outside / "a" / ".tree_changed").is_file())
+        with self.subTest("an edit the run commits"):
+            # only this file is committed: the status and the diff of the others stay as they were
+            proc = run(outside, "echo two >> clean.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm run -- clean.txt")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            self.assertTrue((outside / "a" / ".tree_changed").is_file())
+        # a git that fails is not a state two snapshots can share: the agent is never started.
+        # `ls-files` alone is the last command of the snapshot and sat in front of a pipe, where
+        # its failure was the pipeline's success
+        real_git = shutil.which("git")
+        (stubs / "git").write_text(
+            '#!/bin/sh\nfor a in "$@"; do if [ "$STUB_GIT_FAIL" = all ] || [ "$a" = "$STUB_GIT_FAIL" ]; then exit 1; fi; done\n'
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (stubs / "git").chmod(0o755)
+        self.addCleanup(os.environ.pop, "STUB_GIT_FAIL", None)
+        for failing in ("all", "ls-files"):
+            with self.subTest("a snapshot that cannot be taken", failing=failing):
+                os.environ["STUB_GIT_FAIL"] = failing
+                proc = run(outside, "touch ran_blind.txt")
+                os.environ.pop("STUB_GIT_FAIL", None)
+                self.assertEqual(proc.returncode, 3, proc.stderr)
+                self.assertIn("cannot read the state", proc.stderr)
+                self.assertFalse((repo / "ran_blind.txt").exists(), "the agent did not run")
+        (stubs / "git").unlink()
+        with self.subTest("a run that changes only what is staged"):
+            # staged, then edited again (`MM`): the run stages something else and puts the working
+            # copy back, so the status line and the diff against HEAD are what they were
+            subprocess.run(git + ["add", "tracked.txt"], check=True)
+            (repo / "tracked.txt").write_text("one\nworking copy\n", encoding="utf-8")
+            self.assertEqual(run(outside).returncode, 0, "staged before the run")
+            proc = run(outside, "cp tracked.txt ../keep && echo other > tracked.txt && git add tracked.txt && cp ../keep tracked.txt && rm ../keep")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+        with self.subTest("an untracked link to nothing"):
+            try:
+                os.symlink("nowhere", repo / "dangling")
+            except (OSError, NotImplementedError):
+                self.skipTest("no symlinks here")
+            proc = run(outside)
+            self.assertEqual(proc.returncode, 0, f"a dangling link is a state, not a failed snapshot: {proc.stderr}")
+            proc = run(outside, "ln -sfn elsewhere dangling")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            os.unlink(repo / "dangling")
+        self.assertEqual(run(repo / "runs").returncode, 0, "an ignored run folder inside the checkout")
+        inside = repo / "eval_runs"
+        proc = run(inside, "touch ran.txt")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("not git-ignored", proc.stderr)
+        self.assertFalse(inside.exists(), "refused before staging anything")
+        self.assertFalse((repo / "ran.txt").exists(), "the agent did not run")
 
 
 if __name__ == "__main__":

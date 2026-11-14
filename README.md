@@ -331,6 +331,7 @@ rather than drifting silently. There is no separate `input_schema` file to forge
 ```bash
 npx ffmpeg-skill contract --json            # or: python3 scripts/_contract.py --json
 npx ffmpeg-skill contract --json --static   # without environment detection
+npx ffmpeg-skill contract --json --tool cut # one tool's entry under `tools` (repeatable): ~60 KB, not ~950 KB
 ```
 
 The contract is generated from the code that runs, not maintained beside it. For each of the 42 tools (`ffmpeg-skill/<name>`) it states:

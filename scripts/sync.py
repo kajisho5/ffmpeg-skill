@@ -27,15 +27,13 @@ Examples:
   python3 sync.py cam.mp4 recorder.wav --fix-drift --replace-audio   # long takes: fix clock drift too
 """
 import argparse
-import cmath
-import json
 import math
 import os
 import sys
 from typing import Dict, List
 
 from _common.runner import fail_if_classified
-from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
+from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
 from _common.timeline import output_timecode_args

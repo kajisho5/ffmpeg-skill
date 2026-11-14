@@ -1,8 +1,9 @@
 # Compiled Python bytecode caches: interpreter-specific, never meant to ship.
-# package.json's "files" array already scopes the tarball to bin/, scripts/, mcp/, references/,
-# SKILL.md, README.md and LICENSE -- this excludes junk *within* those directories that npm's own
-# default ignore list doesn't cover (unlike .gitignore, an .npmignore is honored even when "files"
-# is set, per npm's own docs: https://docs.npmjs.com/cli/v10/configuring-npm/package-json#files).
+# This file alone does NOT keep them out. package.json's "files" allow-list wins over it: with
+# npm 10, a checkout that had run the tests packed 59 scripts/__pycache__/*.pyc files (#467 A222).
+# The exclusion that works is the negated entries at the end of "files" ("!**/__pycache__/**",
+# "!**/*.pyc", "!**/*.pyo"); tests/release_check.sh fails a tarball that still has one. These
+# lines stay for an npm that does apply them.
 __pycache__/
 *.pyc
 *.pyo

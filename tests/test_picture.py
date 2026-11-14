@@ -72,6 +72,30 @@ class PictureTests(MediaFixtures):
     def test_redact_out_of_bounds_refused(self):
         script("redact.py", self.src, "--x", "1200", "--y", "0", "--width", "200", "--height", "200", expect_fail=True)
 
+    def test_redact_blur_strength_1_blurs_colour_only_detail(self):
+        """Review of #521: the chroma radius was radius // 2, 0 at --blur-strength 1 for every
+        region, so detail carried by colour alone (constant luma) stayed readable. It is at least
+        1 wherever the chroma plane can hold it. A one-pixel chroma checkerboard on flat luma:
+        its spread inside a 16x16 region falls from 60 to well under 20 (6 here; 60 before)."""
+        src = OUT / "redact_chroma_detail.mp4"
+        sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+           "color=c=gray:s=64x64:r=25:d=1,format=yuv420p,"
+           "geq=lum=128:cb='128+60*(2*mod(X+Y\\,2)-1)':cr='128-60*(2*mod(X+Y\\,2)-1)'",
+           "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", src)
+        out = OUT / "redact_chroma_detail_out.mp4"
+        script("redact.py", src, "--x", "16", "--y", "16", "--width", "16", "--height", "16", "--blur-strength", "1", "-o", out)
+
+        def u_spread(path):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                                  "-pix_fmt", "yuv420p", "-"], capture_output=True, check=True).stdout
+            u = raw[64 * 64:64 * 64 + 32 * 32]
+            # the region's chroma is 8..15 on the half-size plane; its edge pairs are shared
+            vals = [u[y * 32 + x] for y in range(9, 15) for x in range(9, 15)]
+            mean = sum(vals) / len(vals)
+            return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+        self.assertGreater(u_spread(src), 50)
+        self.assertLess(u_spread(out), 20, "the colour-only detail inside the region was not blurred")
+
     def test_redact_odd_dimensions_refused(self):
         script("redact.py", self.src, "--x", "0", "--y", "0", "--width", "101", "--height", "100", expect_fail=True)
 
@@ -294,6 +318,26 @@ class PictureTests(MediaFixtures):
         self.assertClose(m["duration"], 4.0, 0.3)
         self.assertEqual(m["video"]["width"], 1280)
         self.assertEqual(m["video"]["height"], 720)
+
+    def test_stabilize_zoom_zero_keeps_the_framing_and_shows_the_edges(self):
+        """Audit A156 (class: a library default adds to what the caller's value says): vidstab's
+        optzoom=1 added its own zoom to --zoom, so --zoom 0 did not keep the original framing and
+        --crop black had almost no edge to fill (0 of 90 frames on this clip through 3.8.8). With
+        the zoom exactly --zoom, the corrected frames expose black edges."""
+        shaky = OUT / "shaky_wide_swing.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=480x300:rate=30",
+           "-t", "3", "-vf", "crop=320:180:x='80+50*sin(2*PI*t*1.3)':y='60+40*cos(2*PI*t*0.9)'",
+           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", shaky)
+        out = OUT / "stab_zoom0_black.mp4"
+        script("stabilize.py", shaky, "--crop", "black", "--smoothing", "30", "-o", out)
+        edged = set()
+        for strip in ("crop=2:ih:0:0", "crop=2:ih:iw-2:0", "crop=iw:2:0:0", "crop=iw:2:0:ih-2"):
+            cmd = ["ffprobe", "-v", "error", "-f", "lavfi", "-i", f"movie={escape_filter_path(str(out))},{strip},signalstats",
+                   "-show_entries", "frame_tags=lavfi.signalstats.YLOW", "-of", "csv=p=0"]
+            lows = [float(x.strip(",")) for x in subprocess.run(cmd, stdout=subprocess.PIPE, text=True).stdout.split() if x.strip(",")]
+            self.assertTrue(lows, strip)
+            edged |= {i for i, low in enumerate(lows) if low <= 20}
+        self.assertGreaterEqual(len(edged), 10, f"only {len(edged)} frames show a black edge: the picture was zoomed")
 
     def test_stabilize_bad_crop_refused(self):
         script("stabilize.py", self.src, "--crop", "nonsense", expect_fail=True)
@@ -1467,6 +1511,47 @@ class PictureTests(MediaFixtures):
         self.assertEqual(doc["sdr_path"], "gamut")
         self.assertTrue(any("without a tone map" in n for n in doc["notes"]))
         self.assertFalse(any("tonemap" in c for c in doc["commands"]), doc["commands"])
+
+    def test_an_untagged_transfer_is_not_written_as_another_signal(self):
+        """Audit A153 (class: an untagged colour property of the source is written into the
+        output as a guess at a different signal): BT.2020 primaries with no transfer tag are
+        "BT.2020 SDR" to probe(), and every re-encode tagged them HLG. Measured on the written
+        files of the shared encoder line (denoise) and of a tool that crops (crop)."""
+        src = OUT / "bt2020_no_trc.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=0.4",
+           "-vf", "setparams=color_primaries=bt2020:colorspace=bt2020nc", "-c:v", "libx264", "-preset", "ultrafast",
+           "-pix_fmt", "yuv420p10le", "-x264-params", "colorprim=bt2020:colormatrix=bt2020nc",
+           "-color_primaries", "bt2020", "-colorspace", "bt2020nc", src)
+        v = probe(str(src))["video"]
+        self.assertEqual((v["color_primaries"], v["color_transfer"], v["hdr"]), ("bt2020", None, False), v)
+        for tool, extra in (("denoise.py", ()), ("crop.py", ("--x", "0", "--y", "0", "--width", "80", "--height", "40"))):
+            with self.subTest(tool=tool):
+                out = OUT / f"bt2020_no_trc_{tool[:-3]}.mp4"
+                script(tool, src, *extra, "--fast", "-o", out)
+                w = probe(str(out))["video"]
+                self.assertEqual(w["color_transfer"], "bt2020-10", w)
+                self.assertFalse(w["hdr"], w)
+                self.assertEqual(w["hdr_format"], "BT.2020 SDR", w)
+
+    def test_to_sdr_force_on_a_non_hdr_file_says_what_it_read_it_as(self):
+        """Audit A161 (class: a note describes an assumption the code path did not make):
+        --to-sdr --force on a BT.709-tagged file said "tone-mapped untagged input as PQ" while the
+        chain linearised it as BT.709. Its untagged sibling failed outright (kind ffmpeg: zscale
+        on 6.1 found "no path between colorspaces" for a frame with unspecified primaries)."""
+        tagged = tiny_clip(OUT / "force_sdr_bt709.mp4", "testsrc2=s=160x90:r=25",
+                           "-vf", "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709",
+                           "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", seconds=0.4)
+        untagged = tiny_clip(OUT / "force_sdr_untagged.mp4", "testsrc2=s=160x90:r=25", seconds=0.4)
+        self.assertIsNone(probe(str(untagged))["video"]["color_primaries"])
+        for src, said in ((tagged, "transfer bt709, primaries bt709"),
+                          (untagged, "transfer smpte2084 (untagged, taken as PQ), primaries bt2020 (untagged)")):
+            with self.subTest(src=src.name):
+                out = OUT / f"{src.stem}_sdr.mp4"
+                doc = json.loads(script("color.py", src, "--to-sdr", "--force", "--fast", "--json", "-o", out).stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertIn(said, doc["notes"][0])
+                self.assertNotIn("untagged input as PQ", doc["notes"][0])
+                self.assertEqual(probe(str(out))["video"]["color_transfer"], "bt709")
 
     def test_color_retag_is_stream_copy(self):
         out = OUT / "retag.mp4"

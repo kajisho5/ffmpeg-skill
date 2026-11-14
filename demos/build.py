@@ -104,6 +104,8 @@ class Ctx:
     """One demo's working area. Records every skill-script invocation it makes, so the gallery
     page can print the exact command that produced the picture instead of a retyped one."""
 
+    dry = False  # _DryCtx: nothing runs, so nothing is measured
+
     def __init__(self, name, verbose=True):
         self.name = name
         self.verbose = verbose
@@ -129,6 +131,35 @@ class Ctx:
         there it is a no-op and the commands after it are still recorded."""
         if not Path(path).exists():
             raise BuildError("%s did not write %s" % (what, path))
+
+
+# A demo whose second command takes a value the first one measured. The gallery page is written
+# by replaying the builders with nothing run (_DryCtx), so it can only print these values; a real
+# build uses what was measured and stops when that differs from them, so the command under the
+# picture is the one that made it (#467 A243, A244). Measured from the synthetic fixtures with
+# FFmpeg 6.1.1: the letterbox fixture pads a 1280x400 picture at y=160, and the shots fixture
+# cuts at 2 s and 4 s.
+CROPDETECT_GALLERY_RECT = {"x": 0, "y": 160, "width": 1280, "height": 400}
+SCENES_GALLERY_SEGMENTS = "0.00-2.00,2.00-4.00"
+
+
+def measured(raw, gallery, what, pick, constant):
+    """The value a real build measured, checked against the one the gallery prints. `raw` is the
+    first command's stdout (`pick` takes the value out of its JSON) or, with `pick` None, the
+    value itself. Nothing measured, or a value other than the gallery's, is a BuildError."""
+    value = raw
+    if pick is not None:
+        try:
+            value = pick(json.loads(raw or ""))
+        except (ValueError, AttributeError):
+            value = None
+        value = {k: value.get(k) for k in gallery} if isinstance(value, dict) else None
+    if not value:
+        raise BuildError("%s: nothing was measured, so there is no value to run the next command with" % what)
+    if value != gallery:
+        raise BuildError("%s: the build measured %s, the gallery prints %s; set %s in demos/build.py "
+                         "to the measured value and run demos/build.py --docs" % (what, value, gallery, constant))
+    return value
 
 
 def _short(arg) -> str:
@@ -953,10 +984,12 @@ def demo_cropdetect_crop(ctx):
     before = FIX / "letterbox.mp4"
     after = ctx.path("after.mp4")
     out = ctx.script("cropdetect.py", before, "--seconds", "4", "--json", capture=True)
-    rect = {"x": 0, "y": 160, "width": 1280, "height": 400}
-    if out:
-        found = json.loads(out)
-        rect = {k: found.get(k, rect[k]) for k in rect}
+    rect = dict(CROPDETECT_GALLERY_RECT)
+    if not ctx.dry:
+        # the rectangle is the measured one: the build read `x`/`y`/... off the document's top
+        # level, where they are not (they are under `crop`), and cropped the fallback (#467 A244)
+        rect = measured(out, CROPDETECT_GALLERY_RECT, "cropdetect.py's rectangle",
+                        lambda doc: doc.get("crop"), "CROPDETECT_GALLERY_RECT")
         ctx.note("detected x=%(x)s y=%(y)s %(width)sx%(height)s" % rect)
     ctx.script("crop.py", before, "--x", rect["x"], "--y", rect["y"], "--width", rect["width"],
                "--height", rect["height"], "--preset", "veryfast", "-o", after)
@@ -1436,12 +1469,15 @@ def demo_scenes_highlights(ctx):
     edl = ctx.path("picks.txt")
     after = ctx.path("after.mp4")
     ctx.script("scenes.py", before, "--highlights", "2", "--min-scene", "1", "--edl", edl)
-    segments = "0.00-1.50,4.00-5.50"
-    if edl.exists():
-        picked = [line.strip() for line in edl.read_text(encoding="utf-8").split() if line.strip()]
-        if picked:
-            segments = ",".join(picked)
-            ctx.note("%d highlight ranges: %s" % (len(picked), segments))
+    segments = SCENES_GALLERY_SEGMENTS
+    if not ctx.dry:
+        # the cut list is the one scenes.py wrote: the gallery printed a placeholder list while
+        # the build cut the measured one (#467 A243), and a missing EDL fell back to it silently
+        picked = [line.strip() for line in edl.read_text(encoding="utf-8").split()
+                  if line.strip()] if edl.exists() else []
+        segments = measured(",".join(picked), SCENES_GALLERY_SEGMENTS, "scenes.py --edl's ranges",
+                            None, "SCENES_GALLERY_SEGMENTS")
+        ctx.note("%d highlight ranges: %s" % (len(picked), segments))
     ctx.script("cut.py", before, "--segments", segments, "--accurate", "--preset", "veryfast",
                "-o", after)
     return before, after
@@ -1979,6 +2015,8 @@ def write_docs(path=ROOT / "docs" / "demos.md"):
 
 class _DryCtx(Ctx):
     """Records what a builder would run without running any of it."""
+
+    dry = True
 
     def script(self, tool, *args, capture=False):
         self.commands.append(" ".join(["python3", "scripts/" + tool] + [_short(a) for a in args]))

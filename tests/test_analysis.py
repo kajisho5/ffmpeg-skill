@@ -80,6 +80,44 @@ class AnalysisTests(MediaFixtures):
         out = script("probe.py", self.src, "--json", "--field", "duration").stdout.strip()
         self.assertClose(float(out), 12.0, 0.1)
 
+    def test_probe_field_prints_json_not_python(self):
+        """Audit A123 (class: a value printed for a caller is Python's repr): --field printed
+        True, None and {'codec': ...}, which no caller can parse, with or without --json."""
+        self.assertEqual(script("probe.py", self.src, "--field", "video.hdr").stdout.strip(), "false")
+        audio = json.loads(script("probe.py", self.src, "--field", "audio").stdout)
+        self.assertIsInstance(audio, dict)
+        self.assertEqual(script("probe.py", self.src, "--field", "video.codec").stdout.strip(), "h264")
+        self.assertEqual(script("probe.py", self.src, "--field", "nothing.here").stdout.strip(), "")
+        for field, value in (("video.codec", "h264"), ("nothing.here", None), ("video.hdr", False)):
+            with self.subTest(field=field):
+                self.assertEqual(json.loads(script("probe.py", self.src, "--json", "--field", field).stdout), value)
+
+    def test_json_brief_alone_prints_the_json_document(self):
+        """Review of #521: --json-brief implies --json (apply_common set STATE.json), but the tools
+        that branch on args.json read only --json, so `probe --json-brief --field video.codec`
+        printed a bare h264 and a missing field an empty line. The sweep of that class: check
+        printed its text table, report a document and then a bare path, verify its Markdown
+        report and no document, cropdetect and silence --list a bare document with no status.
+        apply_common now sets args.json to the effective mode."""
+        for field, value in (("video.codec", "h264"), ("nothing.here", None)):
+            with self.subTest(field=field):
+                out = script("probe.py", self.src, "--json-brief", "--field", field).stdout
+                self.assertEqual(json.loads(out), value, repr(out))
+        # check fails the unnormalised tone (loudness, true peak): its failure document is the test
+        runs = {"check": (("check.py", self.src, "--platform", "youtube"), "failed"),
+                "cropdetect": (("cropdetect.py", self.src, "--samples", "2"), "completed"),
+                "silence --list": (("silence.py", self.src, "--list"), "completed"),
+                "report": (("report.py", "--after", self.src, "--no-sheets", "-o", OUT / "json_brief_report.html"), "completed"),
+                "verify": (("verify.py", self.src, "--quick"), "completed")}
+        for label, (argv, status) in runs.items():
+            with self.subTest(tool=label):
+                out = script(*argv, "--json-brief", expect_fail=status == "failed").stdout
+                try:
+                    doc = json.loads(out)
+                except ValueError:
+                    self.fail(f"{label} --json-brief printed no JSON document: {out[:200]!r}")
+                self.assertEqual(doc.get("status"), status, out[:300])
+
     def test_probe_missing_file_fails(self):
         proc = script("probe.py", OUT / "nope.mp4", expect_fail=True)
         self.assertIn("not found", proc.stderr)
@@ -1147,6 +1185,23 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("HDR10/PQ", text)
         script("verify.py", OUT / "does_not_exist", expect_fail=True)
 
+    def test_look_takes_an_o_without_an_image_extension_as_a_stem_in_every_mode(self):
+        """Audit A159 (class: an output path the muxer cannot name a format for reaches ffmpeg):
+        look.py --compare and the contact sheet used an -o without an image extension verbatim and
+        failed as kind ffmpeg, though --at takes such an -o as a stem (docs/design-decisions.md)."""
+        a = tiny_clip(OUT / "look_stem_a.mp4", "testsrc2=s=160x90:r=25", seconds=1)
+        b = tiny_clip(OUT / "look_stem_b.mp4", "color=c=red:s=160x90:r=25", seconds=1)
+        stem = OUT / "look_stem_out"
+        for args, name in ((("--at", "0.5", "--compare", b), "look_stem_out_vs_look_stem_b_0_0.500s.png"),
+                           ((), "look_stem_out_sheet.png"), (("--at", "0.5"), "look_stem_out_0.500s.png")):
+            with self.subTest(args=args):
+                (OUT / name).unlink(missing_ok=True)
+                doc = json.loads(script("look.py", a, *args, "--json", "-o", stem).stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertEqual(doc["outputs"], [str(OUT / name)])
+                self.assertGreater(png_size(OUT / name)[0], 0)
+        self.assertFalse(stem.exists())
+
     def test_verify_disambiguates_same_named_files_from_different_folders(self):
         """Every file's outputs share one flat --out directory keyed only on stem = outdir /
         f.stem -- two files with the same basename from different subfolders (entirely normal for
@@ -1169,6 +1224,64 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(len(cut_files), 2, f"expected two distinct 'cut' outputs, one per same-named source file, got {cut_files}")
         cap_files = sorted(p.name for p in out.glob("clip*_cap.mp4"))
         self.assertEqual(len(cap_files), 2, f"expected two distinct 'caption' outputs, got {cap_files}")
+
+    def test_verify_stems_never_collide_and_its_outputs_are_where_it_says(self):
+        """Audit A121, A119, A120 (class: a run that writes several files does not keep them apart,
+        or keep them, as it says). unique_stems gave two clip.mp4 and a clip_1.mp4 the stem
+        clip_1 twice; a rerun into the same --out failed every step, since --overwrite never
+        reached a step; --keep without --out kept nothing (the temporary folder was deleted at
+        exit) and named no folder. Measured on the folders and files the runs leave."""
+        import verify
+        stems = verify.unique_stems([Path("a/clip.mp4"), Path("b/clip.mp4"), Path("c/clip_1.mp4"), Path("d/Clip.MOV")])
+        self.assertEqual(len({v.casefold() for v in stems.values()}), 4, stems)
+        clip = tiny_clip(OUT / "verify_keep_src.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        doc = json.loads(script("verify.py", clip, "--quick", "--keep", "--json").stdout)
+        kept = Path(doc["out_dir"])
+        try:
+            self.assertTrue((kept / "verify_keep_src_cut.mp4").is_file(), sorted(p.name for p in kept.iterdir()))
+        finally:
+            shutil.rmtree(kept, ignore_errors=True)
+        out = OUT / "verify_rerun_out"
+        shutil.rmtree(out, ignore_errors=True)
+        for run in (1, 2):
+            with self.subTest(run=run):
+                doc = json.loads(script("verify.py", clip, "--quick", "--out", out, "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["failed"], doc["out_dir"]), ("completed", 0, str(out)))
+        doc = json.loads(script("verify.py", clip, "--quick", "--json").stdout)
+        self.assertIsNone(doc["out_dir"])
+
+    def test_verify_never_writes_a_name_that_is_another_input(self):
+        """Review of #521 (class: a batch tool's generated output name is another collected
+        input). A folder holding clip.mp4 and clip_cut.mp4, verified into itself with --overwrite:
+        clip.mp4's cut was written to clip_cut.mp4, replacing the other input (each step checks
+        its output against its own input only), and that input's steps then read the cut. Every
+        name the run writes is checked against every input first, a hard link included, and the
+        run is refused before anything is written; --dry-run (which verify ignores) alike."""
+        folder = OUT / "verify_name_is_input"
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir()
+        tiny_clip(folder / "clip.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        other = tiny_clip(folder / "clip_cut.mp4", "color=c=red:s=160x90:r=25", seconds=2)
+        before = other.read_bytes()
+        for extra in ((), ("--dry-run",)):
+            with self.subTest(extra=extra):
+                proc = script("verify.py", folder, "--out", folder, "--overwrite", "--quick", "--json", *extra, expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_is_input"), err)
+                self.assertEqual(Path(err["details"]["input"]).name, "clip_cut.mp4", err)
+                self.assertIn("clip.mp4", err["message"])
+                self.assertEqual(other.read_bytes(), before, "the input was replaced")
+                self.assertEqual(sorted(p.name for p in folder.iterdir()), ["clip.mp4", "clip_cut.mp4"])
+        # another name for the input (a hard link in the --out folder) is the same file
+        out = OUT / "verify_name_is_input_out"
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir()
+        alias = folder / "renamed.mp4"
+        other.rename(alias)
+        os.link(alias, out / "clip_cut.mp4")
+        err = json.loads(script("verify.py", folder, "--out", out, "--overwrite", "--quick", "--json", expect_fail=True).stdout)["error"]
+        self.assertEqual((err["reason"], Path(err["details"]["input"]).name), ("output_is_input", "renamed.mp4"), err)
+        self.assertEqual(alias.read_bytes(), before)
 
     def test_verify_full_plan_hdr_surround_broken_file_and_timeout(self):
         """verify.py's non---quick plan (overlay, look sheet, probe --analyze, loudness, silence,

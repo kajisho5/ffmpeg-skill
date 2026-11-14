@@ -19,7 +19,7 @@ import sys
 
 from _common.alpha import add_alpha_args, check_alpha_args, finish_chain, report as alpha_report, video_line
 from _common.emit import note
-from _common import STATE,  add_common, apply_common, die, draws_chroma, emit, ffmpeg_base, info, parse_time, probe, rgb_chain_to_bt709, run, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE,  add_common, apply_common, die, draws_chroma, emit, ffmpeg_base, info, probe, rgb_chain_to_bt709, run, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs
 
 
 def gradient_source(w: int, h: int, fps: float, c0: str, c1: str, angle: float) -> str:

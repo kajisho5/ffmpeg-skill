@@ -38,11 +38,11 @@ from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
 from _common.drawtext import shaping_refusal
 from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
-                     ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, parse_time, probe, rgb_chain_to_bt709, run, run_keeping_subtitles, video_args,
+                     ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, probe, rgb_chain_to_bt709, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
                      LANGUAGE_NAMES, needs_shaping, detect_script, BIDI_SCRIPTS, font_family_of_file, font_family_for_script, has_emoji,
                      emoji_clusters, emoji_codepoint_name, char_script, emoji_filter_chain, emoji_asset_for, emoji_support, resolve_emoji_assets,
-                     EMOJI_ASSET_HINT, text_width_em, drawtext_shaping, wrap_text, WRAP_MODES,
+                     EMOJI_ASSET_HINT, text_width_em, wrap_text, WRAP_MODES,
                      SAFE_WIDTH_FRACTION, drawtext_draws_newline_glyph, is_multiline, _DRAWTEXT_PENDING)
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
@@ -429,7 +429,6 @@ def main(force_route: Optional[str] = None) -> int:
         el["text"] = text
         elements.append(el)
 
-    extra_inputs: List[str] = []
     fc: List[str] = []  # filter_complex chains (used by templates that need animated boxes)
     if 0 < min(W, H) < 64:  # 0x0 is a dry-run probe of an intermediate that does not exist yet
         die(f"the frame is {W}x{H}; the templates are sized from it and need at least 64 px on the short side")
