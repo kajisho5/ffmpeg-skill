@@ -4379,6 +4379,17 @@ class CompositingAndEdgeInputTests(unittest.TestCase):
         script("reverse.py", vfr, "--fast", "-o", out)
         self.assertGreater(min(frame_rgb(out, 0, 80, 60)), 200, "the reversed clip must open on the source's last frame")
 
+    def test_broll_window_of_one_fast_frame_still_shows_a_slower_cutaway(self):
+        """#514 review: the cutaway is cut half a frame of its own before the window's end, so a
+        window of one 60 fps frame under a 24 fps cutaway (16.7 ms against half a frame of
+        20.8 ms) ended before the cutaway's first frame and nothing was shown."""
+        aroll = tiny_clip(OUT / "a470_a60.mp4", "testsrc2=s=320x180:r=60", seconds=1, audio=True)
+        red = tiny_clip(OUT / "a470_red24.mp4", "color=c=red:s=320x180:r=24", seconds=1, audio=True)
+        out = OUT / "a470_one_frame.mp4"
+        script("broll.py", aroll, "--insert", red, "--at", "0.5", "--duration", "0.016", "--fast", "-o", out)
+        r, g, b = frame_rgb(out, 0.5 - 0.004, 160, 90)  # a read lands on the first frame at or after its time
+        self.assertTrue(r > 150 and g < 90 and b < 90, f"the one-frame window must show the cutaway: {(r, g, b)}")
+
     def test_loop_crossfade_keeps_a_late_picture_with_its_sound(self):
         """A168: the crossfade's unit rebased each stream to its own start (the picture's setpts,
         the sound's aresample first_pts=0), so a picture that starts 0.2 s after its sound came out

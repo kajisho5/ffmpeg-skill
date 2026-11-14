@@ -328,7 +328,9 @@ def fmt_smpte_time(seconds: float, fps: float) -> str:
     if seconds < 0:
         seconds = 0.0
     whole_fps = int(round(fps))
-    total_frames = int(round(seconds * fps))
+    # the frames are counted at the rate parse_time() reads the same text at (29.97 as
+    # 30000/1001): at 29.97 itself 06:00:00:00 came back as 05:59:59:29
+    total_frames = int(round(seconds * ntsc_rate(fps)))
     frame = total_frames % whole_fps
     secs_total = total_frames // whole_fps
     h, rem = divmod(secs_total, 3600)

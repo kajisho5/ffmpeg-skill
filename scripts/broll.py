@@ -177,8 +177,10 @@ def main() -> int:
             # that frame is put on the tick of the `fps` grid at or before the window's first
             # frame, at the A-roll's exact rate (30000/1001, not probe()'s 29.97: frame 37
             # counted at 29.97 comes 1.2 microseconds after the A-roll's and was shown a frame on)
+            # The cut never ends before B's first frame: a window shorter than half a frame of B
+            # (one 60 fps frame of the A-roll under a 24 fps cutaway) cut that frame off too
             half_b = 0.5 / c["rate"] if c["rate"] else 0.0
-            parts.append(f"[{i + 1}:v]trim=start={max(0.0, c['first'] - half_b):.6f}:end={c['first'] + c['span'] - half_b:.6f},"
+            parts.append(f"[{i + 1}:v]trim=start={max(0.0, c['first'] - half_b):.6f}:end={max(c['first'] + c['span'], c['first'] + 2 * half_b) - half_b:.6f},"
                          f"setpts=PTS-STARTPTS+{math.floor(c['on'] * rate_a + 1e-6) / rate_a:.6f}/TB,"
                          f"{convert[i + 1]}{b_sq}{geo},setsar=1,{fps_filter},format={pix}[b{i}]")
             window = window_expr(c["on"], c["on"] + c["span"], meta_a, half_open=True)
