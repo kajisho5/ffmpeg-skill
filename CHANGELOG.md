@@ -20,15 +20,15 @@
   1.2345679 s, past frame 37). Not changed: the emoji PNGs `caption.py` and `graphics.py`'s ASS
   route lay over a libass line, and `fit.py --method speed` without sound (38 frames for 37 on
   FFmpeg 6.1.1).
-- **A cutaway's sound, `broll.py --audio b`'s mute, `sync.py --trim-second`'s delay and
-  `fit.py --method speed`'s retimed sound are placed to the sample.** `--audio b` muted the A-roll
+- **A cutaway's sound, `broll.py --audio b`'s mute and `sync.py --trim-second`'s delay are
+  placed to the sample.** `--audio b` muted the A-roll
   per 1024-sample audio frame (48128-96255 for 48000-95999) and is evaluated per sample now. A
   cutaway's sound starts with its first frame, the A-roll's first at or after `--at` (`--at 1.001`
   at 25 fps: 1.040 s, where the sound started at 1.001 s and the picture at 1.04 s). `sync.py
   --trim-second --fine-ms 0.25` started the second file's sound at sample 11232 for an offset of
   0.2343 s and starts it at 11246; at the default `--fine-ms 1` without `--fix-drift` the command
-  is unchanged. `fit.py --method speed` pads or cuts `atempo`'s output to the target (58368
-  samples for 59244, 95360 for 96000, 59232 for 59244 before).
+  is unchanged. `fit.py --method speed`'s retimed sound keeps the length `atempo` gives it (some
+  milliseconds off the target): padding it to the sample did not end on FFmpeg 8.0.1.
 - **`pad.py --start` and `freeze.py --at 0 --mode insert` delay the sound by the frames put ahead
   of the picture.** The picture is padded by whole frames: `--start 0.23425` at 25 fps is 6
   frames (0.240 s), and the sound was delayed by 0.23425 s, 5.75 ms ahead of its picture; it is

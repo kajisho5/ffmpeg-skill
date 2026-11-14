@@ -1206,8 +1206,7 @@ class EditingTests(MediaFixtures):
         `volume=0:enable=...`, evaluated once per 1024-sample frame (48128-96255 for 48000-95999);
         a cutaway's sound started at --at while its picture started on the A-roll's first frame
         at or after it (--at 1.001 at 25 fps: sound from 1.001 s, picture from 1.04 s); sync.py
-        --trim-second delayed by `adelay=<ms>` (11232 for an offset of 0.2343 s); fit.py --method
-        speed left atempo's sound 13 to 62 ms short of the target; pad.py --start and freeze.py's
+        --trim-second delayed by `adelay=<ms>` (11232 for an offset of 0.2343 s); pad.py --start and freeze.py's
         hold at the first frame put whole frames of picture (0.240 s for 0.23425 at 25 fps) ahead
         of an exact 0.23425 s of silence. Read from the graph, the command run again with PCM in
         place of AAC (pcm_of)."""
@@ -1249,13 +1248,6 @@ class EditingTests(MediaFixtures):
             self.assertEqual(next(k for k, v in enumerate(pcm_of(doc["commands"][-1], pcm)) if abs(v) > 200), written)
             doc = json.loads(script("sync.py", reference, late, "--trim-second", "-o", out, "--json").stdout)
             self.assertIn(f"adelay={round(doc['offset_seconds'] * 1000)}:all=1", doc["commands"][-1], "a whole millisecond is the text it was")
-        burst = "0.4*sin(2*PI*440*t)*lt(mod(t\\,0.31)\\,0.1)"
-        bursts = numbered_clip(OUT / "fs_bursts.mov", 25, 75, sound=f"aevalsrc={burst}:s=48000:d=3")
-        sine = numbered_clip(OUT / "fs_sine.mov", 25, 75, sound="sine=f=440:sample_rate=48000:d=3")
-        for source, duration in ((bursts, "1.23425"), (bursts, "2.0"), (sine, "1.23425")):
-            with self.subTest(tool="fit.py", source=source.name, duration=duration):
-                command = run("fit.py", source, "--duration", duration)
-                self.assertEqual(len(pcm_of(command, pcm)), round(float(duration) * 48000))
         sound = plain_clip(OUT / "fs_pad.mov", 25, 25, sound="aevalsrc=0.5:s=48000:d=1", luma=200)
         sound30 = plain_clip(OUT / "fs_pad30.mov", 30, 30, sound="aevalsrc=0.5:s=44100:d=1", luma=200)
         for tool, source, args, first, rate in (("pad.py", sound, ["--start", "0.23425"], 0.24, 48000),

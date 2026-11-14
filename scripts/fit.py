@@ -39,7 +39,7 @@ import sys
 from fractions import Fraction
 from typing import List
 
-from _common.decision import SEEK_MARGIN, conform_to_length, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, default_output, die, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
@@ -207,19 +207,16 @@ def main() -> int:
                     vf.append("tblend=all_mode=average")
                 if has_audio:
                     af.append(atempo_chain(factor))
-                    if rate:
-                        # atempo's output is not the input's length over the factor: it is laid
-                        # down in overlapping windows placed by the content, and comes out some
-                        # milliseconds short or long (3 s at 2.43x: 58368 samples of bursts for
-                        # 59244; 3 s of a sine at 2x: 72317 for 72000; FFmpeg 6.1.1). The track is
-                        # padded with silence or cut to the target's samples, as audio.py's is
-                        af.append(conform_to_length(target, rate))
-            # A retimed track is ended by that filter and the -t names the same sample. Where the
-            # sound is not retimed (a factor within 1e-4 of 1) the source's runs on and the -t ends
-            # it. A picture without sound that is not retimed either is a trim, counted in frames;
-            # one that is retimed, or regridded by --fps, keeps the millisecond
+            # atempo's sound is not the input's length over the factor (it comes out some
+            # milliseconds short or long), and the millisecond -t stays on a retimed track: padding
+            # it to the target's samples (apad after atempo in -af) never ended on FFmpeg 8.0.1
+            # (seen in CI: killed at the time limit), so the track keeps the length atempo gives.
+            # Where the sound is not retimed (a factor within 1e-4 of 1) the source's runs on and
+            # the -t ends it to the sample. A picture without sound that is not retimed either is
+            # a trim, counted in frames; one that is retimed, or regridded by --fps, keeps the
+            # millisecond
             retimed = abs(factor - 1.0) > 1e-4
-            post += ["-t", length_output_t(target, rate, runs_on=True) if rate
+            post += ["-t", f"{target:.3f}" if af else length_output_t(target, rate, runs_on=True) if rate
                      else f"{target:.3f}" if retimed or args.fps or has_audio else picture_output_t(target, meta)]
             STATE.duration_hint = target
         else:

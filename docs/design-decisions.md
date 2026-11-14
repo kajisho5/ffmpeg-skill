@@ -4181,12 +4181,14 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   23.976, 29.97, 47.952, 59.94 and 119.88 (probe()'s three decimals, or an `@29.97` suffix) as
   N * 1000 / 1001, as `timeline.exact_rate()` does; every other rate is used as it is. Every tool
   that takes a time through `time_arg()` reads it so.
-- **`fit.py --method speed` ends a retimed track on the target's sample.** The 3.8.3 entry left
-  `atempo`'s length alone: its output is laid down in windows placed by the content and comes out
-  short or long (3 s of bursts to 1.23425 s: 58368 samples for 59244; to 2.0 s: 95360 for 96000;
-  a sine: 59232 for 59244). `conform_to_length(target, rate)` follows the `atempo` chain, as in
-  `audio.py`, and the `-t` names the same sample (`length_output_t(..., runs_on=True)`). A whole
-  millisecond, no sound and a dry run's pending input write the command they did.
+- **`fit.py --method speed` leaves a retimed track at the length `atempo` gives it.** Its output
+  is laid down in windows placed by the content and comes out short or long (3 s of bursts to
+  1.23425 s: 58368 samples for 59244; to 2.0 s: 95360 for 96000; a sine: 59232 for 59244;
+  FFmpeg 6.1.1). Following the `atempo` chain with `conform_to_length(target, rate)` in `-af`,
+  as `audio.py` does in its graph, ended the track on the sample on 6.1.1, 7.1 and 9.0.2 and
+  never ended on FFmpeg 8.0.1 (`atempo=...,aformat,apad=whole_len=N,atrim=end_sample=N,atrim=end=T`
+  with `-t`: every such run in CI was killed at the 1800 s limit, #514). It is not shipped; the
+  3.8.3 behaviour stays and the item stays open on #470.
 - **`sync.py --trim-second` delays to the sample.** The 3.8.3 entry kept `adelay=<ms>` because
   "its `-af` reaches every audio track the second file has". That sentence is wrong: the command
   maps the default selection, or with several streams the probed picture and sound
