@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.8
+
+_Automated release: version and notes generated from pull requests merged since 3.8.7._
+
 ### Fixed
 
 - **Cache keys see every file an output depends on** (#458 A80, A81, A100, A277). `batch.py`'s
@@ -54,6 +60,7 @@
   written into the directory of `-o`, lists the ten presets that turn `normalize` on, and no longer
   names a `--codec` render.py does not have; `examples/brand.json` lost a `loudness` block no tool
   reads. Measured on FFmpeg 6.1.1 only.
+- fix: the remaining findings of the render.py, batch.py and sequence.py audit (#458, 25 items) (#508)
 
 ## 3.8.7
 
