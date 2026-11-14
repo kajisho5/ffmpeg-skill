@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.18
+
+_Automated release: version and notes generated from pull requests merged since 3.8.17._
+
 ### Fixed
 
 - **What was left of the old grouped issues #402, #403, #404 and #429 (#510).**
@@ -35,6 +41,7 @@
     pack and reported `verified: true`.
   - A test now pins that an output with no integrated loudness gets a `loudness` step that is not
     ok and says `not_measured` (the behaviour since 3.6.7).
+- fix: leftovers of the audit, the open items of #510 (#532)
 
 ## 3.8.17
 
