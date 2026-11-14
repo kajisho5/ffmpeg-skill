@@ -511,6 +511,11 @@ def apply_common(args: "argparse.Namespace") -> None:
     # --json-brief is a shorter --json, not a second output mode: it implies it, so a caller that
     # passes only --json-brief still gets a JSON document (and --json --json-brief is the brief one).
     STATE.json = bool(getattr(args, "json", False)) or STATE.json_brief
+    if hasattr(args, "json"):
+        # and a tool that branches on args.json reads the same mode: through 3.8.13, probe --field,
+        # check, cropdetect, silence --list, report and verify printed text (or a bare document,
+        # or a document and then a path) under --json-brief alone (review of #521)
+        args.json = STATE.json
     STATE.progress = bool(getattr(args, "progress", False))
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
@@ -991,7 +996,7 @@ def _refuse_output_is_input(output: str, inp: str, real: str, why: str) -> None:
            **details)
 
 
-def refuse_output_is_input(output: str, *inputs: str) -> None:
+def refuse_output_is_input(output: str, *inputs: str, why: str = "the result would replace the source") -> None:
     """Tool-level twin of the run() guard, for tools whose final ffmpeg command does not name
     the user's input at all. `cut.py --segments` cuts each part into a temp dir and then concats
     a list file: the last command's only `-i` is that list, so `-o` equal to the input sailed
@@ -1009,7 +1014,7 @@ def refuse_output_is_input(output: str, *inputs: str) -> None:
         except OSError:
             continue
         if same:
-            _refuse_output_is_input(output, inp, out_real, "the result would replace the source")
+            _refuse_output_is_input(output, inp, out_real, why)
 
 
 def _check_output_path(cmd: Sequence[str]) -> None:

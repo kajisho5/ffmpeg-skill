@@ -10502,6 +10502,60 @@ class Audit467Tests(unittest.TestCase):
         self.assertIn('if [ "$before" != "$after" ]', code)
         self.assertIn("exit 1", code)
 
+    @unittest.skipIf(os.name == "nt" or not shutil.which("sh") or not shutil.which("git"), "needs sh and git")
+    def test_the_agent_eval_sees_a_second_edit_and_refuses_a_run_dir_it_would_see(self):
+        """Review of #521. The checkout's state was `git status` alone, so a run that edited a
+        tracked file already modified left the same ` M` line and went unreported; and a RUN_DIR
+        inside the checkout that git does not ignore made the run's own transcript read as a
+        change (exit 1 on every run). The script is run, in a throwaway repository, with stub
+        `claude`, `node` and fixture writer; the stub agent does what each case says."""
+        tmp = Path(tempfile.mkdtemp(prefix="ffskill_eval25_"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo, stubs = tmp / "repo", tmp / "stubs"
+        (repo / "evals").mkdir(parents=True)
+        (repo / "bin").mkdir()
+        stubs.mkdir()
+        shutil.copy(ROOT / "evals" / "run_agents_25.sh", repo / "evals" / "run_agents_25.sh")
+        (repo / "evals" / "write_fixtures.py").write_text(
+            "import os, sys\nos.makedirs(os.path.join(sys.argv[1], 'a'), exist_ok=True)\n", encoding="utf-8")
+        (repo / "evals" / "agent_prompts_25.json").write_text('[{"id": "a", "prompt": "p"}]', encoding="utf-8")
+        (repo / "bin" / "install.js").write_text("", encoding="utf-8")
+        (repo / ".gitignore").write_text("runs/\n", encoding="utf-8")
+        (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+        for name, body in (("node", 'mkdir -p "$3/ffmpeg-skill"\n'),
+                           ("claude", 'cd "$STUB_REPO" && eval "$STUB_ACTION"\n')):
+            (stubs / name).write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            (stubs / name).chmod(0o755)
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "init"], check=True)
+
+        def run(run_dir, action=":"):
+            env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}", STUB_REPO=str(repo), STUB_ACTION=action)
+            return subprocess.run(["sh", str(repo / "evals" / "run_agents_25.sh"), str(run_dir)], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        outside = tmp / "out_runs"
+        self.assertEqual(run(outside).returncode, 0, "nothing changed")
+        (repo / "tracked.txt").write_text("one\ntwo\n", encoding="utf-8")   # modified before the run
+        (repo / "scratch.txt").write_text("x\n", encoding="utf-8")          # untracked before the run
+        self.assertEqual(run(outside).returncode, 0, "a change made before the run is not the run's")
+        for label, action in (("a tracked file already modified", "echo three >> tracked.txt"),
+                              ("an untracked file already there", "echo y >> scratch.txt"),
+                              ("a new file", "touch new.txt")):
+            with self.subTest(label):
+                proc = run(outside, action)
+                self.assertEqual(proc.returncode, 1, proc.stderr)
+                self.assertTrue((outside / "a" / ".tree_changed").is_file())
+        self.assertEqual(run(repo / "runs").returncode, 0, "an ignored run folder inside the checkout")
+        inside = repo / "eval_runs"
+        proc = run(inside, "touch ran.txt")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("not git-ignored", proc.stderr)
+        self.assertFalse(inside.exists(), "refused before staging anything")
+        self.assertFalse((repo / "ran.txt").exists(), "the agent did not run")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

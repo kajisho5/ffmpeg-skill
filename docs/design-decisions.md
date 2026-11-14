@@ -4465,14 +4465,21 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   over the size the caller set is the larger miss, and a true peak still over the ceiling is
   reported as before. Without `--max-mb` nothing changes. Test:
   `DeliveryTests.test_export_max_mb_with_normalize_stays_under_the_limit`.
-- **`probe.py --field` prints a string as itself and anything else as JSON** (A123); with `--json`
-  every line is JSON. A string stays bare without `--json` so `$(probe.py f --field video.codec)`
-  keeps working. Test: `AnalysisTests.test_probe_field_prints_json_not_python`.
+- **`probe.py --field` prints a string as itself and any other value present as JSON** (A123); a
+  missing field is an empty line, as it always was (kept for callers that test for one). With
+  `--json` or `--json-brief` every line is JSON: a string is quoted and a missing field is `null`.
+  A string stays bare without them so `$(probe.py f --field video.codec)` keeps working. Tests:
+  `AnalysisTests.test_probe_field_prints_json_not_python`,
+  `AnalysisTests.test_json_brief_alone_prints_the_json_document`.
 - **`verify.py` forwards `--overwrite` and `--fast` to its steps, and `--keep` alone keeps the
   outputs in a folder it names** (A119, A120); stems never collide, compared case-folded (A121).
   `--hw` is not forwarded: verify.py has no such flag. Without `--overwrite` a rerun into the same
-  `--out` still fails each step on its existing output (every tool refuses to replace one). Test:
-  `AnalysisTests.test_verify_stems_never_collide_and_its_outputs_are_where_it_says`.
+  `--out` still fails each step on its existing output (every tool refuses to replace one). A name
+  it generates that is another input (`clip.mp4`'s `clip_cut.mp4` beside it in a folder verified
+  into itself, a link or another case of the name included) refuses the whole run before anything
+  is written, `--overwrite` or not: each step checks its output against its own input only. Tests:
+  `AnalysisTests.test_verify_stems_never_collide_and_its_outputs_are_where_it_says`,
+  `AnalysisTests.test_verify_never_writes_a_name_that_is_another_input`.
 - **`straighten.py --fit crop` writes the displayed frame's own size** (A154): fixed in 3.8.11
   ("After 3.8.10", A235). `EditingTests.test_straighten_crop_fit_writes_the_source_frame_size`
   pins it at every angle tried.
@@ -4525,9 +4532,14 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **The agent eval installs the shipped skill and watches the checkout; it does not sandbox the
   agent** (A271, A274). `evals/run_agents_25.sh` installs each run's skill with `bin/install.js
   --dir` (the set `npx ffmpeg-skill` installs: no evals, answer keys or tests) instead of linking the
-  checkout, and compares the checkout's `git status --porcelain` before and after every run: a run
-  that changed it is named in `RUN_DIR/<id>/.tree_changed` and the script exits 1. The agent still
+  checkout, and compares the checkout's state before and after every run (`git status
+  --porcelain`, the tracked files' diff against `HEAD` and the untracked files' hashes): a run
+  that changed it is named in `RUN_DIR/<id>/.tree_changed` and the script exits 1. A `RUN_DIR`
+  inside the checkout that git does not ignore is refused before anything is staged, rather than
+  left out of the comparison: leaving out a folder that holds tracked files would hide edits to
+  them. The agent still
   runs as the caller, with the caller's HOME and environment and `bypassPermissions`: `claude -p`
   reads its sign-in from HOME, and a headless run cannot answer a permission prompt. Run it in a
-  container or a throwaway account when that matters. Test:
-  `test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout`.
+  container or a throwaway account when that matters. Tests:
+  `test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout`,
+  `test_the_agent_eval_sees_a_second_edit_and_refuses_a_run_dir_it_would_see`.

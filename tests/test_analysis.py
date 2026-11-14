@@ -92,6 +92,32 @@ class AnalysisTests(MediaFixtures):
             with self.subTest(field=field):
                 self.assertEqual(json.loads(script("probe.py", self.src, "--json", "--field", field).stdout), value)
 
+    def test_json_brief_alone_prints_the_json_document(self):
+        """Review of #521: --json-brief implies --json (apply_common set STATE.json), but the tools
+        that branch on args.json read only --json, so `probe --json-brief --field video.codec`
+        printed a bare h264 and a missing field an empty line. The sweep of that class: check
+        printed its text table, report a document and then a bare path, verify its Markdown
+        report and no document, cropdetect and silence --list a bare document with no status.
+        apply_common now sets args.json to the effective mode."""
+        for field, value in (("video.codec", "h264"), ("nothing.here", None)):
+            with self.subTest(field=field):
+                out = script("probe.py", self.src, "--json-brief", "--field", field).stdout
+                self.assertEqual(json.loads(out), value, repr(out))
+        # check fails the unnormalised tone (loudness, true peak): its failure document is the test
+        runs = {"check": (("check.py", self.src, "--platform", "youtube"), "failed"),
+                "cropdetect": (("cropdetect.py", self.src, "--samples", "2"), "completed"),
+                "silence --list": (("silence.py", self.src, "--list"), "completed"),
+                "report": (("report.py", "--after", self.src, "--no-sheets", "-o", OUT / "json_brief_report.html"), "completed"),
+                "verify": (("verify.py", self.src, "--quick"), "completed")}
+        for label, (argv, status) in runs.items():
+            with self.subTest(tool=label):
+                out = script(*argv, "--json-brief", expect_fail=status == "failed").stdout
+                try:
+                    doc = json.loads(out)
+                except ValueError:
+                    self.fail(f"{label} --json-brief printed no JSON document: {out[:200]!r}")
+                self.assertEqual(doc.get("status"), status, out[:300])
+
     def test_probe_missing_file_fails(self):
         proc = script("probe.py", OUT / "nope.mp4", expect_fail=True)
         self.assertIn("not found", proc.stderr)
@@ -1223,6 +1249,39 @@ class AnalysisTests(MediaFixtures):
                 self.assertEqual((doc["status"], doc["failed"], doc["out_dir"]), ("completed", 0, str(out)))
         doc = json.loads(script("verify.py", clip, "--quick", "--json").stdout)
         self.assertIsNone(doc["out_dir"])
+
+    def test_verify_never_writes_a_name_that_is_another_input(self):
+        """Review of #521 (class: a batch tool's generated output name is another collected
+        input). A folder holding clip.mp4 and clip_cut.mp4, verified into itself with --overwrite:
+        clip.mp4's cut was written to clip_cut.mp4, replacing the other input (each step checks
+        its output against its own input only), and that input's steps then read the cut. Every
+        name the run writes is checked against every input first, a hard link included, and the
+        run is refused before anything is written; --dry-run (which verify ignores) alike."""
+        folder = OUT / "verify_name_is_input"
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir()
+        tiny_clip(folder / "clip.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        other = tiny_clip(folder / "clip_cut.mp4", "color=c=red:s=160x90:r=25", seconds=2)
+        before = other.read_bytes()
+        for extra in ((), ("--dry-run",)):
+            with self.subTest(extra=extra):
+                proc = script("verify.py", folder, "--out", folder, "--overwrite", "--quick", "--json", *extra, expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_is_input"), err)
+                self.assertEqual(Path(err["details"]["input"]).name, "clip_cut.mp4", err)
+                self.assertIn("clip.mp4", err["message"])
+                self.assertEqual(other.read_bytes(), before, "the input was replaced")
+                self.assertEqual(sorted(p.name for p in folder.iterdir()), ["clip.mp4", "clip_cut.mp4"])
+        # another name for the input (a hard link in the --out folder) is the same file
+        out = OUT / "verify_name_is_input_out"
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir()
+        alias = folder / "renamed.mp4"
+        other.rename(alias)
+        os.link(alias, out / "clip_cut.mp4")
+        err = json.loads(script("verify.py", folder, "--out", out, "--overwrite", "--quick", "--json", expect_fail=True).stdout)["error"]
+        self.assertEqual((err["reason"], Path(err["details"]["input"]).name), ("output_is_input", "renamed.mp4"), err)
+        self.assertEqual(alias.read_bytes(), before)
 
     def test_verify_full_plan_hdr_surround_broken_file_and_timeout(self):
         """verify.py's non---quick plan (overlay, look sheet, probe --analyze, loudness, silence,

@@ -19,7 +19,7 @@ import json
 import math
 import sys
 
-from _common import add_common, analyze_levels, apply_common, die, keyframe_times, print_json, probe, time_arg
+from _common import STATE, add_common, analyze_levels, apply_common, die, keyframe_times, print_json, probe, time_arg
 
 
 def keyframe_candidates(result: dict, times: list, window: float) -> list:
@@ -90,10 +90,12 @@ def main() -> int:
                 cur = cur.get(key) if isinstance(cur, dict) else None
             # a string as itself; anything else as JSON (true, null, {"codec": ...}), not Python's
             # repr (True, None, {'codec': ...}), which no caller can parse (through 3.8.8, A123).
-            # Under --json a missing field is null and a string is quoted: every line is JSON
-            if isinstance(cur, str) and not args.json:
+            # Under --json (or --json-brief, which implies it) a missing field is null and a string
+            # is quoted: every line is JSON. Without either a missing field is an empty line, as it
+            # always was, so `[ -z "$(probe.py f --field x)" ]` keeps working
+            if isinstance(cur, str) and not STATE.json:
                 print(cur)
-            elif cur is None and not args.json:
+            elif cur is None and not STATE.json:
                 print("")
             else:
                 print(json.dumps(cur, ensure_ascii=False))

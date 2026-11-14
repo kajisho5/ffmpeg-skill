@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, MEDIA_EXT as _MEDIA_EXT
+from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -217,15 +217,16 @@ def main() -> int:
     kept_dir = None if tmp else str(outdir)
 
     stem_for = unique_stems(files)
-    results = []
+    # every file's plan is made before any step runs, so the names all of them will write are
+    # checked against every input first (below)
+    jobs: List[Tuple[Path, Dict, List[Tuple[str, List[str]]], Optional[Path]]] = []
     for f in files:
-        info(f"=== {f}")
         entry: Dict = {"file": str(f), "steps": [], "skipped": []}
         meta, failure = _probe_capturing(str(f))
         if meta is None:
             entry["steps"].append(dict({"step": "probe", "ok": False, "seconds": 0, "error": _cell(failure.get("message", ""))}, **failure))
             entry["skipped"].append({"step": "*", "reason": "input_unreadable", "message": "no other step runs on a file probe cannot read"})
-            results.append(entry)
+            jobs.append((f, entry, [], None))
             continue
         entry["probe"] = {k: meta.get(k) for k in ("duration", "format")}
         entry["probe"]["video"] = {k: (meta.get("video") or {}).get(k) for k in ("codec", "width", "height", "fps", "pix_fmt", "hdr_format", "rotation", "variable_frame_rate_suspected")}
@@ -237,7 +238,8 @@ def main() -> int:
         cut = f"{stem}_cut.mp4"
         seg_end = min(dur, args.seconds) if dur else args.seconds
         fast = ["--fast"]
-        plan = []
+        plan: List[Tuple[str, List[str]]] = []
+        cues: Optional[Path] = None
         skipped: List[Dict[str, str]] = entry["skipped"]
 
         def skip(step_name: str, reason: str, message: str) -> None:
@@ -247,7 +249,6 @@ def main() -> int:
             plan.append(("cut accurate", ["cut.py", str(f), "--start", "0", "--end", f"{seg_end:.2f}", "--accurate", "-o", f"{stem}_acc.mp4"] + fast))
             plan.append(("fit 9:16", ["fit.py", cut, "--aspect", "9:16", "--width", "720", "-o", f"{stem}_fit.mp4"] + fast))
             cues = outdir / f"{stem_for[f]}_cues.txt"
-            cues.write_text("0:00-0:02 Verification caption\n0:02-0:04 Second | line\n", encoding="utf-8")
             plan.append(("caption", ["caption.py", cut, "--text", str(cues), "--animate", "pop", "--karaoke", "-o", f"{stem}_cap.mp4"] + fast))
             if not args.quick:
                 plan.append(("overlay text", ["overlay.py", cut, "--text", "verify", "--position", "top-left", "-o", f"{stem}_ovl.mp4"] + fast))
@@ -280,6 +281,30 @@ def main() -> int:
         else:
             for n in ("loudness measure", "silence list", "audio downmix"):
                 skip(n, "quick", "--quick runs probe, copy cut, fit, caption and export only")
+        jobs.append((f, entry, plan, cues))
+
+    # A name verify generates can be another input's (clip.mp4's cut is clip_cut.mp4, which can be
+    # a file of the same folder): each step checks its output against its own input only, so with
+    # --overwrite that input was replaced and its own steps then read the replacement. Every name
+    # the run will write -- step outputs, caption's sidecars, the cue file -- against every input,
+    # through a link or another case of the name included, before the first is written.
+    every_input = [str(f) for f in files]
+    for f, _entry, plan, cues in jobs:
+        written = [("cue file", str(cues))] if cues else []
+        for name, argv in plan:
+            if "-o" in argv:
+                out = argv[argv.index("-o") + 1]
+                written.append((name, out))
+                if argv[0] == "caption.py":
+                    written += [(name, str(Path(out).with_suffix(ext))) for ext in (".srt", ".ass")]
+        for name, out in written:
+            refuse_output_is_input(out, *every_input, why=f"it is where verify writes the {name!r} step's output for {str(f)!r}")
+
+    results = []
+    for f, entry, plan, cues in jobs:
+        info(f"=== {f}")
+        if cues:
+            cues.write_text("0:00-0:02 Verification caption\n0:02-0:04 Second | line\n", encoding="utf-8")
         for name, argv in plan:
             r = step(name, argv, args.timeout)
             entry["steps"].append(r)

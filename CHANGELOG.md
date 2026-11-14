@@ -6,6 +6,28 @@
 
 ### Fixed
 
+- **`verify.py` never writes over another of its inputs** (review of #521). The names it
+  generates (`<stem>_cut.mp4`, `_acc`, `_fit`, `_cap` with its `.srt`/`.ass`, `_cues.txt`, ...)
+  were checked by each step against its own input only, so `verify.py FOLDER --out FOLDER
+  --overwrite` with `clip.mp4` and `clip_cut.mp4` in it replaced `clip_cut.mp4` with the cut of
+  `clip.mp4` and then verified the replacement. Every name is checked against every input, a link
+  or another case of the name included, before anything is written: `kind: input`,
+  `error.reason: output_is_input`, naming both paths. `batch.py` already refused this (#428).
+- **`--json-brief` alone prints the JSON document on every tool** (review of #521). It implies
+  `--json`, but the tools that branch on `--json` themselves did not see it: `probe.py --field`
+  printed a bare string or an empty line, `check.py` its text table, `report.py` the document and
+  then a bare path, `verify.py` its Markdown report and no document, and `cropdetect.py` and
+  `silence.py --list` a bare document with no `status`.
+- **`redact.py --blur-strength 1` blurs colour too** (review of #521). The chroma radius was half
+  the luma radius rounded down, 0 at strength 1, so detail carried by colour alone stayed
+  readable; it is at least 1 wherever the chroma plane can hold it (a region 6 px or more on its
+  short side).
+- **The agent eval notices a second edit and refuses a run folder it would see** (review of
+  #521). `evals/run_agents_25.sh` compared `git status` alone, so a run that edited a tracked file
+  already modified, or an untracked file already there, went unreported; the checkout's state now
+  adds the tracked files' diff against `HEAD` and the untracked files' hashes. A `RUN_DIR` inside
+  the checkout that git does not ignore is refused (exit 2) before anything is staged: the run's
+  own transcript read as a change to the checkout.
 - **A BT.2020 source with no transfer tag is no longer written as HLG** (#463 A153). probe reads
   BT.2020 primaries with no transfer tag as "BT.2020 SDR", and every re-encode on the 10-bit line
   (x265, SVT-AV1, libaom, ProRes, VideoToolbox) tagged the output `arib-std-b67`. It is tagged
@@ -48,7 +70,8 @@
   against a budget built on the preset's 128k. Under `--max-mb` it runs at the preset's bitrate.
 - **`probe.py --field` prints JSON, not Python** (#464 A123): a boolean, a missing field or an
   object came out as `True`, `None` or `{'codec': ...}`. A string is printed as itself and any
-  other value as JSON; with `--json` every line is JSON (a missing field is `null`).
+  other value present as JSON; a missing field is still an empty line, as it always was. With
+  `--json` or `--json-brief` every line is JSON (a string is quoted, a missing field is `null`).
 - **`verify.py` keeps its outputs apart and where it says** (#464 A121, A119, A120). Two `clip.mp4`
   and a `clip_1.mp4` were given the output stem `clip_1` twice; an indexed stem now skips every
   stem already taken, compared case-folded. `--overwrite` and `--fast` reach every step, so a
