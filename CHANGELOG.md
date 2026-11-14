@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.17
+
+_Automated release: version and notes generated from pull requests merged since 3.8.16._
+
 ### Fixed
 
 - **Shared code and the MCP server: the fourteen open items of audit #465.**
@@ -60,6 +66,7 @@
     cancels. The tool specs are built once, before the first call: a `tools/call` and a
     `tools/list` on a fresh server could run a tool's `main()` for real. The `hdr` prompt's
     `strip_dovi: true` gives the `--strip-dovi` recipe (A23); it was taken and changed nothing.
+- fix: shared code and the MCP server, the open items of audit #465 (#530)
 
 ## 3.8.16
 
