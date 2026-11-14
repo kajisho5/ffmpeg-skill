@@ -175,7 +175,8 @@ def main(force_route: Optional[str] = None) -> int:
     if args.brand and style.get("color") and not args.text_color:
         text_c = color_hex(style["color"])
     args.lang = args.lang or (brand.get("lang") if args.brand else None)
-    if args.font_file or brand.get("font_file"):
+    # checked where text is drawn with it: the progress template draws a bar only (review of #532)
+    if args.template != "progress" and (args.font_file or brand.get("font_file")):
         require_font_file(args.font_file or brand["font_file"], "--font-file" if args.font_file else "the --brand file's font_file")
     # a font that covers the text before drawtext renders boxes instead of glyphs (1.12)
     _script, script_file, _family = script_font_for_text(

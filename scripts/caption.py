@@ -1328,8 +1328,9 @@ def main() -> int:
         args.karaoke = True
     if args.brand and brand.get("font_file") and not args.fonts_dir:
         # the brand's face is found in its directory by libass, so a file there that is no font
-        # left libass to another face without a word (#510); a soft track (--mode mux) draws nothing
-        if args.mode != "mux":
+        # left libass to another face without a word (#510); a soft track (--mode mux) draws nothing,
+        # and nor does a run with no input video, which only writes the SRT (review of #532)
+        if args.mode != "mux" and args.input:
             require_font_file(brand["font_file"], "the --brand file's font_file")
         args.fonts_dir = str(Path(brand["font_file"]).parent)
     if not (args.srt or args.ass or args.text or args.transcribe):

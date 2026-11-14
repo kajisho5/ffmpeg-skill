@@ -7363,6 +7363,16 @@ class WrongFormatFileTests(unittest.TestCase):
         doc = json.loads(script("overlay.py", self.src, "--image", plate, "--brand", brand, "-o", self.dir / "font_img.mp4",
                                 "--dry-run", "--json").stdout)
         self.assertEqual(doc["status"], "completed", doc)
+        # nor by a template that draws no text (progress), nor where only an SRT is written (no
+        # input video): review of #532
+        doc = json.loads(script("graphics.py", self.src, "--template", "progress", "--brand", brand, "-o",
+                                self.dir / "font_progress.mp4", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+        cues = self.write("font_cues.txt", "0:00-0:01 Hello\n")
+        srt_only = self.dir / "font_only.srt"
+        srt_only.unlink(missing_ok=True)
+        proc = script("caption.py", "--text", cues, "--write-srt", srt_only, "--brand", brand)
+        self.assertTrue(srt_only.exists(), proc.stderr)
         # nor where a soft subtitle track is muxed: nothing is drawn
         doc = json.loads(script("caption.py", self.src, "--srt", srt, "--brand", brand, "--mode", "mux",
                                 "-o", self.dir / "font_mux.mkv", "--dry-run", "--json").stdout)
@@ -7414,7 +7424,12 @@ class WrongFormatFileTests(unittest.TestCase):
         for label, text in (("any table", "# Notes\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"),
                             ("columns renamed", "| platform | file | size | length | check |\n|---|---|---|---|---|\n" + row),
                             ("a short row", "| platform | file | size | duration | check |\n|---|---|---|---|---|\n| youtube | a.mp4 |\n"),
-                            ("no table", "just prose\n")):
+                            ("no table", "just prose\n"),
+                            # review of #532: a header and a row with no delimiter line is no Markdown
+                            # table, and a row of empty cells after a good row is a row, not a delimiter
+                            ("no delimiter", "| platform | file | size | duration | check |\n" + row),
+                            ("an empty row", "| platform | file | size | duration | check |\n|---|---|---|---|---|\n"
+                                             + row + "| | |\n")):
             with self.subTest(case=label):
                 out = self.dir / "not_pack.html"
                 out.unlink(missing_ok=True)

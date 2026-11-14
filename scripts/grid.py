@@ -146,7 +146,9 @@ def main() -> int:
     if args.label == "auto" and cut:
         note(f"{len(cut)} cell label(s) wider than the {args.cell_width} px cell at --font-size "
              f"{args.font_size} were shortened from the end with an ellipsis")
-    output = args.output or default_output(args.inputs[0], "grid")
+    # named after the first cell; a still there would give its own extension (white_grid.png), and
+    # the image muxer cannot write the grid's frames to one file name (review of #532)
+    output = args.output or default_output(args.inputs[0], "grid", "mp4" if stills[0] else None)
 
     cmd = ffmpeg_base()
     for p, still in zip(args.inputs, stills):

@@ -4817,9 +4817,14 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   none of it (the trim starts past its one frame; with `--from 0` it was one frame through 3.8.11,
   and 3.8.12's `eof_action=repeat` holds it), and `grid.py CLIP logo.png` counted the cell as
   0 s long, so the grid was 0 s and the run ended in a traceback on the empty file. The still is opened with
-  `-loop 1` and a `-t` that bounds it (the window's `--from` plus its length; the grid's length),
-  and a grid cell that is a still takes no part in choosing the grid's length; a grid of stills
-  only is refused (`kind: input`), naming `insert.py`, which makes a clip of a still. Still means
+  `-loop 1` and a `-t` that bounds it (the grid's length; for a cutaway, two of the loop's frames
+  past the end of the trim, which starts at B's first frame at or after `--from` on the loop's own
+  25 fps: `--from` plus the length cut off the one frame of `--from 0.041 --duration 0.033`), and
+  a grid cell that is a still takes no part in choosing the grid's length; a grid of stills
+  only is refused (`kind: input`), naming `insert.py`, which makes a clip of a still. A still has
+  no material to run out of, so broll.py's check of B's length past `--from` skips it (image2
+  gives a TGA a duration of one frame, and that was refused), and a grid whose first cell is a
+  still is named `.mp4`, not after the still's extension. Still means
   what `probe._is_still()` means: one picture read by an image demuxer, so a GIF is a clip here
   as it is to `--image` (a one-frame GIF is still one frame). Code: `probe.is_still_input()`,
   `probe.still_loop_args()`, `overlay.main()`. The other way round, a still as `overlay.py`'s main picture under a
@@ -4838,7 +4843,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `font_used.substituted: false`. The file is read by its first bytes (TrueType, OpenType/CFF,
   collection, WOFF/WOFF2, Type 1, BDF, PCF), not its extension; a `.dfont` and a gzipped PCF pass
   by name, unread. A brand `font_file` is checked only where text is drawn with it, so
-  `overlay.py --image --brand` does not read it. Code: `fonts.require_font_file()`. Test:
+  `overlay.py --image --brand`, `graphics.py --template progress` (a bar, no text) and
+  `caption.py` with no input video (it writes the SRT only) do not read it. Code: `fonts.require_font_file()`. Test:
   `test_a_font_file_that_is_not_a_font_is_refused`.
 - **A brand file key no tool reads is refused** (`kind: input`, with the nearest known key), in
   every block: the top level, `colors`, `caption`, `styles` and `styles.caption` (the last two take
@@ -4849,8 +4855,10 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   carried it until 3.8.8, so it is not refused: it gets a note. Code: `decision.BRAND_KEYS`,
   `check_brand_keys()`. Test: `test_a_brand_key_no_tool_reads_is_refused`.
 - **`report.py --pack` takes the table `render.py --template all` writes, and nothing else.** The
-  first table's header must be that table's five columns in its order and every row must have
-  five cells; a later table in the file ends the pack instead of joining it. Any Markdown with a
+  first table's header must be that table's five columns in its order, the line under it its
+  five-column delimiter row, and every later line of the table is a row that must have five
+  cells (a row of empty cells, `| | |`, is a row, not a second delimiter); a later table in the
+  file ends the pack instead of joining it. Any Markdown with a
   table was rendered and reported `verified: true` (the step only says the HTML was written).
   Code: `report.PACK_HEADER`, `pack_report()`. Test: `test_report_pack_takes_only_the_pack_table`.
 - **A silent output's loudness step is pinned by a test.** `loudness.py` has reported it not ok

@@ -4916,8 +4916,9 @@ class StillAsClipTests(unittest.TestCase):
         if not cls.a.exists():
             sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=160x90:r=30:d=3", "-f", "lavfi",
                "-i", "sine=f=440:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.a)
+        # a TGA is read by image2 with a duration of one frame (0.04 s), where a PNG or a JPEG has none
         cls.stills = []
-        for ext in (".png", ".jpg"):
+        for ext in (".png", ".jpg", ".tga"):
             p = cls.dir / f"white{ext}"
             if not p.exists():
                 sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=160x90", "-frames:v", "1", p)
@@ -4964,11 +4965,50 @@ class StillAsClipTests(unittest.TestCase):
         # a grid of stills only has no clip to take its length from: refused by name, nothing written
         out = self.dir / "grid_stills.mp4"
         out.unlink(missing_ok=True)
-        proc = script("grid.py", *self.stills, "--cols", "2", "--rows", "1", "-o", out, "--json", expect_fail=True)
+        proc = script("grid.py", *self.stills[:2], "--cols", "2", "--rows", "1", "-o", out, "--json", expect_fail=True)
         err = json.loads(proc.stdout)["error"]
         self.assertEqual(err["kind"], "input")
         self.assertIn("still picture", err["message"])
         self.assertFalse(out.exists())
+
+    def test_a_short_cutaway_from_a_still_keeps_its_frame(self):
+        """Review of #532: the looped still was bounded at --from + --duration, but the trim takes
+        B's first frame at or after --from, on the still's own 25 fps grid. --from 0.041 puts that
+        frame at 0.08, past a 0.074 s bound: one A-roll frame of cutaway showed no B. A still B
+        shows on as many frames as a clip B does, for each window."""
+        clip = self.dir / "white_clip.mp4"
+        if not clip.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=160x90:r=30:d=5", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", clip)
+        for window in (("--at", "1", "--from", "0.041", "--duration", "0.033"),
+                       ("--at", "1.01", "--from", "0.33", "--duration", "0.07"),
+                       ("--at", "2", "--from", "3.7", "--duration", "0.9")):
+            want = None
+            for b in [clip] + self.stills:
+                with self.subTest(window=" ".join(window), insert=b.name):
+                    out = self.dir / f"broll_short_{b.suffix[1:]}.mp4"
+                    doc = json.loads(script("broll.py", self.a, "--insert", b, *window, "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    frames = round(self.bright_seconds(out) * 30)
+                    if want is None:
+                        want = frames
+                        self.assertGreater(want, 0, "fixture: the clip B shows in the window")
+                    self.assertEqual(frames, want)
+
+    def test_a_grid_whose_first_cell_is_a_still_is_named_as_a_video(self):
+        """Review of #532: with no -o the grid was named after its first cell, white_grid.png for a
+        still, and the image muxer could not write the grid's frames to one file name."""
+        still = self.dir / "first_cell.png"
+        shutil.copy(self.stills[0], still)
+        out = self.dir / "first_cell_grid.mp4"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("grid.py", still, self.a, "--cols", "2", "--rows", "1", "--label", "none",
+                                "--cell-width", "160", "--cell-height", "90", "--json").stdout)
+        self.assertEqual((doc["status"], doc["output"]), ("completed", str(out)))
+        self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.1)
+        # a video first cell keeps its own extension, as before
+        doc = json.loads(script("grid.py", self.a, still, "--cols", "2", "--rows", "1", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["output"], str(self.dir / "black_grid.mp4"))
 
 
 if __name__ == "__main__":

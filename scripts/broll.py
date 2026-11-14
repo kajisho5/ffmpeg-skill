@@ -109,7 +109,9 @@ def main() -> int:
             die(f"cutaway {i + 1}: --at {at:g}s is past the end of the A-roll ({dur_a:.3f}s)")
         if dur_a and at + length > dur_a + 0.01:
             die(f"cutaway {i + 1}: {at:g}s + {length:g}s runs past the end of the A-roll ({dur_a:.3f}s)")
-        dur_b = input_length(meta_b)
+        # a still has no material to run out of: it is looped for the window. image2 gives some (a
+        # TGA) a duration of one frame, which this refused as "only -0.460s from 0.5s" (review of #532)
+        dur_b = None if is_still_input(meta_b) else input_length(meta_b)
         if dur_b and start_b + length > dur_b + 0.01 and not STATE.dry_run:
             die(f"cutaway {i + 1}: {path} has only {dur_b - start_b:.3f}s from {start_b:g}s, {length:g}s asked for")
         # the cutaway in whole frames: `first` is B's first frame at or after --from, `on` the
@@ -140,9 +142,14 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input]
     for c in cutaways:
         # a still B-roll is one frame to a plain -i: it showed for one frame of the cutaway and A
-        # came back under it (#510). Looped, it lasts the window it is trimmed to.
+        # came back under it (#510). Looped, it lasts the window it is trimmed to. The bound is past
+        # the trim's end, which runs from B's first frame at or after --from on the loop's own
+        # grid for the window's whole frames: --from + --duration cut that frame off a short window
+        # (--from 0.041 --duration 0.033 needs the frame at 0.08, review of #532). A frame of B
+        # past it costs nothing: the trim drops it.
         if is_still_input(c["meta"]):
-            cmd += still_loop_args(c["path"], c["from"] + c["length"])
+            frame_b = 1 / c["rate"] if c["rate"] else 0.04
+            cmd += still_loop_args(c["path"], max(c["from"], c["first"]) + max(c["length"], c["span"] or 0) + 2 * frame_b)
         cmd += ["-i", c["path"]]
 
     # Picture: each B window is trimmed, normalised to A's frame and fps, shifted to start at its

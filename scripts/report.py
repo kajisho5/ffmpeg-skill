@@ -14,6 +14,7 @@ import base64
 import html
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -156,6 +157,7 @@ def pack_report(args) -> int:
     text = read_text_or_die(args.pack, "--pack")
     rows: List[List[str]] = []
     header: List[str] = []
+    delimiter: Optional[List[str]] = None
     for line in text.split("\n"):
         line = line.strip()
         if not line.startswith("|"):
@@ -163,17 +165,24 @@ def pack_report(args) -> int:
                 break  # the table ended: a later table in the file is not the pack's
             continue
         cells = md_cells(line)
-        if all(set(c) <= set("-: ") for c in cells):
-            continue
         if not header:
             header = cells
+        elif delimiter is None:
+            delimiter = cells  # the line under the header, whatever it is: checked below
         else:
+            # every later line is a row, a separator-like one too: `| | |` after a row was skipped
+            # as a delimiter and never counted (review of #532)
             rows.append(cells)
     # the table render.py --template all writes, and only that one: any Markdown table was taken
     # and handed over as a pack report with `verified: true` (#510)
     if header and header != PACK_HEADER:
         die(f"{args.pack}: its table's columns are {' | '.join(header)}, not the pack table's "
             f"({' | '.join(PACK_HEADER)}) that render.py --template all writes", kind="input")
+    # a header with a row under it and no delimiter line is no Markdown table (review of #532)
+    if header and delimiter is not None and not (
+            len(delimiter) == len(PACK_HEADER) and all(re.fullmatch(r":?-+:?", c) for c in delimiter)):
+        die(f"{args.pack}: the line under the pack table's header is not its delimiter row "
+            f"(|---|---|---|---|---|), so it is no Markdown table", kind="input")
     bad = next((i for i, r in enumerate(rows) if len(r) != len(PACK_HEADER)), None)
     if bad is not None:
         die(f"{args.pack}: row {bad + 1} of the pack table has {len(rows[bad])} cells, not {len(PACK_HEADER)}", kind="input")
