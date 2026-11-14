@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.8.8`) | any release |
+| `skill.version` | the npm / package.json version (`3.8.9`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.8.8", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.8.9", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -878,7 +878,17 @@ An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 c
 (`_common.runner.FFMPEG_FAILURE_CLASSES`): `disk_full` ("No space left on device"),
 `encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
 get one that has it), `input_incomplete` ("moov atom not found": a cut-off recording or an
-unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. A tool that copies the
+unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. After 3.8.4 an ffmpeg
+command a tool runs through `run()` that names an encoder (`-c:v`/`-c:a`/`-c:s` and their
+spellings, after the last input, for a stream kind the output keeps: not one `-an`/`-vn`/`-sn`
+drops or no input file carries) or a filter (`-vf`, `-af`, `-filter:v`, `-filter:a`,
+`-filter_complex`, `-lavfi`) the build's own list lacks is refused with that same `kind`, `reason`
+and `details.name` before ffmpeg runs, under `--dry-run` too
+(`_common.runner._check_build_components()`). Not checked: a measurement pass run through
+`run_analysis()` (`loudness.measure()` and its loudnorm filter, for one: a pass that reports its
+own failure carries ffmpeg's `reason` after the run, `ffmpeg_failure_extra()`), a VideoToolbox encoder,
+a `-filter_complex_script` or lavfi input, an explicit `-map` selection, and any command when the
+list could not be read (that refuses nothing). A tool that copies the
 source's subtitle and data streams retried the whole encode without them after any failure; it
 now retries only when the source has such a stream and the failure is none of these.
 

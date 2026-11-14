@@ -25,6 +25,7 @@ AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
 from _common.emit import refuse
+from _common.runner import ffmpeg_failure_extra
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -77,7 +78,7 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     proc = run_analysis(cmd, check=False, record=True)
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", proc.stderr, re.S)
     if proc.returncode != 0 or not m:
-        die(f"loudness measurement failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
+        die(f"loudness measurement failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
     data = json.loads(m.group(0))
     data["too_short"] = False
     for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):

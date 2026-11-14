@@ -121,7 +121,7 @@ def sentence_words(args) -> "Tuple[list, str]":
             raw = parse_json(read_text_or_die(args.words, "--words"))
         except ValueError as exc:
             die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
-        words, _had_segments, _untimed = _words_from_transcript(raw)
+        words, _had_segments, _untimed = _words_from_words_file(args.words, raw)
         if not words:
             die(f"no word timings in {args.words}: the sentence flags need "
                 '{"words": [{"word": ..., "start": ..., "end": ...}]} (or the same inside "segments").',
@@ -356,7 +356,15 @@ def resolve_filler(args, meta):
         except ValueError as exc:
             die(f"--words {args.words}: not readable JSON ({exc})", kind="input")
         source = f"whisper-json:{args.words}"
-        words, had_segments, untimed = _words_from_transcript(raw)
+        words, had_segments, untimed = _words_from_words_file(args.words, raw)
+        length = float(meta.get("duration") or 0.0)
+        late = [w for w in words if w["start"] >= length] if length > 0 else []
+        if late:
+            # nothing said it: the cuts were planned on times the input does not have (#404)
+            warn(f"--words {args.words}: {len(late)} of {len(words)} word timings start at or after the end of the input "
+                 f"({length:.3f}s; the last at {max(w['start'] for w in late):g}s) -- a transcript of another file, or "
+                 "times in milliseconds (a whisper JSON's start/end are seconds); no word is cut there",
+                 "words_outside_input", count=len(late), words=len(words), duration=round(length, 3))
         if not words:
             if had_segments:
                 die(f"the transcript in {args.words} has segment timings but no word timings; "
@@ -423,7 +431,11 @@ def resolve_filler(args, meta):
             if primary in names:
                 return names[primary]
             return primary[:2] if len(primary) > 3 else primary
-        spoken = _code((raw or {}).get("language")) if isinstance(raw, dict) else ""
+        # openai-whisper's top-level `language`, or whisper.cpp's `result.language` (its
+        # --output-json-full document is read for its words too: _words_from_words_file())
+        result = raw.get("result") if isinstance(raw, dict) else None
+        spoken = _code(raw.get("language") or (result.get("language") if isinstance(result, dict) else None)) \
+            if isinstance(raw, dict) else ""
         spoken = spoken or _code(transcription.get("language") or transcription.get("detected_language"))
         if spoken and spoken not in FILLER_WORDS and not args.filler_words:
             die(f"the transcript is in {spoken}, which has no built-in filler list. The languages with one are "
@@ -480,6 +492,18 @@ def resolve_filler(args, meta):
         warn(f"--filler: {block['matched_untimed']} listed word(s) in the transcript carry no usable timing and were "
              "not removed (nothing measured to cut on)", "filler_words_untimed", count=block["matched_untimed"])
     return block, [(s["start"], s["end"]) for s in spans]
+
+
+def _words_from_words_file(path, data):
+    """_words_from_transcript() for a --words file, plus whisper.cpp's own shape: its
+    --output-json-full document (transcription[].tokens[], offsets in milliseconds) is what the
+    refusals here tell a caller to make, and it was then refused for having no word timings (#404).
+    Read as --transcribe reads the same file."""
+    words, had_segments, untimed = _words_from_transcript(data)
+    if not words and isinstance(data, dict) and isinstance(data.get("transcription"), list):
+        words = _asr._words_from_whisper_cpp_json(path)
+        had_segments = had_segments or bool(data["transcription"])
+    return words, had_segments, untimed
 
 
 def _words_from_transcript(data):

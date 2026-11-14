@@ -41,7 +41,8 @@ from _common.color import is_rgb
 from _common.decision import length_output_t
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            has_alpha_plane, report as alpha_report, source_alpha, source_format, tag_args, video_line)
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import display_size, refuse_not_a_still, square_pixels, square_pixels_note
+from _common.drawtext import shaping_refusal
 from _common.wrap import wrap_text
 from _common import text_width_em
 from _common.fonts import font_choice, record_font_choice
@@ -323,8 +324,7 @@ def main() -> int:
         # refuse and name the two tools that render the script correctly through libass.
         _sc = detect_script(args.text, getattr(args, "lang", None))
         if needs_shaping(_sc):
-            die(f"{LANGUAGE_NAMES.get(_sc, _sc)} text cannot be shaped by drawtext on any ffmpeg build "
-                "(the marks are reordered by harfbuzz, which drawtext does not use): draw it with "
+            die(f"{LANGUAGE_NAMES.get(_sc, _sc)} text {shaping_refusal(_sc)}: draw it with "
                 "caption.py (--text cues, burned through libass) or graphics.py (--template with "
                 "--text-render ass) instead", kind="input")
         if has_emoji(args.text):
@@ -337,8 +337,12 @@ def main() -> int:
                     args.text = args.text[:_i] + args.text[_i + len(_cl):]
                 warn("emoji: stripped from the drawn text (--emoji none)", "emoji_stripped", mode="none")
             else:
-                warn("emoji are drawn by the text font here (monochrome at best); "
-                     "caption.py/graphics.py composite colour PNGs with --emoji-assets", "emoji_monochrome")
+                # not "drawn by the text font": drawtext loads that one font and has no fallback, so
+                # a font without the glyph (DejaVu Sans, every script font) draws an empty box (#403)
+                warn("emoji are left to the text font here: drawtext loads that one font and has no fallback, so "
+                     "a font without the glyph draws an empty box (monochrome at best with one). --emoji none "
+                     "leaves them out; caption.py/graphics.py composite colour PNGs with --emoji-assets",
+                     "emoji_monochrome")
     script_file = script_family = None
     if args.text and not args.font_file:
         # 1.12: non-Latin overlay text picks a font by script, so a title in Japanese, Korean,
@@ -440,7 +444,8 @@ def main() -> int:
     cmd = ffmpeg_base() + ["-i", args.input]
 
     if args.image:
-        probe(args.image)
+        refuse_not_a_still(args.image, probe(args.image), "--image",
+                           "--video composites a moving layer; `look.py FILE --at T` writes one frame of it as a PNG")
         chain: List[str] = ["format=rgba"]
         if args.scale_percent:
             chain.append(f"scale={int(vw * args.scale_percent / 100)}:-1")

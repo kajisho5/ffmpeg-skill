@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 from _common.probe import PROBED_VIDEO
-from _common.runner import default_selection_maps
+from _common.runner import ffmpeg_failure_extra, default_selection_maps, require_filter
 from _common import STATE, add_common, apply_common, aac_args, cfr_args, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
@@ -57,6 +57,10 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    # pass 1 is a measurement that runs under --dry-run too: refused here, with the reason a run
+    # that met "No such filter" gets, instead of as an unclassified pass-1 failure (#402)
+    for name in ("vidstabdetect", "vidstabtransform"):
+        require_filter(name, "stabilizing (vid.stab)")
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, "stab")
 
@@ -89,7 +93,7 @@ def main() -> int:
         if not dry_run_input_pending(args.input):
             proc = run_analysis(detect_cmd, check=False, record=True)
             if proc.returncode != 0:
-                die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg")
+                die(f"stabilization analysis (pass 1) failed:\n{proc.stderr.strip()[-1500:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
 
         crop_mode = {"keep": 0, "black": 1}[args.crop]
         transform_vf = f"{even}vidstabtransform=input={trf_arg}:smoothing={args.smoothing}:crop={crop_mode}:zoom={args.zoom:g}:optzoom=1"

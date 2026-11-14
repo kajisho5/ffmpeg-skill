@@ -13,7 +13,7 @@ import statistics
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, warn
-from _common.runner import STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
+from _common.runner import ffmpeg_failure_extra, STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
 # a cover (`V`), its `audio` the first sound stream. Without a -map, FFmpeg picks the largest
@@ -63,7 +63,7 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:
-            die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+            die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr.decode(errors="replace")))
         return []
     n = len(proc.stdout) // 2
     import struct
@@ -113,7 +113,7 @@ def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start:
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:
-            die(f"could not decode frames from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg")
+            die(f"could not decode frames from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr.decode(errors="replace")))
         return []
     frame_size = width * height
     data = proc.stdout
@@ -208,10 +208,12 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
 
     role="output" marks a file this tool just wrote: a read failure is then reported as an
     output-verification failure (kind "output") instead of an input problem."""
-    if not os.path.exists(path):
+    if not os.path.exists(path) or (role == "output" and STATE.dry_run):
         if role == "output" and not STATE.dry_run:
             _output_failed(path, "not written")
         if STATE.dry_run:
+            # also for an output path that holds a file: a dry run did not write it, and reading it
+            # reported an earlier run's file as this plan's result (#403: cut.py's output_duration)
             # width/height/fps are honestly 0/0/0.0 -- "not measured", matching duration/size_bytes
             # below -- because this is a dry run: the file doesn't exist yet, so there is nothing to
             # probe. Earlier this stub used plausible-looking placeholders (1920x1080x30.0) instead,
@@ -840,6 +842,24 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
     return doc
 
 
+def refuse_not_a_still(path: str, meta: Dict[str, Any], flag: str, instead: str) -> None:
+    """`flag` takes a still image and is read with `-loop 1`, an option of the image demuxers only:
+    a video or a GIF (one frame or many: the gif demuxer has no such option) given there failed as
+    "Option loop not found" / "Option framerate not found", naming neither the file nor the flag
+    (#404). `instead` says what takes a video."""
+    fmt = str(meta.get("format") or "")
+    if STATE.dry_run and meta.get("dry_run"):
+        return  # a pending input: nothing was read
+    if fmt == "image2" or fmt.endswith("_pipe"):
+        return
+    if fmt == "gif":
+        die(f"{flag} {path} is a GIF, and {flag} reads a still image through the image demuxers, which do not "
+            "open GIF: convert it to PNG first (`look.py FILE --at 0 -o still.png` writes its first frame)", kind="input")
+    length = meta.get("duration")
+    die(f"{flag} {path} is not a still image: it is a {fmt.split(',')[0] or 'media'} file"
+        + (f" ({length:.3f}s)" if length else "") + f", and {flag} is read as one picture", kind="input", hint=instead)
+
+
 def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
     """Sample luma/saturation statistics (signalstats) and guess whether the picture is Log-encoded.
 
@@ -1023,7 +1043,7 @@ def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tu
            f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
     proc = run_analysis(cmd, check=False, record=True)
     if proc.returncode != 0:
-        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+        die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
     silences: "List[Tuple[float, float]]" = []
     start = None
     for kind, val in SIL_RE.findall(proc.stderr):
@@ -1085,7 +1105,7 @@ def detect_content(path: str, duration: float, *, video: bool = True, audio: boo
         cmd += ["-map", "0:a:0", "-af", f"silencedetect=noise={SILENT_PEAK_DBFS:g}dB:d={CONTENT_SILENCE_MIN}"]
     proc = run_analysis(cmd + ["-f", "null", "-"], check=False, record=True)
     if proc.returncode != 0:
-        die(f"content detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+        die(f"content detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
     end = max(duration, 0.0)
     out: Dict[str, Any] = {}
     if video:
@@ -1129,7 +1149,7 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
                          f"silencedetect=noise={CONTENT_DROPOUT_DB:g}dB:d={CONTENT_DROPOUT_MIN}", "-f", "null", "-"],
                         check=False, record=True)
     if proc.returncode != 0:
-        die(f"dropout detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg")
+        die(f"dropout detection failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
     gaps: "List[Tuple[float, float]]" = []
     start = None
     for kind, val in SIL_RE.findall(proc.stderr):

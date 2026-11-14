@@ -1048,7 +1048,7 @@ _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec
 
 
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
-    """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a")
+    """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a"/"s")
     stream, and no filter graph could make one. An encoder option for a stream the output will
     not have selects nothing (FFmpeg applies -c:a after stream selection), so it is not a reason
     to refuse: cut.py names -c:a aac for a silent source too. Anything not known counts as present."""
@@ -1108,6 +1108,120 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
                hint="name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); "
                     "a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha",
                output=output, container="webm", encoders=refused)
+
+
+# the options whose value is a filter graph this module can read the filter names out of
+_GRAPH_OPTIONS = frozenset({"-vf", "-af", "-filter:v", "-filter:a", "-filter_complex", "-lavfi"})
+_ENCODER_OPTION_RE = re.compile(r"^-(?:c|codec):([vas])(?::\d+)?$|^-([vas])codec$")
+# the output option that drops every stream of a kind: an encoder named for that kind selects nothing
+_NO_STREAM_OPTION = {"v": "-vn", "a": "-an", "s": "-sn"}
+# one row of `ffmpeg -encoders` / `ffmpeg -filters` (the filter row by its io-spec token, so the
+# flag-column width of FFmpeg 6/7 and 8+ does not matter): ffmpeg_encoders(), ffmpeg_filters()
+_ENCODER_ROW = r"^\s*[VAS][.\w]{5}\s+(\S+)"
+_FILTER_ROW = r"^\s*(?:[A-Z.|]{1,6}\s+)?([A-Za-z0-9_]+)\s+\S*->\S*"
+# quiet reads of a list the tool itself never asked for: {"-encoders": names, "-filters": names}
+_PREFLIGHT_LISTS: Dict[str, set] = {}
+
+
+def graph_filter_names(graph: str) -> List[str]:
+    """The filter names of one filter graph string, in order, without duplicates. A `,` or `;`
+    separates filters only outside '...' quotes and when no backslash escapes it; `[labels]` before
+    a filter and its `=options` / `@instance` are dropped. A graph-level `sws_flags=` is not a
+    filter and is left out, as is anything that is not a plain identifier."""
+    parts: List[str] = []
+    cur: List[str] = []
+    quoted = False
+    i = 0
+    while i < len(graph):
+        ch = graph[i]
+        if ch == "\\" and i + 1 < len(graph):
+            cur.append(graph[i:i + 2])
+            i += 2
+            continue
+        if ch == "'":
+            quoted = not quoted
+        elif ch in ",;" and not quoted:
+            parts.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    parts.append("".join(cur))
+    names: List[str] = []
+    for part in parts:
+        part = part.strip()
+        while part.startswith("["):
+            end = part.find("]")
+            if end < 0:
+                break
+            part = part[end + 1:].lstrip()
+        m = re.match(r"[A-Za-z0-9_]+", part)
+        if not m or m.end() < len(part) and part[m.end()] not in "=@[ \t":
+            continue
+        if m.group(0) != "sws_flags" and m.group(0) not in names:
+            names.append(m.group(0))
+    return names
+
+
+def _build_list(flag: str) -> set:
+    """This build's encoder or filter names for the check below: the list a tool already read, else
+    one quiet read. A list that cannot be read is empty here and refuses nothing; the
+    `ffmpeg_list_unreadable` warning stays with the tools that decide something on the list."""
+    cached = _ENCODERS if flag == "-encoders" else _FILTERS
+    if cached is not None:
+        return cached
+    if flag not in _PREFLIGHT_LISTS:
+        _PREFLIGHT_LISTS[flag] = _read_ff_list(flag, _ENCODER_ROW if flag == "-encoders" else _FILTER_ROW, quiet=True)
+    return _PREFLIGHT_LISTS[flag]
+
+
+def _check_build_components(cmd: Sequence[str]) -> None:
+    """An encoder or a filter the command names and this ffmpeg build does not have is refused
+    before anything runs, dry runs included, with the kind, reason and hint the run got from
+    ffmpeg's "Unknown encoder" / "No such filter" (#402): the dry run said completed, and a real
+    run found out after its earlier commands had run. Read from the command as built, so every tool
+    and every route to an encoder (an HDR source kept as HEVC, --codec, a preset) is covered.
+    Only output options are read (a -c:v before an -i picks a decoder), and an encoder only for a
+    stream kind the output keeps: not one -an/-vn/-sn drops or no input file carries. A VideoToolbox encoder is
+    left to --hw's own checks and its CPU retry, a -filter_complex_script and a lavfi input are not
+    parsed, and a list that could not be read refuses nothing."""
+    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    encoders: List[str] = []
+    streams: Dict[str, set] = {}  # encoder -> the stream kinds ("v", "a", "s") it is named for
+    filters: List[str] = []
+    output_opts = {str(tok) for tok in cmd[last_input + 2:-1]}
+    for i in range(1, len(cmd) - 1):
+        tok, value = str(cmd[i]), str(cmd[i + 1])
+        m = _ENCODER_OPTION_RE.match(tok)
+        if tok in _GRAPH_OPTIONS:
+            filters += [n for n in graph_filter_names(value) if n not in filters]
+        elif i > last_input and m and value != "copy" and not value.endswith("_videotoolbox"):
+            if value not in encoders:
+                encoders.append(value)
+            streams.setdefault(value, set()).add(m.group(1) or m.group(2))
+
+    def selected(name: str) -> bool:
+        # ffmpeg picks an encoder per output stream, after stream selection: one named for a kind
+        # the output drops (-an/-vn/-sn) or that no input carries (cut.py names -c:a aac for a
+        # silent source too) is never opened. What the command cannot tell (a -filter_complex graph, a
+        # lavfi or unreadable input) counts as selected; explicit -map lists are not read.
+        return any(_NO_STREAM_OPTION[k] not in output_opts and _an_input_has(cmd, k) for k in streams.get(name, ()))
+
+    for flag, wanted, what, reason in (("-encoders", encoders, "encoder", "encoder_missing"),
+                                       ("-filters", filters, "filter", "filter_missing")):
+        have = _build_list(flag) if wanted else set()
+        missing = [n for n in wanted if n not in have] if have else []
+        if what == "encoder":
+            missing = [n for n in missing if selected(n)]  # asked last: only an encoder that would be refused is probed for
+        if missing:
+            name = missing[0]
+            hint = filter_missing_hint(name) if what == "filter" else filter_missing_hint(name).replace(
+                f"no {name} filter", f"no {name} encoder", 1)
+            die(f"this ffmpeg build has no {name} {what}, which the command this run builds needs"
+                + (f" (also missing: {', '.join(missing[1:])})" if missing[1:] else ""),
+                code=1, kind="ffmpeg", hint=hint,
+                error_extra={"reason": reason, "details": {"name": name}})
 
 
 EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
@@ -1904,6 +2018,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_container_codecs(cmd)
+        _check_build_components(cmd)
         _check_existing_output(cmd)
         ctx.commands.append(_cmdline(cmd))
     if not quiet:
@@ -2126,6 +2241,16 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
         return True
     kinds = {ln.strip() for ln in out.splitlines() if ln.strip()}
     return not kinds or bool(kinds & {"subtitle", "data", "attachment"})
+
+
+def ffmpeg_failure_extra(stderr: str) -> Dict[str, Any]:
+    """The die() keywords that carry the cause ffmpeg named in `stderr` -- a missing encoder or
+    filter, a full disk, an unreadable input -- as `hint` and the error's `reason`/`details`, or {}
+    when it named none (#402): a tool that composes its own failure message (cut.py's re-encode, a
+    measurement pass) reports the cause as run()'s own failures do. Used as
+    `die(msg, kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))`, through the caller's own die."""
+    cls = classify_ffmpeg_failure(stderr or "")
+    return {"hint": cls[1], "error_extra": {"reason": cls[0], "details": cls[2]}} if cls else {}
 
 
 def fail_if_classified(proc: subprocess.CompletedProcess) -> None:
@@ -2543,7 +2668,7 @@ def ffmpeg_encoders() -> set:
     refusal or a CPU note built on the empty set names the read failure, not a missing encoder."""
     global _ENCODERS
     if _ENCODERS is None:
-        _ENCODERS = _read_ff_list("-encoders", r"^\s*[VAS][.\w]{5}\s+(\S+)")
+        _ENCODERS = _read_ff_list("-encoders", _ENCODER_ROW)
     return _ENCODERS
 
 
@@ -2565,7 +2690,7 @@ def ffmpeg_filters() -> set:
     flag-column width of FFmpeg 6/7 (three) and 8+ (two) does not matter."""
     global _FILTERS
     if _FILTERS is None:
-        _FILTERS = _read_ff_list("-filters", r"^\s*(?:[A-Z.|]{1,6}\s+)?([A-Za-z0-9_]+)\s+\S*->\S*")
+        _FILTERS = _read_ff_list("-filters", _FILTER_ROW)
     return _FILTERS
 
 
@@ -2605,12 +2730,13 @@ def ffmpeg_list_error(flag: str) -> Optional[str]:
     return None if cache else _LIST_ERRORS.get(flag)
 
 
-def _read_ff_list(flag: str, pattern: str) -> set:
+def _read_ff_list(flag: str, pattern: str, quiet: bool = False) -> set:
     tool = "ffprobe" if STATE.dry_run else "ffmpeg"
     # --timeout bounds this read too: on Apple Silicon every CPU re-encode asks for the list
     # (#314), so a deadlocked ffmpeg must not outlive the limit the caller set before the encode
     limit = _probe_limit()
-    _LIST_ERRORS.pop(flag, None)
+    if not quiet:
+        _LIST_ERRORS.pop(flag, None)
     names: set = set()
     why = None
     try:
@@ -2625,6 +2751,8 @@ def _read_ff_list(flag: str, pattern: str) -> set:
         why = f"{tool} {flag} did not answer within {limit:g} s"
     except (OSError, subprocess.SubprocessError) as exc:
         why = f"{tool} {flag} could not run: {exc}"
+    if why and quiet:
+        return set()
     if why:
         _LIST_ERRORS[flag] = why
         what = {"-encoders": "encoder", "-decoders": "decoder", "-bsfs": "bitstream filter"}.get(flag, "filter")

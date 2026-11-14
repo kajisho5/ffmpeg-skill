@@ -353,7 +353,9 @@ the stored size, because the filter measures the picture after ffmpeg applies
 the tag. Distinct from
 `fit.py --fit crop`, which crops to a target aspect ratio it computes
 itself with no black-bar measurement involved. A rectangle that matches the
-full source frame means no bars were found. Does not decide whether
+full source frame means no bars were found: a picture that reaches every edge
+is reported as the frame itself, and `--round` (default 16) rounds a detected
+crop only (1080 is not a multiple of 16). Does not decide whether
 removing detected bars is wanted -- genuine letterboxed content (a
 scope-ratio film in a 16:9 frame) "detects" the same way as accidental
 bars; look at the frame before cropping it away. `windows` / `windows_failed`
@@ -653,7 +655,8 @@ metadata.py INPUT [--chapters chapters.txt | --clear-chapters | --auto-chapters]
                   [--title T] [--artist A] [--album A] [--comment C] [--date D] [--genre G] [-o OUT]
 ```
 `chapters.txt` holds one chapter per line, `TIME TITLE` (cut.py's time syntax:
-seconds, mm:ss, hh:mm:ss.ms); each chapter ends where the next starts and the
+seconds, mm:ss, hh:mm:ss.ms; a `-`, dash, `|` or `:` between the two, as in
+`0:00 - Intro`, is not part of the title); each chapter ends where the next starts and the
 last runs to the end of the file. Starts must ascend and lie inside the file.
 Every stream is `-c copy` (bit for bit; `probe` reports the result under
 `chapters` and `tags`), so this is instant and lossless. Chapter markers need a
@@ -766,7 +769,7 @@ leaves none. A dry run writes nothing.
 **`--filler` (1.17)** removes filler words as well, through the same
 `keep_ranges()` graph with more, shorter ranges. It is **never**
 applied without measured word timings: pass `--words` (a whisper JSON carrying
-per-word `start`/`end`) or `--transcribe` (the same local engine `caption.py`
+per-word `start`/`end`, or whisper.cpp's `--output-json-full` document) or `--transcribe` (the same local engine `caption.py`
 uses, never required). There is no heuristic fallback — finding an "um" by
 looking for short quiet blips would cut real speech, so the tool refuses
 instead. `--filler-list` reports what would go and writes nothing.
@@ -871,7 +874,9 @@ packet count must equal the clips' total and its video length their summed lengt
 `copy`. `--copy` does not take `--width`, `--height`, `--fps`, `--sample-rate`, `--channels` or a transition, and an
 audio-only join (which resamples every clip to one format) is refused with it.
 `--list FILE` (2.2) reads the clips from a file, one per line in order, paths relative to the
-file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines accepted), for the
+file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines and the `ffconcat version` header accepted,
+any other concat directive -- `inpoint`, `outpoint`, `duration`, the argument-free `stream` -- refused, since join.py
+applies none, unless the line names a file that is there), for the
 segments a TTS or render step wrote. Every input -- listed or given as arguments -- is checked
 before anything runs: missing, empty (0 bytes) or unreadable as media. By default all of them
 are named in one refusal (`kind: input`, `problems: [{index, path, reason}]`, nothing encoded);
@@ -1795,8 +1800,8 @@ stays text (escaped), and under `--karaoke` `<font color>` is dropped for the hi
 colours. The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
 Emoji (1.15): `--emoji-assets DIR` is a directory of PNGs named by code point
-(`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji/Noto
-convention), also read from `brand.json` `styles.caption.emoji_assets` and
+(`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji
+convention; Noto Emoji's `emoji_u1f389.png`, `emoji_u0031_20e3.png` are found too), also read from `brand.json` `styles.caption.emoji_assets` and
 `FFMPEG_SKILL_EMOJI_ASSETS`. With one, the cue text keeps its place in the ASS
 with an invisible placeholder reserving the emoji's box and each PNG is
 composited on top (`--emoji-scale` sizes the box, `--emoji-max` caps the count).

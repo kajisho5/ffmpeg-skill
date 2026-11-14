@@ -58,7 +58,7 @@ import tempfile
 import zlib
 from typing import List, Tuple
 
-from _common.runner import JsonTooDeep, fail_if_classified, read_json
+from _common.runner import ffmpeg_failure_extra, JsonTooDeep, fail_if_classified, read_json
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
@@ -950,7 +950,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             fail_if_classified(proc)  # a full disk fails the re-encode too: its error, not a retry (#415)
             info("stream copy failed, falling back to re-encode")
             return cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["copy_failed"], edit_list_ok)
-        die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg")
+        die(f"ffmpeg failed:\n{proc.stderr.strip()}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
     out_meta = probe(dst) if not reencode and not STATE.dry_run and copy_t is None else None
     if out_meta is not None:
         # #367: a copy from MPEG-TS whose window holds no video keyframe writes no video at all
@@ -1222,7 +1222,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
 BEAT_RATE = 22050  # the decode rate the onset pass uses, matching scenes.py --beats
 
 
-def _grid_from_source(path: str, min_confidence: float) -> "dict":
+def _grid_from_source(path: str, min_confidence: float, named: bool = False) -> "dict":
     """The beat grid of `path`: a scenes.py --json document if that is what it is, otherwise a
     media file to measure. Reading a document is how a caller avoids a second decode."""
     try:
@@ -1260,7 +1260,15 @@ def _grid_from_source(path: str, min_confidence: float) -> "dict":
     if isinstance(doc, dict):
         die(f"--snap-source {path}: this JSON has no beat_grid -- produce one with "
             "`scenes.py MUSIC --beats --json`", kind="input")
+    if doc is not None:
+        die(f"--snap-source {path}: this JSON is not a scenes.py document (it is a {type(doc).__name__}, "
+            "not an object with beat_grid) -- produce one with `scenes.py MUSIC --beats --json`", kind="input")
     samples = decode_pcm_mono(path, BEAT_RATE, check=False)
+    if not samples and named:
+        # not "no reliable beat grid in this audio": nothing was decoded, so nothing was measured (#404)
+        die(f"--snap-source {path}: no audio could be decoded from it, and it is not a scenes.py --beats --json "
+            "document, so no beat grid was measured", kind="input",
+            hint="pass the music bed (a media file with sound) or the JSON `scenes.py MUSIC --beats --json` prints")
     block = max(1, int(round(BEAT_RATE * 0.01)))
     env = rms_envelope(samples, block)
     # the envelope's real step is block / rate (220 / 22050 = 9.977 ms), not the 10 ms asked for:
@@ -1295,7 +1303,7 @@ def snap_segments(args, segments, meta, total):
         die("--min-confidence must be greater than 0: at 0 every grid is 'reliable', including "
             "one measured from noise, which is exactly what --snap beats must not cut to. Use "
             "--snap none if you do not want the points moved at all.", kind="input")
-    grid = _grid_from_source(source, args.min_confidence)
+    grid = _grid_from_source(source, args.min_confidence, named=bool(args.snap_source))
     confidence = float(grid.get("confidence") or 0.0)
     tempo = grid.get("tempo_bpm")
     if confidence < args.min_confidence or not grid.get("beats"):
@@ -1880,7 +1888,7 @@ def main() -> int:
          requested_start=round(requested[0][0], 6) if len(requested) == 1 else None,
          requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in requested] if len(requested) > 1 else None,
-         requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None else None,
+         requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None and not STATE.dry_run else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
          mode=mode, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],
          reencode_reason=reencode_reason, least_exact_precision=report["least_exact_precision"],
