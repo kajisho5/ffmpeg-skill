@@ -24,7 +24,7 @@
     go through the same wrap and get the same fix.
   - `caption.py`: an emoji PNG in a left- or right-aligned caption is placed from the Style's side
     margins, not `--margin` (A62): on the left it covered the first words.
-  - `--karaoke` with real word timings waits for the first word (A59) instead of leading the
+  - `--karaoke` with word timings that match the cue's word count waits for the first word (A59) instead of leading the
     speech by the cue's opening silence, and `--offset` moves the word timings with the cues
     (#505): `--offset 0.05` had cut the first word short and `0.2` dropped the timings for an even
     split.
@@ -36,8 +36,8 @@
   - The size fit measures against the `--karaoke-style word` budget (A58), so a cue reported as
     fitting is not split.
   - `--mode mux` adds a soft subtitle track without wrapping or splitting it at the burn-in size
-    (A55; one cue on a 360x640 video became three); `--max-lines` or `--wrap measured` with
-    `--mode mux` is refused.
+    (A55; one cue on a 360x640 video became three); a `--max-lines` other than the default 2, or `--wrap measured`,
+    with `--mode mux` is refused (the default is accepted and has no effect there).
   - The emoji placeholder no longer resets the line's own overrides for the text after an emoji
     (A69): the pop animation, a per-cue size and a cue's italics, bold and colour now carry past
     it (`caption.py` and `graphics.py`'s ASS route).
@@ -45,7 +45,8 @@
     emoji family is installed (A64); it said `none`, and a `caption.py --emoji auto` run left the
     emoji out of the text.
   - `font_used.file` under `caption.py --bold` names the face fontconfig matches for the family at
-    bold weight (A70), on Linux and macOS; it named the regular face.
+    bold weight (A70), on Linux and macOS, where the face is resolved through fontconfig; it named
+    the regular face. With `--ass`, or `--fonts-dir` and no script font, it stays `null`.
   - In a burn, `--language` is the script and wrap hint only (A71): `--language ja_JP` was refused
     as `--srt: 'ja_JP' is not a language code`; the wrap now reads `ja_JP` as `ja`, as the font
     pick already did. With `--mode mux` the refusal names `--language`,

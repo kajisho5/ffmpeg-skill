@@ -1853,7 +1853,7 @@ only) after a particle — a particle attaches to the word before it, so kinsoku
 forbids opening a line with one — discouraged between a kanji stem and its
 okurigana, and forbidden before a small kana, `ー`, a closing bracket or the
 fullwidth `，；：．` (and after an opening bracket); in `phrase` mode the first
-fill never takes such a break either, so a cue of three or more lines, and each
+fill does not take such a break either while a permitted one fits, so a cue of three or more lines, and each
 piece of a cue split past `--max-lines`, keeps the punctuation on the line it
 ends; **R4**
 for en/es/pt/fr/de/it, an article or preposition is kept with the phrase it

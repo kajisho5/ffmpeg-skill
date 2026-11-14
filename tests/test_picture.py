@@ -6351,7 +6351,8 @@ class CaptionDrawingAuditTests(unittest.TestCase):
                 self.assertEqual(err["kind"], "input", err)
                 self.assertTrue(err["message"].startswith("--language:"), err)
 
-    @unittest.skipIf(_no_fontconfig(), "no fc-match here: the bold face cannot be resolved")
+    @unittest.skipIf(_no_fontconfig() or shutil.which("fc-match") is None,
+                     "no fc-match here: the bold face cannot be resolved")
     def test_font_used_names_the_bold_face_libass_draws(self):
         """A70: under --bold libass draws the family's bold face, and font_used.file named the
         regular one."""
