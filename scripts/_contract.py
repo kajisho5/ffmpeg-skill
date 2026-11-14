@@ -436,6 +436,7 @@ ERROR_REASONS = {
     "output_is_directory": "the output path is a directory; details: {output}",
     "media_path_is_playlist": "an input is a playlist that ffmpeg would follow to the files or URLs it names: HLS .m3u8/.m3u or an ffconcat list (by name or by its first bytes), a DASH manifest or an IMF composition playlist (by name or by the content ffmpeg's own probe looks for, whatever the file is called); the skill takes media files only; details: {path}",
     "media_path_has_line_break": "a path written into a concat list (loop.py, join.py --copy, sequence.py, multi-part cuts) contains a line break, which the concat format cannot hold: each line is a directive, so the name would add entries to the list; details: {path}",
+    "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart; details: {clips: [{index?, path, differs}]}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",
@@ -1943,6 +1944,11 @@ MCP_PROMPTS: List[Dict[str, Any]] = [
                      "to keep HDR and only drop the Dolby Vision layer, when strip_dovi is asked for). A flat, washed-out "
                      "look after a re-encode usually means HDR metadata was lost upstream; `probe` shows `hdr: true` "
                      "only for a real PQ/HLG/Dolby Vision signal, and `bt2020_or_hdr: true` also for BT.2020 SDR."),
+        # A23 (#465): strip_dovi was taken and changed nothing; true now asks for the other recipe
+        "flags": {"strip_dovi": (
+            "Keep {input} HDR and drop only its Dolby Vision layer: `color.py {input} --strip-dovi`, a stream copy "
+            "(HEVC only) that removes the Dolby Vision RPU so players use the HLG/HDR10 base layer. A source with no "
+            "Dolby Vision metadata gets a `dovi_not_detected` warning.")},
     },
 ]
 
@@ -1968,7 +1974,17 @@ def mcp_prompt_get(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     fields: Dict[str, str] = {a["name"]: str((arguments or {}).get(a["name"]) or a.get("default", "")) for a in prompt["arguments"]}
     for opt_name, clause in prompt["optional"].items():
         fields[opt_name] = clause.format(**fields) if fields.get(opt_name) else ""
-    text = prompt["template"].format(**fields)
+    template = prompt["template"]
+    for flag, flag_template in (prompt.get("flags") or {}).items():
+        # a yes/no argument picks the recipe; every prompt argument arrives as a string, so
+        # "false" is no, and a value that is neither is a caller mistake (ValueError, as above)
+        value = (arguments or {}).get(flag)
+        word = str(value).strip().lower() if value is not None else ""
+        if word in ("true", "1", "yes"):
+            template = flag_template
+        elif word not in ("", "false", "0", "no"):
+            raise ValueError(f"prompt {name!r}: {flag} must be true or false, got {value!r}")
+    text = template.format(**fields)
     return {"description": prompt["description"], "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
 
 
