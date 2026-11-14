@@ -115,7 +115,8 @@
   ran 0.5 s a switch short of the direct render and each later switch came early.
 - **`multicam.py --switch` refuses a range shorter than a millisecond** (`kind: input`): the cut
   list is written to the millisecond, so it was a `0.000-0.000` line that `cut.py --segments`
-  refuses (the sibling of the `scenes.py --highlights` range above).
+  refuses (the sibling of the `scenes.py --highlights` range above). A gap or a clipped range that
+  short (`--switch "0.0004-3:1"`) goes to its neighbour.
 - **`scenes.py --sheet --dry-run` on an input an earlier step has yet to write plans its one tile**
   instead of a traceback (no scene was measured, and the sheet's select recursed on an empty list).
 - **`scenes.py --highlights` never writes an empty range**: a pick shorter than the hundredth it is

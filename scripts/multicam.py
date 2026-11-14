@@ -30,7 +30,7 @@ import json
 import math
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
@@ -283,6 +283,22 @@ def main() -> int:
         cursor = max(cursor, e)
     if cursor < ref_dur:
         filled.append((cursor, ref_dur, 0))
+    # a gap or a clipped range under a millisecond is nothing at the precision the cut list is
+    # written in (--switch "0.0004-3:1" left a leading "0.000-0.000", the line cut.py --segments
+    # refuses, and a 0.4 ms trim in the render): its neighbour takes it, so the timeline stays whole
+    whole: List[Tuple[float, float, int]] = []
+    carry: Optional[float] = None
+    for s, e, c in filled:
+        if carry is not None:
+            s, carry = carry, None
+        if round(e, 3) <= round(s, 3):
+            if whole:
+                whole[-1] = (whole[-1][0], e, whole[-1][2])
+            else:
+                carry = s
+            continue
+        whole.append((s, e, c))
+    filled = whole
     for s, e, c in filled:
         if not metas[c].get("video"):
             die(f"camera {c} ({args.inputs[c]}) has no video; it can only be used with --audio")

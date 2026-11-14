@@ -599,6 +599,17 @@ class OrchestrationTests(MediaFixtures):
                 self.assertEqual(doc["error"]["kind"], "input")
                 self.assertIn("millisecond", doc["error"]["message"])
                 self.assertFalse(edl.exists())
+        # the gap the fill makes before a range that starts 0.4 ms in was the same line: the
+        # range takes it, and every line of the cut list is a range cut.py --segments accepts
+        data = json.loads(script("multicam.py", self.src, self.src, "--switch", "0.0004-3:1", "--edl", edl,
+                                 "--fast", "-o", OUT / "mc_tiny.mp4", "--json").stdout)
+        self.assertEqual(data["cuts"][0], [0.0, 3.0, 1])
+        lines = edl.read_text(encoding="utf-8").split()
+        self.assertEqual(lines[0], "0.000-3.000")
+        for line in lines:
+            a, b = (float(x) for x in line.split("-"))
+            self.assertLess(a, b, line)
+        edl.unlink()
 
     def test_multicam_switch_ranges_that_overlap_are_refused(self):
         """A132: two --switch ranges over the same reference time were both rendered, so the
