@@ -751,7 +751,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "guides": {"type": "array", "description": "--guides only: each outline drawn on the PNG, {guide: action|title, fraction (0.93 / 0.90 of the frame, SMPTE ST 2046-1), of: frame} or {guide: 4:3, window, action: 0.90, title: 0.80}; drawn on the preview only"}}
     elif name == "render":
         extra = {"stages": {"type": "array", "items": {"type": "string"}}, "check": {"type": ["object", "null"], "description": "check.py's document for a \"check\" stage with a platform, \"content\": true, or both; when check.py printed none, a failure document with error.reason check_output_unparsed"},
-                 "cache": {"type": ["object", "null"], "description": "--cache: {dir, ffmpeg, hits, misses, miss_reasons: [{stage, reason: not_cached|sidecar_missing|artifact_missing|sidecar_corrupt|artifact_truncated|no_output_path, ...}], saved_seconds, entries, would_hit (--dry-run)}"},
+                 "cache": {"type": ["object", "null"], "description": "--cache: {dir, ffmpeg, hits, misses, miss_reasons: [{stage, reason: not_cached|sidecar_missing|artifact_missing|sidecar_corrupt|artifact_truncated|no_output_path|destination_not_owned, ...}], saved_seconds, entries, would_hit (--dry-run)}"},
                  "caption": {"type": ["object", "null"], "description": "the caption stage's own block, forwarded verbatim from caption.py (cue-layout counts and fit-size keys); null without a caption stage"},
                  "snap": {"type": ["object", "null"], "description": "a project's \"snap\": cut.py's snap block for the first snapped clip, with every clip's in clips; null when nothing was snapped"},
                  "intermediate_preset": {"type": ["string", "null"], "description": "2.15: the x264/x265 preset the stages before an encoding export ran at (--intermediate-preset, default superfast since 2.16); null when no stage received it (no encoding export reached, --fast, --stop-after before the export, a copy export, or nothing but the export encoded)"},
@@ -763,7 +763,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "tool_result": {"type": "object", "description": "plan execution: the tool's own --json document"},
                  "timeline": {"type": "object", "description": "--export-timeline: format, rate, duration, frames, clips, transition, "
                               "transition_frames, music, markers, notes, and not_exported (what the project asks for that an "
-                              "editor timeline cannot carry)"}}
+                              "editor timeline cannot carry)"},
+                 "templates": {"type": "array", "description": "--list-templates --json: one row per shipped template, {template, "
+                               "destination, frame: {width, height} or null (audio), fit, max_duration, lufs, safe: {top, bottom, "
+                               "left, right}}; without --json the same rows are a table"}}
     elif name == "verify":
         extra = {"report": {"type": ["string", "null"]},
                  "files": {"type": "array", "description": "one entry per file: {file, probe, steps, skipped}. A step is {step, ok, seconds, error (one line, for the table)}, plus the tool's verified when it completed, and on a failure its own kind, reason, message, details and exit_code (reason step_timeout or step_output_unparsed when the tool printed no failure document); skipped lists the steps that do not apply as {step, reason: quick|no_video|no_audio|not_hdr|not_multichannel|input_unreadable, message}"},

@@ -21,7 +21,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.8.7`) | any release |
+| `skill.version` | the npm / package.json version (`3.8.8`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -149,7 +149,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.8.7", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.8.8", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -726,7 +726,8 @@ Per-tool keys added in 1.17, all additive:
 | `filler`, `removed_seconds_total` | `silence.py --filler` | `{lang, source, engine, words, removed, removed_count, removed_seconds, removed_words, word_timings, list, warnings}`. The existing `removed_seconds` is unchanged in name and meaning — the seconds of *silence* removed, which is what it has always held — and `removed_seconds_total` is the additive sibling covering silence plus filler |
 | `jobs`, `jobs_requested`, `wall_seconds`, `item_seconds_total`, `timed_out` | `batch.py` | the parallelism actually applied and the number asked for, the batch's wall clock, the sum of the per-item times (so the speed-up can be quoted), and whether the shared timeout budget ran out. A timed-out item carries `"skipped": "timeout"` in its result row |
 | `timeline` | `render.py --export-timeline FILE` | `{format, rate, duration, frames, clips, transition, transition_frames, music, markers, notes, not_exported}`: the written timeline's own numbers (`rate` is exact, `"30000/1001"` for 29.97) and what the project asked for that an editor timeline cannot carry. Nothing is encoded (`commands: []`); `verified` means the file was written and reads back as its format (`verification` step `parse`) -- not that an editor opened it |
-| `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, miss_reasons, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. `miss_reasons` (unreleased, additive): `[{stage, reason, ...}]`, `reason` one of `not_cached`, `sidecar_missing`, `artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`. The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
+| `templates` | `render.py --list-templates --json` | one row per shipped template: `{template, destination, frame: {width, height} or null for an audio destination, fit, max_duration, lufs, safe: {top, bottom, left, right}}` (unreleased: before, the table was printed under `--json` too). `render.py --init FILE --json` prints the plain success document with `output` the file it wrote |
+| `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, miss_reasons, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. `miss_reasons` (unreleased, additive): `[{stage, reason, ...}]`, `reason` one of `not_cached`, `sidecar_missing`, `artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`, `destination_not_owned` (a file already at the stage's path in `--work` is not one this render wrote). The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
 | `intermediate_preset` | `render.py` | The x264/x265 preset the stages before an encoding export ran at: `--intermediate-preset`, default `superfast` since 2.16 (`veryfast` in 2.15). `null` when no stage received it: no encoding export was reached, `--fast`, `--stop-after` before the export, a `copy` export, or nothing but the export encoded. Present on every render result, early stops included |
 
 Per-tool keys added in 1.17.1, all additive:
