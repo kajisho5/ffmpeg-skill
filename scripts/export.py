@@ -203,7 +203,8 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
         note(f"--hw: --preset {args.preset} stays on {p['video'][p['video'].index('-c:v') + 1]}: one ffmpeg run writes "
              "the fill and the key as a pair, and VideoToolbox's ProRes encoder is not used for it")
     fill_chain = ",".join(vf + (["premultiply=inplace=1"] if args.alpha_mode == "premultiplied" else []) + ["format=yuv422p10le"])
-    key_chain = ",".join(vf + ["alphaextract", "format=yuv422p10le"])
+    # Alpha uses full range even when the source picture is tagged limited range.
+    key_chain = ",".join(vf + ["alphaextract", "scale=in_range=pc:out_range=tv", "format=yuv422p10le"])
     tc = ((meta.get("timecode") or {}).get("value"))
     tc_args = ["-timecode", tc] if tc else []
     cmd = cmd + ["-filter_complex", f"[0:{PROBED_VIDEO}]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
