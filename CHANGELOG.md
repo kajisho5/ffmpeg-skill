@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.16
+
+_Automated release: version and notes generated from pull requests merged since 3.8.15._
+
 ### Fixed
 
 - **A variable-rate source is conformed by the `fps` filter, and its picture stays with its sound
@@ -61,6 +67,7 @@
   that fit.py refuses is refused by the export under its own name. A project of several clips
   is unchanged (its join is sized from the frame first; which of `frame` and `fit` wins there is
   deferred, see `docs/design-decisions.md`).
+- fix: a VFR conform keeps the picture with its sound; odd overlay and crop positions land where asked; the timeline takes the fit object's frame (#525)
 
 ## 3.8.15
 
