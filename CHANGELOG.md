@@ -19,7 +19,11 @@
     is sent SIGTERM and killed only if it has not exited 15 s later (A183). The SIGKILL left its
     partial output under the final name and its output lock behind. `verify.py`'s per-step
     `--timeout` stops a step the same way (found by the sweep: each timed-out step left its partial
-    output and lock in `--out`). On Windows it is still killed at once.
+    output and lock in `--out`), and so does a SIGTERM or Ctrl-C to `verify.py`, which used to exit
+    and leave the step running. On Windows, where no handler runs, the tool and its ffmpeg are
+    killed together with `taskkill /T /F`; its lock and partial output stay (the next run takes the
+    lock over, and refuses the partial output unless `--overwrite`). Without taskkill only the tool
+    is killed.
   - An unknown colour name (`grey`; ffmpeg's is `gray`) is refused before ffmpeg runs, dry runs
     included, for every colour flag `validate_color()` checks (A189); it failed inside ffmpeg as
     kind ffmpeg.
@@ -29,8 +33,12 @@
     it to every such input.
   - A hard link to the input given as the output is refused as `output_is_input` (A5), as is the
     input's name in another case on a case-insensitive volume (not measured here); `--overwrite`
-    replaced it. The side-file guards compare files the same way.
-  - Two runs that find the same stale output lock no longer both take it over (A186).
+    replaced it. The side-file guards compare files the same way, and `caption.py` refuses such an
+    `-o` before it writes its SRT or ASS.
+  - Two runs that find the same stale output lock no longer both take it over (A186), nor two
+    that find the same expired takeover guard. A new lock holds its pid from the moment it
+    exists (it was briefly empty, which reads as stale), and on Windows a finished process whose
+    handle is still open no longer counts as a live holder.
   - `batch.py` leaves no `out/` or `out/.work` behind when it refuses a run before any item starts
     (`--jobs`, an output collision) or matches no file (A187), and `verify.py` no new `--out` folder
     when its `--report` is refused (found by the sweep).
@@ -43,9 +51,12 @@
   - MCP: a failed call carries its failure document in `content` as well as `structuredContent`
     (A22), which protocol 2024-11-05, the one the server negotiates, does not have. `ping` and the
     other requests are answered while a tool runs, and `notifications/cancelled` stops the call it
-    names (its partial output removed, no response sent) (A24); calls still run one at a time, in
-    order. The `hdr` prompt's `strip_dovi: true` gives the `--strip-dovi` recipe (A23); it was
-    taken and changed nothing.
+    names, with no response sent (A24): on POSIX its tool removes its partial output; on Windows
+    its process tree is killed, as on a timeout above. Calls still run one at a time, in order, and
+    the next starts only once a cancelled one is stopped. Only a `"jsonrpc": "2.0"` notification
+    cancels. The tool specs are built once, before the first call: a `tools/call` and a
+    `tools/list` on a fresh server could run a tool's `main()` for real. The `hdr` prompt's
+    `strip_dovi: true` gives the `--strip-dovi` recipe (A23); it was taken and changed nothing.
 
 ## 3.8.16
 

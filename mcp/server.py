@@ -33,13 +33,22 @@ import _contract  # noqa: E402  (the contract is the only source of tool names, 
 import _common  # noqa: E402  (run_tool: the outer wall-clock ceiling on a dispatched tool)
 
 _SPECS: Dict[str, Dict[str, Any]] = {}
+_SPECS_LOCK = threading.Lock()
 
 
 def specs() -> Dict[str, Dict[str, Any]]:
-    """ToolSpecs from the contract, generated once per process (argparse -> ToolSpec -> here)."""
+    """ToolSpecs from the contract, generated once per process (argparse -> ToolSpec -> here).
+
+    Built under a lock and published whole: _contract.build() swaps the process-wide argparse
+    parse_args and sys.argv while it reads each tool's parser, so two first uses at once (a
+    tools/call on the worker thread and a tools/list on the reading loop) could each restore the
+    other's swap and let a tool's main() run for real (review of #530). main() also builds it
+    before the worker starts."""
     if not _SPECS:
-        for spec in _contract.build(detect=False)["tools"]:
-            _SPECS[spec["name"]] = spec
+        with _SPECS_LOCK:
+            if not _SPECS:
+                built = {spec["name"]: spec for spec in _contract.build(detect=False)["tools"]}
+                _SPECS.update(built)
     return _SPECS
 
 
@@ -268,9 +277,12 @@ def _write(out: Any, resp: Dict[str, Any]) -> None:
 
 
 def _stop(proc: Any) -> None:
+    """Stop a cancelled call's tool: on POSIX SIGTERM, whose handler stops its ffmpeg and removes
+    the partial output and the lock; on Windows, where no handler runs, its whole process tree
+    (taskkill /T /F), so its ffmpeg does not go on encoding beside the next call. Returns once that
+    has been done (runner.terminate_tree())."""
     try:
-        if proc.poll() is None:
-            proc.terminate()  # the tool's SIGTERM handler stops its ffmpeg and removes the partial output
+        _common.runner.terminate_tree(proc)
     except OSError:
         pass
 
@@ -285,8 +297,13 @@ def cancel(params: Any) -> None:
             return  # finished already, or never seen: nothing to stop
         entry["cancelled"] = True
         proc = entry.get("proc")
-    if proc is not None:
+        if proc is None:
+            return  # not started: the worker never starts it
+        stopped = entry["stopped"] = threading.Event()
+    try:
         _stop(proc)
+    finally:
+        stopped.set()  # the worker waits for this before it starts the next call
 
 
 def _respond(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
@@ -317,6 +334,12 @@ def _call_worker(out: Any) -> None:
         try:
             if not entry["cancelled"]:
                 resp = _respond(req, on_start=started)
+            # a call cancelled while it ran: the next one starts only once the stop is done (on
+            # Windows the tree kill may still be ending the tool's ffmpeg after the tool exited)
+            with _CALLS_LOCK:
+                stopped = entry.get("stopped")
+            if stopped is not None:
+                stopped.wait(_common.runner.TREE_KILL_TIMEOUT + 5)
         finally:
             with _CALLS_LOCK:
                 key = _key(req["id"])
@@ -346,6 +369,10 @@ def main() -> int:
         return 0
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
+    try:
+        specs()  # built here, once, before the worker thread can need it too (review of #530)
+    except Exception:  # noqa: BLE001
+        pass  # a contract that cannot be built fails each request that needs it (under the lock), not the server
     worker = threading.Thread(target=_call_worker, args=(stdout,), daemon=True)
     worker.start()
     for raw in stdin:
@@ -357,10 +384,9 @@ def main() -> int:
         except ValueError as exc:
             # JSON-RPC 2.0: a line that is not JSON is answered with -32700 and id null, not
             # dropped -- a client whose request was mangled in transit otherwise waits for an
-            # answer that never comes, with nothing to say why
-            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"parse error: {exc}"}}
-            stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
-            stdout.flush()
+            # answer that never comes, with nothing to say why. Through _write(), as every
+            # response: the worker writes too, and a line written beside its own would split it
+            _write(stdout, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"parse error: {exc}"}})
             continue
         # json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
         # `true` or `[1,2]` line parses fine but isn't a JSON-RPC request. Without this guard,
@@ -371,7 +397,9 @@ def main() -> int:
         if not isinstance(req, dict):
             continue
         if "id" not in req:  # notification
-            if req.get("method") == "notifications/cancelled":
+            # only a JSON-RPC 2.0 notification cancels a call (review of #530: a "jsonrpc": "1.0"
+            # line stopped the running tool); anything else is ignored, as before
+            if req.get("jsonrpc") == "2.0" and req.get("method") == "notifications/cancelled":
                 cancel(req.get("params"))
             continue
         if req.get("method") == "tools/call":

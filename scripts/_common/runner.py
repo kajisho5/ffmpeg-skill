@@ -608,8 +608,13 @@ def stop_children() -> None:
     signal handler does before it exits, for a tool that reports more than "interrupted" after a
     signal (batch.py's partial table)."""
     for proc, cmd in list(_CHILDREN):
+        if not cmd:
+            # a sibling script (run_tool(), verify.py's steps): its own handler stops its ffmpeg
+            # and removes its partial output, given STOP_GRACE; on Windows its whole tree is killed
+            _stop_child(proc, communicate=False)
+            continue
         try:
-            proc.terminate()  # ffmpeg exits promptly on SIGTERM; a sibling script runs this same handler
+            proc.terminate()  # ffmpeg exits promptly on SIGTERM
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -1256,9 +1261,12 @@ EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
 
 
 def _pid_dead(pid: int) -> bool:
-    """True only when the process is known not to exist. POSIX: signal 0. Windows: OpenProcess
-    fails with ERROR_INVALID_PARAMETER (87) for a pid that is not in use; any other outcome
-    (a handle, or access denied) means it is live. Unknown is treated as live."""
+    """True only when the process is known not to have exited. POSIX: signal 0. Windows:
+    OpenProcess fails with ERROR_INVALID_PARAMETER (87) for a pid that is not in use; a process
+    that has exited still opens while any handle to it is open (its parent's Popen keeps one), so
+    its exit code is read too, and one other than STILL_ACTIVE (259) is dead (review of #530: the
+    Windows CI judged a finished child alive and refused its stale lock as held). Any other
+    outcome (access denied, an unreadable code) means it is live. Unknown is treated as live."""
     if os.name != "nt":
         try:
             os.kill(pid, 0)
@@ -1272,8 +1280,13 @@ def _pid_dead(pid: int) -> bool:
         k32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if handle:
-            k32.CloseHandle(handle)
-            return False
+            try:
+                code = ctypes.c_ulong(0)
+                if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return code.value != 259  # STILL_ACTIVE
+                return False
+            finally:
+                k32.CloseHandle(handle)
         return k32.GetLastError() == 87
     except Exception:
         return False
@@ -1282,6 +1295,59 @@ def _pid_dead(pid: int) -> bool:
 LOCK_HOUR = 3600.0
 TAKEOVER_STALE = 60.0  # seconds after which a `.takeover` guard no run is inside any more is removed
 LOCK_UNLIMITED = 10 * 365 * 86400.0  # --timeout 0: the deadline is pushed past any run (and kept short of 2038)
+
+
+def _identity(st: os.stat_result) -> "Tuple[int, int, int]":
+    """A file instance: its device, inode and modification time. The time tells a new file apart
+    from a removed one whose inode number was handed out again."""
+    return (st.st_dev, st.st_ino, st.st_mtime_ns)
+
+
+def _expired_guard(guard: str) -> "Optional[Tuple[int, int, int]]":
+    """The identity of the takeover guard at `guard` when it is older than TAKEOVER_STALE (a run
+    killed while it held it), else None. FileNotFoundError when there is none."""
+    import time
+    st = os.stat(guard)
+    return _identity(st) if time.time() - st.st_mtime > TAKEOVER_STALE else None
+
+
+def _recover_guard(guard: str, expired: "Tuple[int, int, int]") -> bool:
+    """Remove the expired takeover guard `expired` names, if this run is the one that recovers it.
+
+    Every run that judged the same expired guard reaches for the same claim file, named after that
+    guard's identity, and only one O_EXCL create of it succeeds: that run looks at `guard` again
+    and removes it only if it is still the expired instance, then removes the claim. A run that
+    loses the claim, or finds another guard at the name (a run that recovered it first and is now
+    inside), removes nothing and returns False (the caller refuses as takeover_in_progress), so no
+    run ever removes a guard another run holds. A run killed while it holds a claim leaves it: that
+    expired guard then stays until it and its claim are removed by hand (the refusal names it)."""
+    claim = f"{guard}.{expired[0]}-{expired[1]}-{expired[2]}.claim"
+    try:
+        cfd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except OSError:
+        return False
+    try:
+        try:
+            if _identity(os.stat(guard)) != expired:
+                return False
+        except FileNotFoundError:
+            return True  # recovered by a run that held the claim before us: nothing to remove
+        try:
+            os.remove(guard)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        return True
+    finally:
+        try:
+            os.close(cfd)
+        except OSError:
+            pass
+        try:
+            os.remove(claim)
+        except OSError:
+            pass
 
 
 class _OutputLock:
@@ -1317,9 +1383,7 @@ class _OutputLock:
         taken: Optional[Dict[str, Any]] = None
         for attempt in (0, 1):
             try:
-                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-                os.write(self.fd, str(os.getpid()).encode())
-                self._set_deadline()
+                self.fd = self._create()
                 if taken is not None:
                     self._record_takeover(taken)
                 return self
@@ -1357,30 +1421,33 @@ class _OutputLock:
         which is held, and is refused. Returns the holder as judged last; `stale` is True only
         when this run removed the lock (or found it already gone) and may create its own.
 
-        A takeover lock left by a run killed inside these few lines is removed once it is older
-        than TAKEOVER_STALE seconds; until then a takeover in progress counts as held."""
-        import time
+        A takeover lock left by a run killed inside these few lines is recovered once it is older
+        than TAKEOVER_STALE seconds; until then a takeover in progress counts as held. Recovery
+        never removes a guard by its name alone (review of #530: two runs that found the same
+        expired guard both removed "it", the second removing the first's new guard, and both went
+        on inside): see _recover_guard()."""
         guard = self.path + ".takeover"
-        for _ in (0, 1):
+        for _ in (0, 1, 2):
             try:
                 gfd = os.open(guard, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
                 break
             except FileExistsError:
                 try:
-                    old = time.time() - os.path.getmtime(guard) > TAKEOVER_STALE
+                    expired = _expired_guard(guard)
+                except FileNotFoundError:
+                    continue  # gone since: the other takeover finished, try again
                 except OSError:
-                    old = False  # gone since: the other takeover finished, try again
-                    continue
-                if not old:
-                    return dict(judged, stale=False, why="takeover_in_progress")
-                try:
-                    os.remove(guard)
-                except OSError:
-                    return dict(judged, stale=False, why="takeover_in_progress")
+                    return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
+                if expired is None or not _recover_guard(guard, expired):
+                    return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
             except OSError as exc:
                 return dict(judged, stale=False, takeover_error=str(exc))
         else:
-            return dict(judged, stale=False, why="takeover_in_progress")
+            return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
+        try:
+            mine = _identity(os.fstat(gfd))
+        except OSError:
+            mine = None
         try:
             try:
                 os.stat(self.path)
@@ -1406,8 +1473,11 @@ class _OutputLock:
                 os.close(gfd)
             except OSError:
                 pass
+            # our own guard only: the file at that name is removed when it is still the one this
+            # run created (same device, inode and mtime), never another run's by its name
             try:
-                os.remove(guard)
+                if mine is not None and _identity(os.stat(guard)) == mine:
+                    os.remove(guard)
             except OSError:
                 pass
 
@@ -1417,12 +1487,54 @@ class _OutputLock:
         d, base = os.path.split(os.path.abspath(self.output))
         return os.path.join(d, f".{base}.ffskill-audit.jsonl")
 
-    def _set_deadline(self) -> None:
+    def _create(self) -> int:
+        """Create the lock, already holding this run's pid and dated with its deadline, and
+        return an open descriptor on it; FileExistsError when another run's lock is there.
+
+        The pid and the date are written to a file of this run's own first, which is then
+        hard-linked to the lock's name: the link is atomic and fails when the name exists, as
+        O_EXCL does, so no other run ever reads this lock empty (an empty lock reads as
+        `unreadable`, which is stale, and was open to a takeover between the create and the
+        write) or undated. Where a hard link cannot be made (a FAT volume, some network shares)
+        the lock is created with O_EXCL and written at once, as before."""
+        import uuid
+        tmp = f"{self.path}.{os.getpid()}-{uuid.uuid4().hex[:12]}.new"
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except OSError:
+            return self._create_in_place()
+        try:
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)  # closed before the link: Windows links and removes only a closed file
+            self._set_deadline(tmp)
+            try:
+                os.link(tmp, self.path)
+            except FileExistsError:
+                raise
+            except (OSError, NotImplementedError, AttributeError):
+                return self._create_in_place()
+            return os.open(self.path, os.O_WRONLY)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    def _create_in_place(self) -> int:
+        fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.write(fd, str(os.getpid()).encode())
+        self._set_deadline(self.path)
+        return fd
+
+    def _set_deadline(self, path: Optional[str] = None) -> None:
         import time
+        path = path or self.path
         limit = child_limit()
         deadline = time.time() + (limit if limit else LOCK_UNLIMITED)
         try:
-            os.utime(self.path, (deadline - LOCK_HOUR, deadline - LOCK_HOUR))
+            os.utime(path, (deadline - LOCK_HOUR, deadline - LOCK_HOUR))
         except (OSError, OverflowError, ValueError) as exc:
             warn(f"could not date the output lock {self.path} ({exc}); another run may take it over an hour from now",
                  "lock_deadline_unset", lock=self.path, error=str(exc))
@@ -2310,21 +2422,83 @@ def child_limit(per_call: Optional[float] = None) -> Optional[float]:
 STOP_GRACE = 15.0
 
 
-def _stop_child(child: subprocess.Popen) -> "Tuple[bool, str]":
-    """Stop a sibling script: SIGTERM, then SIGKILL if it has not exited within STOP_GRACE.
-    Returns (stopped, stderr): stopped is True when it exited on the SIGTERM, which a sibling
-    script handles by removing its partial output and its output lock, and False when it had to
-    be killed (always on Windows, where terminate() is TerminateProcess and no handler runs)."""
-    if os.name != "nt":
+def _taskkill() -> Optional[str]:
+    """Windows' own taskkill.exe, by its full path under %SystemRoot% (never a `taskkill` found on
+    PATH), or None when it is not there."""
+    root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    path = os.path.join(root, "System32", "taskkill.exe")
+    return path if os.path.isfile(path) else None
+
+
+TREE_KILL_TIMEOUT = 30.0
+
+
+def terminate_tree(child: subprocess.Popen, windows: Optional[bool] = None) -> bool:
+    """Ask a sibling script to stop, so that its ffmpeg stops too (review of #530).
+
+    POSIX: SIGTERM to the script; its handler stops its ffmpeg (up to 5 s each), removes the
+    partial output and releases the output lock, then exits. Returns True.
+
+    Windows: terminate() is TerminateProcess on the script alone, no handler runs, and its ffmpeg
+    would keep encoding with the lock and the partial output in place. The whole tree is killed
+    with taskkill /T /F and this returns once taskkill has (True when it says it did). Without
+    taskkill, or when it fails or does not finish in TREE_KILL_TIMEOUT, the script alone is
+    killed and this returns False: its ffmpeg may outlive it."""
+    if windows is None:
+        windows = os.name == "nt"
+    if child.poll() is not None:
+        return True
+    if not windows:
         try:
             child.terminate()
-            return True, child.communicate(timeout=STOP_GRACE)[1] or ""
+        except OSError:
+            pass
+        return True
+    exe = _taskkill()
+    if exe:
+        try:
+            done = subprocess.run([exe, "/T", "/F", "/PID", str(child.pid)], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=TREE_KILL_TIMEOUT)
+            if done.returncode == 0:
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if child.poll() is not None:
+            return True  # taskkill failed because the tree was already gone
+    try:
+        child.kill()
+    except OSError:
+        pass
+    return False
+
+
+def _stop_child(child: subprocess.Popen, communicate: bool = True) -> "Tuple[bool, str]":
+    """Stop a sibling script with terminate_tree(): on POSIX SIGTERM, then SIGKILL if it has not
+    exited within STOP_GRACE; on Windows its whole tree at once (taskkill /T /F). Returns
+    (stopped, stderr): stopped is True when it exited on the SIGTERM, which a sibling script
+    handles by removing its partial output and its output lock, and False when it had to be
+    killed (always on Windows, where no handler runs). communicate=False waits without reading the
+    pipes (stop_children(), whose caller is already reading them or exiting)."""
+    def wait(timeout: Optional[float] = None) -> str:
+        if communicate:
+            return child.communicate(timeout=timeout)[1] or ""
+        child.wait(timeout=timeout)
+        return ""
+    if os.name != "nt":
+        try:
+            terminate_tree(child, windows=False)
+            return True, wait(STOP_GRACE)
         except subprocess.TimeoutExpired:
             pass
         except OSError:
-            return False, child.communicate()[1] or ""
-    child.kill()
-    return False, child.communicate()[1] or ""
+            return False, wait()
+        try:
+            child.kill()
+        except OSError:
+            pass
+        return False, wait()
+    terminate_tree(child, windows=True)
+    return False, wait()
 
 
 def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,

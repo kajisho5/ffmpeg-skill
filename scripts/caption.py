@@ -55,7 +55,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import warn
 from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import carried_stream_maps, same_file, subtitle_codec_for, subtitle_container_holds
+from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, record_font_choice
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -1586,9 +1586,12 @@ def main() -> int:
             up_front.append((args.write_ass or os.path.splitext(planned_out)[0] + ".ass", "ASS"))
         if args.ass and args.offset and os.path.exists(args.ass):
             up_front.append((os.path.splitext(planned_out)[0] + "_offset.ass", "offset ASS"))
-        # -o naming the input itself keeps its own, more specific refusal (_check_no_overwrite_input)
-        if not same_file(planned_out, args.input):
-            up_front.append((planned_out, "video"))
+        # -o naming the input (the same name, a hard link, another case on a case-insensitive
+        # volume) is refused here, before any sidecar or transcript is written: run()'s own guard
+        # came after the .srt was already beside it (review of #530)
+        if same_file(planned_out, args.input):
+            refuse_output_is_input(planned_out, args.input, why="the captioned video would replace the source")
+        up_front.append((planned_out, "video"))
     claim(up_front)
     if args.transcribe:
         # the sidecar goes next to the output like the --text one, not into the source folder

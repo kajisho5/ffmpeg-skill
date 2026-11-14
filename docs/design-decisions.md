@@ -4673,11 +4673,24 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **A sibling script past its outer ceiling is sent SIGTERM and killed only if it has not exited
   15 s later** (A183, `STOP_GRACE`). Its own SIGTERM handler stops its ffmpeg (up to 5 s each),
   removes the partial output and releases the output lock; the SIGKILL that `run_tool()` sent left
-  both. The document is still `kind: timeout`, exit 124, and says "stopped" or "killed". On
-  Windows `terminate()` is TerminateProcess, no handler runs, and a partial output can stay there.
+  both. The document is still `kind: timeout`, exit 124, and says "stopped" or "killed".
   `verify.py`'s per-step `--timeout` stops its step the same way; `subprocess.run()`'s SIGKILL left
-  each timed-out step's partial output and output lock in `--out`. Code: `_common.runner._stop_child()`.
-  Test: `test_a_child_past_its_ceiling_is_stopped_and_cleans_up`.
+  each timed-out step's partial output and output lock in `--out`. A SIGTERM or Ctrl-C to
+  `verify.py` itself stops the step it is running the same way (`stop_children()`); through the
+  review of #530 the step was not tracked and ran on, writing, after `verify.py` had exited.
+  **On Windows** no SIGTERM handler can run (`terminate()` is TerminateProcess on the tool's own
+  Python), so the tool and every process it started, its ffmpeg included, are killed at once with
+  `%SystemRoot%\System32\taskkill.exe /T /F` (`terminate_tree()`), and the call returns once
+  taskkill has. Nothing of the tool's own cleanup runs: its output lock stays, naming a process
+  that no longer runs, which the next run to that output takes over (`stale_lock_taken_over`), and
+  its partial output stays under the final name, which the next run refuses as `output_exists`
+  unless `--overwrite` is given. Without taskkill, or when it fails or takes more than 30 s, only
+  the tool is killed and its ffmpeg can run on. This branch runs on the Windows CI job only; here
+  the choice of branch is tested with the kill call replaced. Code: `_common.runner._stop_child()`,
+  `terminate_tree()`. Tests: `test_a_child_past_its_ceiling_is_stopped_and_cleans_up`,
+  `test_a_sigterm_to_verify_stops_its_running_step`,
+  `test_stopping_a_tool_picks_the_tree_kill_on_windows_only`,
+  `test_on_windows_a_stopped_tool_takes_its_ffmpeg_with_it`.
 - **A colour name is checked against ffmpeg's own table** (A189). `validate_color()` took any word,
   and an unknown one (`grey`; ffmpeg has `gray` and `lightgrey`) failed inside ffmpeg as kind
   ffmpeg after a dry run that completed. The table is the `ffmpeg -colors` list (the same in 6.1
@@ -4698,19 +4711,39 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   input and, on a case-insensitive volume, the input's name in another case were written over.
   With a hard link the staged `--overwrite` would have left the source's data in place, but the
   name the caller gave is still the input, as `refuse_output_is_input()` already treated it. The
-  same comparison now serves the side-file guards, `silence.py --timemap` and `--plan`. Not
-  measured here: a case-insensitive volume (the CI runners on macOS and Windows have one). Code:
-  `_common.runner.same_file()`. Test: `test_a_second_name_for_the_input_is_refused`.
+  same comparison now serves the side-file guards, `silence.py --timemap` and `--plan`.
+  `caption.py` refuses an `-o` that is its input (by name or as another name for it) before it
+  writes the SRT or the ASS; it used to write the sidecar beside the source first (review of
+  #530). Not measured here: a case-insensitive volume (the CI runners on macOS and Windows have one). Code:
+  `_common.runner.same_file()`. Tests: `test_a_second_name_for_the_input_is_refused`,
+  `test_caption_refuses_the_input_as_output_before_writing_a_sidecar`.
 - **A stale output lock is taken over under a second lock** (A186). The run that judged it stale
   creates `<lock>.takeover` with O_EXCL, judges the lock again, removes it only if it is still
   stale, and removes the guard; the other run then meets either no lock or a held one. A lock
   found gone under the guard is not removed (a run that took it over may be creating its own), and
-  the O_EXCL create decides. A guard
-  older than 60 s (`TAKEOVER_STALE`, a run killed inside those few lines) is removed; a younger one
-  is a takeover in progress and the run is refused as `output_locked` with `why:
-  takeover_in_progress`. Not changed: a holder that outlived its own deadline still removes the
-  lock by name when it ends, which can be the lock of the run that took it over. Code:
-  `_OutputLock._remove_stale()`. Test: `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`.
+  the O_EXCL create decides. A guard younger than 60 s (`TAKEOVER_STALE`) is a takeover in
+  progress and the run is refused as `output_locked` with `why: takeover_in_progress` and the
+  guard's path. An older one was left by a run killed inside those few lines and is recovered, but
+  never removed by its name alone: two runs that found the same expired guard used to both remove
+  "it", the second removing the guard the first had just made, and both went on inside (review of
+  #530). Now each run that judged it expired creates a claim named after that guard's device,
+  inode and time with O_EXCL; only the run whose create succeeds looks again and removes the guard
+  if it is still that one; any other run, or one that finds another guard there, removes nothing
+  and is refused. A run removes its own guard only while the file at that name is still the one it
+  created. A run killed while it holds a claim leaves the claim, and that expired guard then stays
+  until both are removed by hand. The lock itself appears with its holder's pid and deadline
+  already in it: they are written to a file of the run's own, which is hard-linked to the lock's
+  name (atomic, and refused when the name exists, as O_EXCL is). A lock created empty and written
+  after read as `unreadable`, which is stale, to a run that looked in between; where no hard link
+  can be made (FAT, some network shares) it still is. On Windows a process that has exited is dead
+  even while a handle to it is open (its exit code is read): the Windows CI judged such a child
+  alive and refused its stale lock as held. Not changed: a holder that outlived its own deadline still
+  removes the lock by name when it ends, which can be the lock of the run that took it over. Code:
+  `_OutputLock._remove_stale()`, `_recover_guard()`, `_create()`, `_pid_dead()`. Tests:
+  `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`,
+  `test_two_runs_recovering_one_expired_takeover_guard_do_not_both_go_in`,
+  `test_an_output_lock_is_never_seen_without_its_pid`,
+  `test_a_finished_process_is_dead_while_its_handle_is_open`.
 - **`batch.py` removes the directories it created when no item started** (A187): a refusal before
   the first item (`--jobs`, an output collision, a final path that is an input) and a glob that
   matches nothing leave no empty `out/` and `out/.work`, as a dry run already did. Once an item has
@@ -4736,10 +4769,22 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   requests answers `ping`, `tools/list` and the prompts while a tool runs, and
   `notifications/cancelled` stops the call it names: its tool gets SIGTERM (stops its ffmpeg,
   removes the partial output) and no response is sent for it, as the protocol asks; a queued call
-  that is cancelled never starts. Calls still run one at a time and answer in the order they came,
-  so a client sees no new interleaving between tool results and no two encodes at once. Code:
-  `mcp/server.py` (`_call_worker`, `cancel`). Test:
-  `test_mcp_answers_a_ping_and_cancels_a_call_while_a_tool_runs`.
+  that is cancelled never starts. Only a JSON-RPC 2.0 notification (`"jsonrpc": "2.0"`, no `id`)
+  cancels; any other is ignored. Calls still run one at a time and answer in the order they came,
+  and the next call starts only once a cancelled one's stop is done: on POSIX that is when its
+  tool has exited, its handler having stopped its ffmpeg; on Windows its whole process tree is
+  killed (see A183 above) and the worker waits for taskkill, up to 35 s. So a client sees no new
+  interleaving between tool results and no two encodes at once, except on Windows when taskkill is
+  missing or fails, where the cancelled tool's ffmpeg can run on beside the next call. The tool
+  specs are built once, before the worker starts and under a lock: building them swaps argparse's
+  `parse_args` and `sys.argv` process-wide, and a `tools/call` and a `tools/list` on a fresh server
+  built them at once and ran a tool's `main()` for real (SystemExit). Every response, the -32700
+  parse error included, is written under one lock. Code: `mcp/server.py` (`_call_worker`,
+  `cancel`, `specs`, `_write`). Tests: `test_mcp_answers_a_ping_and_cancels_a_call_while_a_tool_runs`,
+  `test_mcp_starts_the_next_call_only_once_a_cancelled_one_is_stopped`,
+  `test_mcp_cancels_only_on_a_json_rpc_2_notification`,
+  `test_mcp_tool_specs_are_built_once_when_first_used_from_two_threads`,
+  `test_mcp_parse_error_goes_through_the_one_writer`.
 - **The `hdr` prompt's `strip_dovi` picks the recipe** (A23): `true`, `1` or `yes` gives the
   `color.py --strip-dovi` message, `false`, `0`, `no` or nothing the `--to-sdr` one, and any other
   value is a JSON-RPC error naming it. Code: `_contract.mcp_prompt_get()` (`flags`). Test:

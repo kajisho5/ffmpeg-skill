@@ -10927,5 +10927,443 @@ class SharedCodeAudit465Tests(unittest.TestCase):
             _contract.mcp_prompt_get("hdr", {"input": "/abs/a.mov", "strip_dovi": "maybe"})
 
 
+
+class ReviewOf530Tests(unittest.TestCase):
+    """The review of #530 (the #465 fixes): the MCP server's cancellation, its start-up and its
+    writes, the expired takeover guard, verify.py's step child, and caption.py's order of refusal
+    and sidecar. docs/design-decisions.md, "After 3.8.16 -- shared code and the MCP server (#465)"."""
+
+    class Refused(Exception):
+        pass
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=3",
+               "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def doc(self, name, *args):
+        proc = tool(name, *args, "--json", check=False)
+        try:
+            return json.loads(proc.stdout)
+        except ValueError:
+            self.fail(f"{name} printed no JSON document (exit {proc.returncode}):\n{proc.stderr[-800:]}")
+
+    @staticmethod
+    def serve(lines, **patches):
+        """mcp/server.py's main() on these request lines, in this process; returns its stdout."""
+        stdin = types.SimpleNamespace(buffer=io.BytesIO("".join(l + "\n" for l in lines).encode("utf-8")))
+        out = io.BytesIO()
+        stdout = types.SimpleNamespace(buffer=out)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch.object(sys, "stdin", stdin))
+            stack.enter_context(unittest.mock.patch.object(sys, "stdout", stdout))
+            stack.enter_context(unittest.mock.patch.object(sys, "argv", ["server.py"]))
+            for name, value in patches.items():
+                stack.enter_context(unittest.mock.patch.object(mcp_server, name, value))
+            mcp_server.main()
+        return out.getvalue().decode("utf-8")
+
+    # 1. Windows: a cancelled or timed-out tool's whole tree is stopped, and the next call waits
+
+    def test_stopping_a_tool_picks_the_tree_kill_on_windows_only(self):
+        runner = sys.modules["_common.runner"]
+
+        class Proc:
+            pid = 4242
+
+            def __init__(self):
+                self.calls = []
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.calls.append("terminate")
+
+            def kill(self):
+                self.calls.append("kill")
+
+        p = Proc()
+        self.assertTrue(runner.terminate_tree(p, windows=False))
+        self.assertEqual(p.calls, ["terminate"], "POSIX: SIGTERM, which the tool's handler answers")
+        exe = r"C:\Windows\System32\taskkill.exe"
+        for label, returned, expect_ok, expect_calls in (
+                ("taskkill succeeds", subprocess.CompletedProcess([], 0), True, []),
+                ("taskkill fails", subprocess.CompletedProcess([], 128), False, ["kill"]),
+                ("taskkill hangs", subprocess.TimeoutExpired("taskkill", 30), False, ["kill"])):
+            with self.subTest(label):
+                p = Proc()
+                effect = {"side_effect": returned} if isinstance(returned, BaseException) else {"return_value": returned}
+                with unittest.mock.patch.object(runner, "_taskkill", return_value=exe), \
+                        unittest.mock.patch.object(runner.subprocess, "run", **effect) as run:
+                    self.assertEqual(runner.terminate_tree(p, windows=True), expect_ok)
+                self.assertEqual(run.call_args[0][0], [exe, "/T", "/F", "/PID", "4242"])
+                self.assertEqual(p.calls, expect_calls)
+        with self.subTest("no taskkill"):
+            p = Proc()
+            with unittest.mock.patch.object(runner, "_taskkill", return_value=None):
+                self.assertFalse(runner.terminate_tree(p, windows=True))
+            self.assertEqual(p.calls, ["kill"], "without taskkill the tool alone is killed, and that is reported")
+        with unittest.mock.patch.object(runner, "terminate_tree") as tree:
+            mcp_server._stop(Proc())
+        self.assertEqual(tree.call_count, 1, "a cancelled MCP call is stopped the same way")
+
+    def test_mcp_starts_the_next_call_only_once_a_cancelled_one_is_stopped(self):
+        """On Windows the tool's Python can be gone while the tree kill is still ending its
+        ffmpeg: the worker waited for the tool only, and the next encode could start beside it."""
+        import threading
+        exited, events = threading.Event(), []
+
+        class Proc:
+            pid = 1
+
+            def poll(self):
+                return None
+
+        def respond(req, on_start=None):
+            if req["id"] == 1:
+                on_start(Proc())
+                exited.wait(10)  # the tool's own process ends as soon as the stop begins
+                return {"jsonrpc": "2.0", "id": 1, "result": {}}
+            events.append("second call started")
+            return {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+        def slow_stop(proc):
+            exited.set()
+            time.sleep(0.5)  # the rest of the tree is still being ended
+            events.append("first call stopped")
+
+        out = io.BytesIO()
+        with unittest.mock.patch.object(mcp_server, "_respond", respond), \
+                unittest.mock.patch.object(mcp_server, "_stop", slow_stop):
+            worker = threading.Thread(target=mcp_server._call_worker, args=(out,), daemon=True)
+            worker.start()
+            entries = []
+            for rid in (1, 2):
+                entry = {"proc": None, "cancelled": False}
+                entries.append(entry)
+                with mcp_server._CALLS_LOCK:
+                    mcp_server._CALLS[mcp_server._key(rid)] = entry
+                mcp_server._QUEUE.put({"req": {"jsonrpc": "2.0", "id": rid, "method": "tools/call"}, "entry": entry})
+            for _ in range(200):
+                if entries[0]["proc"] is not None:
+                    break
+                time.sleep(0.01)
+            mcp_server.cancel({"requestId": 1})
+            mcp_server._QUEUE.put(None)
+            worker.join(20)
+        self.assertEqual(events, ["first call stopped", "second call started"])
+        self.assertEqual([json.loads(l)["id"] for l in out.getvalue().decode().splitlines()], [2],
+                         "the cancelled call gets no response")
+
+    @unittest.skipUnless(platform.system() == "Windows", "the Windows tree kill: runs on the Windows CI job")
+    def test_on_windows_a_stopped_tool_takes_its_ffmpeg_with_it(self):
+        """No SIGTERM handler runs on Windows: terminate() ended the tool's Python and left its
+        ffmpeg encoding. run_tool()'s ceiling and a cancelled MCP call now end the whole tree."""
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        child = self.work / "win_tree_child.py"
+        child.write_text(
+            "import subprocess, sys, time\n"
+            "p = subprocess.Popen(['ffmpeg', '-v', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=25:d=120',"
+            " '-f', 'null', '-'], stdin=subprocess.DEVNULL)\n"
+            "open(sys.argv[1], 'w').write(str(p.pid))\n"
+            "time.sleep(300)\n", encoding="utf-8")
+
+        def alive(pid):
+            listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], stdout=subprocess.PIPE,
+                                    text=True, errors="replace").stdout
+            return str(pid) in listed.split()
+
+        def ffmpeg_pid(path):
+            for _ in range(200):
+                if path.exists() and path.read_text().strip():
+                    return int(path.read_text())
+                time.sleep(0.05)
+            self.fail("the child never started its ffmpeg")
+
+        pid_file = self.work / "win_tree_pid_1.txt"
+        with mock.patch.object(runner, "child_limit", lambda per_call=None: 4.0):
+            proc = runner.run_tool([str(child), str(pid_file)])
+        self.assertEqual(proc.returncode, 124)
+        self.assertFalse(alive(ffmpeg_pid(pid_file)), "run_tool()'s ceiling left the tool's ffmpeg running")
+        pid_file = self.work / "win_tree_pid_2.txt"
+        tool_proc = subprocess.Popen([sys.executable, str(child), str(pid_file)])
+        pid = ffmpeg_pid(pid_file)
+        mcp_server._stop(tool_proc)
+        tool_proc.wait(30)
+        self.assertFalse(alive(pid), "a cancelled MCP call left the tool's ffmpeg running")
+
+    # 2. and 7. the reading loop
+
+    def test_mcp_cancels_only_on_a_json_rpc_2_notification(self):
+        seen = []
+        self.serve([json.dumps({"jsonrpc": "1.0", "method": "notifications/cancelled", "params": {"requestId": 7}}),
+                    json.dumps({"method": "notifications/cancelled", "params": {"requestId": 8}}),
+                    json.dumps({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 9}})],
+                   cancel=seen.append)
+        self.assertEqual(seen, [{"requestId": 9}])
+
+    def test_mcp_parse_error_goes_through_the_one_writer(self):
+        """The worker writes responses too: every response takes _WRITE_LOCK, the -32700 one
+        included, so no line is written into the middle of another."""
+        written = []
+        real = mcp_server._write
+
+        def recording(out, resp):
+            written.append(resp)
+            real(out, resp)
+        text = self.serve(["{not json", json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"})], _write=recording)
+        self.assertEqual([r["id"] for r in written], [None, 1])
+        self.assertEqual(written[0]["error"]["code"], -32700)
+        self.assertEqual(len(text.splitlines()), 2)
+
+    # 4. start-up
+
+    def test_mcp_tool_specs_are_built_once_when_first_used_from_two_threads(self):
+        """A tools/call and a tools/list on a fresh server built the specs cache on two threads at
+        once; _contract.build() swaps argparse's parse_args and sys.argv process-wide, so one could
+        restore the other's swap and run a tool's main() for real."""
+        import argparse
+        import threading
+        saved_specs = dict(mcp_server.specs())
+        saved_parse, saved_argv = argparse.ArgumentParser.parse_args, sys.argv
+        real = _contract.build
+        entered, both = [], threading.Event()
+
+        def slow_build(*a, **k):
+            entered.append(threading.current_thread().name)
+            if len(entered) >= 2:
+                both.set()
+            both.wait(1.5)
+            return real(*a, **k)
+
+        results, errors = {}, []
+
+        def use(name, fn):
+            try:
+                results[name] = fn()
+            except BaseException as exc:  # noqa: BLE001 - a SystemExit from a tool's main() included
+                errors.append(repr(exc))
+        mcp_server._SPECS.clear()
+        try:
+            with unittest.mock.patch.object(_contract, "build", slow_build):
+                threads = [threading.Thread(target=use, args=("list", mcp_server.tool_list)),
+                           threading.Thread(target=use, args=("specs", lambda: dict(mcp_server.specs())))]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(180)
+        finally:
+            argparse.ArgumentParser.parse_args, sys.argv = saved_parse, saved_argv
+            mcp_server._SPECS.clear()
+            mcp_server._SPECS.update(saved_specs)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(entered), 1, "the cache was built twice at once")
+        self.assertEqual(set(results["specs"]), set(saved_specs))
+        self.assertTrue(results["list"])
+
+    # 3. the expired takeover guard
+
+    def test_two_runs_recovering_one_expired_takeover_guard_do_not_both_go_in(self):
+        """Two runs that found the same expired `.takeover` guard both removed "it": the second
+        removed the first's new guard, both judged the stale lock inside, and the second's late
+        removal took the first run's new output lock, so both wrote the output."""
+        import threading
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        out = str(self.work / "guarded.mp4")
+        lock = Path(self.work / ".guarded.mp4.ffskill-lock")
+        guard = Path(str(lock) + ".takeover")
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lock.write_text(str(dead.pid), encoding="utf-8")
+        guard.write_text("", encoding="utf-8")
+        old = time.time() - runner.TAKEOVER_STALE - 30
+        os.utime(guard, (old, old))
+        a, b = runner._OutputLock(out), runner._OutputLock(out)
+        names = {a: "A", b: "B"}
+        b_observed, a_inside, b_judged, a_locked = (threading.Event() for _ in range(4))
+        holder_calls = {"A": 0, "B": 0}
+        real_holder = runner._OutputLock._holder
+
+        def holder(self_):
+            who = names.get(self_)
+            judged = real_holder(self_)
+            if who:
+                holder_calls[who] += 1
+                if holder_calls[who] == 2:  # the judgement made inside the guard
+                    if who == "A":
+                        a_inside.set()
+                        b_judged.wait(3)
+                    else:
+                        b_judged.set()
+                        a_locked.wait(3)
+            return judged
+
+        def b_pauses_after_reading(fn):
+            def wrapped(*args, **kw):
+                value = fn(*args, **kw)
+                if (threading.current_thread().name == "B" and str(args[0]).endswith(".takeover")
+                        and not b_observed.is_set()):
+                    b_observed.set()
+                    a_inside.wait(3)
+                return value
+            return wrapped
+
+        def refuse(kind, reason, msg, **kw):
+            raise self.Refused(reason)
+        outcome = {}
+
+        def contend(lock_obj, name, after=None):
+            try:
+                lock_obj.__enter__()
+                outcome[name] = "holds"
+            except self.Refused as exc:
+                outcome[name] = exc.args[0]
+            finally:
+                if after is not None:
+                    after.set()
+
+        patches = [mock.patch.object(runner._OutputLock, "_holder", holder), mock.patch.object(runner, "refuse", refuse),
+                   mock.patch("os.path.getmtime", b_pauses_after_reading(os.path.getmtime))]
+        if hasattr(runner, "_expired_guard"):
+            patches.append(mock.patch.object(runner, "_expired_guard", b_pauses_after_reading(runner._expired_guard)))
+        try:
+            with contextlib.ExitStack() as stack:
+                for p in patches:
+                    stack.enter_context(p)
+                tb = threading.Thread(target=contend, args=(b, "B"), name="B")
+                tb.start()
+                self.assertTrue(b_observed.wait(5), "B never looked at the expired guard")
+                ta = threading.Thread(target=contend, args=(a, "A", a_locked), name="A")
+                ta.start()
+                ta.join(20)
+                tb.join(20)
+            self.assertEqual(sorted(outcome.values()), ["holds", "output_locked"], outcome)
+            winner = a if outcome["A"] == "holds" else b
+            self.assertTrue(lock.exists(), "the winner's output lock was removed")
+            self.assertEqual(os.fstat(winner.fd).st_ino, os.stat(lock).st_ino, "the lock on disk is the winner's")
+            self.assertEqual(sorted(p.name for p in self.work.iterdir() if ".takeover" in p.name), [],
+                             "no guard or claim is left behind")
+        finally:
+            for lk in (a, b):
+                if getattr(lk, "fd", None) is not None:
+                    lk.__exit__()
+
+    def test_a_finished_process_is_dead_while_its_handle_is_open(self):
+        """Windows CI: a child that had exited was judged alive while its Popen (and so a handle
+        to it) was still open, so its stale lock was refused as held. Its exit code is read now."""
+        runner = sys.modules["_common.runner"]
+        done = subprocess.Popen([sys.executable, "-c", "pass"])
+        done.wait()
+        self.assertTrue(runner._pid_dead(done.pid), "a finished child whose Popen is still open is dead")
+        self.assertFalse(runner._pid_dead(os.getpid()))
+
+    def test_an_output_lock_is_never_seen_without_its_pid(self):
+        """The lock was created empty and its pid written after: a run looking in between read it
+        as `unreadable`, which is stale, and could take it over. It appears with its pid now."""
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        out = str(self.work / "fresh.mp4")
+        lock = self.work / ".fresh.mp4.ffskill-lock"
+        seen = []
+        real_write = os.write
+
+        def watching_write(fd, data):
+            seen.append(lock.read_text(encoding="utf-8") if lock.exists() else None)
+            return real_write(fd, data)
+        for label, link_fails in (("hard link", False), ("no hard links here", True)):
+            with self.subTest(label):
+                seen.clear()
+                lk = runner._OutputLock(out)
+                patches = [mock.patch("os.write", watching_write)]
+                if link_fails:
+                    patches.append(mock.patch("os.link", side_effect=OSError(1, "Operation not permitted")))
+                try:
+                    with contextlib.ExitStack() as stack:
+                        for p in patches:
+                            stack.enter_context(p)
+                        lk.__enter__()
+                    self.assertEqual(lock.read_text(encoding="utf-8"), str(os.getpid()))
+                    if not link_fails:
+                        self.assertEqual(seen, [None], "the lock existed, empty, before its pid was written")
+                    self.assertEqual([p.name for p in self.work.iterdir() if p.name.endswith(".new")], [])
+                finally:
+                    lk.__exit__()
+
+    # 5. caption.py: the output that is the input, before any sidecar
+
+    def test_caption_refuses_the_input_as_output_before_writing_a_sidecar(self):
+        folder = self.work / "cap"
+        folder.mkdir()
+        clip = folder / "clip.mp4"
+        shutil.copy(self.clip, clip)
+        cues = folder / "cues.txt"
+        cues.write_text("0:00-0:02 Hello\n", encoding="utf-8")
+        alias = folder / "alias.mp4"
+        try:
+            os.link(clip, alias)
+            outputs = [alias, clip]
+        except (OSError, AttributeError):
+            outputs = [clip]
+        before = sorted(p.name for p in folder.iterdir())
+        for out in outputs:
+            for extra in ([], ["--overwrite"], ["--animate", "pop"]):
+                with self.subTest(out=out.name, extra=extra):
+                    doc = self.doc("caption", clip, "--text", cues, "-o", out, *extra)
+                    self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_is_input"), doc)
+                    self.assertEqual(sorted(p.name for p in folder.iterdir()), before, "a sidecar was written first")
+
+    # 6. verify.py: a signal stops the step it is running
+
+    @unittest.skipIf(platform.system() == "Windows", "SIGTERM is never delivered on Windows")
+    def test_a_sigterm_to_verify_stops_its_running_step(self):
+        import signal
+        big, outdir = self.work / "verify_sig.mp4", self.work / "verify_sig_out"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:d=20", "-f", "lavfi", "-i", "sine=d=20",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", str(big))
+        proc = subprocess.Popen([sys.executable, str(SCRIPTS / "verify.py"), str(big), "--out", str(outdir),
+                                 "--seconds", "20", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def running_children():
+            listed = subprocess.run(["ps", "-A", "-o", "pid=,args="], stdout=subprocess.PIPE, text=True).stdout
+            return [int(line.split()[0]) for line in listed.splitlines()
+                    if str(outdir) in line and int(line.split()[0]) != proc.pid]
+        try:
+            seen = None
+            for _ in range(1200):
+                locks = [p for p in outdir.glob(".*.ffskill-lock") if "_cut.mp4" not in p.name] if outdir.exists() else []
+                if locks:
+                    seen = locks[0]
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(seen, "no step after the copy cut started")
+            proc.send_signal(signal.SIGTERM)
+            proc.communicate(timeout=60)
+            time.sleep(0.5)
+            self.assertEqual(running_children(), [], "a step was still running after verify.py exited")
+            self.assertEqual([p.name for p in outdir.glob(".*.ffskill-lock")], [], "the step's lock was left")
+            step_output = outdir / seen.name[1:-len(".ffskill-lock")]
+            self.assertFalse(step_output.exists(), f"the step's partial output {step_output.name} was left")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+            for pid in running_children() if outdir.exists() else []:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import _stop_child
+from _common.runner import _stop_child, _unwatch, _watch
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -143,6 +143,10 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         return r
     child = subprocess.Popen([sys.executable, str(HERE / argv[0])] + argv[1:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    # watched like run_tool()'s child (review of #530): a SIGTERM or Ctrl-C to verify.py stops the
+    # step through stop_children() -- its own handler removes its partial output and lock --
+    # instead of leaving it running and writing after verify.py has exited
+    _watch(child, [])
     try:
         out, err = child.communicate(timeout=timeout or None)
         proc = subprocess.CompletedProcess(child.args, child.returncode, out, err)
@@ -153,6 +157,8 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         msg = f"timeout after {timeout:.0f}s"
         return {"step": name, "ok": False, "seconds": round(time.time() - t0, 1), "error": msg,
                 "kind": "timeout", "reason": "step_timeout", "message": msg}
+    finally:
+        _unwatch(child)
     try:
         doc = json.loads(proc.stdout)
     except ValueError:
