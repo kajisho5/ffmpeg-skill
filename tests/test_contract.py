@@ -3481,10 +3481,10 @@ class ContractTests(unittest.TestCase):
             # #408: on POSIX the backslash is part of the name, and the quoted form keeps it
             self.assertEqual(_common.concat_list_line("/a\\b/c.mp4"), "file '/a\\b/c.mp4'")
         self.assertEqual(_common.concat_list_line("/a/it's.mp4"), "file '/a/it'\\''s.mp4'")
-        for tc in ("00:00:00:29", "00:00:01:00", "01:00:00:00", "00:59:56:12"):
+        for tc in ("00:00:00:29", "00:00:01:00", "01:00:00:00", "00:59:56:12", "06:00:00:00", "23:59:59:29"):
             secs = _common.parse_time(tc, 29.97)
             self.assertEqual(_common.fmt_smpte_time(secs, 29.97), tc, tc)
-        self.assertAlmostEqual(_common.parse_time("01:00:00:00", 29.97), 3600 * 30 / 29.97, places=3)
+        self.assertAlmostEqual(_common.parse_time("01:00:00:00", 29.97), 3600 * 30 * 1001 / 30000, places=6)  # 29.97 read as 30000/1001
         proc = tool("cut", self.src, "--start", "00:00:01:00", "--end", "00:00:02:15", "--json", "-o", self.out("smpte_cut.mp4"))
         self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
         proc = tool("cut", self.src, "--start", "00:00:01:99", "--end", "2", "--json", "-o", self.out("smpte_bad.mp4"), check=False)

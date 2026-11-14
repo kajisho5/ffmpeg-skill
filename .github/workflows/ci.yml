@@ -26,6 +26,9 @@ permissions:
 
 jobs:
   test:
+    # a part takes 10 to 25 minutes; a filter graph that never ends on one FFmpeg (#514) ran
+    # until the six-hour default
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -128,6 +131,7 @@ jobs:
   # and zimg, so this job runs inside a trixie container. It also happens to give Python 3.13.
   test-ffmpeg-7:
     name: test (debian-trixie container, py3.13, ffmpeg 7.1 apt, ${{ matrix.part }}/3)
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:

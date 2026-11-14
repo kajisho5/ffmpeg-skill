@@ -441,8 +441,12 @@ def main() -> int:
                 # same command, and the seek stays next to the -i it drops the margin from
                 cmd += ["-i", args.second] + out_seek + default_selection_maps(second_meta, output)
                 af_parts = on_clock + drift_af
-                if delay_ms > 0:
-                    af_parts.append(f"adelay={delay_ms}:all=1")
+                # one sound is written here (the default selection, or the probed track of a file
+                # with several: default_selection_maps), the one sec_sr is the rate of, so the delay
+                # is counted in its samples as --replace-audio's is. A whole millisecond (the
+                # default --fine-ms 1 without --fix-drift) keeps `adelay=<ms>:all=1`
+                if offset > 0 and round(offset * sec_sr):
+                    af_parts.append(silence_filter(sec_sr, lead=offset))
                 if has_video:
                     vf = []
                     if delay_ms > 0:

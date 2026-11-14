@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -108,7 +108,10 @@ def main() -> int:
     t0 = time.time()
     failed, ran = [], 0
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        for name, code, secs, output in pool.map(lambda j: run_job(j, out_root), work):
+        # printed as each module finishes, not in the order they were started: a job that is
+        # cancelled or runs out of time still shows every module that got to its end (#514)
+        for done in as_completed([pool.submit(run_job, j, out_root) for j in work]):
+            name, code, secs, output = done.result()
             last = output.strip().splitlines()[-1] if output.strip() else ""
             ran += sum(int(m) for m in re.findall(r"^Ran (\d+) tests?", output, flags=re.M))
             print(f"\n===== {name}: {'OK' if code == 0 else 'FAILED'} in {secs:.0f}s ({last}) =====")
@@ -117,6 +120,7 @@ def main() -> int:
                 print(output)
             else:
                 print("\n".join(line for line in output.splitlines()[-3:]))
+            sys.stdout.flush()
     print(f"\n{ran} tests, {len(names)} modules in {len(work)} processes, {jobs} at a time, {time.time() - t0:.0f}s wall; "
           + ("FAILED: " + ", ".join(failed) if failed else "all OK"))
     return 1 if failed else 0

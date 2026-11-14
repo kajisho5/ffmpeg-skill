@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts
+from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, MissingFpsError, time_arg, fmt_secs, run
 from _common.emit import input_length
 
@@ -83,7 +83,9 @@ def main() -> int:
         vf = f"tpad=start_mode=clone:start_duration={args.hold:.3f}"
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
-            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), lead=args.hold)]
+            # the sound waits as long as the picture is held: whole frames (tpad_length), as the
+            # hold in the middle of a clip pads by the held frames' length
+            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), lead=tpad_length(args.hold, meta))]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
         # resuming the rest of the clip: split the timeline at `at` and hold the remainder's

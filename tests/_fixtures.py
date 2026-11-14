@@ -43,8 +43,30 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
 
 
+# A command a test runs is over in seconds; one that is still running after this long never ends
+# (a filter graph that does not reach EOF on one FFmpeg: #514, where the job ran until it was
+# cancelled and its log named nothing). The test then fails with the command instead.
+SH_LIMIT = float(os.environ.get("FFSKILL_TEST_SH_LIMIT", "900"))
+
+
 def sh(*cmd, expect_fail=False, env=None):
-    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+    argv = [str(c) for c in cmd]
+    posix = os.name == "posix"
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                             errors="replace", env=env, start_new_session=posix)
+    try:
+        out, err = child.communicate(timeout=SH_LIMIT)
+    except subprocess.TimeoutExpired:
+        if posix:  # the script's ffmpeg too: it is in the child's process group
+            import signal
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        child.kill()
+        out, err = child.communicate()
+        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\nSTDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
+    proc = subprocess.CompletedProcess(argv, child.returncode, out, err)
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"
         return proc
@@ -221,6 +243,73 @@ def tiny_clip(path, source, *extra, seconds=1, audio=False, pix_fmt="yuv420p"):
     cmd += (["-c:a", "aac", "-shortest"] if audio else [])
     sh(*cmd, path)
     return path
+
+
+# Clips that say which frame is on screen (#470): frame N of numbered_clip() has a mean luma of
+# 16 + 2 * N, stored losslessly, so a decode reads the frame's number back; plain_clip() is one
+# flat luma to lay such a clip over. Both end on their own frame count (trim=end_frame): with
+# -frames:v the muxer stopped the sound where the picture ended.
+def _counted_clip(path, picture, rate, frames, sound, late):
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    cmd += (["-itsoffset", str(late)] if late else []) + ["-f", "lavfi", "-i", f"{picture},trim=end_frame={frames}"]
+    if sound:
+        cmd += ["-f", "lavfi", "-i", sound]
+    cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-pix_fmt", "yuv420p"] + (["-c:a", "pcm_s16le"] if sound else [])
+    sh(*cmd, path)
+    return path
+
+
+def numbered_clip(path, rate, frames, sound=None, size="64x64", late=0):
+    """`frames` frames at `rate` whose frame N has a luma of 16 + 2 * N. `sound` is a lavfi audio
+    source with its own length; `late` starts the picture that many seconds after the sound."""
+    return _counted_clip(path, f"color=black:s={size}:r={rate},geq=lum='16+2*N':cb=128:cr=128", rate, frames, sound, late)
+
+
+def plain_clip(path, rate, frames, sound=None, size="64x64", luma=235, late=0):
+    """`frames` frames at `rate` of one flat luma."""
+    return _counted_clip(path, f"color=black:s={size}:r={rate},geq=lum={luma}:cb=128:cr=128", rate, frames, sound, late)
+
+
+def frame_lumas(path, crop=None):
+    """The mean luma of every frame of `path`'s picture in order (of the `crop` region if given)."""
+    vf = (f"crop={crop}," if crop else "") + "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+    out = sh("ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-vf", vf, "-f", "null", "-").stdout
+    return [float(line.split("=")[1]) for line in out.splitlines() if "YAVG=" in line]
+
+
+def frame_numbers(path):
+    """The numbers of the numbered_clip() frames `path` shows, in order."""
+    return [round((v - 16) / 2) for v in frame_lumas(path)]
+
+
+def stretches(values, test):
+    """[(first, last)] index ranges of `values` over which `test` holds."""
+    out, start = [], None
+    for i, v in enumerate(list(values) + [None]):
+        hit = v is not None and test(v)
+        if hit and start is None:
+            start = i
+        if not hit and start is not None:
+            out.append((start, i - 1))
+            start = None
+    return out
+
+
+def pcm_of(command, path, channels=1):
+    """The samples a result's last command writes, as one array of 16-bit values: the command is
+    run again with PCM in place of AAC (an AAC frame smears an edge over 1024 samples)."""
+    import array
+    import shlex
+    cmd = shlex.split(command)
+    at = cmd.index("aac")
+    assert (cmd[at - 1], cmd[at + 1]) == ("-c:a", "-b:a"), cmd
+    cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(path)
+    sh(*cmd)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", str(channels), "-f", "s16le", "-"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    pcm = array.array("h")
+    pcm.frombytes(raw)
+    return pcm
 
 
 # legal_range_clip(): the share of each plane's samples set to each code in the first half of the

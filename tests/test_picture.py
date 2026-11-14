@@ -4821,7 +4821,8 @@ class LineAwareLayoutTests(unittest.TestCase):
         # first column and row
         self.assertIn("color=c=0xFFD200:s=86x4:", cmd)
         self.assertIn("pad=87:5:1:1:color=black@0", cmd)
-        self.assertIn("overlay=x=596:y=398:", cmd)
+        # the layer's window is in its x position after 3.8.11 (decision.windowed_overlay_x)
+        self.assertRegex(" ".join(shlex.split(cmd)), r"overlay=x='if\(between\(t,[-0-9.]+,[0-9.]+\),596,-w\)':y=398:")
         self.assertIn("y=(h-text_h)/2+60:", cmd)
 
     def test_a_two_line_name_and_title_fit_in_the_lower_third_bar(self):

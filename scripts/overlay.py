@@ -38,7 +38,7 @@ from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, default_output, die, escape_drawtext, ffmpeg_base, info, parse_time, probe, run, run_keeping_subtitles, validate_color, x264_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb
-from _common.decision import length_output_t
+from _common.decision import length_output_t, window_expr, windowed_overlay_x
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            has_alpha_plane, report as alpha_report, source_alpha, source_format, tag_args, video_line)
 from _common.probe import display_size, refuse_not_a_still, square_pixels, square_pixels_note
@@ -128,13 +128,12 @@ def _wrap_to_frame(args, frame_w: int, margins: Optional[dict], frame_h: int = 0
     return wrapped
 
 
-def enable_expr(start: Optional[float], end: Optional[float]) -> str:
+def enable_expr(start: Optional[float], end: Optional[float], meta: Optional[dict] = None) -> str:
+    """True on the main picture's frames from --start to --end, both inclusive (window_expr):
+    the bounds sit half a frame from the frames they select, not on a frame's own time."""
     if start is None and end is None:
         return ""
-    s = f"{start:.3f}" if start is not None else "0"
-    if end is None:
-        return f"gte(t,{s})"
-    return f"between(t,{s},{end:.3f})"
+    return window_expr(start, end, meta)
 
 
 def alpha_expr(opacity: float, start: Optional[float], end: Optional[float], fade: float) -> str:
@@ -440,7 +439,7 @@ def main() -> int:
             "from --start to --end without a fade", hint="drop --fade for the video layer")
 
     output = args.output or default_output(args.input, "overlay", default_ext(alpha_codec) if alpha_codec else None)
-    enable = enable_expr(start, end)
+    enable = enable_expr(start, end, meta)
     cmd = ffmpeg_base() + ["-i", args.input]
 
     if args.image:
@@ -464,9 +463,9 @@ def main() -> int:
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
         # a 10-bit main on a 10-bit line is composited at 10 bits in YUV: format=auto with an RGBA
         # still took the whole picture through 8-bit RGB (overlay_format)
-        ov = f"overlay={x}:{y}" + (overlay_format(meta) or ":format=auto")
-        if enable:
-            ov += f":enable='{enable}'"
+        # a --start/--end window is in the layer's position, which is evaluated on the main
+        # picture's frames; overlay's enable is evaluated on the layer's frames too
+        ov = f"overlay={windowed_overlay_x(x, enable) if enable else x}:{y}" + (overlay_format(meta) or ":format=auto")
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", *still_input_args(args.image), "-i", args.image]
         # the RGBA still is converted to the BT.709 the output is tagged with (overlay's own
@@ -545,9 +544,9 @@ def main() -> int:
             # which came back BT.601 under the BT.709 tag (#333's defect, on this path)
             chain.append(f"lut=y=val:u=val:v=val:a=val*{args.opacity:g}")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
-        ov = f"overlay={x}:{y}" + (overlay_format(meta) or ":format=auto")
-        if enable:
-            ov += f":enable='{enable}'"
+        # a --start/--end window is in the layer's position, which is evaluated on the main
+        # picture's frames; overlay's enable is evaluated on the layer's frames too
+        ov = f"overlay={windowed_overlay_x(x, enable) if enable else x}:{y}" + (overlay_format(meta) or ":format=auto")
         # a VP9 layer stored with an alpha layer is decoded with libvpx-vp9: FFmpeg's own decoder
         # drops the alpha, and the layer covered the picture as an opaque rectangle
         cmd = ffmpeg_base() + ["-i", args.input] + decoder_args_for(pip_meta, args.video) + ["-i", args.video]

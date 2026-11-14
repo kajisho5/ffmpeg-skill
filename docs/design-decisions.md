@@ -87,6 +87,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.8 — four old grouped issues, item by item (#402, #403, #404, #429)](#after-388--four-old-grouped-issues-item-by-item-402-403-404-429)
 - [After 3.8.9 — captions and text drawing (audit #457, #505)](#after-389--captions-and-text-drawing-audit-457-505)
 - [After 3.8.10 — compositing, time and edge inputs (#460, #461)](#after-3810--compositing-time-and-edge-inputs-460-461)
+- [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
 <!-- contents:end -->
 
 ## Time limits
@@ -115,7 +116,7 @@ exists. When a decision changes, edit the entry in the same PR.
   beats`, and `render`/`batch`, whose stages run as their own dry runs (audit A236/A193: the
   contract said `none` for these four; a test now derives the list from what each dry run
   decodes, `test_every_tool_that_decodes_under_dry_run_is_in_dry_run_analysis`). The contract lists them as
-  `analysis_only`, `probe` included since "After 3.8.4" below (it was `none` with the note that
+  `analysis_only`, `probe` included since "After 3.8.11" below (it was `none` with the note that
   ffprobe still runs, while `--analyze` decodes with ffmpeg); every other tool runs nothing. Code:
   `_contract.DRY_RUN_ANALYSIS`. Tests: `test_dry_run_never_runs_ffmpeg_and_writes_nothing`,
   `test_dry_run_plans_rest_on_real_measurements`.
@@ -3682,7 +3683,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   milliseconds, so those commands are the ones they were. One exception, a defect of its own: the
   millisecond was `int(seconds * 1000)`, which cuts 1.001 to 1000 (741 of the whole-millisecond
   values up to 100 s), and is `round()` now. `freeze.py --at T` in the middle of a clip already
-  pads by the held frames' length to the microsecond and is unchanged.
+  pads by the held frames' length to the microsecond and is unchanged. After 3.8.11 the silence
+  *ahead* of a clip (`pad.py --start`, `freeze.py --at 0`) is the length of the frames `tpad` puts
+  ahead of its picture, not the amount asked ("After 3.8.11").
 - **The picture's `tpad` keeps its millisecond.** `tpad=start_duration/stop_duration={:.3f}`
   becomes a whole number of frames, so the text only matters when the amount is within half a
   millisecond of a half-frame boundary (`--end 0.0504` at 29.97 fps: 1 frame from "0.050", 2
@@ -3703,11 +3706,12 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   samples for a target of 59244, 3 s to 1.23425 s; FFmpeg 6.1.1), so the millisecond cuts nothing
   there; that shortfall is `atempo`'s and is not addressed here, and `render.py` hands a speed
   stage's length to `fit.py` as `{:.3f}` on that path. A whole millisecond, a source without
-  sound and a dry run's pending input write the command they did.
+  sound and a dry run's pending input write the command they did. After 3.8.11 a retimed track is
+  conformed to the target's samples ("After 3.8.11").
 - **The same `-t` bounds fit.py's picture.** With sound, a trim to 37 frames of a 30000/1001
   source (`--duration 1.2345666`) wrote 38 under `-t 1.235` and writes 37 under `-t 1.234567`.
   Without sound there is no rate, the millisecond stays, and that trim still writes 38 frames:
-  seen, measured and not changed here.
+  seen, measured and not changed here (counted in frames after 3.8.11).
 - **`broll.py` delays a cutaway's sound by `--at` to the sample.** It was
   `adelay={int(at * 1000)}|...`: `--at 1.001` started the sound at sample 48000 for 48048
   (`int(1.001 * 1000)` is 1000), `--at 1.2346` at 59232 for 59261 and `--at 1.23425` at 59232
@@ -3724,7 +3728,7 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   it changes the whole-millisecond commands too; it is left for its own change. The
   `--audio b` gate (`volume=0:enable='between(t,...)'`) is not limited by its text either way:
   FFmpeg evaluates it once per audio frame, and a window of samples 48000-95999 was muted over
-  48128-96255.
+  48128-96255. Both are changed after 3.8.11, and the sound's delay with them ("After 3.8.11").
 - **`sync.py --replace-audio` delays the second file by the offset it measured, to the sample.**
   At the default `--fine-ms 1` and without `--fix-drift` the offset is a whole millisecond (8
   samples of the 8 kHz the measurement is made at) and the command is the one it was.
@@ -3737,7 +3741,8 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `-af` reaches every audio track the second file has and the `aformat` that pins the rate of
   the count would resample a track at another rate; and `multicam.py`'s `adelay`, whose offsets
   are whole milliseconds (its step is fixed at 1 ms) except under `--fix-drift`, which was not
-  measured and is not changed.
+  measured and is not changed. After 3.8.11 `--trim-second` delays to the sample: the reason given
+  here does not hold, its command writes one audio track ("After 3.8.11").
 - **Where the millisecond changes nothing (measured, left as it was).** `join.py`'s
   `anullsrc -t {:.3f}` for a part without sound is padded and trimmed to that part's sample
   count like every other part (`apad=whole_len=N,atrim=end_sample=N`), and silence padded with
@@ -4113,3 +4118,115 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   of 320x180 was warned (audit A174). It is an estimate for a warning, not a limit: nothing is
   refused. Code: `decision.held_frames_bytes()`. Test:
   `test_reverse_warns_from_what_it_holds_not_from_the_length`.
+## After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)
+
+- **A window on the picture is bounded half a frame from the frames it selects.** `overlay.py
+  --start/--end`, `graphics.py`'s windows and `broll.py`'s cutaway wrote `between(t,{:.3f},{:.3f})`.
+  At 30000/1001 frame 37 starts at 1.2345667 s, which `{:.3f}` writes as 1.235, past it, and `t`
+  is a double that is not always the number the text reads as (the frame at 1.4 s of a 25 fps MP4
+  is not `<= 1.400`). `window_expr(start, end, meta)` writes the bounds half a frame before the
+  first frame at or after `start` and half a frame after the last frame at or before `end`, on the
+  grid `grid_at_or_after()` counts on (`half_open` for an end that is the next window's start:
+  the countdown's digits). A window of frames 37-67 (`--start 1.2345666 --end 2.2356666`) is on
+  37-67; the text drawn by `drawtext` was on 38-67 and 31-59 for 31-60. With no grid (a dry run's
+  pending input, a picture probe() suspects of a variable rate) the millisecond text stays. The
+  bounds change for a window in whole milliseconds as well (`between(t,1.980000,8.020000)` for
+  `--start 2 --end 8` at 25 fps): written at the frame's own time the text was the one that could
+  go either way.
+- **An overlay's window is in the layer's position, not in `enable`.** overlay's `enable` is
+  evaluated on each frame either input hands over, the layer's next frame included, so a still
+  looped at 25 fps or a 25 fps `--video` over a 30000/1001 picture was drawn on frames 36, 38-65
+  and 67 for 37-67 (FFmpeg 6.1.1). `windowed_overlay_x(x, window)` writes `x='if(WINDOW,X,-w)'`,
+  evaluated once per output frame with the main picture's `t`: the layer is off the picture
+  outside the window. `overlay.py --image/--video` and every `graphics.py` layer (`overlay`
+  boxes, the lower-third bar, the progress bar) are written this way; `drawtext` and `drawbox`
+  see the main picture's frames only and keep `enable`. A fade's `alpha` keeps its millisecond:
+  a fade-in is at 0 on its first frame either way. Not changed: `_common/emoji.py`'s PNG windows
+  follow the cue of the line libass draws (`caption.py`, `graphics.py`'s ASS route), whose times
+  are libass's own; bounding the PNG alone would split it from its line. Not measured.
+- **`broll.py`'s cutaway is whole frames of the A-roll, and its sound starts with them.** The
+  window is the A-roll's frames from its first at or after `--at` to the last before `--at` plus
+  the length; B is cut from its first frame at or after `--from`, half a frame of its own early,
+  for that many frames, and put on the A-roll's exact rate (`fps=30000/1001`, not `fps=29.97`).
+  `--at 1.2345666 --from 1.2345666 --duration 1.0343666` at 30000/1001 was on frames 38-67
+  showing B's 39-68 and is on 37-67 showing 37-67. B's last frame is held (`eof_action=repeat`)
+  and the position takes it off: with `eof_action=pass` the last frame depended on where B's end
+  fell against the window, and a window between two frames gained or lost one (`--at 0.5
+  --duration 0.5` at 25 fps was 13 frames, 12 now, the frames that start in [0.5, 1.0)). This
+  replaces the 3.8.3 entry's "delays a cutaway's sound by `--at`": the picture never started at
+  an `--at` between two frames, the next frame did, and the sound ran ahead of it (`--at 1.001`
+  at 25 fps: sound from 1.001 s, picture from 1.04 s). The sound is delayed by the window's first
+  frame now (`adelay=1040|1040`), as both streams of a clip shift by one constant (#409); an
+  `--at` on a frame writes the delay it did. A cutaway in which no frame of the A-roll starts
+  (`--at 1.01 --duration 0.02` at 25 fps) is refused as `kind: input`: it would show nothing.
+  Without a grid for the A-roll: the old text.
+- **`broll.py --audio b` mutes the A-roll per sample.** `volume=0:enable='between(t,...)'` is
+  evaluated once per audio frame: a window of samples 48000-95999 was muted over 48128-96255
+  (1024-sample frames). `aeval='val(ch)*not(between(t,LO,HI))'` is evaluated per sample on the
+  A-roll's clock, the bounds half a sample outside the window's first and last sample, and B's
+  layer is padded or cut to the same count, so the A-roll is muted exactly where B sounds.
+- **`fit.py --method trim` without sound counts frames.** It kept `-t {:.3f}`: 37 frames of a
+  30000/1001 source were written as 38 under `-t 1.235`, and `--duration 1.0014` as 30 for 31
+  under `-t 1.001`. `picture_output_t()` keeps the millisecond when it keeps the same frames as
+  the target and writes half a frame before the first frame left out when it does not (`-t
+  1.217883`). Not from the centre (the output's clock starts at the seek, between two frames) and
+  not with `--fps`: the millisecond stays there. `--method speed` without sound is a sibling not
+  changed: its retimed picture is regridded by the output's own frame-rate handling, which reads
+  the graph's frame rate, and FFmpeg 7.0 changed what a `setpts` leaves of it
+  (`frame_durations`); 6.1.1 writes 38 frames for a 37-frame target (3 s to 1.2345666 s at
+  30000/1001), and 7.1 and 8 were not measured.
+- **An SMPTE time at an NTSC rate is counted at the exact rate.** `parse_time()` divided the
+  frame count by `fps` as probe() reports it, 29.97: `00:00:01:07` was 1.2345679 s, 1.2
+  microseconds past frame 37, and a start read from it was the frame after. `ntsc_rate()` reads
+  23.976, 29.97, 47.952, 59.94 and 119.88 (probe()'s three decimals, or an `@29.97` suffix) as
+  N * 1000 / 1001, as `timeline.exact_rate()` does; every other rate is used as it is. Every tool
+  that takes a time through `time_arg()` reads it so.
+- **`fit.py --method speed` leaves a retimed track at the length `atempo` gives it.** Its output
+  is laid down in windows placed by the content and comes out short or long (3 s of bursts to
+  1.23425 s: 58368 samples for 59244; to 2.0 s: 95360 for 96000; a sine: 59232 for 59244;
+  FFmpeg 6.1.1). Following the `atempo` chain with `conform_to_length(target, rate)` in `-af`,
+  as `audio.py` does in its graph, ended the track on the sample on 6.1.1, 7.1 and 9.0.2 and
+  never ended on FFmpeg 8.0.1 (`atempo=...,aformat,apad=whole_len=N,atrim=end_sample=N,atrim=end=T`
+  with `-t`: every such run in CI was killed at the 1800 s limit, #514). It is not shipped; the
+  3.8.3 behaviour stays and the item stays open on #470.
+- **`sync.py --trim-second` delays to the sample.** The 3.8.3 entry kept `adelay=<ms>` because
+  "its `-af` reaches every audio track the second file has". That sentence is wrong: the command
+  maps the default selection, or with several streams the probed picture and sound
+  (`default_selection_maps`), so one track is written, the one `sec_sr` is the rate of (a second
+  file with a 48 kHz and a 44.1 kHz track: one 48 kHz track written, before and after). With
+  `--fine-ms 0.25` an offset of 0.2343 s started the sound at sample 11232; it is
+  `aformat=sample_rates=48000,adelay=11246S:all=1` now (`silence_filter`). At the default
+  `--fine-ms 1` without `--fix-drift` the command is the one it was. Not changed: the picture's
+  `tpad=start_duration={:.4f}` is whole frames; the sound is placed on the offset measured
+  against the reference, and moving it to the frame would undo that alignment.
+- **A silence ahead of a clip is as long as the frames put ahead of its picture.** `pad.py
+  --start` and `freeze.py --at 0 --mode insert` delayed the sound by the amount asked, which the
+  3.8.1 entry counted in samples, while `tpad` puts whole frames ahead of the picture: `--start
+  0.23425` at 25 fps is 6 frames (0.240 s) of picture and was 0.23425 s of silence, the clip's
+  sound 5.75 ms ahead of its picture; `--start 0.05` at 30 fps was 2 frames and 0.050 s.
+  `tpad_length(seconds, meta)` is the length tpad makes of the `{:.3f}` text it is given (the
+  nearest frame count, a half rounding up), and the sound is delayed by it: 11520 samples for
+  the 0.23425 s, `adelay=240:all=1`, and `--start 1.001` is 25 frames and `adelay=1000:all=1`.
+  `pad.py` says so in a note when the two differ. The silence after a clip (`--end`, `freeze.py`'s
+  hold at the end) moves nothing and is the amount asked, counted as the 3.8.1 entry says. No
+  rate (a dry run's pending input) or a variable one: the amount asked.
+- **`loop.py` fills the gap a long sound leaves at each repeat on the clip's rate.** A repeat is
+  as long as the file, so where the sound outlasts the picture the next repeat starts after a
+  gap, and what stood in it was left to the output's frame-rate handling: FFmpeg 6.1.1 repeated
+  the last frame and showed the next repeat's first frame twice, from 1.20 s where its sound
+  starts at 1.23425 s (a 1 s 25 fps clip with 1.23425 s of sound); FFmpeg 7.1 and 8 held the
+  last frame (50 packets for 6.1's 56; seen in CI). The graph now ends on `fps=<clip's rate>`
+  when the file outlasts the picture by more than half a frame: the last frame is repeated in the
+  graph and each later repeat's frames sit on the grid once (its first on 1.24 s). `fps` rounds
+  to the nearest tick, so a repeat's first frame is within half a frame of its sound on either
+  side (1.20 s for sound at 1.21 s); rounding up would never be early and could be a whole frame
+  late, and half a frame is the bound the other time tools hold. The number of
+  frames is then the graph's, not the FFmpeg version's default; that is measured on 6.1.1 only,
+  and 7.1 and 8 are expected, not seen, to write the same 56. A clip whose repeats meet, a
+  `--crossfade` repeat and a variable-rate source (conformed by `-fps_mode cfr -r`) write the
+  command they did.
+  All of it measured on FFmpeg 6.1.1 only. Code: `decision.window_expr()`,
+  `decision.windowed_overlay_x()`, `decision.ntsc_rate()`, `decision.tpad_length()`,
+  `fit.picture_output_t()`. Tests: `test_a_window_or_a_length_on_a_frame_time_keeps_that_frame`,
+  `test_a_start_a_gate_or_a_retimed_length_is_written_to_the_sample`,
+  `test_a_loop_whose_sound_outlasts_its_picture_repeats_the_last_frame_on_the_grid`.
