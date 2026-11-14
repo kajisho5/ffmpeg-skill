@@ -366,7 +366,10 @@ def main() -> int:
         # render.py project instead of the direct render this tool already does -- additive, not
         # a replacement: the combined output below is still written as usual.
         project = {"output": default_output(args.inputs[0], "multicam_project", "mp4"),
-                   "clips": project_clips}
+                   "clips": project_clips,
+                   # a switch is a cut: render.py's default is a 0.5 s crossfade at every join,
+                   # which shortens the timeline by 0.5 s a switch and moves every later one
+                   "transition": {"type": "none"}}
         # the inputs are named as given, relative to the working directory, and render.py reads a
         # project's relative paths against the project file's directory: written elsewhere
         # (--write-project out/cut.json), they named files that are not there

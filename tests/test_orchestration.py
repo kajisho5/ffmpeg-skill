@@ -526,9 +526,16 @@ class OrchestrationTests(MediaFixtures):
             self.assertEqual(clip["src"], inputs[c])
             self.assertAlmostEqual(clip["in"], s - offsets[c], delta=0.01)
             self.assertAlmostEqual(clip["out"], e - offsets[c], delta=0.01)
+        # a switch is a cut: without a stated transition render.py crossfades 0.5 s at every join,
+        # so the project ran 0.5 s a switch short of the direct render and moved each later switch
+        self.assertEqual(project["transition"], {"type": "none"})
         r = script("render.py", proj, "--dry-run", "--json")
         rdata = json.loads(r.stdout)
         self.assertEqual(rdata["status"], "completed")
+        joined = [c for c in rdata["commands"] if "joined.mp4" in c and "-filter_complex" in c]
+        self.assertEqual(len(joined), 1, rdata["commands"])
+        self.assertIn(f"concat=n={len(clips)}", joined[0])
+        self.assertNotIn("xfade", joined[0])
 
     def test_multicam_write_project_does_not_change_default_behavior(self):
         """Without --write-project, multicam.py's existing behavior (combined output, --edl,

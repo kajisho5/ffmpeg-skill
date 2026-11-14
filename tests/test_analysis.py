@@ -1630,6 +1630,12 @@ class AnalysisTests(MediaFixtures):
                 self.assertFalse(doc["beat_grid"]["usable"])
                 self.assertEqual(doc["audio_peaks_db"], [])
                 self.assertEqual(doc["speech"], [])
+        # with --sheet too: no scene was measured, and the sheet's select summed an empty list by
+        # recursing on it (RecursionError, a traceback instead of the plan); it plans one tile
+        doc = json.loads(script("scenes.py", OUT / "pending_stage.mp4", "--dry-run", "--sheet",
+                                OUT / "pending_sheet.png", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("tile=1x1", doc["commands"][-1])
 
     def test_scenes_beats_decodes_with_check_so_a_failed_decode_is_not_no_pulse(self):
         """A decode that failed came back as [] and was reported as "no steady pulse in this audio".

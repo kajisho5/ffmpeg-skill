@@ -1630,7 +1630,9 @@ refused, `kind: input`, since each moment has one camera), `--auto N`
 simply alternates every N seconds. Under `--fix-drift` a drifting camera's picture is retimed
 with its sound (`setpts=(PTS-STARTPTS)/ratio`), so a range lasts its reference length on both;
 `--write-project`'s clips name that camera's own in/out, with the ratio as the clip's `speed`
-(render.py plays it at that rate, so it lasts its reference length there too). Audio comes from the reference unless
+(render.py plays it at that rate, so it lasts its reference length there too), and the project states
+`"transition": {"type": "none"}`: a switch is a cut, and render.py's default 0.5 s crossfade at every join
+would run the timeline 0.5 s a switch short and move each later switch. Audio comes from the reference unless
 `--audio` picks another input, e.g. an external recorder that has no video.
 `--offsets-only` reports offsets and confidence without rendering. `cuts` names
 the camera actually rendered: a range whose camera has not started yet plays

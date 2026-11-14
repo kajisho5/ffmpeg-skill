@@ -110,6 +110,11 @@
   `export.py`, `loop.py`, `loudness.py` and `audio.py`'s bed.
 - **`multicam.py --fix-drift --write-project` writes the drift ratio as a clip's `speed`**, which
   render.py plays it at, so the project's clips last what the direct render's do.
+- **`multicam.py --write-project` states a cut between its clips** (`"transition": {"type":
+  "none"}`). It named no transition, so render.py crossfaded 0.5 s at every switch: the project
+  ran 0.5 s a switch short of the direct render and each later switch came early.
+- **`scenes.py --sheet --dry-run` on an input an earlier step has yet to write plans its one tile**
+  instead of a traceback (no scene was measured, and the sheet's select recursed on an empty list).
 - **`scenes.py --highlights` never writes an empty range**: a pick shorter than the hundredth it is
   written in was `0.00-0.00`, which `cut.py --segments` refuses. Such a pick is left out with a
   note, and a run where none fits is refused (`kind: input`) before any `--edl` is written.

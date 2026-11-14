@@ -138,6 +138,9 @@ def _balanced_sum(terms: List[str]) -> str:
 def sheet_graph(starts: List[float], src: str, thumb: str, tile: str) -> str:
     """The --sheet filter graph: exactly one frame a scene (the first at or after its start), each
     made a thumbnail by `thumb`, laid out by `tile`, out as [sheet]."""
+    # no scene (a dry run whose input an earlier step has yet to write, a clip of under one scene):
+    # the sheet is its one tile, the first frame, as the 1x1 layout the caller sized for it
+    starts = starts or [0.0]
     k = max(1, math.ceil(len(starts) / SHEET_SELECT_TERMS))
     if k == 1:
         return f"{src}select='{_balanced_sum([_first_at(t) for t in starts])}',{thumb},{tile}[sheet]"
