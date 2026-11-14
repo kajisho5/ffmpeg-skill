@@ -1629,7 +1629,8 @@ each range of the reference timeline (gaps fall back to camera 0; ranges that ov
 refused, `kind: input`, since each moment has one camera), `--auto N`
 simply alternates every N seconds. Under `--fix-drift` a drifting camera's picture is retimed
 with its sound (`setpts=(PTS-STARTPTS)/ratio`), so a range lasts its reference length on both;
-`--write-project`'s clips name that camera's own in/out and carry no retiming. Audio comes from the reference unless
+`--write-project`'s clips name that camera's own in/out, with the ratio as the clip's `speed`
+(render.py plays it at that rate, so it lasts its reference length there too). Audio comes from the reference unless
 `--audio` picks another input, e.g. an external recorder that has no video.
 `--offsets-only` reports offsets and confidence without rendering. `cuts` names
 the camera actually rendered: a range whose camera has not started yet plays
@@ -2185,7 +2186,7 @@ that is off is refused, as the `--duck-*` flags are: `--denoise-strength` withou
 `--duck` lowers the music by `--duck-amount` dB (0..60, default 12) while the speech is above
 `--duck-threshold`, and leaves it at its level in the pauses: a sidechain gate keyed by the
 speech passes the bed under speech, and that part, scaled by `-(1 - 10^(-amount/20))`, is added
-back to the bed (`sidechaingate=threshold=0.05:ratio=9000:range=0:attack=20:release=400`, then
+back to the bed (`sidechaingate=threshold=0.05:ratio=9000:range=0:knee=1:attack=20:release=400`, then
 `volume=-0.748811` for 12 dB, by default). Through 3.8.8 it was a sidechain compressor whose
 ratio was `amount/3` (at least 2), so the depth followed the speech's level, not the flag
 (audit A134). `--duck-threshold DB` (default −26.02 dBFS, i.e. the 0.05 linear),
@@ -2217,8 +2218,11 @@ when the container can hold it (`dropped_non_av_streams` says when it could not)
 `--limit` (and `--voice strong`'s limiter) is `alimiter` with `level=disabled:latency=1`: the
 look-ahead is compensated, so the limited sound starts on the input's own sample instead of
 `--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476). With `--music`
-or `--effects` both limiters run on the mix, after the beds are added, so the written sound
-holds the ceiling (A129); without a bed they run on the main track, where they always ran.
+or `--effects` both limiters run on the mix, after the beds are added: the combined mix is
+limited before it is encoded (A129). A lossy output (`.m4a`, `.mp3`, `.opus`, AAC beside a
+picture) can then peak over the ceiling, since the encoder works after the limiter; use
+`loudness.py` for final levels, which measures the written file. Without a bed they run on the
+main track, where they always ran.
 The typed dynamics flags speak dB where the filter takes a linear value: a knee
 (`--comp-knee`, `--gate-knee`) is 0..18.06 dB, the filters' linear 1..8, default 9.03 dB
 (2.82843); the defaults `--help` gives are ffmpeg's own, in the flag's unit (A135).

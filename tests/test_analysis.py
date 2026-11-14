@@ -1807,6 +1807,25 @@ class AnalysisTests(MediaFixtures):
                 self.assertTrue(any(s <= start and end <= e for s, e in scenes), f"{start}-{end} spans a cut: {scenes}")
         self.assertIn(3.4, [start for start, _ in lines], "the loud window of the second scene starts on its cut")
 
+    def test_scenes_highlight_never_writes_an_empty_range(self):
+        """A pick shorter than the hundredth it is written in was rounded inward to 0.00-0.00 and
+        written to --edl, a range cut.py --segments refuses. No range fits: the run is refused
+        (kind input) and no EDL is written."""
+        src = OUT / "a459_one_second.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=1:r=48000", src)
+        edl = OUT / "a459_empty_picks.txt"
+        if edl.exists():
+            edl.unlink()
+        proc = script("scenes.py", src, "--highlights", "1", "--target", "0.006", "--edl", edl, "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("0.01 s", err["message"])
+        self.assertFalse(edl.exists(), "no EDL of an empty range")
+        # a pick that fits is written as before
+        data = json.loads(script("scenes.py", src, "--highlights", "1", "--target", "0.5", "--edl", edl, "--json").stdout)
+        self.assertEqual(len(data["highlights"]), 1)
+        self.assertGreater(data["highlights"][0]["end"], data["highlights"][0]["start"])
+
     def test_decoded_pcm_takes_a_few_bytes_a_sample(self):
         """A140: decode_pcm_mono() returned a list of Python floats, ~32 bytes a sample, which is
         what scenes.py (and multicam --switch energy per camera) held for a whole file: ~2.3 GB an
@@ -1859,6 +1878,31 @@ class AnalysisTests(MediaFixtures):
             with self.subTest(scene=k):
                 self.assertAlmostEqual(px, want, delta=4)
         sheet.unlink()
+
+    def test_scenes_sheet_select_expressions_do_not_grow_with_the_scene_count(self):
+        """One select expression of 3,000 summed terms reached ffmpeg and FFmpeg 7.1 and later refused
+        it ("Error while parsing expression", Cannot allocate memory); 6.1 took it. Every select
+        in the --sheet graph holds at most SHEET_SELECT_TERMS terms, nested at most 6 deep, for any
+        number of scenes, and every scene start is in exactly one of them."""
+        import scenes
+        self.assertLessEqual(scenes.SHEET_SELECT_TERMS, 64)
+        for n in (1, 5, 64, 65, 3000, 30000):
+            with self.subTest(scenes=n):
+                starts = [0.1 * i for i in range(n)]
+                graph = scenes.sheet_graph(starts, "[0:V:0]", "scale=320:-2", "tile=4x4")
+                exprs = re.findall(r"select='([^']*)'", graph)
+                self.assertTrue(exprs)
+                terms = [e.count("gte(t") for e in exprs]
+                self.assertLessEqual(max(terms), scenes.SHEET_SELECT_TERMS)
+                self.assertEqual(sum(terms), n, "each scene is selected in one expression")
+                for e in exprs:
+                    depth = deepest = 0
+                    for ch in e:
+                        depth += {"(": 1, ")": -1}.get(ch, 0)
+                        deepest = max(deepest, depth)
+                    # 6 levels of the balanced sum, and 3 of one term: gte(), (isnan()+lt())
+                    self.assertLessEqual(deepest, 6 + 3, e[:120])
+                self.assertTrue(graph.endswith("[sheet]"))
 
     def test_scenes_beats_keep_their_refit_on_a_range_bound(self):
         """A146: the least-squares refit of the beat grid was discarded when it landed a hair past

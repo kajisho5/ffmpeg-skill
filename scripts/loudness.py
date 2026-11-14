@@ -24,7 +24,7 @@ from _platforms import TP_TOLERANCE_DB
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
-from _common.emit import refuse
+from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
 from _common.decision import LOSSLESS_AUDIO_EXT
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
@@ -363,8 +363,7 @@ def audio_length(meta: dict) -> "Optional[float]":
     """The sound's own length: the stream's duration, else Matroska's DURATION tag. Never the
     container's, which is the picture's when the picture runs longer (and would fail a correct
     output against an expected length the sound never had)."""
-    audio = meta.get("audio") or {}
-    return audio.get("duration") or audio.get("tagged_duration")
+    return own_length(meta.get("audio"))
 
 
 def _kbps(value: str) -> int:

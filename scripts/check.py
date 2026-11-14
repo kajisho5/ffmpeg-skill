@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, upload_limit_note, resolve as resolve_platform
 from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
-from _common.emit import file_identity
+from _common.emit import file_identity, own_length
 from _common.probe import PROBED_AUDIO
 from _common.probe import display_size as shown_size, shorter_than_a_loudness_block
 from _common import STATE, add_common, apply_common, die, emit, info, probe, require_tool, run, run_analysis, dry_run_input_pending
@@ -618,7 +618,7 @@ def main() -> int:
                 row("true peak", "WARN", "could not measure", f"<= {spec['tp']:g} dBTP", "re-run check.py, or verify true peak manually",
                     reason="ffmpeg's loudness measurement didn't produce a readable result -- this was not actually checked")
             elif (lm and lm["lufs"] == float("-inf") and lm["tp"] > SILENT_PEAK_DBFS
-                  and shorter_than_a_loudness_block(a.get("duration") or a.get("tagged_duration") or dur_read)):
+                  and shorter_than_a_loudness_block(own_length(a) or dur_read)):
                 # A257: shorter than one 400 ms gating block: a true peak but no integrated
                 # loudness. Not silence, and not a -inf LUFS that FAILs the target. Decided on
                 # the sound's length: a longer track whose every block is under the gate reads

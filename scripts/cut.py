@@ -294,11 +294,12 @@ def source_skew(src: str, meta: dict, t: float) -> float:
 
 def video_end(src: str, meta: dict):
     """Where the video stream ends on the cut's clock (seconds from the file's start), or None when
-    the stream's length is unknown."""
-    v = meta.get("video") or {}
-    if not v.get("duration"):
-        return None
-    return (v.get("start_time") or 0.0) + v["duration"] - file_origin(src)
+    the stream's length is unknown. A Matroska/WebM stream states no duration, only its DURATION
+    tag, which is already that end (own_end()); read from `duration` alone, a .mkv had no picture
+    end and --remove kept a sound-only leftover past it."""
+    from _common.emit import own_end
+    end = own_end(meta.get("video"))
+    return None if end is None else end - file_origin(src)
 
 
 _SEEK_SHIFTS: dict = {}

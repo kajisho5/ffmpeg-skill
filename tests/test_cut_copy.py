@@ -447,21 +447,31 @@ class CutJoinTests(unittest.TestCase):
         """#462 A51: --remove 1-6 of a file whose sound runs 0.3 s past its 6 s picture left 6.0-6.3,
         sound with no frame, and then refused it as "segment 6.000-6.300s is shorter than one frame",
         a segment the caller never gave. That leftover is not kept, with a note; a removal that leaves
-        nothing else is refused as such."""
+        nothing else is refused as such. The same file as Matroska, whose streams state no duration
+        but a DURATION tag (the stream's end): the picture's end was read from `duration` alone, so
+        the leftover was kept without a note and --remove 0-6 wrote the sound alone."""
         meta = probe(str(self.long))
         self.assertGreater(meta["audio"]["duration"] - meta["video"]["duration"], 0.25, "fixture: sound outlasts picture")
-        out = DIR / "remove_sound_tail.mp4"
-        if out.exists():
-            out.unlink()
-        data = cut_json(self.long, "--remove", "1-6", "--accurate", "--preset", "ultrafast", "-o", out)
-        self.assertEqual(data["status"], "completed", data)
-        self.assertEqual((data["requested_start"], data["requested_end"]), (0.0, 1.0))
-        self.assertTrue(any("holds sound but no frame of the picture" in n for n in data["notes"]), data["notes"])
-        proc = script("cut.py", self.long, "--remove", "0-6", "-o", DIR / "remove_all_but_sound.mp4", "--json",
-                      expect_fail=True)
-        err = json.loads(proc.stdout)["error"]
-        self.assertEqual(err["kind"], "input")
-        self.assertIn("only sound with no picture", err["message"])
+        mkv = DIR / "remove_long.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self.long, "-map", "0:v:0", "-map", "0:a:0",
+           "-c", "copy", mkv)
+        mkv_meta = probe(str(mkv))
+        self.assertIsNone(mkv_meta["video"]["duration"], "fixture: Matroska states no stream duration")
+        self.assertIsNotNone(mkv_meta["video"]["tagged_duration"], "fixture: only the DURATION tag")
+        for src, ext in ((self.long, ".mp4"), (mkv, ".mkv")):
+            with self.subTest(container=ext):
+                out = DIR / f"remove_sound_tail{ext}"
+                if out.exists():
+                    out.unlink()
+                data = cut_json(src, "--remove", "1-6", "--accurate", "--preset", "ultrafast", "-o", out)
+                self.assertEqual(data["status"], "completed", data)
+                self.assertEqual((data["requested_start"], data["requested_end"]), (0.0, 1.0))
+                self.assertTrue(any("holds sound but no frame of the picture" in n for n in data["notes"]), data["notes"])
+                proc = script("cut.py", src, "--remove", "0-6", "-o", DIR / f"remove_all_but_sound{ext}", "--json",
+                              expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual(err["kind"], "input")
+                self.assertIn("only sound with no picture", err["message"])
         # to an audio output the sound after the picture is kept, as it was
         wav = DIR / "remove_sound_tail.wav"
         if wav.exists():

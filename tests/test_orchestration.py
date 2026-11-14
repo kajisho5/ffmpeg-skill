@@ -614,8 +614,9 @@ class OrchestrationTests(MediaFixtures):
                "-i", sound, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", cam)
             cams.append(cam)
         out = OUT / "mc459_drift.mp4"
+        proj = OUT / "mc459_drift.json"
         data = json.loads(script("multicam.py", *cams, "--switch", "1-60:1,60-130:0", "--fix-drift", "--fast",
-                                 "-o", out, "--json").stdout)
+                                 "--write-project", proj, "-o", out, "--json").stdout)
         self.assertAlmostEqual(data["drift_ppm"][1], 2000, delta=150, msg="fixture: the drift is measured")
         self.assertEqual([c[2] for c in data["cuts"][:3]], [0, 1, 0])
         frames = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "59", "-i", str(out), "-t", "2",
@@ -623,7 +624,15 @@ class OrchestrationTests(MediaFixtures):
                                 stdout=subprocess.PIPE, check=True).stdout
         first_red = next(i for i in range(len(frames) // 12) if frames[i * 12] > frames[i * 12 + 2])
         self.assertLessEqual(abs(59 + first_red / 30 - 60.0), 1.5 / 30, f"camera A is back at frame {first_red} after 59 s")
-        for p in [base, slow, out] + cams:
+        # the project times each clip as the render does: render.py plays a clip at its speed, so
+        # a drift-corrected camera's clip lasts its reference range, not (ratio - 1) longer (it
+        # carried no speed); camera A, not retimed, carries none
+        clips = json.loads(proj.read_text(encoding="utf-8"))["clips"]
+        self.assertEqual(len(clips), len(data["cuts"]))
+        for clip, (s, e, cam) in zip(clips, data["cuts"]):
+            self.assertEqual("speed" in clip, cam == 1, clip)
+            self.assertAlmostEqual((clip["out"] - clip["in"]) / clip.get("speed", 1.0), e - s, delta=0.005, msg=clip)
+        for p in [base, slow, out, proj] + cams:
             p.unlink()
 
     def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):

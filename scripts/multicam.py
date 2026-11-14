@@ -327,7 +327,12 @@ def main() -> int:
         retime = f"(PTS-STARTPTS)/{ratios[c]:.9f}" if abs(ratios[c] - 1.0) > 1e-7 else "PTS-STARTPTS"
         parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts={retime},{convert[c]}{sq}{geo}[v{i}]")
         labels.append(f"[v{i}]")
-        project_clips.append({"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)})
+        clip = {"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)}
+        if abs(ratios[c] - 1.0) > 1e-7:
+            # render.py plays a clip at clips[].speed (its length / speed), as the retime above
+            # does: without it a drift-corrected camera's clip ran (ratio - 1) * (e - s) long
+            clip["speed"] = round(ratios[c], 9)
+        project_clips.append(clip)
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")
     a = args.audio
     a_start = -offsets[a] if offsets[a] < 0 else 0.0

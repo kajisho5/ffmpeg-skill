@@ -4321,8 +4321,9 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   compressor's gain reduction is how far its key rises over the threshold times `1 - 1/ratio`, so
   no ratio gives a stated depth: the ratio `max(2, amount/3)` used through 3.8.8 ducked 0 and 3
   the same 9.7 dB on the test's speech and 60 by 18. The bed is now split: one copy goes through
-  `sidechaingate` keyed by the speech (`ratio=9000:range=0`: all of the bed above the threshold,
-  none below), that copy is scaled by `-(1 - 10^(-amount/20))` and added to the other, which
+  `sidechaingate` keyed by the speech (`ratio=9000:range=0:knee=1`: all of the bed above the threshold,
+  none below; agate's default soft knee of 2.82843 opened it only about 2 dB over the threshold,
+  so a key 1.5 dB over it left the bed unducked), that copy is scaled by `-(1 - 10^(-amount/20))` and added to the other, which
   leaves `10^(-amount/20)` of the bed under speech and all of it in the pauses (measured: 3, 12
   and 30 dB asked, 3.0, 12.0 and 30.1 written). The key gets `dcshift=shift=0.000001` (-120 dBFS):
   agate's detector starts at zero and leaves the gate open while the key is exact zeros, so a
@@ -4331,12 +4332,15 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `--duck-attack` and closes over `--duck-release`); the result's `duck.ratio` is the gate's 9000,
   and `amount_db` is the depth. The default command line moved: the "unchanged to the byte" the
   1.13 test pinned was a compressor string, and it now pins the gate's. Code: `audio.duck_graph()`.
-  Test: `test_duck_amount_is_the_depth_in_db`, `test_audio_duck_parameters_reach_the_sidechain_filter`.
+  Test: `test_duck_amount_is_the_depth_in_db`, `test_audio_duck_parameters_reach_the_sidechain_filter`,
+  `test_a_key_just_over_the_duck_threshold_ducks_the_bed`.
 - **A limiter runs on what is delivered.** With `--music` or `--effects`, `--limit` and `--voice
   strong`'s `alimiter` move from the main track to the mix, ahead of the fades and the conform; a
   limiter on the voice let the beds added after it pass the ceiling (`--limit-ceiling -6` wrote 0
   dBFS). The ducking key is the voice before that limiter, which only lowers peaks above the
-  ceiling. Without a bed the chain is the one it was. Code: `audio.py` (`post_limit`). Test:
+  ceiling. Without a bed the chain is the one it was. What is limited is the mix before it is
+  encoded: a lossy encoder after the limiter can peak over the ceiling in the written file (the
+  test writes PCM), and `loudness.py` is the tool that measures and holds a written file's peak. Code: `audio.py` (`post_limit`). Test:
   `test_a_limiter_is_the_ceiling_of_the_mix_it_delivers`.
 - **A dynamics knee is 0..18.06 dB.** The filters take a linear knee of 1..8 (default 2.82843); the
   flag converts dB to linear and accepted 1..8 *dB* (linear 1.12..2.51), so nothing from 2.51 up to
@@ -4359,6 +4363,14 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `-filter_complex_script`, `-filter_script:v` ... before it, removing the file afterwards; the
   command a run records and prints keeps the graph inline. Only the 6.1 spelling was run here.
   Code: `runner.long_filters_in_files()`. Test: `test_scenes_sheet_of_thousands_of_scenes_is_written`.
+- **`scenes.py --sheet` has no expression that grows with the scene count.** One `select` summing a
+  term a scene reached FFmpeg in the file above and 7.1 and later refused it at 3,000 scenes
+  (ENOMEM from the expression parser; 6.1 took 30,000, flat or nested). The scenes are dealt
+  round-robin to `split` branches of at most 64 terms (`SHEET_SELECT_TERMS`), each summed as a
+  balanced tree (6 nested levels), and `interleave` merges the branches' thumbnails in time order;
+  dealt round-robin, the branches stay level and interleave holds about one thumbnail a branch.
+  Only 6.1 was run here: that 7.1+ takes 64-term expressions is unverified until CI. Code:
+  `scenes.sheet_graph()`. Test: `test_scenes_sheet_select_expressions_do_not_grow_with_the_scene_count`.
 - **`decode_pcm_mono()` returns an `array('f')`.** Four bytes a sample instead of a Python
   float's ~32, and every value is the double the list held (an s16 sample over 32768 is exact in
   a float32). It is still the whole decode in memory, now about 0.3 GB an hour at scenes.py's
@@ -4375,9 +4387,10 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **`multicam.py --switch` ranges that overlap are refused** (`kind: input`) rather than merged or
   resolved by order: which camera a caller meant for the overlap is theirs to say. Ranges that
   touch run. **`--fix-drift` retimes the picture** with `setpts=(PTS-STARTPTS)/ratio`, as
-  `sync.py --trim-second` does; `--write-project`'s clips still name each camera's own in/out
-  with no retiming (render.py has no per-clip rate), so a drift-corrected project does not
-  reproduce the drift correction. Tests: `test_multicam_switch_ranges_that_overlap_are_refused`,
+  `sync.py --trim-second` does; `--write-project`'s clip of a retimed camera carries the ratio as
+  `speed`, the per-clip rate render.py plays a clip at (fit to its length / speed), so the
+  project's clips last what the direct render's do; a camera that is not retimed (camera 0, a
+  fallback to it, a ratio of 1) carries no `speed`, as render.py skips 1. Tests: `test_multicam_switch_ranges_that_overlap_are_refused`,
   `test_multicam_fix_drift_retimes_the_picture_with_the_sound`.
 - **A `scenes.py --highlights` range lies inside its scene.** Its window starts at the scene's
   start or on the 0.5 s grid after it and ends by the scene's end, and is written to the

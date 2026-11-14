@@ -171,12 +171,13 @@ SOUND_EDGE = 0.05
 
 def sound_span(meta: Dict[str, Any], duration: float) -> Tuple[float, float]:
     """Where the sound starts and ends on the clock silencedetect reports on (the file's), for
-    inside_margin(): its start, and its start plus its own length (the file's length when that is
-    not stated)."""
-    from _common.emit import stream_length
+    inside_margin(): its start, and its own end (the file's length when that is not stated). The
+    end is stream_end()'s: a Matroska DURATION tag is already where the sound ends, and adding the
+    start to it put the end of a sound from 1 s to 6 s at 7 s."""
+    from _common.emit import file_origin, stream_end
     a0 = stream_starts(meta)[1]
-    length = stream_length(meta, "audio")
-    return a0, (a0 + length) if length is not None else duration
+    end = stream_end(meta, "audio")
+    return a0, (end - file_origin(meta)) if end is not None else duration
 
 
 def inside_margin(silences: List[Tuple[float, float]], duration: float, margin: float,

@@ -42,7 +42,7 @@ from _common import (add_common, apply_common, aac_args, default_output, die, dr
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, warn
-from _common.decision import is_audio_output, length_output_t
+from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
@@ -176,7 +176,9 @@ def main() -> int:
     # H.264 video named .m4a
     in_ext = os.path.splitext(args.input)[1].lower()
     output = args.output or default_output(args.input, "waveform", "mp4" if in_ext in AUDIO_MEDIA_EXT else None)
-    if is_audio_output(output):
+    # every audio-only extension this skill reads, not only those it writes (is_audio_output():
+    # .aif, .aiff, .caf and .wma are not there, and passed this to fail in ffmpeg, or in a dry run not at all)
+    if os.path.splitext(output)[1].lower() in AUDIO_MEDIA_EXT:
         die(f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
             "name a video file (.mp4, .mov, .mkv)", kind="input")
 

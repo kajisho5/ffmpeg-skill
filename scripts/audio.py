@@ -29,7 +29,7 @@ from typing import Any, Dict, List
 
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
-from _common.emit import warn
+from _common.emit import own_length, warn
 from _common.decision import LOSSLESS_AUDIO_EXT, conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
@@ -83,7 +83,9 @@ KNEE_MAX_DB = 18.06  # 20*log10(8) = 18.0618, rounded down so the linear value s
 # through 3.8.8 took the amount as ratio = max(2, amount/3), and a compressor's depth is how far
 # the speech rises over its threshold: on the test's speech 0 and 3 ducked the same 9.7 dB, 60 ducked 18.
 # The key gets a DC offset far below any threshold (-120 dBFS) because agate's detector leaves the
-# gate open on a key that is exact zeros from its first sample.
+# gate open on a key that is exact zeros from its first sample. The knee is hard (knee=1): agate's
+# default soft knee (2.82843) opened the gate only about 2 dB over the threshold, so a key just
+# over it left the bed at its level (measured: a sine 1.5 dB over -7.5 dBFS ducked 0 dB of 12).
 DUCK_GATE_RATIO = 9000.0  # agate's largest: closed below the threshold
 DUCK_KEY_DC = "dcshift=shift=0.000001"
 
@@ -93,7 +95,7 @@ def duck_graph(threshold_db: float, amount_db: float, attack: float, release: fl
     cut = 1.0 - 10 ** (-amount_db / 20.0)
     return ["[music]asplit=2[mdry][mwet]",
             f"[sc]{DUCK_KEY_DC}[key]",
-            f"[mwet][key]sidechaingate=threshold={db_to_linear(threshold_db):.6g}:ratio={DUCK_GATE_RATIO:g}:range=0"
+            f"[mwet][key]sidechaingate=threshold={db_to_linear(threshold_db):.6g}:ratio={DUCK_GATE_RATIO:g}:range=0:knee=1"
             f":attack={attack:g}:release={release:g}[mspeech]",
             f"[mspeech]volume={-cut:.6g}[mcut]",
             "[mdry][mcut]amix=inputs=2:normalize=0[ducked]"]
@@ -573,6 +575,12 @@ def main() -> int:
             kind="input", hint="add --sample-rate 48000 and give the length in 48 kHz samples, or write .wav/.flac")
 
     graph: List[str] = []
+    if args.music or args.effects:
+        # the beds are mixed in float, whatever the main chain ends in: after --voice's compressors
+        # (double) amix ran in double straight into the mix's limiter, and that graph wrote an empty
+        # file with exit 0 on FFmpeg 9.0.2 (Windows and macOS CI), where the same mix of a plain
+        # track (amix in float, converted before alimiter) wrote the sound
+        fx = fx + ["aformat=sample_fmts=flt"]
     graph.append(f"[{main_src}]{','.join(fx) if fx else 'anull'}[main]")
     last = "main"
 
@@ -588,12 +596,14 @@ def main() -> int:
         # ends there: timed on the output's end it started after the bed had stopped at full level
         bed_end = end_dur
         if args.music_fade_out and not args.music_loop and not dry_run_input_pending(args.music):
-            bed_audio = probe(args.music).get("audio") or {}
-            bed_len = bed_audio.get("duration") or bed_audio.get("tagged_duration")
+            bed_len = own_length(probe(args.music).get("audio"))
             if bed_len and (not bed_end or bed_len < bed_end):
                 bed_end = bed_len
         if args.music_fade_out and bed_end:
-            mfx.append(f"afade=t=out:st={max(0.0, bed_end - args.music_fade_out):.3f}:d={args.music_fade_out:g}")
+            # a fade longer than the bed is cut to it, so the bed still ends silent (a 5 s fade on
+            # a 2 s bed started at 0 and stopped at 60% gain)
+            m_fade = min(args.music_fade_out, bed_end)
+            mfx.append(f"afade=t=out:st={bed_end - m_fade:.3f}:d={m_fade:g}")
         graph.append(f"[{m}]{','.join(mfx)}[music]")
         if args.duck:
             graph.append("[main]asplit=2[mainA][sc]")
@@ -618,7 +628,8 @@ def main() -> int:
     if args.fade_in:
         post.append(f"afade=t=in:st=0:d={args.fade_in:g}")
     if args.fade_out and end_dur:
-        post.append(f"afade=t=out:st={max(0.0, end_dur - args.fade_out):.3f}:d={args.fade_out:g}")
+        fade_out = min(args.fade_out, end_dur)  # cut to the output, so it still ends silent
+        post.append(f"afade=t=out:st={end_dur - fade_out:.3f}:d={fade_out:g}")
     # The audio track is conformed to the source duration whenever it is known: padded with
     # silence if the graph came out short, trimmed if long. A mixed track can come out a few
     # hundredths short (amix's dropout_transition, a looped bed's atrim boundary), and with
@@ -655,9 +666,9 @@ def main() -> int:
     elif has_video:
         cmd += ["-vn"]  # audio extension: the picture is dropped, not copied into a container that cannot hold it
     cmd += audio_codec_for(output, args.bitrate)
-    if not keep_video:
-        # audio-only outputs: a looped music bed is infinite, -shortest ends the run with the main track
-        cmd.append("-shortest")
+    # No -shortest: the output maps one stream, and the graph already ends with the main track (a
+    # bed, looped or not, is trimmed to it and mixed with amix duration=first), then is conformed to
+    # its sample count, so -shortest had nothing to end.
     if keep_video:
         dropped_streams = run_keeping_subtitles(cmd, output)
     else:

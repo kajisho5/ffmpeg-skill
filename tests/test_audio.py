@@ -198,12 +198,12 @@ class AudioTests(MediaFixtures):
         taken back off the bed by 1 - 10^(-amount/20): the depth is --duck-amount in dB."""
         out = OUT / "duck_params.mp4"
         default, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "-o", out)
-        self.assertIn("[mwet][key]sidechaingate=threshold=0.05:ratio=9000:range=0:attack=20:release=400[mspeech];"
+        self.assertIn("[mwet][key]sidechaingate=threshold=0.05:ratio=9000:range=0:knee=1:attack=20:release=400[mspeech];"
                       "[mspeech]volume=-0.748811[mcut]", default, "the default duck: 0.05 linear, 12 dB deep")
         self.assertEqual(data["audio"]["duck"]["threshold_linear"], 0.05)
         tuned, data = self._audio_filters(self.src, "--music", self.long_ref, "--duck", "--duck-amount", "18",
                                           "--duck-threshold", "-30", "--duck-attack", "5", "--duck-release", "250", "-o", out)
-        self.assertIn("sidechaingate=threshold=0.0316228:ratio=9000:range=0:attack=5:release=250[mspeech];"
+        self.assertIn("sidechaingate=threshold=0.0316228:ratio=9000:range=0:knee=1:attack=5:release=250[mspeech];"
                       "[mspeech]volume=-0.874107[mcut]", tuned)
         self.assertEqual(data["audio"]["duck"], {"amount_db": 18.0, "threshold_db": -30.0, "threshold_linear": 0.0316228,
                                                  "ratio": 9000.0, "attack_ms": 5.0, "release_ms": 250.0})
@@ -1255,6 +1255,11 @@ class Audit459AudioTests(MediaFixtures):
         # without a bed the limiter still runs on the main track, where it always ran
         _, data = self._audio_filters(self.voice, "--limit", "-o", OUT / "a459_limit_alone.wav")
         self.assertIn("[0:a:0]alimiter=", data["commands"][-1])
+        # one mapped stream, already ended with the main track and conformed: no -shortest (the
+        # --voice strong case above wrote an empty file with it under FFmpeg 9.0.2)
+        _, data = self._audio_filters(self.voice, "--music", self.bed, "--music-loop", "--voice", "strong",
+                                      "-o", OUT / "a459_limit_loop.wav")
+        self.assertNotIn("-shortest", data["commands"][-1])
 
     def test_duck_amount_is_the_depth_in_db(self):
         """A134: --duck-amount was a compressor ratio (max(2, amount/3)): 0 and 3 ducked the same
@@ -1281,6 +1286,32 @@ class Audit459AudioTests(MediaFixtures):
         full = self._rms_db(pcm, 1.0, 1.9)
         self.assertGreater(full, -12, "the bed plays at its level before the fade")
         self.assertLess(self._rms_db(pcm, 2.85, 2.97), full - 20, "faded out by the bed's own end")
+
+    def test_a_fade_out_longer_than_its_bed_still_ends_silent(self):
+        """A fade longer than the sound it fades started at 0 with its whole length: a 5 s
+        --music-fade-out on a 3 s bed stopped at 40% gain, and --fade-out 8 on 6 s of sound
+        ended at 25%. The fade is cut to the bed (the output), so it ends silent there."""
+        out = OUT / "a459_long_bed_fade.wav"
+        script("audio.py", self.silence, "--music", self.short_bed, "--music-volume", "0", "--music-fade-out", "5", "-o", out)
+        pcm = self._pcm(out)
+        self.assertGreater(self._rms_db(pcm, 0.1, 0.3), -12, "the bed starts at its level")
+        self.assertLess(self._rms_db(pcm, 2.85, 2.97), self._rms_db(pcm, 0.1, 0.3) - 20, "faded out by the bed's own end")
+        out = OUT / "a459_long_fade.wav"
+        script("audio.py", self.voice, "--fade-out", "8", "-o", out)
+        pcm = self._pcm(out)
+        self.assertLess(self._rms_db(pcm, 5.88, 5.98), self._rms_db(pcm, 0.1, 0.3) - 20, "faded out by the output's end")
+
+    def test_a_key_just_over_the_duck_threshold_ducks_the_bed(self):
+        """agate's default soft knee (2.82843) opened the duck's gate only about 2 dB over the
+        threshold: speech peaking 1.5 dB over --duck-threshold left the bed at its level (0 of
+        12 dB). The gate's knee is hard, so the bed is ducked by the amount."""
+        bed_only = "highpass=f=1000,highpass=f=1000,highpass=f=1000"
+        out = OUT / "a459_duck_near_threshold.wav"
+        # the speech peaks at -6.02 dBFS (a sine of amplitude 0.5)
+        script("audio.py", self.speech, "--music", self.bed_hi, "--music-volume", "0", "--duck",
+               "--duck-amount", "12", "--duck-threshold", "-7.5", "-o", out)
+        pcm = self._pcm(out, bed_only)
+        self.assertAlmostEqual(self._rms_db(pcm, 0.5, 1.5) - self._rms_db(pcm, 3.0, 5.0), 12, delta=0.5)
 
     def test_bitrate_reaches_the_codec_of_an_audio_output(self):
         """A143: --bitrate was ignored for every audio extension (.m4a stayed 256k, .mp3 -q:a 0);
@@ -1347,6 +1378,18 @@ class Audit459AudioTests(MediaFixtures):
                 self.assertIsNotNone(meta["audio"])
         doc = json.loads(script("waveform.py", self.voice, "-o", OUT / "a459_wave.wav", "--json", expect_fail=True).stdout)
         self.assertEqual(doc["error"]["kind"], "input")
+
+    def test_waveform_refuses_every_audio_only_extension(self):
+        """The refusal read the extensions this skill writes sound to (AUDIO_CODECS): -o .aiff,
+        .aif or .caf failed in ffmpeg's muxer instead (kind ffmpeg), and a dry run planned it."""
+        for ext in (".aiff", ".aif", ".caf"):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(ext=ext, dry_run=bool(dry)):
+                    out = OUT / f"a459_wave_out{ext}"
+                    doc = json.loads(script("waveform.py", self.voice, "-o", out, *dry, "--json", expect_fail=True).stdout)
+                    self.assertEqual(doc["error"]["kind"], "input", doc)
+                    self.assertIn("holds sound only", doc["error"]["message"])
+                    self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":

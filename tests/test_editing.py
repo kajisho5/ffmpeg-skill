@@ -3529,6 +3529,25 @@ class EditingTests(MediaFixtures):
         self.assertClose(keep[-1][1], 6.2, 0.01, "the margin after the last word")
         self.assertClose(doc["kept_duration"], 4.8, 0.02)
 
+    def test_silence_reads_a_matroska_sounds_end_from_its_tag(self):
+        """A Matroska stream states no duration, only a DURATION tag, which is where the stream
+        ENDS: a sound from 1 s to 8.5 s is tagged 8.5. The sound's end was its start plus the tag
+        (9.5), so the silence running to its end was not seen as the last one and kept a margin
+        of dead air at the file's end (8.32-8.52)."""
+        wav = self._tone_wav("late_sound_edges.wav", "between(t\\,1\\,3)+between(t\\,4\\,6)", 7.5)
+        mkv = OUT / "late_sound_edges.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=8.5",
+           "-itsoffset", "1", "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast",
+           "-c:a", "flac", mkv)
+        audio = probe(str(mkv))["audio"]
+        self.assertIsNone(audio["duration"], "fixture: Matroska states no stream duration")
+        self.assertClose(audio["start_time"], 1.0, 0.01, "fixture: the sound starts 1 s in")
+        self.assertClose(audio["tagged_duration"], 8.5, 0.01, "fixture: its tag is its end")
+        doc = json.loads(script("silence.py", mkv, "--list", "--min-keep", "0.1", "--json").stdout)
+        keep = doc["keep"]
+        self.assertEqual(len(keep), 2, keep)
+        self.assertClose(keep[-1][1], 7.2, 0.05, "the margin after the last word, and nothing after it")
+
     def test_silence_writes_its_cut_lists_only_once_the_media_exists(self):
         """#462 A41: silence.py wrote --edl before it checked the media output, so a refused run (an
         existing -o, -o the input, nothing kept) left an EDL describing media never made, and the

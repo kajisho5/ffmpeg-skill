@@ -52,7 +52,7 @@ from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, run_analysis as _run_analysis, subtitle_codec_for
-from _common.emit import file_identity, input_length
+from _common.emit import file_identity, input_length, own_length
 from check import SPECS as PLATFORMS, measure_loudness
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, UPLOAD_LIMITS_AS_OF, resolve as resolve_platform
@@ -254,7 +254,7 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     pair = {k: [fv.get(k), kv.get(k)] for k in ("width", "height", "nb_frames", "r_frame_rate")}
     # the video streams' lengths: the fill's container also counts its sound, which may run longer
     # than the picture, and the key has none
-    pair["duration"] = [round(v.get("duration") or v.get("tagged_duration") or 0, 3) for v in (fv, kv)]
+    pair["duration"] = [round(own_length(v) or 0, 3) for v in (fv, kv)]
     same = all(a == b and a not in (None, 0) for a, b in pair.values())
     # the two written files against each other: no expected value, so no provenance (#403: it said
     # "output_measurement", which is not one of the contract's values)
@@ -741,7 +741,7 @@ def main() -> int:
         m = measure_loudness(output)
         written_audio = probe(output, role="output").get("audio") or {}
         if (m and not math.isfinite(m["lufs"]) and math.isfinite(m["tp"]) and m["tp"] > SILENT_PEAK_DBFS
-                and shorter_than_a_loudness_block(written_audio.get("duration") or written_audio.get("tagged_duration"))):
+                and shorter_than_a_loudness_block(own_length(written_audio))):
             # A257: too short for a gating block is not silent (it has a measured peak); a longer
             # track under the gate is not "too short" and takes the path it took before
             _loudness_unmeasured(extra, notes, platform, spec, tp=m["tp"])
