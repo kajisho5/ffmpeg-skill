@@ -964,7 +964,7 @@ class EditingTests(MediaFixtures):
         (59232 for 59244), broll.py delayed a cutaway's sound by `int(at * 1000)` ms (--at 1.001:
         48000 for 48048) and sync.py --replace-audio by the offset rounded to the millisecond
         (measured with --fine-ms 0.25: 11232 for 11246).
-        After 3.8.4 a silence ahead of a clip is as long as the frames put ahead of its picture
+        After 3.8.11 a silence ahead of a clip is as long as the frames put ahead of its picture
         (pad.py --start, freeze.py's hold at the first frame), and a cutaway's sound starts with
         the first frame of its window: the expectations for an amount between two frames are the
         frames' (test_a_start_a_gate_or_a_retimed_length_is_written_to_the_sample)."""
@@ -1142,8 +1142,8 @@ class EditingTests(MediaFixtures):
                                          ("fit.py", pending, ["--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", mute, ["--method", "trim", "--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", two48, ["--method", "trim", "--duration", "1.2"], "-t 1.200 "),
-                                         # a retimed track is ended on the target's sample by its own filter
-                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234250 ")):
+                                         # a retimed track ends before the target (atempo), so its -t cuts nothing and stays
+                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234 ")):
             with self.subTest(pending=tool, source=source.name, args=args):
                 plan = json.loads(script(tool, source, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
                 self.assertIn(text, str(plan["commands"]))
