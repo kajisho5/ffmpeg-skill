@@ -1675,5 +1675,39 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
         self.assertGreater(rgb[0], 180, rgb)
 
 
+class KeyFillRangeTests(unittest.TestCase):
+    def test_key_luma_maps_transparency_to_legal_video_levels(self):
+        """#501: an extracted alpha plane must become limited-range luma on FFmpeg 6.1 too."""
+        OUT.mkdir(parents=True, exist_ok=True)
+        samples = ((0, 64), (16, 119), (64, 284), (128, 504), (235, 871), (255, 940))
+        for codec, flags in (("qtrle", ()), ("prores_ks", ("-profile:v", "4", "-pix_fmt", "yuva444p10le"))):
+            src = OUT / f"key_range_{codec}.mov"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               "color=s=256x64:r=25:d=0.2,format=rgba,geq=r=128:g=128:b=128:a=X",
+               "-c:v", codec, *flags, src)
+            alpha = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(src), "-frames:v", "1", "-vf",
+                 "format=rgba,alphaextract", "-f", "rawvideo", "-"],
+                stdout=subprocess.PIPE, check=True, timeout=30).stdout
+            self.assertEqual(len(alpha), 256 * 64)
+            for x, _ in samples:
+                self.assertAlmostEqual(alpha[32 * 256 + x], x, delta=1)
+            for mode in ("straight", "premultiplied"):
+                with self.subTest(codec=codec, mode=mode):
+                    fill = OUT / f"key_range_{codec}_{mode}.mov"
+                    doc = json.loads(script("export.py", src, "--preset", "key-fill", "--alpha-mode", mode,
+                                            "--json", "--overwrite", "-o", fill).stdout)
+                    self.assertTrue(doc["verified"], doc["verification"])
+                    key = doc["key"]["output"]
+                    raw = subprocess.run(
+                        ["ffmpeg", "-v", "error", "-i", key, "-frames:v", "1", "-pix_fmt", "yuv422p10le",
+                         "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True, timeout=30).stdout
+                    self.assertEqual(len(raw), 256 * 64 * 4)
+                    for x, expected in samples:
+                        offset = (32 * 256 + x) * 2
+                        measured = int.from_bytes(raw[offset:offset + 2], "little")
+                        self.assertAlmostEqual(measured, expected, delta=3, msg=f"alpha {x}, {codec}, {mode}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
