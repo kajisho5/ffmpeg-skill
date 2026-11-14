@@ -4561,20 +4561,30 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   the nearest frame for every slot; on that clip each of those tools wrote every flash 18-19 ms
   after its beep (within half a 27 fps frame) and a 4.000 s picture (FFmpeg 6.1.1). It is the last
   filter of a plain `-vf` chain, and the first of a `-vf` that is a graph of its own
-  (drawn_chain()'s split/maskedmerge for a colour with chroma) and of a `-filter_complex` graph
+  (drawn_chain()'s split/maskedmerge for a colour with chroma, `pad_filters()`'s blur pad in
+  `fit.py --fit blur`/`--pad-fill blur` and `export.py`; `chain_with_rate()` places a rate that is
+  not cfr_args()'s the same way) and of a `-filter_complex` graph
   that composites onto the main picture without moving it in time (`overlay`, `redact`, `broll`,
   `graphics`, `caption`'s emoji route, `color --keep-alpha`): FFmpeg 6.1's overlay and maskedmerge
   end their output at the last frame's start, so an fps filter after them lost the last frame
-  (3.963 s of 4). `pad.py` conforms right after `tpad`, inside its drawn chain: in front of it the
+  (3.963 s of 4; `export.py --preset reels --pad-fill blur`, whose `-r 30` was appended after the
+  blur pad, wrote 119 frames of a 4 s 30 fps picture). `fit.py` conforms after any retiming and
+  ahead of the frame's own filters. `pad.py` conforms right after `tpad`, inside its drawn chain: in front of it the
   padding was rounded to the 27 fps grid on top of the frames' own rounding (37 ms late).
   `cfr_at_input()` raises when such a graph does not read the main picture exactly once, so no
   graph goes unconformed without a word. A graph that moves frames in time closes on the delivered
   rate (`speedramp.py`, `freeze.py` inside the clip) or takes the filter after its concat (`cut.py
-  --segments`). The rate is cfr_args()'s own, so a 29.97 average is still written as `29.97`. A
+  --segments`). `speedramp.py` gives each segment the frames between its retimed ends on the
+  whole output's grid (its picture shifted by under half a frame onto that grid, padded by two
+  clones and cut to the count; its sound padded or cut to its own sample count) and joins the
+  two streams by separate concats: each segment's own length rounded to the grid drifted (eight
+  0.5 s segments at 1x of the 27 fps clip held 14 frames each and put the last flash at 3.630 s
+  for 3.5), and one concat over both started each segment after the longer of its two streams. The rate is cfr_args()'s own, so a 29.97 average is still written as `29.97`. A
   rate the caller names (`--fps`), an `export.py` social preset's `-r 30`, a youtube preset's
   divided rate for a source above the platform's limit (120 to 60: `_platform_rate_args`, after
   3.8.11) and `fit.py --method speed`'s retimed picture (the picture only: its `atempo` track keeps
-  its own length, see "After 3.8.11") go through the same filter (a 1.11x speed-up of a constant 30 fps clip
+  its own length, see "After 3.8.11"; with `--fps` the retimed picture goes to that rate at once,
+  where `fps=30` then `fps=60` kept 60 of a 2x speed-up's 120 pictures) go through the same filter (a 1.11x speed-up of a constant 30 fps clip
   showed each flash 50 ms late; the 30 fps social presets measured no shift on that VFR clip
   before or after). `grid.py` already conformed each cell with `fps=`, and `join.py` measured
   18-19 ms before the change; both are unchanged. Not changed, each with its own cause:
@@ -4588,9 +4598,12 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   source's last frame before the reversal (one that falls past the delivered grid's last slot),
   which `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame` pins; that is left for a
   decision (#512). Code: `decision.cfr_filter()`, `with_cfr()`, `cfr_at_input()`,
-  `graph_with_cfr()`. Tests:
+  `graph_with_cfr()`, `chain_with_rate()`, `speedramp.main()`. Tests:
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
-  `test_a_speed_change_puts_each_picture_within_half_a_frame`.
+  `test_a_speed_change_puts_each_picture_within_half_a_frame`,
+  `test_speedramp_segments_hold_the_frames_between_their_retimed_ends`,
+  `test_a_speed_change_to_a_named_rate_keeps_every_picture`,
+  `test_a_rate_conform_ahead_of_a_composite_pad_keeps_the_last_frame`.
 - **A VFR hold is counted at the rate its frames are cloned at.** `freeze.py` counted `--hold` in
   frames of the average rate and `tpad` cloned them at the nominal one, so 1 s held 27 frames
   spaced 1/30 s (0.9 s) while the sound was padded by 1 s. The count, and the sound's pad, are now
@@ -4608,8 +4621,12 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   input or layer does not exist yet has no sizes and plans the expressions as before. `--text`
   (drawtext) was already exact. The layer's own size is computed for the position as `scale`
   computes it (`-1`/`-2`, rounded half away from zero); the pad is written in `iw`/`ih`, so the
-  layer is never resized by it. Code: `overlay.on_grid()`. Test:
-  `test_an_overlay_lands_where_its_position_says_in_luma`.
+  layer is never resized by it. An `--image` that stores non-square pixels is made square at its
+  display aspect first, as a `--video` layer is (square_pixels(), #411): the position was computed
+  from its displayed size while overlay received the stored one, so a 100x100 PNG at SAR 2:1 sat
+  at x=120 of a 320 px main, 100 px wide, for `top-right --margin 0`. Code: `overlay.on_grid()`.
+  Tests: `test_an_overlay_lands_where_its_position_says_in_luma`,
+  `test_an_image_layer_with_non_square_pixels_is_placed_at_its_displayed_size`.
 - **`fit.py --fit crop` keeps its crop offset even by widening the scaled frame, not with
   `crop=exact=1`.** `crop` floored the computed offset `(in_w-out_w)*crop_x` to the chroma grid,
   so over an odd margin `--crop-x 1` kept one column of the margin and lost the source's last

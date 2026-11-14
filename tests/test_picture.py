@@ -2557,6 +2557,28 @@ class PictureTests(MediaFixtures):
                 script("overlay.py", main, *argv, "-o", out, "--overwrite")
                 self.assertEqual(box(out), want)
 
+    def test_an_image_layer_with_non_square_pixels_is_placed_at_its_displayed_size(self):
+        """#525 review: the --image position was computed from the still's displayed size
+        (display_size(), SAR applied) while the still reached overlay at its stored size, so a
+        20x10 PNG at SAR 2:1 drew 20 px wide at x=56 of a 96 px main for top-right, 20 px short of
+        the edge. It is made square at its display aspect first, as a --video layer is. The PNG
+        is checked to carry its SAR (pHYs) first."""
+        main = OUT / "sar_layer_main.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=96x64:r=25:d=0.4",
+           "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", main)
+        png = OUT / "sar_layer.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=white:s=20x10,format=rgb24,setsar=2/1", "-frames:v", "1", png)
+        v = probe(str(png))["video"]
+        self.assertEqual((v["width"], v["height"], v["sample_aspect_ratio"]), (20, 10, "2:1"))
+        out = OUT / "sar_layer_out.mp4"
+        script("overlay.py", main, "--image", png, "--position", "top-right", "--margin", "0", "-o", out, "--overwrite")
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(out), "-frames:v", "1",
+                              "-vf", "extractplanes=y", "-f", "rawvideo", "-"], stdout=subprocess.PIPE).stdout
+        pts = [(i % 96, i // 96) for i, y in enumerate(raw[:96 * 64]) if y > 128]
+        self.assertEqual((min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts)),
+                         (56, 0, 95, 9))
+
     def test_overlay_chromakey_removes_the_key_color(self):
         red_bg = OUT / "ck_red_bg.mp4"
         green_fg = OUT / "ck_green_fg.mp4"

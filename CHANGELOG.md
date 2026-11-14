@@ -19,17 +19,31 @@
   came 74 ms late, 114 ms against the sound); they close on the delivered rate. `freeze.py` counted a VFR hold in average-rate frames spaced at the nominal rate (0.9 s of
   picture against 1 s of sound for `--hold 1`). `fit.py --method speed` puts its retimed picture
   back on the grid the same way (a 1.11x speed-up of a constant-rate clip showed each flash 50 ms
-  late). Not changed: `speedramp.py` puts its sound 21-40 ms early (atempo, also on a constant
-  rate), a `freeze.py --at` inside a VFR gap writes the picture after the hold early, and
-  `reverse.py` still shows a reversed VFR picture late (0.19 s on that clip); the three are filed
-  as #523.
+  late); with `--fps` it goes straight to the rate asked (a 2x speed-up of a 30 fps clip to
+  `--fps 60` went through `fps=30`, keeping 60 of its 120 pictures, then `fps=60`). The rate
+  comes first in a `-vf` that is a split/overlay or maskedmerge graph (`fit.py --fit blur` and
+  `--pad-fill blur`, `export.py`'s pad with `--pad-fill blur` or a `--pad-color` with chroma),
+  after any retiming: FFmpeg 6.1's overlay ends at its last frame's start, and an `fps` filter
+  after it lost that frame (`export.py --preset reels --pad-fill blur` wrote 119 frames of a 4 s
+  30 fps picture, `fit.py --fit blur --fps 60` 238 of 240, `--fit blur` on the 27 fps clip 107
+  of 108). `speedramp.py` gives each segment the frames between its retimed ends on the whole
+  output's grid and joins the picture and the sound by separate concats: each segment's own
+  length rounded to the grid drifted, eight 0.5 s segments at 1x of the 27 fps clip ran 4.148 s
+  and put the last flash, and its beep, at 3.630 s for 3.5. Not changed: `speedramp.py` puts
+  its sound 21-40 ms early (atempo, also on a constant rate), a `freeze.py --at` inside a VFR
+  gap writes the picture after the hold early, and `reverse.py` still shows a reversed VFR
+  picture late (0.19 s on that clip); the three are filed as #523.
 - **`overlay.py` places an `--image` or `--video` layer at the pixel its position names (#512).**
   `overlay` puts a layer on a 4:2:0 picture on the chroma grid, so `--position 11,13` drew the
   logo at 10,12, and a right-aligned, bottom-aligned or centred layer whose position came out odd
   moved one pixel left or up. The layer gets a transparent column or row where its position is
   odd and is overlaid at the even one before it, so its luma lands where asked; the chroma sample
   on that edge is shared with the pixel outside it. A dry run whose input does not exist yet
-  plans the old graph (no size to compute the position from). `--text` was already exact.
+  plans the old graph (no size to compute the position from). `--text` was already exact. An
+  `--image` that stores non-square pixels (a PNG's pHYs) is made square at its display aspect
+  first, as a `--video` layer is: its position was computed from its displayed size while it
+  was drawn at its stored one (a 100x100 PNG at SAR 2:1 drew 100 px wide at x=120 of a 320 px
+  main for `--position top-right --margin 0`).
 - **`fit.py --fit crop` keeps the edge or the centre `--crop-x`/`--crop-y` names (#512).** `crop`
   floored the computed offset to the chroma grid, so over an odd margin `--crop-x 1` kept a column
   of the margin and lost the source's last one, and a centred crop sat a pixel off. The scaled

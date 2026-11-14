@@ -1776,6 +1776,78 @@ class EditingTests(MediaFixtures):
                 for g, w in zip(got, want):
                     self.assertLessEqual(abs(g - w), 0.5 / 30 + 0.001, f"flashes at {got}, want {want}")
 
+    def test_speedramp_segments_hold_the_frames_between_their_retimed_ends(self):
+        """#525 review: each segment's picture was its own length rounded to the delivered grid,
+        so eight contiguous 0.5 s segments at 1x of the 27 fps average clip held 14 frames each,
+        concat advanced 14/27 s per segment, the picture ran 4.148 s and the last flash (and,
+        padded by concat, its beep) landed at 3.630 s for 3.5. Each segment now holds the frames
+        between its retimed ends on the whole output's grid, and the two streams are joined by
+        their own concats. Picture against its slot, and against the sound."""
+        src = make_vfr_flash_beep(OUT / "i525_vfr.mp4")
+        half = 0.5 / 27 + 0.001
+        segs = [a for i in range(8) for a in ("--segment", f"{i * 0.5:g}-{(i + 1) * 0.5:g}:1")]
+        out = OUT / "i525_ramp8.mp4"
+        script("speedramp.py", src, *segs, "--fast", "-o", out, "--overwrite")
+        got = flash_times(out)
+        self.assertEqual(len(got), 4, got)
+        for g, w in zip(got, (0.5, 1.5, 2.5, 3.5)):
+            self.assertLessEqual(abs(g - w), half, f"flashes at {got}")
+        for o in av_offsets_ms(out):
+            self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
+        self.assertLessEqual(abs(stream_spans(out)["video"][1] - 4.0), half, stream_spans(out))
+
+    def test_a_speed_change_to_a_named_rate_keeps_every_picture(self):
+        """#525 review: fit --method speed put the retimed picture on the source's rate and --fps
+        then put it on the rate asked: a 2x speed-up of a 30 fps clip to --fps 60 went through
+        fps=30 (every other picture dropped) and fps=60 (the rest shown twice), 60 distinct
+        pictures in 120 frames. The retimed picture goes straight to the rate asked. Each source
+        frame has its own luma, so the output's distinct levels count the pictures it kept."""
+        src = OUT / "i525_levels.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=black:s=64x48:r=30:d=4,format=gray,geq=lum='16+N*1.7',format=yuv420p",
+           "-f", "lavfi", "-i", "sine=d=4", "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-c:a", "aac", src)
+
+        def levels(path):
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:v:0", "-vf",
+                      "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-f", "null", "-")
+            return [round(float(x)) for x in re.findall(r"YAVG=([\d.]+)", proc.stderr)]
+
+        kept = len(set(levels(src)))
+        self.assertGreaterEqual(kept, 100, "the source's pictures must be told apart")
+        out = OUT / "i525_speed60.mp4"
+        script("fit.py", src, "--duration", "2", "--method", "speed", "--fps", "60", "--fast", "-o", out, "--overwrite")
+        got = levels(out)
+        self.assertEqual(len(got), 120)
+        self.assertGreaterEqual(len(set(got)), kept - 2, f"{len(set(got))} distinct pictures of the source's {kept}")
+
+    def test_a_rate_conform_ahead_of_a_composite_pad_keeps_the_last_frame(self):
+        """#525 review: the fps filter that delivers the rate came after the -vf, and a blur pad
+        (split/overlay) or a drawn pad with chroma (maskedmerge) ends its output at the last
+        frame's start on FFmpeg 6.1, so the conform lost the last frame: export reels --pad-fill
+        blur wrote 119 frames of a 4 s 30 fps picture, fit --fit blur on the 27 fps average clip
+        107 of 108, fit --fit blur --fps 60 238 of 240. The rate now comes first in such a -vf,
+        after any retiming. Frame count, and each flash against its beep."""
+        vfr = make_vfr_flash_beep(OUT / "i525_vfr.mp4")
+        cfr = make_flash_beep(OUT / "i525_cfr.mp4")
+        half27 = 0.5 / 27 + 0.001
+        cases = (
+            ("reels-blur", cfr, ["export.py", "--preset", "reels", "--pad-fill", "blur"], 120, 0.5 / 30 + 0.001),
+            ("reels-colour-vfr", vfr, ["export.py", "--preset", "reels", "--pad-color", "red"], 120, 0.5 / 30 + 0.001),
+            ("fit-blur-vfr", vfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--fit", "blur"], 108, half27),
+            ("fit-padfill-vfr", vfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--pad-fill", "blur"], 108, half27),
+            ("fit-blur-fps", cfr, ["fit.py", "--aspect", "9:16", "--width", "360", "--fit", "blur", "--fps", "60"], 240,
+             0.5 / 60 + 0.001),
+        )
+        for name, src, argv, frames, half in cases:
+            with self.subTest(case=name):
+                out = OUT / f"i525_pad_{name}.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
+                offsets = av_offsets_ms(out)
+                self.assertEqual(len(offsets), 4, offsets)
+                for o in offsets:
+                    self.assertLessEqual(abs(o), half * 1000 + 1, f"flash minus beep {offsets} ms")
+
     def test_rotated_source_uses_display_orientation(self):
         out = OUT / "rot_fit.mp4"
         script("fit.py", self.rot, "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)

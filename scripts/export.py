@@ -49,7 +49,7 @@ from typing import Dict, List, Optional
 
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
-from _common.decision import hw_preset_video, restate_last_swap
+from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
@@ -709,8 +709,11 @@ def main() -> int:
         # it dropped one (#512)
         rate_f = (f"fps={video[video.index('-r') + 1]}" if "-r" in video
                   else f"fps={rate_args[rate_args.index('-r') + 1]}" if "-r" in rate_args else "")
+        # it is placed as with_cfr() places it: first in a -vf that is a graph (a blur pad's
+        # split/overlay, a drawn pad's maskedmerge), whose last frame an fps filter after it lost
+        # on FFmpeg 6.1 (reels --pad-fill blur: 119 frames of a 4 s 30 fps picture)
         if rate_f and "-vf" in cmd:
-            cmd[cmd.index("-vf") + 1] += "," + rate_f
+            cmd[cmd.index("-vf") + 1] = chain_with_rate(cmd[cmd.index("-vf") + 1], rate_f)
         elif rate_f:
             cmd += ["-vf", rate_f]
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):

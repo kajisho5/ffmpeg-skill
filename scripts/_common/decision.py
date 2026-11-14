@@ -671,12 +671,20 @@ def with_cfr(chain: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = 
     A -vf value that is a graph of its own (drawn_chain()'s split/maskedmerge) gets it first
     instead: maskedmerge, like overlay, ends its output at its last frame's start, and an fps
     filter after it lost the last frame (graphics.py --template chapter: 3.963 s of 4)."""
-    f = cfr_filter(meta, fps)
-    if not f:
+    return chain_with_rate(chain, cfr_filter(meta, fps))
+
+
+def chain_with_rate(chain: str, rate_filter: str) -> str:
+    """`chain` with an `fps` filter `rate_filter` placed as with_cfr() places cfr_filter(): last in
+    a plain chain, first in a -vf that is a graph of its own (fit/export's blur pad, a drawn pad
+    with chroma), whose overlay or maskedmerge ends its output at its last frame's start on FFmpeg
+    6.1 and lost the last frame to an fps filter after it. For a rate that is not cfr_args()'s
+    own (export.py's preset and platform rates)."""
+    if not rate_filter:
         return chain
     if ";" in chain:
-        return f"{f},{chain}"
-    return f"{chain},{f}" if chain else f
+        return f"{rate_filter},{chain}"
+    return f"{chain},{rate_filter}" if chain else rate_filter
 
 
 def graph_with_cfr(graph: str, label: str, meta: Optional[Dict[str, Any]],

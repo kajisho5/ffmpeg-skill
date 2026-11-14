@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common.decision import av_trim, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length
 
@@ -85,7 +85,7 @@ def main() -> int:
     has_audio = bool(meta.get("audio"))
     output = args.output or default_output(args.input, "ramp")
 
-    vparts, aparts, labels = [], [], []
+    vparts, aparts = [], []
     # The coverage check above allows the last end to sit up to 0.5 s off the probed duration.
     # That slack is for a caller who rounded the duration, not a reason to redraw the tail at
     # the last factor. The end bound is omitted only when the stated end is the file's end
@@ -97,7 +97,12 @@ def main() -> int:
     # the factor scaled that (+570 ms at 0.5x). The first segment starts at the first frame.
     v0 = stream_starts(meta)[0]
     rate = frame_rate(meta)
+    # on a VFR source the picture is delivered at the rate the encoder line forces (its average):
+    # closed on r_frame_rate, -r then resampled the joined picture and it drifted 113 ms late (#512)
+    out_rate = delivered_rate(meta) or rate
+    srate = int((meta.get("audio") or {}).get("sample_rate") or 0)
     bounds = [v0] + [grid_at_or_after(end, v0, rate) for _, end, _ in segments[:-1]]
+    retimed = 0.0  # where the segment starts on the output's clock
     for i, (start, end, factor) in enumerate(segments):
         vlabel, alabel = f"v{i}", f"a{i}"
         to_eof = i == len(segments) - 1 and last_runs_to_eof
@@ -107,25 +112,42 @@ def main() -> int:
             die(f"--segment {start:g}-{end:g}:{factor:g} holds no frame: both ends fall on the frame at "
                 f"{bounds[i]:.3f}s; widen it or merge it into a neighbour")
         vtrim, atrim = av_trim(bounds[i], seg_end, rate)
-        # the closing fps puts the sped-up frames back on the source's grid with its frame
+        # the closing fps puts the sped-up frames back on the delivered grid with its frame
         # duration: concat starts the next segment after the last frame's duration, which setpts
         # leaves at the unscaled 1/rate, so every 2x segment pushed the rest of the picture two
         # frames late against the sound (and added those frames)
-        # on a VFR source the closing rate is the one the encoder line delivers (its average): closed
-        # on r_frame_rate, -r then resampled the joined picture and it drifted 113 ms late (#512)
-        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, delivered_rate(meta) or rate)}[{vlabel}]")
-        labels.append(f"[{vlabel}]")
+        vchain = f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, out_rate)}"
+        achain = f"[0:a]{atrim},{atempo_chain(factor)}"
+        if out_rate:
+            # Each segment holds the frames (and samples) between its retimed ends on the whole
+            # output's grid, not its own length rounded: eight 0.5 s segments at 27 fps rounded
+            # to 14 frames each, concat advanced 14/27 s per segment and the last flash landed
+            # 130 ms late. The picture is sampled on the output's grid (an offset of under half
+            # a frame, and fps's start_time) and, but for a last segment that runs to the end,
+            # padded by a frame or two and cut to its count; the sound is padded or cut to its
+            # own count, so neither stream drifts across segments.
+            first = round(retimed * out_rate)
+            shift = first / out_rate - retimed
+            vchain = (f"[0:v]{vtrim},setpts=PTS/{factor:.6f}{-shift:+.6f}/TB,"
+                      f"{frame_durations(meta, out_rate)}:start_time=0")
+            if seg_end is not None:
+                after = retimed + (seg_end - bounds[i]) / factor
+                vchain += f",tpad=stop=2:stop_mode=clone,trim=end_frame={round(after * out_rate) - first}"
+                if srate:
+                    achain += f",{conform_filter(round(after * srate) - round(retimed * srate), srate)}"
+                retimed = after
+        vparts.append(f"{vchain}[{vlabel}]")
         if has_audio:
-            aparts.append(f"[0:a]{atrim},{atempo_chain(factor)}[{alabel}]")
+            aparts.append(f"{achain}[{alabel}]")
 
+    # the two streams are joined by two concats: one concat over both started each segment after
+    # the longer of its two streams, so a picture a frame longer than its sound moved both late
+    n = len(segments)
+    fc = ";".join(vparts) + ";" + "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv]"
+    maps = ["-map", "[outv]"]
     if has_audio:
-        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(segments)))
-        fc = ";".join(vparts + aparts) + f";{concat_inputs}concat=n={len(segments)}:v=1:a=1[outv][outa]"
-        maps = ["-map", "[outv]", "-map", "[outa]"]
-    else:
-        concat_inputs = "".join(f"[v{i}]" for i in range(len(segments)))
-        fc = ";".join(vparts) + f";{concat_inputs}concat=n={len(segments)}:v=1:a=0[outv]"
-        maps = ["-map", "[outv]"]
+        fc += ";" + ";".join(aparts) + ";" + "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[outa]"
+        maps += ["-map", "[outa]"]
 
     cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", fc] + maps
     cmd += video_args(meta, args.crf, args.preset)

@@ -498,6 +498,13 @@ def main() -> int:
         refuse_not_a_still(args.image, image_meta, "--image",
                            "--video composites a moving layer; `look.py FILE --at T` writes one frame of it as a PNG")
         chain: List[str] = ["format=rgba"]
+        # a still that stores non-square pixels (a PNG's pHYs, a JPEG's density) is made square at
+        # its display aspect first, as a --video layer is: its size and position are computed in
+        # that frame, and placed from it at its stored size a 100x100 PNG at SAR 2:1 drew 100 px
+        # wide at x=120 of a 320 px main for top-right, 100 px short of the edge
+        if square_pixels(image_meta.get("video")):
+            chain.append(square_pixels(image_meta.get("video")))
+            note(square_pixels_note(image_meta.get("video"), "the --image"))
         iw, ih = display_size(image_meta.get("video"))
         lw = int(vw * args.scale_percent / 100) if args.scale_percent else args.scale or iw
         lh = _scaled_height(lw, iw, ih, 1) if lw != iw and iw and ih else ih
