@@ -10572,6 +10572,24 @@ class Audit467Tests(unittest.TestCase):
                 self.assertIn("cannot read the state", proc.stderr)
                 self.assertFalse((repo / "ran_blind.txt").exists(), "the agent did not run")
         (stubs / "git").unlink()
+        with self.subTest("a run that changes only what is staged"):
+            # staged, then edited again (`MM`): the run stages something else and puts the working
+            # copy back, so the status line and the diff against HEAD are what they were
+            subprocess.run(git + ["add", "tracked.txt"], check=True)
+            (repo / "tracked.txt").write_text("one\nworking copy\n", encoding="utf-8")
+            self.assertEqual(run(outside).returncode, 0, "staged before the run")
+            proc = run(outside, "cp tracked.txt ../keep && echo other > tracked.txt && git add tracked.txt && cp ../keep tracked.txt && rm ../keep")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+        with self.subTest("an untracked link to nothing"):
+            try:
+                os.symlink("nowhere", repo / "dangling")
+            except (OSError, NotImplementedError):
+                self.skipTest("no symlinks here")
+            proc = run(outside)
+            self.assertEqual(proc.returncode, 0, f"a dangling link is a state, not a failed snapshot: {proc.stderr}")
+            proc = run(outside, "ln -sfn elsewhere dangling")
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            os.unlink(repo / "dangling")
         self.assertEqual(run(repo / "runs").returncode, 0, "an ignored run folder inside the checkout")
         inside = repo / "eval_runs"
         proc = run(inside, "touch ran.txt")

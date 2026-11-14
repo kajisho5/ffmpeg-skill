@@ -12,7 +12,8 @@
 # The agent still runs as the caller, with the caller's HOME (`claude -p` reads its sign-in
 # from there) and environment, so the checkout's state is taken before and after each run:
 # `git status`, the content diff of tracked files against HEAD (a file already modified keeps
-# its ` M` line when a run edits it again), the hash of every untracked file and HEAD (a run
+# its ` M` line when a run edits it again), the index, the hash of every untracked file (a link
+# is its target's name) and HEAD (a run
 # that commits its edit). A snapshot that cannot be taken stops the script (exit 3). A run that
 # changed it is named in RUN_DIR/<id>/.tree_changed, and the script exits 1. A RUN_DIR inside
 # the checkout must be git-ignored: the run's own files would read as a change to it.
@@ -36,12 +37,32 @@ tree_state() {
   # new HEAD empty. A command that fails is a failure of the snapshot, never a state to compare
   git -C "$REPO" rev-parse HEAD 2>/dev/null &&
     git -C "$REPO" status --porcelain=v1 --untracked-files=all 2>/dev/null &&
-    git -C "$REPO" diff --binary --no-ext-diff HEAD 2>/dev/null || return 1
-  # the list goes through a file, not a pipe: a pipeline's status is its last command's, so a
-  # failed `ls-files` in front of an xargs with nothing to do read as a clean, empty list
+    git -C "$REPO" diff --binary --no-ext-diff HEAD 2>/dev/null &&
+    git -C "$REPO" diff --cached --binary --no-ext-diff HEAD 2>/dev/null || return 1
+  # (the second diff is the index: a file staged and then edited again keeps its `MM` line and
+  # its diff against HEAD when a run stages something else and puts the working copy back.)
+  # The untracked list goes through a file, not a pipe: a pipeline's status is its last
+  # command's, so a failed `ls-files` in front of a reader with nothing to do read as a clean,
+  # empty list. Each file is hashed without following a link (`git hash-object` opens the target,
+  # so a dangling link failed the snapshot): a link is its target's name, a file its bytes
   list=$(mktemp) || return 1
   if git -C "$REPO" ls-files -z --others --exclude-standard > "$list" 2>/dev/null &&
-     (cd "$REPO" && xargs -0 git hash-object -- < "$list" 2>/dev/null); then
+     (cd "$REPO" && python3 -c '
+import hashlib, os, stat, sys
+for name in filter(None, open(sys.argv[1], "rb").read().split(b"\0")):
+    st = os.lstat(name)
+    if stat.S_ISLNK(st.st_mode):
+        what = b"link " + os.fsencode(os.readlink(name))
+    elif stat.S_ISREG(st.st_mode):
+        h = hashlib.sha256()
+        with open(name, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        what = b"file " + h.hexdigest().encode()
+    else:
+        what = b"other %o" % stat.S_IFMT(st.st_mode)
+    sys.stdout.buffer.write(what + b" " + name + b"\n")
+' "$list" 2>/dev/null); then
     rm -f "$list"
   else
     rm -f "$list"

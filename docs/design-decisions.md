@@ -4537,7 +4537,9 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   that changed it is named in `RUN_DIR/<id>/.tree_changed` and the script exits 1. A `RUN_DIR`
   inside the checkout that git does not ignore is refused before anything is staged, rather than
   left out of the comparison: leaving out a folder that holds tracked files would hide edits to
-  them. The state carries `HEAD` as well (a run that commits its edit leaves the status clean),
+  them. The state carries `HEAD` and the index as well (a run that commits its edit leaves the
+  status clean; one that only restages leaves the status line and the diff against `HEAD`), an
+  untracked link is hashed as its target's name without being followed,
   and a snapshot git cannot take stops the script with exit 3 before the agent starts: two failed
   snapshots are not an unchanged checkout. The agent still
   runs as the caller, with the caller's HOME and environment and `bypassPermissions`: `claude -p`

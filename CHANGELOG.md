@@ -28,8 +28,10 @@
   adds the tracked files' diff against `HEAD` and the untracked files' hashes. A `RUN_DIR` inside
   the checkout that git does not ignore is refused (exit 2) before anything is staged: the run's
   own transcript read as a change to the checkout.
-  The state also carries `HEAD`, so a run that commits its edit is seen, and a snapshot that
-  cannot be taken stops the script (exit 3) instead of comparing equal to another failed one.
+  The state also carries `HEAD` and the index, so a run that commits or only stages its edit is
+  seen; an untracked link is its target's name (a dangling one no longer fails the snapshot); and
+  a snapshot that cannot be taken stops the script (exit 3) instead of comparing equal to another
+  failed one.
 - **A BT.2020 source with no transfer tag is no longer written as HLG** (#463 A153). probe reads
   BT.2020 primaries with no transfer tag as "BT.2020 SDR", and every re-encode on the 10-bit line
   (x265, SVT-AV1, libaom, ProRes, VideoToolbox) tagged the output `arib-std-b67`. It is tagged
