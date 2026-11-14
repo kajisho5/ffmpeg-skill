@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.13
+
+_Automated release: version and notes generated from pull requests merged since 3.8.12._
+
 ### Fixed
 
 - **`audio.py --duck-amount` is the depth in dB** (audit A134). It was a sidechain compressor's
@@ -134,7 +140,7 @@
   verification failed ... End of file" (`audio.py --voice strong --music` on the test's sines). The
   probe is given `-f wav` for a file that opens with a RIFF/WAVE header. A WAV like that given as an
   input still meets the same misread inside ffmpeg on 9.0.2 (#518).
-
+- fix: the open items of audit #462 (cut, smart cut, silence) and #459 (audio, sync, multicam, scenes, waveform) (#516)
 
 ## 3.8.12
 
