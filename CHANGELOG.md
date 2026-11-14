@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.12
+
+_Automated release: version and notes generated from pull requests merged since 3.8.11._
+
 ### Fixed
 
 - **A window or a length on the picture keeps the frame it names** (#470's open items).
@@ -42,6 +48,7 @@
   the command it did.
 
 All of it measured on FFmpeg 6.1.1 only (docs/design-decisions.md, "After 3.8.11").
+- fix: a window, a start or a length lands on the frame or the sample it names (#514)
 
 ## 3.8.11
 
