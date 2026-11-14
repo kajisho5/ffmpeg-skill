@@ -43,8 +43,30 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
          "+0.3*sin(2*PI*220*t)*gt(sin(2*PI*0.21*t+2)\\,0.7)")
 
 
+# A command a test runs is over in seconds; one that is still running after this long never ends
+# (a filter graph that does not reach EOF on one FFmpeg: #514, where the job ran until it was
+# cancelled and its log named nothing). The test then fails with the command instead.
+SH_LIMIT = float(os.environ.get("FFSKILL_TEST_SH_LIMIT", "900"))
+
+
 def sh(*cmd, expect_fail=False, env=None):
-    proc = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+    argv = [str(c) for c in cmd]
+    posix = os.name == "posix"
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                             errors="replace", env=env, start_new_session=posix)
+    try:
+        out, err = child.communicate(timeout=SH_LIMIT)
+    except subprocess.TimeoutExpired:
+        if posix:  # the script's ffmpeg too: it is in the child's process group
+            import signal
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        child.kill()
+        out, err = child.communicate()
+        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\nSTDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
+    proc = subprocess.CompletedProcess(argv, child.returncode, out, err)
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"
         return proc
