@@ -46,7 +46,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from _common.runner import child_exit_code, fail_if_classified, kept_clause, mark_delivered
+from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
@@ -321,15 +321,19 @@ _subtitle_codec = subtitle_codec_for
 
 def _data_streams(path: str) -> List[Dict[str, object]]:
     """The data streams of a file ({index, codec}), without its attachments (probe()'s
-    data_streams counts both, and -map 0:d maps only the data streams)."""
+    data_streams counts both, and -map 0:d maps only the data streams) and without an MP4/MOV
+    chapter track, which the muxer writes again from the chapters (carried_stream_maps, A173)."""
     proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "d", "-show_entries",
-                "stream=codec_name,codec_tag_string", "-of", "json", path], quiet=True)
+                "stream=codec_name,codec_tag_string:chapter=id", "-of", "json", path], quiet=True)
     try:
-        streams = json.loads(proc.stdout or "{}").get("streams") or []
+        doc = json.loads(proc.stdout or "{}")
     except ValueError:
         # an unread list would map nothing and report nothing dropped
         die(f"ffprobe's data-stream list for {path} did not parse", kind="ffmpeg")
-    return [{"index": n, "codec": s.get("codec_name") or s.get("codec_tag_string")} for n, s in enumerate(streams)]
+    streams = doc.get("streams") or []
+    chapter_track = bool(doc.get("chapters"))
+    return [{"index": n, "codec": s.get("codec_name") or s.get("codec_tag_string")} for n, s in enumerate(streams)
+            if not (chapter_track and str(s.get("codec_tag_string") or "").lower() == "text")]
 
 
 def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data: int) -> List[str]:
@@ -338,10 +342,13 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
     subtitles + data, subtitles alone, neither; each retry is a `non_av_streams_dropped` fallback
     with the attempt's error. `cmd` already maps the picture and the sound and has no output.
     Returns the stream types dropped ([] when everything mapped was written)."""
+    src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
     sub_args: List[str] = ["-map", "0:s"] if sub_codecs else []
     for n, codec in enumerate(sub_codecs):
         sub_args += [f"-c:s:{n}", codec]
-    data_args = ["-map", "0:d", "-c:d", "copy"] if data else []
+    if sub_codecs:
+        sub_args += carried_stream_maps(src, output, chapters=False)  # the fonts the subtitles are drawn with (A256)
+    data_args = (["-map", "0:d"] + carried_stream_maps(src, output, attachments=False) + ["-c:d", "copy"]) if data else []
     rungs = [(sub_args + data_args, [])]
     if sub_codecs and data:
         rungs.append((sub_args, ["data"]))
@@ -389,7 +396,9 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
         written_data = _data_streams(output)
     for kind, streams, written in (("subtitle", subs, written_subs), ("data", data, written_data)):
         for n, s in enumerate(streams):
-            row = {"type": kind, "index": n, "codec": s.get("codec")}
+            # a data row keeps its n-th-of-type index in the source: the chapter text track is left
+            # out of the list, so a timecode track after it is data stream 1, not 0
+            row = {"type": kind, "index": s.get("index", n) if kind == "data" else n, "codec": s.get("codec")}
             if kind == "subtitle":
                 row["language"] = s.get("language")
             if STATE.dry_run and kind not in dropped:

@@ -412,7 +412,9 @@ burned-in line that does not move. That is a border blend, not inpainting,
 and a logo that travels or subtitles that change position are out of
 scope. The filter reads a 1 px ring outside the box, so the box cannot
 touch the frame edge, and it only interpolates 8-bit YUV (an HDR or 10-bit
-source is refused; `color.py --to-sdr` first). The rest of the frame, and
+source is refused; `color.py --to-sdr` first). Blur and pixelate cover the
+rectangle exactly at an odd `--x`/`--y` too (on 4:2:0 the chroma sample on an
+odd edge is shared with the pixel outside). The rest of the frame, and
 the whole clip's timeline, are untouched -- to cover only part of the
 timeline, `cut.py` the clip into segments first.
 
@@ -471,6 +473,8 @@ background.py -o OUT.mov --duration T --width W --height H --transparent
 No input file: ffmpeg's own `color`/`gradients` source filters generate the
 clip directly. For a title-card background, a placeholder layer, or a base
 for `overlay.py` to composite onto. `--width`/`--height` must be even.
+`--angle DEG` (any value, 0 = left to right, 90 = top to bottom) runs the gradient from the corner
+the direction starts from (C1) to the opposite one (C2).
 `--transparent` writes a canvas with alpha 0 in every pixel in an alpha line:
 ProRes 4444 with 16-bit alpha (default; `.mov`/`.mkv`), `qtrle` (`.mov`), `png`
 (`.mov`/`.mkv`) or `vp9` (`.webm`/`.mkv`). It is the base layer
@@ -485,7 +489,9 @@ reverse.py INPUT [--no-audio] [-o OUT]
 Reverses video (and audio, unless `--no-audio`) with ffmpeg's `reverse`/
 `areverse` filters, which buffer the whole clip in memory — keep this to
 clips it makes sense to reverse (seconds to a couple of minutes), not
-something this tool limits for you.
+something this tool limits for you. A `memory_heavy` warning says when the
+decoded frames come to more than about 2 GiB (size, chroma, depth and frame
+count, not the length alone).
 
 ### stabilize.py — motion stabilisation
 ```
@@ -567,10 +573,11 @@ extend` only works with `--at` at (or past) the clip's end and just makes
 the last frame last `--hold` seconds longer, with nothing pushed; `--mode insert` at
 the clip's end (no `--at`) does the same. Audio is
 silent during the held frame in `--mode insert` (there is no source audio
-for a frozen moment that didn't exist before). `--mode insert` drops a
-subtitle/data track rather than copy it with timestamps that no longer match
-the pushed picture (`dropped_non_av_streams: true` in the result), as
-`fit.py --method speed` does; `--mode extend` keeps it.
+for a frozen moment that didn't exist before). A hold inside the clip or at
+its start drops a subtitle/data track rather than copy it with timestamps that
+no longer match the pushed picture (`dropped_non_av_streams: true` in the
+result), as `fit.py --method speed` does; a hold of the last frame (`--mode
+extend`, or no `--at`) pushes nothing and keeps it.
 
 ### pad.py — add black/silent padding at the start/end
 ```

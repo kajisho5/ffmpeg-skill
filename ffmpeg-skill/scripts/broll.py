@@ -105,9 +105,15 @@ def main() -> int:
         dur_b = input_length(meta_b)
         if dur_b and start_b + length > dur_b + 0.01 and not STATE.dry_run:
             die(f"cutaway {i + 1}: {path} has only {dur_b - start_b:.3f}s from {start_b:g}s, {length:g}s asked for")
-        if cutaways and at < cutaways[-1]["at"] + cutaways[-1]["length"]:
-            die(f"cutaway {i + 1} at {at:g}s overlaps the previous one (ends {cutaways[-1]['at'] + cutaways[-1]['length']:g}s)")
         cutaways.append({"path": path, "at": at, "length": length, "from": start_b, "has_audio": bool(meta_b.get("audio")), "meta": meta_b})
+    # overlap is a property of the windows in time, not of the order they were given in: compared
+    # against the one given before it, a later window listed first was called overlapping (A179)
+    order = sorted(range(len(cutaways)), key=lambda k: cutaways[k]["at"])
+    for prev, k in zip(order, order[1:]):
+        end_prev = cutaways[prev]["at"] + cutaways[prev]["length"]
+        if cutaways[k]["at"] < end_prev:
+            die(f"cutaway {k + 1} at {cutaways[k]['at']:g}s overlaps cutaway {prev + 1} "
+                f"({cutaways[prev]['at']:g}s to {end_prev:g}s)")
     if args.audio != "a" and not all(c["has_audio"] for c in cutaways):
         die("--audio b/mix needs audio on every B-roll clip")
 

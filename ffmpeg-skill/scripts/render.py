@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, remember_written
 from _common.emit import absorb_stage, audit, record_fallback, record_skip, refuse, warn
 from _common.decision import rebase_project_paths
@@ -691,6 +691,59 @@ def check_snap_to(snap: Any, label: str) -> None:
 
 _LAST_DOC: Dict[str, Any] = {}   # the JSON document the most recent sh() child printed
 
+# source_carry for a render (A255): the one picture/sound source of a project with one, and what
+# each stage that ran said about the start timecode ("kept", "dropped", None: a stage that compared
+# nothing, "unknown": a cache hit whose entry did not keep it). main() resets both.
+PROJECT_SOURCE: Dict[str, Any] = {"src": None, "timecode": []}
+
+
+def _timecode_verdict(doc: Any) -> Optional[str]:
+    """What a stage's document says about the start timecode: "kept", "dropped", or None when its
+    source_carry compared none."""
+    carry = doc.get("source_carry") if isinstance(doc, dict) else None
+    if not isinstance(carry, dict):
+        return None
+    return "dropped" if "timecode" in (carry.get("dropped") or []) else "kept" if "timecode" in (carry.get("kept") or []) else None
+
+
+def project_source(proj: Dict[str, Any], rel) -> Optional[str]:
+    """The project's single picture/sound source -- its clips all one file, and no music,
+    replacement or effects track, no video layer and no audiogram picture beside it -- or None,
+    when the output mixes several (source_carry is then not compared, as for any tool with two
+    sources)."""
+    srcs = {os.path.realpath(rel(c["src"])) for c in proj.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("src"), str)}
+    audio = proj.get("audio") if isinstance(proj.get("audio"), dict) else {}
+    others = [audio.get(k) for k in ("music", "replace", "effects") if audio.get(k)]
+    overlays = proj.get("overlays") if isinstance(proj.get("overlays"), list) else []
+    others += [ov.get("video") for ov in overlays if isinstance(ov, dict) and ov.get("video")]
+    if proj.get("audiogram"):
+        others.append("audiogram")  # the picture is the waveform over an image, not the clip's
+    return next(iter(srcs)) if len(srcs) == 1 and not others else None
+
+
+def emit(output: Optional[str], **extra: Any) -> None:
+    """emit(), with render.py's source_carry: the stages run as children, so this process never
+    probed the project's source as an input and its result carried no source_carry at all, even
+    for a one-clip render that lost the source's subtitle track (A255). The source is probed here
+    (after the stages' intermediates, which are not sources), so emit() compares it with the
+    delivered file. A stage that moves the picture's start writes the label of the frame it starts
+    on, which is not the source's: the timecode counts as kept when every stage that compared it
+    kept it, as dropped when one dropped it, and is compared with the source's own label when no
+    stage said (nothing ran, or a cache entry written before stages' source_carry was kept)."""
+    src = PROJECT_SOURCE.get("src")
+    if src and output and not STATE.dry_run and os.path.isfile(src) and os.path.isfile(output) \
+            and os.path.realpath(src) != os.path.realpath(output) and "source_carry" not in extra:
+        STATE.first_input, STATE.video_inputs, STATE.audio_inputs = None, set(), set()
+        probe(src)
+        said = PROJECT_SOURCE["timecode"]
+        if "dropped" in said:
+            STATE.expected_timecode = ""
+        elif "kept" in said and "unknown" not in said:
+            STATE.expected_timecode = (probe(output, role="output").get("timecode") or {}).get("value") or ""
+        else:
+            STATE.expected_timecode = None
+    _emit(output, **extra)
+
 
 def _refuse_uncached_earlier_stage(stage: str) -> None:
     """--from STAGE promises the earlier stages come from the cache. When one does not, say so
@@ -783,6 +836,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
             code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script, error_extra=error_extra, **extra_fields)
     _LAST_DOC.clear()
     _LAST_DOC.update(doc if isinstance(doc, dict) else {})
+    PROJECT_SOURCE["timecode"].append(_timecode_verdict(doc))
     absorb_stage(Path(script).stem, doc)  # a stage's GPU facts (ran on VideoToolbox, fell back and why) and its diagnostics reach this result
     out_path = str(doc.get("output") or "")
     if not STATE.dry_run:
@@ -981,6 +1035,10 @@ def cache_lookup(stage: str, key: str, dest: str, tool: Optional[str] = None) ->
         shutil.copy2(art, dest)     # ... and a copy where it does not. Never a move: the cache
     CACHE["saved_seconds"] += float(meta.get("seconds") or 0.0)
     result = meta.get("result")
+    # what the stage said about the start timecode, for render's source_carry; an entry written
+    # before its source_carry was kept does not say
+    PROJECT_SOURCE["timecode"].append(_timecode_verdict(result) if isinstance(result, dict) and "source_carry" in result
+                                      else "unknown")
     if isinstance(result, dict):
         absorb_stage(tool or stage, dict(result, status="completed", dry_run=False))  # tagged as the stage's tool, as a live run is
     else:
@@ -994,7 +1052,9 @@ def _stage_result(doc: Any) -> Dict[str, Any]:
     """What a cache entry keeps of the stage's own --json document, replayed on a hit."""
     if not isinstance(doc, dict):
         return {}
-    return {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics") if k in doc}
+    kept = {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics") if k in doc}
+    kept["source_carry"] = doc.get("source_carry")  # None too: the stage compared nothing (render's source_carry)
+    return kept
 
 
 def cache_store(stage: str, key: str, produced: str, seconds: float, doc: Any = None) -> None:
@@ -1472,6 +1532,7 @@ def main() -> int:
     add_hw_orchestrator_args(ap)
     args = ap.parse_args()
     apply_common(args)
+    PROJECT_SOURCE.update(src=None, timecode=[])
     STATE.audit_log = os.path.abspath(args.audit_log) if args.audit_log else None
 
     if args.list_templates:
@@ -1650,6 +1711,7 @@ def main() -> int:
     CACHE.clear()
     CACHE.update(_fresh_cache())
     CONTENT_KEYED.clear()
+    PROJECT_SOURCE.update(src=project_source(proj, rel), timecode=[])
     if args.cache:
         cdir = Path(args.cache)
         try:

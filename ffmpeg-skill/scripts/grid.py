@@ -26,7 +26,7 @@ import os
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
-    as_limited, draws_chroma, drawn_chain, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args
+    as_limited, draws_chroma, drawn_chain, drawtext_text_opts, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
@@ -173,7 +173,9 @@ def main() -> int:
         if args.label == "auto":
             font_file = label_fonts[i]["file"]
             font_opt = drawtext_fontfile(font_file) if font_file else f"font='{escape_drawtext(args.font)}'"
-            drawn.append((f"drawtext=text='{escape_drawtext(labels[i])}':{font_opt}:fontsize={args.font_size}:"
+            # the textfile= route every other drawn text takes: escape_drawtext() is for a font name,
+            # and dropped an apostrophe or a percent sign from a file name's label (A178)
+            drawn.append((f"drawtext={drawtext_text_opts(labels[i])}:{font_opt}:fontsize={args.font_size}:"
                           f"fontcolor={args.font_color}:x=w-tw-{LABEL_MARGIN}:y=h-th-{LABEL_MARGIN}:"
                           f"box=1:boxcolor=black@0.5:boxborderw=4", "null"))
         gap_r = args.gap if i % args.cols < args.cols - 1 else 0

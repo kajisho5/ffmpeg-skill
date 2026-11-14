@@ -433,6 +433,11 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         "subtitles": len(subs),
         "chapters": len(raw.get("chapters") or []),
         "cover_art": sum(1 for s in streams if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0)),
+        # Matroska attachments (a subtitle track's fonts, A256) and the playable pictures beside
+        # the one probe() describes, which a tool that writes one picture leaves out (A258)
+        "attachments": sum(1 for s in streams if s.get("codec_type") == "attachment"),
+        "video_streams": sum(1 for s in streams if s.get("codec_type") == "video"
+                             and not s.get("disposition", {}).get("attached_pic", 0)),
         "creation_time": 1 if any(k.lower() == "creation_time" for k in (fmt.get("tags") or {})) else 0,
         "audio_language": 1 if lang and lang.lower() != "und" else 0,
         "timecode": 1 if out["timecode"].get("value") else 0,

@@ -2253,6 +2253,45 @@ def ffmpeg_failure_extra(stderr: str) -> Dict[str, Any]:
     return {"hint": cls[1], "error_extra": {"reason": cls[0], "details": cls[2]}} if cls else {}
 
 
+
+
+MATROSKA_EXT = frozenset({".mkv", ".mka", ".mks"})
+
+
+def carried_stream_maps(src: Optional[str], output: str, *, chapters: bool = True, attachments: bool = True) -> List[str]:
+    """What a command that keeps a source's subtitle/data streams (`-map 0:s? -map 0:d?`, or
+    `-map 0`) adds so the written file carries what the source does, and nothing it does not:
+
+    - `-map -0:N` for an MP4/MOV chapter track. FFmpeg reads the QuickTime chapter text track as a
+      data stream (codec tag `text`) and its muxer writes a new one from the chapters it is given;
+      the copied one was written as a `gpmd` data track holding the old titles, so
+      `metadata.py --clear-chapters` left them behind and every pass added a track (A173).
+    - `-map 0:t? -c:t copy` into Matroska: a subtitle track's fonts are attachments, which no
+      `-map 0:s?`/`0:d?` selects, so every tool that kept the subtitles dropped the fonts they are
+      drawn with (A256). Other containers hold no attachments; source_carry reports them dropped.
+
+    Nothing when the source cannot be read here (the command then runs as before)."""
+    if not src or not os.path.isfile(src):
+        return []
+    try:
+        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries",
+                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", src],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                             errors="replace", timeout=_probe_limit()).stdout
+        doc = json.loads(out or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return []
+    streams = doc.get("streams") or []
+    maps: List[str] = []
+    if chapters and doc.get("chapters"):
+        for s in streams:
+            if s.get("codec_type") == "data" and str(s.get("codec_tag_string") or "").lower() == "text":
+                maps += ["-map", f"-0:{s.get('index')}"]
+    if attachments and os.path.splitext(output)[1].lower() in MATROSKA_EXT and any(s.get("codec_type") == "attachment" for s in streams):
+        maps += ["-map", "0:t?", "-c:t", "copy"]
+    return maps
+
+
 def fail_if_classified(proc: subprocess.CompletedProcess) -> None:
     """Stop with a failed attempt's own error when ffmpeg named a cause a second encode would hit
     the same way (a full disk, a missing encoder or filter, an unreadable input): the rule
@@ -2334,7 +2373,9 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
     so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
     the new one; the MOV/MP4 muxer builds the track again from the label."""
     skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
-    first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + ["-c:s", "copy", "-c:d", "copy", output], check=False)
+    src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
+    first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + carried_stream_maps(src, output)
+                + ["-c:s", "copy", "-c:d", "copy", output], check=False)
     if first.returncode == 0:
         return False
     if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):
