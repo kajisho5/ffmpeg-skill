@@ -22,7 +22,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, drawn_chain, emit, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note
 from _common.probe import display_size, square_pixels, square_pixels_note
 
@@ -100,7 +100,7 @@ def main() -> int:
     if square_pixels(meta["video"]):
         rotate = square_pixels(meta["video"]) + "," + rotate
         note(square_pixels_note(meta["video"]))
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", rotate, "-map", "0:v:0"]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", with_cfr(rotate, meta, args.fps), "-map", "0:v:0"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]
     cmd += video_args(meta, args.crf, args.preset)

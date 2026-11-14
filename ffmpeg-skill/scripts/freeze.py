@@ -19,8 +19,8 @@ Examples:
 import argparse
 import sys
 
-from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
+from _common.decision import av_trim, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
+from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length
 
 
@@ -71,7 +71,7 @@ def main() -> int:
     if holds_end:
         # tpad's stop_duration clones the last frame for the given duration; no PTS surgery
         # needed since it only ever appends past the real end.
-        vf = f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}"
+        vf = with_cfr(f"tpad=stop_mode=clone:stop_duration={args.hold:.3f}", meta)
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), tail=args.hold)]
@@ -80,7 +80,7 @@ def main() -> int:
         # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
         # it -- ffmpeg fails filtering an empty stream). Symmetric to --mode extend at the other
         # end: tpad's start_duration clones the *first* frame backwards instead.
-        vf = f"tpad=start_mode=clone:start_duration={args.hold:.3f}"
+        vf = with_cfr(f"tpad=start_mode=clone:start_duration={args.hold:.3f}", meta)
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             # the sound waits as long as the picture is held: whole frames (tpad_length), as the
@@ -92,12 +92,12 @@ def main() -> int:
         # FIRST frame -- the frame shown at `at` -- for --hold seconds (a segment of its own, below).
         # Through 3.1.3 the head's last frame was held, the frame before `at`: at a cut, the last
         # frame of the previous shot (#411).
-        n = max(1, round(args.hold * fps))
+        n = max(1, round(args.hold * rate))
         # The video hold length is rounded to a whole number of frames (n / fps), but the audio
         # side used to pad by the raw --hold value -- up to half a frame duration off from what
         # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
         # the same, frame-rounded duration the video actually gets.
-        actual_hold = n / fps
+        actual_hold = n / rate
         head_v, head_a = av_trim(v0, cut_at, rate)
         tail_v, tail_a = av_trim(cut_at, None, rate)
         # The hold is its own segment: the frame at cut_at, cut on the input's clock and cloned to
@@ -112,11 +112,13 @@ def main() -> int:
         # and 0.100, --at 0.06), and the hold was lost (#416 review). A second trim keeps that one
         # frame; on a constant rate it is the frame at cut_at, as before.
         half = 0.5 / rate
+        # the graph closes on the rate the encoder line delivers (a VFR source is conformed to its
+        # average): closed on r_frame_rate, -r then resampled it and the picture ran late (#512)
         hold_v = (f"trim=start={cut_at - half:.6f},trim=end_frame=1,"
                   f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-STARTPTS")
         vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
               f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
-              f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, rate)}[outv]")
+              f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, delivered_rate(meta) or rate)}[outv]")
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
             af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"

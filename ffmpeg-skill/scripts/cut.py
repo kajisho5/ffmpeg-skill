@@ -65,7 +65,7 @@ from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, seve
 from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
-from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
+from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -925,6 +925,9 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             m = min(SEEK_MARGIN, start)
             cmd = ffmpeg_base() + ["-ss", f"{start - m:.6f}", "-i", src, "-ss", f"{m:.6f}", "-t", f"{dur:.6f}"]
             cmd += stream_maps(meta, dst, copy=False)
+            # a VFR source is conformed by the fps filter at the rate cfr_args() delivers: the
+            # encoder line's -fps_mode cfr alone let a frame run up to two frames late (#512)
+            cmd += ["-vf", cfr_filter(meta)] if cfr_filter(meta) else []
         # ffmpeg's default stream selection also picks one subtitle stream; a re-encode cannot
         # trim it (the cues kept their timestamps and the container grew to 2 s for a 1 s cut,
         # sweep F2), so the re-encode carries video/audio only and the result says so
@@ -1162,8 +1165,11 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
             pads += f"[a{i}]"
     outs = ("[v]" if has_v else "") + ("[a]" if has_a else "")
     graph.append(f"{pads}concat=n={len(segments)}:v={int(has_v)}:a={int(has_a)}{outs}")
-    cmd += ["-filter_complex", ";".join(graph)]
-    for pad in ("[v]" if has_v else None, "[a]" if has_a else None):
+    # a VFR source is conformed by the fps filter after the concat, at the rate cfr_args() delivers
+    # (#512); a constant-rate source's graph is unchanged
+    fc, vpad = graph_with_cfr(";".join(graph), "[v]", meta) if has_v else (";".join(graph), None)
+    cmd += ["-filter_complex", fc]
+    for pad in (vpad, "[a]" if has_a else None):
         if pad:
             cmd += ["-map", pad]
     if intermediate:
