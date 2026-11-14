@@ -17,6 +17,7 @@ Examples:
 """
 import argparse
 import sys
+from fractions import Fraction
 from typing import List, Tuple
 
 from _common.decision import av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
@@ -143,7 +144,17 @@ def main() -> int:
     # the two streams are joined by two concats: one concat over both started each segment after
     # the longer of its two streams, so a picture a frame longer than its sound moved both late
     n = len(segments)
-    fc = ";".join(vparts) + ";" + "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[outv]"
+    # Every segment's picture is a whole count of frames on one grid, so the joined picture's
+    # timestamps are rebuilt from the running frame count: FFmpeg 6.1.1's video-only concat gave a
+    # one-frame segment no length (it takes a segment's end from its last frame's timestamp), so
+    # three one-frame segments put the rest of the picture a frame before its sound. The closing
+    # fps gives the frames their durations back (from 7.0 setpts leaves them 0, frame_durations)
+    regrid = ""
+    if out_rate:
+        grid = frame_durations(meta, out_rate)
+        q = Fraction(grid[len("fps="):]) if "/" in grid else Fraction(out_rate).limit_denominator(1001)
+        regrid = f",setpts=N*{q.denominator}/({q.numerator}*TB),{grid}"
+    fc = ";".join(vparts) + ";" + "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0{regrid}[outv]"
     maps = ["-map", "[outv]"]
     if has_audio:
         fc += ";" + ";".join(aparts) + ";" + "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[outa]"

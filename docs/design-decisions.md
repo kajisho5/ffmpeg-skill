@@ -4579,7 +4579,12 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   clones and cut to the count; its sound padded or cut to its own sample count) and joins the
   two streams by separate concats: each segment's own length rounded to the grid drifted (eight
   0.5 s segments at 1x of the 27 fps clip held 14 frames each and put the last flash at 3.630 s
-  for 3.5), and one concat over both started each segment after the longer of its two streams. The rate is cfr_args()'s own, so a 29.97 average is still written as `29.97`. A
+  for 3.5), and one concat over both started each segment after the longer of its two streams.
+  The joined picture's timestamps are rebuilt from its running frame count
+  (`setpts=N*den/(num*TB)` and a closing `fps` on the delivered rate): FFmpeg 6.1.1's video-only
+  concat ends a segment at its last frame's timestamp, so a one-frame segment had no length, and
+  three in a row put the rest of the picture a frame early (0.267 s for 0.3). A segment that falls
+  wholly inside a VFR source's gap holds no source frame and still comes out empty. The rate is cfr_args()'s own, so a 29.97 average is still written as `29.97`. A
   rate the caller names (`--fps`), an `export.py` social preset's `-r 30`, a youtube preset's
   divided rate for a source above the platform's limit (120 to 60: `_platform_rate_args`, after
   3.8.11) and `fit.py --method speed`'s retimed picture (the picture only: its `atempo` track keeps
@@ -4602,6 +4607,7 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
   `test_a_speed_change_puts_each_picture_within_half_a_frame`,
   `test_speedramp_segments_hold_the_frames_between_their_retimed_ends`,
+  `test_a_one_frame_speedramp_segment_keeps_its_length`,
   `test_a_speed_change_to_a_named_rate_keeps_every_picture`,
   `test_a_rate_conform_ahead_of_a_composite_pad_keeps_the_last_frame`.
 - **A VFR hold is counted at the rate its frames are cloned at.** `freeze.py` counted `--hold` in
@@ -4634,7 +4640,9 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   size `force_original_aspect_ratio=increase` gives, with the margin on each axis rounded up to a
   multiple of 4 (at most 3 px more on the cropped axis, a scale off the source's aspect by under a
   pixel), and the offset is computed in the tool, to even: `--crop-x/-y` 0, 0.5 and 1 land on the
-  edge or the centre exactly, any other anchor on the even offset nearest it. This is
+  edge or the centre exactly, any other anchor on the even offset nearest it, with a `notes` line
+  naming the axis, the offset asked and the one applied (`--crop-x 0.25` over a 36 px margin: 10
+  px, not 9). This is
   `straighten.py --fit crop`'s rule (A235). `exact=1` keeps the scale but puts the chroma half a
   sample off the luma on an odd offset. A dry run whose input does not exist yet plans the old
   expressions. Code: `fit.main()`. Test:

@@ -281,6 +281,12 @@ def main() -> int:
             sc_h = max(out_h, (2 * out_w * sh + sw) // (2 * sw))
             mx, my = (-(-(sc - o) // 4) * 4 for sc, o in ((sc_w, out_w), (sc_h, out_h)))
             ox, oy = (int(m * f / 2 + 0.5) * 2 for m, f in ((mx, args.crop_x), (my, args.crop_y)))
+            for axis, m, f, got in (("x", mx, args.crop_x, ox), ("y", my, args.crop_y, oy)):
+                if abs(m * f - got) > 1e-9:
+                    # the offset is kept even (the chroma grid); a caller who asked for another one
+                    # is told which it got, as proxy.py says which width it wrote
+                    note(f"--crop-{axis} {f:g}: crop offset {got}px, not {m * f:g}px: the offset is kept even "
+                         f"(4:2:0 chroma), on a {m}px margin")
             vf.append(f"scale={out_w + mx}:{out_h + my}")
             vf.append(f"crop={out_w}:{out_h}:{ox}:{oy}")
         elif args.fit == "crop":  # a dry run's pending input has no size: the expressions, planned only

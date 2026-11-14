@@ -29,7 +29,10 @@
   of 108). `speedramp.py` gives each segment the frames between its retimed ends on the whole
   output's grid and joins the picture and the sound by separate concats: each segment's own
   length rounded to the grid drifted, eight 0.5 s segments at 1x of the 27 fps clip ran 4.148 s
-  and put the last flash, and its beep, at 3.630 s for 3.5. Not changed: `speedramp.py` puts
+  and put the last flash, and its beep, at 3.630 s for 3.5. The joined picture's timestamps are
+  then rebuilt from its frame count: FFmpeg 6.1.1's video-only concat gave a one-frame segment
+  no length, and three of them in a row (`0-0.1:3`, `0.1-0.2:3`, `0.2-0.3:3` on a 30 fps clip)
+  put the rest of the picture a frame before its sound. Not changed: `speedramp.py` puts
   its sound 21-40 ms early (atempo, also on a constant rate), a `freeze.py --at` inside a VFR
   gap writes the picture after the hold early, and `reverse.py` still shows a reversed VFR
   picture late (0.19 s on that clip); the three are filed as #523.
@@ -48,7 +51,9 @@
   floored the computed offset to the chroma grid, so over an odd margin `--crop-x 1` kept a column
   of the margin and lost the source's last one, and a centred crop sat a pixel off. The scaled
   frame's margin is now a multiple of 4 (at most 3 px wider on the cropped axis) and the offset
-  is computed to even, as `straighten.py --fit crop` does.
+  is computed to even, as `straighten.py --fit crop` does. An anchor whose offset is not even
+  (`--crop-x 0.25` over a 36 px margin asks for 9 px) gets the even one nearest it, and a
+  `notes` line names the axis, the offset asked and the one applied.
 - **`render.py --export-timeline` sizes a one-clip sequence by the project's `fit` object
   (#506).** The render's fit stage reframes with the `fit` object's aspect, mode, sides and rate
   and takes the frame's only where it has none; the export read the frame alone, so frame 16:9

@@ -524,10 +524,19 @@ class EditingTests(MediaFixtures):
             got = {}
             for anchor in ("0", "0.5", "1"):
                 out = OUT / f"i512_fitcrop_{axis}_{anchor}.mp4"
-                script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", anchor,
-                       "-o", out, "--overwrite")
+                doc = json.loads(script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", anchor,
+                                        "-o", out, "--overwrite", "--json").stdout)
+                # an anchor that lands on the even grid as asked moves nothing, and says nothing
+                self.assertFalse([n for n in doc.get("notes") or [] if "--crop-" in n], doc.get("notes"))
                 rows = luma(out, 50, 50)
                 got[anchor] = bars(rows[25] if axis == "x" else [r[25] for r in rows])
+            # #525 review: over this 36 px margin 0.25 asks for 9 px; the offset is kept even (10),
+            # and the result says so, naming the axis, the offset asked and the one applied
+            doc = json.loads(script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", "0.25",
+                                    "-o", OUT / f"i512_fitcrop_{axis}_q.mp4", "--overwrite", "--json").stdout)
+            moved = [n for n in doc.get("notes") or [] if f"--crop-{axis} 0.25" in n]
+            self.assertEqual(len(moved), 1, doc.get("notes"))
+            self.assertIn("10px, not 9px", moved[0])
             with self.subTest(axis=axis):
                 self.assertAlmostEqual(got["0"][0], got["1"][1], delta=0.25, msg=f"edge bars {got}")
                 self.assertAlmostEqual(got["0.5"][0], got["0.5"][1], delta=0.25, msg=f"centred bars {got}")
@@ -1795,6 +1804,36 @@ class EditingTests(MediaFixtures):
         for o in av_offsets_ms(out):
             self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
         self.assertLessEqual(abs(stream_spans(out)["video"][1] - 4.0), half, stream_spans(out))
+
+    def test_a_one_frame_speedramp_segment_keeps_its_length(self):
+        """#525 review: a segment whose picture is one frame (0-0.1 at 3x of a 30 fps clip) was
+        given no length by FFmpeg 6.1.1's video-only concat, which ends a segment at its last
+        frame's timestamp, while the sound's concat advanced by 1/30 s: three of them in a row put
+        the rest of the picture a frame early (flash at 0.267 s for 0.3, 113 frames for 114). The
+        joined picture's timestamps are rebuilt from its frame count. The picture is measured
+        against where it belongs; the sound, which atempo moves by itself (about 21 ms), against
+        the same offset in every flash."""
+        src = make_flash_beep(OUT / "i525_onef.mp4")
+        cases = (
+            (["0-0.1:3", "0.1-4:1"], 0.1 / 3 - 0.1),
+            (["0-0.1:3", "0.1-0.2:3", "0.2-4:1"], 2 * 0.1 / 3 - 0.2),
+            (["0-0.1:3", "0.1-0.2:3", "0.2-0.3:3", "0.3-4:1"], 0.1 - 0.3),
+            (["0-1:1", "1-1.1:3", "1.1-1.2:3", "1.2-4:1"], 2 * 0.1 / 3 - 0.2),
+        )
+        for segs, moved in cases:
+            with self.subTest(segments=segs):
+                out = OUT / "i525_onef_out.mp4"
+                script("speedramp.py", src, *[a for seg in segs for a in ("--segment", seg)], "--fast",
+                       "-o", out, "--overwrite")
+                got = flash_times(out)
+                want = [t + moved if t > 0.5 or segs[0] != "0-1:1" else t for t in (0.5, 1.5, 2.5, 3.5)]
+                self.assertEqual(len(got), 4, got)
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), 0.5 / 30 + 0.001, f"flashes at {got}, want {want}")
+                offsets = av_offsets_ms(out)
+                self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
+                frames = round((4.0 + moved) * 30)
+                self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
 
     def test_a_speed_change_to_a_named_rate_keeps_every_picture(self):
         """#525 review: fit --method speed put the retimed picture on the source's rate and --fps
