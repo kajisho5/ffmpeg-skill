@@ -221,6 +221,8 @@ def riff_wave_args(path: str) -> List[str]:
     stream and fails with "End of file". The header says what the file is, so the probe is told.
     Measured on 9.0.2 (CI): the same file fails unforced and reads with `-f wav`; 6.1 to 8.0 read
     it either way."""
+    if not os.path.isfile(path):  # a pipe or a device is never opened here: the open would block
+        return []
     try:
         with open(path, "rb") as fh:
             head = fh.read(12)

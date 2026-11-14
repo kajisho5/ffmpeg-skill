@@ -1240,6 +1240,12 @@ class Audit459AudioTests(MediaFixtures):
         self.assertEqual(riff_wave_args(str(self.voice)), ["-f", "wav"])
         self.assertEqual(riff_wave_args(str(self.src)), [])
         self.assertEqual(riff_wave_args(str(OUT / "a459_absent.wav")), [])
+        if hasattr(os, "mkfifo"):  # a pipe is not opened to read its header: that open blocks
+            fifo = OUT / "a459_pipe.wav"
+            if not fifo.exists():
+                os.mkfifo(fifo)
+            self.assertEqual(riff_wave_args(str(fifo)), [])
+            fifo.unlink()
         named = OUT / "a459_named.dat"  # the header decides, not the name
         named.write_bytes(self.voice.read_bytes())
         self.assertEqual(riff_wave_args(str(named)), ["-f", "wav"])
