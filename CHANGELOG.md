@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.14
+
+_Automated release: version and notes generated from pull requests merged since 3.8.13._
+
 ### Fixed
 
 - **`verify.py` never writes over another of its inputs** (review of #521). The names it
@@ -109,7 +115,7 @@
   included, and with every permission check off a run could edit the tracked tree unnoticed. It
   installs the skill with `bin/install.js --dir`, and exits 1 naming the runs during which the
   checkout's `git status` changed.
-
+- fix: audit #463, #464 and #467 open items across media tools, delivery and packaging (#521)
 
 ## 3.8.13
 
