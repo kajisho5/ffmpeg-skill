@@ -86,7 +86,11 @@ def main() -> int:
         # rounding left a non-square SAR such as 6112:6111 (A235).
         cw, ch = (dw // 2 * 2, dh // 2 * 2) if dw and dh else (0, 0)
         if cw and ch:
-            rotate = (f"scale={math.ceil(cw * s / 2) * 2}:{math.ceil(ch * s / 2) * 2},setsar=1,"
+            # the margin on each axis is a multiple of 4, so the centred crop's offset is even:
+            # crop floors an odd one to the chroma grid, which moved the window a pixel up and
+            # left and could bring the fill into the top-left corner
+            sw, sh = (c + math.ceil(max(0.0, c * s - c) / 4) * 4 for c in (cw, ch))
+            rotate = (f"scale={sw}:{sh},setsar=1,"
                       f"rotate={radians:.8f},crop={cw}:{ch},setsar=1")
         else:  # a dry run's pending input has no size yet: the old expression, planned only
             rotate = f"scale=iw*{s:.8f}:ih*{s:.8f},rotate={radians:.8f},crop=trunc(iw/{s:.8f}/2)*2:trunc(ih/{s:.8f}/2)*2"

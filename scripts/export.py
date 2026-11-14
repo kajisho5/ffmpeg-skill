@@ -396,7 +396,9 @@ def _non_av_report(subs: List[Dict], sub_codecs: List[str], data: List[Dict], dr
         written_data = _data_streams(output)
     for kind, streams, written in (("subtitle", subs, written_subs), ("data", data, written_data)):
         for n, s in enumerate(streams):
-            row = {"type": kind, "index": n, "codec": s.get("codec")}
+            # a data row keeps its n-th-of-type index in the source: the chapter text track is left
+            # out of the list, so a timecode track after it is data stream 1, not 0
+            row = {"type": kind, "index": s.get("index", n) if kind == "data" else n, "codec": s.get("codec")}
             if kind == "subtitle":
                 row["language"] = s.get("language")
             if STATE.dry_run and kind not in dropped:

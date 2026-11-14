@@ -6507,6 +6507,8 @@ class CompositingAuditPictureTests(unittest.TestCase):
                 inside = lambda i: x <= i % w < x + rw and y <= i // w < y + rh  # noqa: E731
                 outside = [i for i in range(len(before)) if not inside(i) and before[i] != after[i]]
                 self.assertEqual(outside, [], f"luma outside the rectangle changed at {[(i % w, i // w) for i in outside[:4]]}")
+                self.assertTrue(any(before[i] != after[i] for i in range(len(before)) if inside(i)),
+                                f"{mode} did not change the rectangle")
                 if mode == "pixelate":  # one block: the whole rectangle is one value, its last column and row included
                     vals = {after[i] for i in range(len(after)) if inside(i)}
                     self.assertEqual(len(vals), 1, sorted(vals)[:8])

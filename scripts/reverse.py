@@ -65,6 +65,9 @@ def main() -> int:
         # the rate the encoder line delivers (cfr_args: a VFR source is conformed to its average
         # rate), so the graph's closing fps and the output's -r are one grid: the graph closed on
         # r_frame_rate and -r then resampled it, 51 frames for 49 that ran 81 ms past the sound (A234)
+        # The trim that drops the hold's spare clones stays on the source's own grid (half a frame
+        # of r_frame_rate before the end): half a delivered frame cut a real last frame that sits
+        # nearer the end than that, and reverse then opened on the one before it.
         rate = delivered_rate(meta) or frame_rate(meta) or meta["video"].get("fps") or 30.0
         length = av_clip_length(meta, rate)
         vlen = meta["video"].get("duration") or length
@@ -72,7 +75,7 @@ def main() -> int:
         vtrim, atrim = av_trim(stream_starts(meta)[0], None)
         cmd += ["-filter_complex",
                 f"[0:v:0]tpad=stop_mode=clone:stop_duration={max(0.0, end - vlen) + 2 / rate:.6f},{vtrim},"
-                f"trim=end={end - 0.5 / rate:.6f},reverse,{frame_durations(meta, rate)}[v];"
+                f"trim=end={end - 0.5 / max(rate, frame_rate(meta) or rate):.6f},reverse,{frame_durations(meta, rate)}[v];"
                 f"[0:a:0]{atrim},apad=whole_dur={end:.6f},atrim=end={end:.6f},areverse,asetpts=N/SR/TB[a]",
                 "-map", "[v]", "-map", "[a]"]
     else:

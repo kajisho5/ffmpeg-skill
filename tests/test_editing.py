@@ -603,6 +603,15 @@ class EditingTests(MediaFixtures):
         v = probe(str(out))["video"]
         for x, y in ((1, 1), (v["width"] - 2, 1), (1, v["height"] - 2), (v["width"] - 2, v["height"] - 2)):
             self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
+        # a size whose centred crop offset was odd (322x184 at -45: 153,87): crop floored it to the
+        # chroma grid and the window moved a pixel towards the top-left fill
+        src = tiny_clip(OUT / "straighten_white_322.mp4", "color=c=white:s=322x184:r=30", seconds=0.5)
+        out = OUT / "straighten_white_322_45.mp4"
+        script("straighten.py", src, "--degrees", "-45", "-o", out, "--overwrite")
+        v = probe(str(out))["video"]
+        self.assertEqual((v["width"], v["height"]), (322, 184))
+        for x, y in ((0, 0), (v["width"] - 1, 0), (0, v["height"] - 1), (v["width"] - 1, v["height"] - 1)):
+            self.assertGreater(min(frame_rgb(out, 0.2, x, y)), 200, (x, y))
 
     def test_straighten_pad_fit_grows_the_frame(self):
         out = OUT / "straighten2.mp4"
