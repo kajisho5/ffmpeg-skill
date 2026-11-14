@@ -36,8 +36,17 @@ tree_state() {
   # new HEAD empty. A command that fails is a failure of the snapshot, never a state to compare
   git -C "$REPO" rev-parse HEAD 2>/dev/null &&
     git -C "$REPO" status --porcelain=v1 --untracked-files=all 2>/dev/null &&
-    git -C "$REPO" diff --binary --no-ext-diff HEAD 2>/dev/null &&
-    git -C "$REPO" ls-files -z --others --exclude-standard 2>/dev/null | (cd "$REPO" && xargs -0 git hash-object -- 2>/dev/null)
+    git -C "$REPO" diff --binary --no-ext-diff HEAD 2>/dev/null || return 1
+  # the list goes through a file, not a pipe: a pipeline's status is its last command's, so a
+  # failed `ls-files` in front of an xargs with nothing to do read as a clean, empty list
+  list=$(mktemp) || return 1
+  if git -C "$REPO" ls-files -z --others --exclude-standard > "$list" 2>/dev/null &&
+     (cd "$REPO" && xargs -0 git hash-object -- < "$list" 2>/dev/null); then
+    rm -f "$list"
+  else
+    rm -f "$list"
+    return 1
+  fi
 }
 no_state() {
   echo "cannot read the state of the checkout at $REPO ($1 run $2): a run it cannot watch is not started or not reported as clean" >&2
