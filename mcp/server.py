@@ -19,6 +19,8 @@ Claude Desktop / Claude Code config example:
 import json
 import os
 import sys
+import queue
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,13 +33,22 @@ import _contract  # noqa: E402  (the contract is the only source of tool names, 
 import _common  # noqa: E402  (run_tool: the outer wall-clock ceiling on a dispatched tool)
 
 _SPECS: Dict[str, Dict[str, Any]] = {}
+_SPECS_LOCK = threading.Lock()
 
 
 def specs() -> Dict[str, Dict[str, Any]]:
-    """ToolSpecs from the contract, generated once per process (argparse -> ToolSpec -> here)."""
+    """ToolSpecs from the contract, generated once per process (argparse -> ToolSpec -> here).
+
+    Built under a lock and published whole: _contract.build() swaps the process-wide argparse
+    parse_args and sys.argv while it reads each tool's parser, so two first uses at once (a
+    tools/call on the worker thread and a tools/list on the reading loop) could each restore the
+    other's swap and let a tool's main() run for real (review of #530). main() also builds it
+    before the worker starts."""
     if not _SPECS:
-        for spec in _contract.build(detect=False)["tools"]:
-            _SPECS[spec["name"]] = spec
+        with _SPECS_LOCK:
+            if not _SPECS:
+                built = {spec["name"]: spec for spec in _contract.build(detect=False)["tools"]}
+                _SPECS.update(built)
     return _SPECS
 
 
@@ -149,7 +160,9 @@ def timeout_from_call(args: Dict[str, Any]) -> float:
         return _common._env_timeout()
 
 
-def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+def call_tool(name: str, args: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
+    """tools/call. `on_start(child)` is handed the tool's process once it runs (the stdio loop
+    keeps it, to stop the call if the client cancels it)."""
     script = SCRIPTS / f"{name}.py"
     if name not in specs() or not script.exists():
         return {"isError": True, "content": [{"type": "text", "text": f"unknown tool {name}"}]}
@@ -165,7 +178,8 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     env = {k: v for k, v in os.environ.items() if k != _contract.READ_ONLY_ENV}
     if _contract.mcp_read_only(specs()[name]):
         env[_contract.READ_ONLY_ENV] = "1"
-    proc = _common.run_tool([str(script)] + argv, per_call=per_call, env=env)
+    started = {"on_start": on_start} if on_start is not None else {}
+    proc = _common.run_tool([str(script)] + argv, per_call=per_call, env=env, **started)
     stdout = proc.stdout.strip()
     text = stdout
     structured = None
@@ -179,9 +193,13 @@ def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         failed: Dict[str, Any] = {"isError": True, "content": [{"type": "text", "text": f"{name} failed (exit {proc.returncode})\n{tail}"}]}
         # The child's own failure document (status, error.kind/code/hint, commands) is the
         # machine-readable half of the contract; dropping it here left an MCP caller regex-
-        # parsing prose to tell a timeout from a missing binary.
+        # parsing prose to tell a timeout from a missing binary. structuredContent is a field of
+        # protocol revisions after the 2024-11-05 this server negotiates, so a client of that
+        # revision reads only `content`: the document is also a second text block there (A22,
+        # #465), as a success's document is the text block.
         if isinstance(structured, dict):
             failed["structuredContent"] = structured
+            failed["content"].append({"type": "text", "text": stdout})
         return failed
     if structured is None:
         text = stdout or "\n".join(proc.stderr.strip().splitlines()[-5:])
@@ -206,7 +224,7 @@ def tool_list() -> List[Dict[str, Any]]:
     return [_contract.mcp_tool(all_specs[name]) for name in names]
 
 
-def handle(req: Dict[str, Any]) -> Dict[str, Any]:
+def handle(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
     method = req.get("method")
     params = req.get("params") or {}
     if method == "initialize":
@@ -219,7 +237,7 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
     if method == "tools/list":
         return {"tools": tool_list()}
     if method == "tools/call":
-        return call_tool(params.get("name", ""), params.get("arguments") or {})
+        return call_tool(params.get("name", ""), params.get("arguments") or {}, on_start=on_start)
     if method == "prompts/list":
         # roadmap 1.20.0: the five workflow recipes (reel, podcast, multicam, delivery_check, hdr)
         return {"prompts": _contract.mcp_prompt_list()}
@@ -234,6 +252,101 @@ def handle(req: Dict[str, Any]) -> Dict[str, Any]:
     if method == "ping":
         return {}
     raise KeyError(method)
+
+
+# A24 (#465): tools/call runs on a worker thread, so the loop that reads requests keeps reading
+# while a tool runs -- a ping is answered at once, and `notifications/cancelled` stops the call it
+# names (its tool gets SIGTERM, stops its ffmpeg and removes its partial output, as on any SIGTERM)
+# and no response is sent for it, as the protocol asks. The tools still run one at a time, in the
+# order they were called, and answer in that order (one encode at a time, as before); a call
+# cancelled while it waits for its turn never starts.
+_QUEUE: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
+_CALLS: Dict[str, Dict[str, Any]] = {}  # request id (as JSON) -> {"proc": Popen or None, "cancelled": bool}
+_CALLS_LOCK = threading.Lock()
+_WRITE_LOCK = threading.Lock()
+
+
+def _key(request_id: Any) -> str:
+    return json.dumps(request_id, sort_keys=True)
+
+
+def _write(out: Any, resp: Dict[str, Any]) -> None:
+    with _WRITE_LOCK:
+        out.write((json.dumps(resp) + "\n").encode("utf-8"))
+        out.flush()
+
+
+def _stop(proc: Any) -> None:
+    """Stop a cancelled call's tool: on POSIX SIGTERM, whose handler stops its ffmpeg and removes
+    the partial output and the lock; on Windows, where no handler runs, its whole process tree
+    (taskkill /T /F), so its ffmpeg does not go on encoding beside the next call. Returns once that
+    has been done (runner.terminate_tree())."""
+    try:
+        _common.runner.terminate_tree(proc)
+    except OSError:
+        pass
+
+
+def cancel(params: Any) -> None:
+    """notifications/cancelled: stop the named call if it is running, or keep it from starting."""
+    if not isinstance(params, dict) or "requestId" not in params:
+        return
+    with _CALLS_LOCK:
+        entry = _CALLS.get(_key(params["requestId"]))
+        if entry is None:
+            return  # finished already, or never seen: nothing to stop
+        entry["cancelled"] = True
+        proc = entry.get("proc")
+        if proc is None:
+            return  # not started: the worker never starts it
+        stopped = entry["stopped"] = threading.Event()
+    try:
+        _stop(proc)
+    finally:
+        stopped.set()  # the worker waits for this before it starts the next call
+
+
+def _respond(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
+    try:
+        return {"jsonrpc": "2.0", "id": req["id"], "result": handle(req, on_start=on_start)}
+    except KeyError as exc:
+        return {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32601, "message": f"method not found: {exc}"}}
+    except Exception as exc:  # noqa: BLE001
+        return {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32000, "message": str(exc)}}
+
+
+def _call_worker(out: Any) -> None:
+    """Run the queued tools/call requests one at a time until the None that ends the input."""
+    while True:
+        item = _QUEUE.get()
+        if item is None:
+            return
+        req, entry = item["req"], item["entry"]
+
+        def started(proc: Any, entry: Dict[str, Any] = entry) -> None:
+            with _CALLS_LOCK:
+                entry["proc"] = proc
+                cancelled = entry["cancelled"]
+            if cancelled:
+                _stop(proc)
+
+        resp = None
+        try:
+            if not entry["cancelled"]:
+                resp = _respond(req, on_start=started)
+            # a call cancelled while it ran: the next one starts only once the stop is done (on
+            # Windows the tree kill may still be ending the tool's ffmpeg after the tool exited)
+            with _CALLS_LOCK:
+                stopped = entry.get("stopped")
+            if stopped is not None:
+                stopped.wait(_common.runner.TREE_KILL_TIMEOUT + 5)
+        finally:
+            with _CALLS_LOCK:
+                key = _key(req["id"])
+                if _CALLS.get(key) is entry:
+                    del _CALLS[key]
+        if resp is not None and not entry["cancelled"]:
+            _write(out, resp)
 
 
 def version() -> str:
@@ -256,6 +369,12 @@ def main() -> int:
         return 0
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
+    try:
+        specs()  # built here, once, before the worker thread can need it too (review of #530)
+    except Exception:  # noqa: BLE001
+        pass  # a contract that cannot be built fails each request that needs it (under the lock), not the server
+    worker = threading.Thread(target=_call_worker, args=(stdout,), daemon=True)
+    worker.start()
     for raw in stdin:
         line = raw.decode("utf-8", errors="replace").strip()
         if not line:
@@ -265,10 +384,9 @@ def main() -> int:
         except ValueError as exc:
             # JSON-RPC 2.0: a line that is not JSON is answered with -32700 and id null, not
             # dropped -- a client whose request was mangled in transit otherwise waits for an
-            # answer that never comes, with nothing to say why
-            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"parse error: {exc}"}}
-            stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
-            stdout.flush()
+            # answer that never comes, with nothing to say why. Through _write(), as every
+            # response: the worker writes too, and a line written beside its own would split it
+            _write(stdout, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"parse error: {exc}"}})
             continue
         # json.loads accepts any valid JSON value, not just an object -- a bare `42`, `null`,
         # `true` or `[1,2]` line parses fine but isn't a JSON-RPC request. Without this guard,
@@ -279,16 +397,20 @@ def main() -> int:
         if not isinstance(req, dict):
             continue
         if "id" not in req:  # notification
+            # only a JSON-RPC 2.0 notification cancels a call (review of #530: a "jsonrpc": "1.0"
+            # line stopped the running tool); anything else is ignored, as before
+            if req.get("jsonrpc") == "2.0" and req.get("method") == "notifications/cancelled":
+                cancel(req.get("params"))
             continue
-        try:
-            result = handle(req)
-            resp = {"jsonrpc": "2.0", "id": req["id"], "result": result}
-        except KeyError as exc:
-            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32601, "message": f"method not found: {exc}"}}
-        except Exception as exc:  # noqa: BLE001
-            resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32000, "message": str(exc)}}
-        stdout.write((json.dumps(resp) + "\n").encode("utf-8"))
-        stdout.flush()
+        if req.get("method") == "tools/call":
+            entry = {"proc": None, "cancelled": False}
+            with _CALLS_LOCK:
+                _CALLS[_key(req["id"])] = entry
+            _QUEUE.put({"req": req, "entry": entry})
+            continue
+        _write(stdout, _respond(req))
+    _QUEUE.put(None)  # end of input: the calls already queued run and answer before the server exits
+    worker.join()
     return 0
 
 

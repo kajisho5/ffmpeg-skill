@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
 import stat
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE
+from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file
 
 
 # Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
@@ -977,7 +978,56 @@ def _brief(doc: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
 PLAN_VERSION = 1
 
 
-_PLAN_STRIP = ("--plan", "--dry-run", "--json")
+_PLAN_STRIP = ("--plan", "--dry-run", "--json", "--json-brief")
+
+
+def is_output_shape_flag(token: str) -> bool:
+    """`--json-brief`, or an abbreviation argparse reads as it (`--json-b`): the flag that changes
+    the shape of the document a tool prints. A plan's argv and a plan's execution leave it out
+    (A181): render.py runs the planned tool with --json and reads its full document, whose
+    `commands` the brief form replaces with a count, and executing a plan recorded with it crashed
+    on that count."""
+    return token.startswith("--json-") and "--json-brief".startswith(token)
+
+
+def _command_complete(line: str) -> bool:
+    """Whether a `$ CMD` / `[dry-run] $ CMD` stderr line holds the whole command: run() prints it
+    shell-quoted, so a quote still open at the end of the line is an argument with a line break in
+    it (a `-metadata title=` with two lines), continued on the next stderr line."""
+    body = line[2:] if line.startswith("$ ") else line[len("[dry-run] $ "):]
+    try:
+        shlex.split(body)
+    except ValueError:
+        return False
+    return True
+
+
+def stderr_records(stderr: str) -> "List[Tuple[bool, str]]":
+    """A sibling tool's stderr as (is_command, text) records, in order, for a tool that ran it
+    (render.py's stages and plans): `$ CMD` is the command CMD, a `[dry-run]` line is kept whole as
+    a command record (what render.py has always listed for a dry run), anything else is a line to
+    pass on. A command whose quoted argument holds a line break spans several stderr lines; they
+    are one record again, joined with the break they had (A4: one ffmpeg command became two
+    records, the second passed on as prose). A quote that never closes leaves the lines as they
+    were."""
+    lines = stderr.splitlines(keepends=True)
+    out: "List[Tuple[bool, str]]" = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip("\r\n")
+        i += 1
+        if not (line.startswith("$ ") or line.startswith("[dry-run]")):
+            out.append((False, line))
+            continue
+        if line.startswith("$ ") or line.startswith("[dry-run] $ "):
+            text, j = line, i
+            while not _command_complete(text) and j < len(lines):
+                text = text + lines[j - 1][len(lines[j - 1].rstrip("\r\n")):] + lines[j].rstrip("\r\n")
+                j += 1
+            if _command_complete(text):
+                line, i = text, j
+        out.append((True, line[2:] if line.startswith("$ ") else line))
+    return out
 
 
 def _plan_at_exit() -> None:
@@ -1074,7 +1124,7 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         if skip:
             skip = False
             continue
-        if a in _PLAN_STRIP:
+        if a in _PLAN_STRIP or is_output_shape_flag(a):
             skip = a == "--plan"
             continue
         if a.startswith("--plan="):
@@ -1090,11 +1140,10 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     if platform and output and tool != "check":
         verify.append({"tool": "check", "platform": platform})
     plan_inputs = _plan_inputs(ctx.commands, cleaned, ctx)
-    real = os.path.realpath(path)
     # every file the plan names (#413 review): its inputs, side inputs included (an SRT, a still),
     # and the output it promises, a default name too, which apply_common could not know
     for named in plan_inputs + ([output] if output else []):
-        if os.path.realpath(named) == real:
+        if same_file(named, path):
             refuse("input", "output_is_input" if named != output else "output_path_taken",
                    f"--plan {path!r} is also {'the output' if named == output else 'an input'} of this run "
                    f"({named!r}); give the plan its own path", output=path, other=named)
@@ -1102,7 +1151,7 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     # (loudness.py --versions, whose `output` is null; export.py's key file) names them only there,
     # and a plan written over one of them is refused as an existing output when it is executed
     for written in _planned_outputs(ctx.commands):
-        if os.path.realpath(written) == real:
+        if same_file(written, path):
             refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
                    "give the plan its own path", output=path, other=written)
     doc = {

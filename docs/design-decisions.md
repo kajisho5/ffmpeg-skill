@@ -93,6 +93,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3813--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
 - [After 3.8.13 — tests, CI, distribution and the site (#467)](#after-3813--tests-ci-distribution-and-the-site-467)
 - [After 3.8.14 — odd positions, the CFR conform and the timeline's aspect (#512, #506)](#after-3814--odd-positions-the-cfr-conform-and-the-timelines-aspect-512-506)
+- [After 3.8.16 — shared code and the MCP server (#465)](#after-3816--shared-code-and-the-mcp-server-465)
 <!-- contents:end -->
 
 ## Time limits
@@ -4657,3 +4658,152 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   "The sequence is the project's frame" (one side and no aspect, padding before a crop, a `fit`
   object over the join) are still open there. Code: `render.export_timeline()`. Test:
   `test_a_one_clip_sequence_takes_the_fit_objects_frame`.
+
+## After 3.8.16 — shared code and the MCP server (#465)
+
+- **A file with an image name that ffmpeg cannot decode as one is refused by `probe()`** (A184).
+  ffprobe lists a text file named `.png` as a png stream of 0x0 through the image demuxer; that was
+  reported as a measured picture (`probe.py` exit 0) and divided by in `check.py` and `insert.py`.
+  `probe()` now refuses a still (read by `image2` or an `*_pipe` demuxer) whose stream has no frame
+  size, `kind: input`, `reason: still_unreadable`, for every tool that probes the file, which is
+  every input of every tool except `sequence.py`'s frames after the first (it probes the first
+  only; a later one that is not an image is left out of the encode, as before). A stream with no size in a video container is not refused there: such a file can
+  still carry a readable track, and the tool that reads it decides. Code: `_common.probe.probe()`.
+  Test: `test_a_file_named_as_an_image_that_is_not_one_is_refused`.
+- **A sibling script past its outer ceiling is sent SIGTERM and killed only if it has not exited
+  15 s later** (A183, `STOP_GRACE`). Its own SIGTERM handler stops its ffmpeg (up to 5 s each),
+  removes the partial output and releases the output lock; the SIGKILL that `run_tool()` sent left
+  both. The document is still `kind: timeout`, exit 124, and says "stopped" or "killed".
+  `verify.py`'s per-step `--timeout` stops its step the same way; `subprocess.run()`'s SIGKILL left
+  each timed-out step's partial output and output lock in `--out`. A SIGTERM or Ctrl-C to
+  `verify.py` itself stops the step it is running the same way (`stop_children()`); through the
+  review of #530 the step was not tracked and ran on, writing, after `verify.py` had exited.
+  **On Windows** no SIGTERM handler can run (`terminate()` is TerminateProcess on the tool's own
+  Python), so the tool and every process it started, its ffmpeg included, are killed at once with
+  `%SystemRoot%\System32\taskkill.exe /T /F` (`terminate_tree()`), and the call returns once
+  taskkill has. Nothing of the tool's own cleanup runs: its output lock stays, naming a process
+  that no longer runs, which the next run to that output takes over (`stale_lock_taken_over`), and
+  its partial output stays under the final name, which the next run refuses as `output_exists`
+  unless `--overwrite` is given. Without taskkill, or when it fails or takes more than 30 s, only
+  the tool is killed and its ffmpeg can run on. This branch runs on the Windows CI job only; here
+  the choice of branch is tested with the kill call replaced. Code: `_common.runner._stop_child()`,
+  `terminate_tree()`. Tests: `test_a_child_past_its_ceiling_is_stopped_and_cleans_up`,
+  `test_a_sigterm_to_verify_stops_its_running_step`,
+  `test_stopping_a_tool_picks_the_tree_kill_on_windows_only`,
+  `test_on_windows_a_stopped_tool_takes_its_ffmpeg_with_it`.
+- **A colour name is checked against ffmpeg's own table** (A189). `validate_color()` took any word,
+  and an unknown one (`grey`; ffmpeg has `gray` and `lightgrey`) failed inside ffmpeg as kind
+  ffmpeg after a dry run that completed. The table is the `ffmpeg -colors` list (the same in 6.1
+  through 8), plus `random` and `bikeshed`; a word that is not a name passes only as six or eight
+  bare hex digits, which is how ffmpeg reads it. The test compares the table with the installed
+  ffmpeg's list, so a later FFmpeg that adds a name fails it rather than refusing the name. Code:
+  `_common.color.FFMPEG_COLOR_NAMES`. Test: `test_an_unknown_colour_name_is_refused_before_ffmpeg`.
+- **`run()` and `run_analysis()` add `-pattern_type none` to every still input with a `%` in its
+  name** (A7), the #408 guard, which only the tools that called `still_input_args()` had: the emoji
+  overlay PNGs, `grid.py`'s and `broll.py`'s stills and `join.py`'s reached image2, which read
+  `st%d.png` as a sequence and opened `st1.png`. An input that sets its own `-pattern_type` or `-f`
+  is left alone (no tool here reads an image sequence through a pattern; `sequence.py` writes a
+  concat list). The ffprobe stream checks inside `run()` and the frame readers of `_common.alpha` and
+  `_common.probe`, which start their own process, add it too. Code: `_common.runner.guard_still_patterns()`. Test:
+  `test_a_percent_in_a_still_path_never_opens_another_file`.
+- **Two paths are one file when they resolve alike or when the file is the same (device and
+  inode)** (A5). `run()`'s output-is-input guard compared resolved strings, so a hard link to the
+  input and, on a case-insensitive volume, the input's name in another case were written over.
+  With a hard link the staged `--overwrite` would have left the source's data in place, but the
+  name the caller gave is still the input, as `refuse_output_is_input()` already treated it. The
+  same comparison now serves the side-file guards, `silence.py --timemap` and `--plan`.
+  `caption.py` refuses an `-o` that is its input (by name or as another name for it) before it
+  writes the SRT or the ASS; it used to write the sidecar beside the source first (review of
+  #530). Not measured here: a case-insensitive volume (the CI runners on macOS and Windows have one). Code:
+  `_common.runner.same_file()`. Tests: `test_a_second_name_for_the_input_is_refused`,
+  `test_caption_refuses_the_input_as_output_before_writing_a_sidecar`.
+- **A stale output lock is taken over inside a section the operating system holds** (A186). Two
+  runs that both found the same stale lock used to both remove "it": the second removal took the
+  first run's new lock, and both wrote the output. A run that judges the lock stale now takes the
+  section first: `<lock>.takeover`, locked through the OS (`flock` on POSIX, `msvcrt.locking` on
+  Windows). Inside it the run judges the lock again, removes it only if it is still stale, and
+  creates its own lock before it leaves; a lock found gone there is not removed, and its own
+  create decides. A run that cannot get the section within 2 s (`SECTION_WAIT`) is refused as
+  `output_locked`, `why: takeover_in_progress`. A run also removes its own lock at its end inside
+  the section, and on POSIX only while the file at that name is still its own; when a takeover of
+  its lock is under way it leaves the lock to that run. The section belongs to the run while it
+  lives and is released by the kernel when the run closes it or ends, killed included, so a run
+  paused inside it for any length of time still keeps every other run out, and nothing is left
+  for another run to judge or recover. Through the review of #530 the section was a file whose
+  existence was the lock, recovered by others once it was older than 60 s: a run paused past that
+  lost it without knowing, a contender took the lock over, and the paused run then removed the
+  contender's fresh lock, so both held one; three rounds each closed one window of that and left
+  another. The section's file means nothing by itself: its name is removed when the section is
+  left. On POSIX that happens while the lock is still held, and a run that had opened the old file
+  finds, once it has the lock, that the name is another file or none, and starts again. On
+  Windows a file another run has open cannot be removed, so the holder closes it first and a
+  failed removal leaves the empty file for the next run to use. Where the filesystem gives no OS
+  file lock (some network filesystems), no weaker scheme stands in: a stale lock is not taken over
+  (`why: takeover_unavailable`, and the refusal says to delete the lock by hand), while a run that
+  finds no lock is unaffected. The lock itself appears with its holder's pid and deadline already
+  in it: they are written to a file of the run's own, which is hard-linked to the lock's name
+  (atomic, and refused when the name exists, as O_EXCL is). A lock created empty and written after
+  read as `unreadable`, which is stale, to a run that looked in between; where no hard link can be
+  made (FAT, some network shares) it still is. On Windows a process that has exited is dead even
+  while a handle to it is open (its exit code is read): the Windows CI judged such a child alive
+  and refused its stale lock as held. Not measured here: the Windows branch (`msvcrt.locking`,
+  the removal of an open file) runs on the Windows CI job only, and a filesystem without `flock`.
+  Code: `_common.runner._TakeoverSection`, `_OutputLock._take_over()`, `__exit__()`, `_create()`,
+  `_pid_dead()`. Tests: `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`,
+  `test_a_run_paused_in_a_takeover_keeps_every_other_run_out`,
+  `test_a_run_that_opened_the_section_before_its_name_went_starts_again`,
+  `test_a_killed_holder_releases_the_takeover_section`,
+  `test_without_an_os_file_lock_a_stale_lock_is_left_for_a_person`,
+  `test_an_output_lock_is_never_seen_without_its_pid`,
+  `test_a_finished_process_is_dead_while_its_handle_is_open`.
+- **`batch.py` removes the directories it created when no item started** (A187): a refusal before
+  the first item (`--jobs`, an output collision, a final path that is an input) and a glob that
+  matches nothing leave no empty `out/` and `out/.work`, as a dry run already did. Once an item has
+  started they stay, as before. `verify.py` makes a new `--out` folder before its `--report` guard
+  (so a report inside it passes) and removes it again, with the parents it made, when that guard
+  refuses the run; once a step has run the folder stays. Code: `batch.main()` (`item_started`),
+  `verify.main()` (`started`). Test:
+  `test_a_refused_batch_leaves_no_directories`.
+- **A plan does not record `--json-brief`, and executing a plan drops it** (A181): `render.py`
+  runs the planned tool with `--json` and reads the full document, whose `commands` the brief one
+  replaces with a count. A plan written by 3.8.11 or earlier with the flag runs. Code:
+  `_common.emit.is_output_shape_flag()`. Test: `test_a_plan_made_with_json_brief_executes`.
+- **`render.py` still reads a stage's commands from its stderr, and joins a command whose quoted
+  argument holds a line break** (A4). render's `commands` have always been read from there, the
+  `[dry-run]` lines included, so the stderr stays the source and a `$` line whose quote is still
+  open at its end takes the next line. Code: `_common.emit.stderr_records()`. Test:
+  `test_a_command_with_a_line_break_in_an_argument_stays_one_command`.
+- **A failed MCP call carries its failure document in `content` too** (A22): as the last text
+  block, after the `<tool> failed (exit N)` lines. The server negotiates protocol 2024-11-05, which
+  has no `structuredContent`; a client of that revision read only stderr lines. `structuredContent`
+  stays. Code: `mcp/server.call_tool()`. Test: `test_mcp_failure_document_reaches_a_2024_11_05_client`.
+- **The MCP server runs `tools/call` on one worker thread, in order** (A24). The loop that reads
+  requests answers `ping`, `tools/list` and the prompts while a tool runs, and
+  `notifications/cancelled` stops the call it names: its tool gets SIGTERM (stops its ffmpeg,
+  removes the partial output) and no response is sent for it, as the protocol asks; a queued call
+  that is cancelled never starts. Only a JSON-RPC 2.0 notification (`"jsonrpc": "2.0"`, no `id`)
+  cancels; any other is ignored. Calls still run one at a time and answer in the order they came,
+  and the next call starts only once a cancelled one's stop is done: on POSIX that is when its
+  tool has exited, its handler having stopped its ffmpeg; on Windows its whole process tree is
+  killed (see A183 above) and the worker waits for taskkill, up to 35 s. So a client sees no new
+  interleaving between tool results and no two encodes at once, except on Windows when taskkill is
+  missing or fails, where the cancelled tool's ffmpeg can run on beside the next call. The tool
+  specs are built once, before the worker starts and under a lock: building them swaps argparse's
+  `parse_args` and `sys.argv` process-wide, and a `tools/call` and a `tools/list` on a fresh server
+  built them at once and ran a tool's `main()` for real (SystemExit). Every response, the -32700
+  parse error included, is written under one lock. Code: `mcp/server.py` (`_call_worker`,
+  `cancel`, `specs`, `_write`). Tests: `test_mcp_answers_a_ping_and_cancels_a_call_while_a_tool_runs`,
+  `test_mcp_starts_the_next_call_only_once_a_cancelled_one_is_stopped`,
+  `test_mcp_cancels_only_on_a_json_rpc_2_notification`,
+  `test_mcp_tool_specs_are_built_once_when_first_used_from_two_threads`,
+  `test_mcp_parse_error_goes_through_the_one_writer`.
+- **The `hdr` prompt's `strip_dovi` picks the recipe** (A23): `true`, `1` or `yes` gives the
+  `color.py --strip-dovi` message, `false`, `0`, `no` or nothing the `--to-sdr` one, and any other
+  value is a JSON-RPC error naming it. Code: `_contract.mcp_prompt_get()` (`flags`). Test:
+  `test_mcp_hdr_prompt_strip_dovi_changes_the_recipe`.
+- **Cutting a word wider than the line takes time linear in its length** (A11). `_slice_atom()`
+  measured every prefix of the remaining word for each piece, so a 4 KB hyphenated cue ran for
+  minutes inside `caption.py`, where `--timeout` (a limit on each ffmpeg call) does not reach. It
+  cuts the same pieces (compared on 20000 random strings of Latin, kana, Thai, combining marks,
+  ZWJ emoji and flags) and measures only up to the first prefix that is too wide. Code:
+  `_common.wrap._slice_atom()`. Test: `test_slicing_a_long_hyphenated_word_measures_linearly`.

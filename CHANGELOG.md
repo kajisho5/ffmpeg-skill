@@ -4,7 +4,62 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Shared code and the MCP server: the fourteen open items of audit #465.**
+  - A file with an image name that ffmpeg cannot decode as one (a text file named `.png`) is
+    refused as `kind: input`, `reason: still_unreadable` (A184) wherever a tool probes it (every
+    input but `sequence.py`'s frames after the first). `probe.py` reported
+    it as a 0x0 picture and exited 0, `check.py` and `insert.py` died with a traceback and no JSON,
+    `overlay.py --image` with one had not finished after 120 s on a 2 s clip, and the other
+    tools failed inside ffmpeg or with a misleading refusal.
+  - `render.py` runs a plan recorded with `--json-brief` (A181); it crashed on the brief
+    document's command count. A new plan no longer records the flag.
+  - A sibling script past its outer ceiling (a `render.py` stage, a `batch.py` step, an MCP call)
+    is sent SIGTERM and killed only if it has not exited 15 s later (A183). The SIGKILL left its
+    partial output under the final name and its output lock behind. `verify.py`'s per-step
+    `--timeout` stops a step the same way (found by the sweep: each timed-out step left its partial
+    output and lock in `--out`), and so does a SIGTERM or Ctrl-C to `verify.py`, which used to exit
+    and leave the step running. On Windows, where no handler runs, the tool and its ffmpeg are
+    killed together with `taskkill /T /F`; its lock and partial output stay (the next run takes the
+    lock over, and refuses the partial output unless `--overwrite`). Without taskkill only the tool
+    is killed.
+  - An unknown colour name (`grey`; ffmpeg's is `gray`) is refused before ffmpeg runs, dry runs
+    included, for every colour flag `validate_color()` checks (A189); it failed inside ffmpeg as
+    kind ffmpeg.
+  - Every still with a `%` in its name is read as that one file (A7): the emoji overlay PNGs of
+    `caption.py` and `graphics.py`, and the stills `grid.py`, `broll.py` and `join.py` take, went
+    to image2 without `-pattern_type none`, which opened `st1.png` for `st%d.png`. `run()` now adds
+    it to every such input.
+  - A hard link to the input given as the output is refused as `output_is_input` (A5), as is the
+    input's name in another case on a case-insensitive volume (not measured here); `--overwrite`
+    replaced it. The side-file guards compare files the same way, and `caption.py` refuses such an
+    `-o` before it writes its SRT or ASS.
+  - Two runs that find the same stale output lock no longer both take it over (A186): the lock is
+    judged, removed and replaced inside a section the OS holds (`flock`, `msvcrt.locking`), which
+    a paused run keeps and a killed one releases, and a run removes its own lock at its end there
+    too. Where the filesystem has no OS file lock, a stale lock is refused with a note to delete it
+    by hand. A new lock holds its pid from the moment it exists (it was briefly empty, which reads
+    as stale), and on Windows a finished process whose handle is still open no longer counts as a
+    live holder.
+  - `batch.py` leaves no `out/` or `out/.work` behind when it refuses a run before any item starts
+    (`--jobs`, an output collision) or matches no file (A187), and `verify.py` no new `--out` folder
+    when its `--report` is refused (found by the sweep).
+  - `caption.py` wraps a cue with a very long hyphenated word in time linear in its length (A11);
+    a 1 KB word took seconds and 4 KB minutes.
+  - `metadata.py --auto-chapters` refuses a `--chapters-out` or `--description-out` at the default
+    output name (A6); the chapter text replaced the video it had just written.
+  - `render.py` keeps a stage command whose argument holds a line break (a two-line `--title`) as
+    one command (A4); it became two records, the second passed on as prose.
+  - MCP: a failed call carries its failure document in `content` as well as `structuredContent`
+    (A22), which protocol 2024-11-05, the one the server negotiates, does not have. `ping` and the
+    other requests are answered while a tool runs, and `notifications/cancelled` stops the call it
+    names, with no response sent (A24): on POSIX its tool removes its partial output; on Windows
+    its process tree is killed, as on a timeout above. Calls still run one at a time, in order, and
+    the next starts only once a cancelled one is stopped. Only a `"jsonrpc": "2.0"` notification
+    cancels. The tool specs are built once, before the first call: a `tools/call` and a
+    `tools/list` on a fresh server could run a tool's `main()` for real. The `hdr` prompt's
+    `strip_dovi: true` gives the `--strip-dovi` recipe (A23); it was taken and changed nothing.
 
 ## 3.8.16
 

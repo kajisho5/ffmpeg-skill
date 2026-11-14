@@ -219,8 +219,11 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
     if args.auto_chapters:  # the only mode that writes them
-        guard_sidecar(args.chapters_out, args.input, siblings=(args.description_out, args.output))
-        guard_sidecar(args.description_out, args.input, siblings=(args.output,))
+        # against the video this run writes, the default name too (A6, #465: --chapters-out at
+        # input_meta.mp4 wrote the chapter text over the video it had just written)
+        video_out = args.output or default_output(args.input, "meta", Path(args.input).suffix.lstrip(".") or "mp4")
+        guard_sidecar(args.chapters_out, args.input, siblings=(args.description_out, video_out))
+        guard_sidecar(args.description_out, args.input, siblings=(video_out,))
 
     if args.chapters and args.clear_chapters:
         die("--chapters and --clear-chapters exclude each other")

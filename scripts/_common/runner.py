@@ -608,8 +608,13 @@ def stop_children() -> None:
     signal handler does before it exits, for a tool that reports more than "interrupted" after a
     signal (batch.py's partial table)."""
     for proc, cmd in list(_CHILDREN):
+        if not cmd:
+            # a sibling script (run_tool(), verify.py's steps): its own handler stops its ffmpeg
+            # and removes its partial output, given STOP_GRACE; on Windows its whole tree is killed
+            _stop_child(proc, communicate=False)
+            continue
         try:
-            proc.terminate()  # ffmpeg exits promptly on SIGTERM; a sibling script runs this same handler
+            proc.terminate()  # ffmpeg exits promptly on SIGTERM
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -978,12 +983,22 @@ def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
     for i, a in enumerate(cmd):
         if a == "-i" and i + 1 < len(cmd):
             inp = cmd[i + 1]
-            try:
-                same = os.path.realpath(inp) == out_real
-            except OSError:
-                continue
-            if same:
+            if same_file(inp, output):
                 _refuse_output_is_input(output, inp, out_real, "would overwrite it while ffmpeg is still reading it")
+
+
+def same_file(a: str, b: str) -> bool:
+    """Whether two paths name one file: the same resolved path, or, when both exist, the same
+    file by identity (os.path.samefile: device and inode). The second catches what the strings
+    do not (A5, #465): a hard link, and on a case-insensitive volume (macOS's and Windows'
+    defaults) `Clip.mp4` for `clip.mp4`, which --overwrite then replaced. False when either path
+    cannot be resolved."""
+    try:
+        if os.path.realpath(a) == os.path.realpath(b):
+            return True
+        return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
 
 
 def _refuse_output_is_input(output: str, inp: str, real: str, why: str) -> None:
@@ -1007,13 +1022,8 @@ def refuse_output_is_input(output: str, *inputs: str, why: str = "the result wou
     except OSError:
         return
     for inp in inputs:
-        try:
-            # a hard link is another name for the same file: compare the files, not just the names
-            same = os.path.realpath(inp) == out_real or (
-                os.path.exists(output) and os.path.exists(inp) and os.path.samefile(output, inp))
-        except OSError:
-            continue
-        if same:
+        # a hard link is another name for the same file: compare the files, not just the names
+        if same_file(inp, output):
             _refuse_output_is_input(output, inp, out_real, why)
 
 
@@ -1087,7 +1097,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
         if not os.path.isfile(path):
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
-                     "-show_entries", "stream=index", "-of", "csv=p=0", path]
+                     "-show_entries", "stream=index", "-of", "csv=p=0", *still_input_args(path), path]
         limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
@@ -1251,9 +1261,12 @@ EVEN_SCALE = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
 
 
 def _pid_dead(pid: int) -> bool:
-    """True only when the process is known not to exist. POSIX: signal 0. Windows: OpenProcess
-    fails with ERROR_INVALID_PARAMETER (87) for a pid that is not in use; any other outcome
-    (a handle, or access denied) means it is live. Unknown is treated as live."""
+    """True only when the process is known not to have exited. POSIX: signal 0. Windows:
+    OpenProcess fails with ERROR_INVALID_PARAMETER (87) for a pid that is not in use; a process
+    that has exited still opens while any handle to it is open (its parent's Popen keeps one), so
+    its exit code is read too, and one other than STILL_ACTIVE (259) is dead (review of #530: the
+    Windows CI judged a finished child alive and refused its stale lock as held). Any other
+    outcome (access denied, an unreadable code) means it is live. Unknown is treated as live."""
     if os.name != "nt":
         try:
             os.kill(pid, 0)
@@ -1267,8 +1280,13 @@ def _pid_dead(pid: int) -> bool:
         k32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if handle:
-            k32.CloseHandle(handle)
-            return False
+            try:
+                code = ctypes.c_ulong(0)
+                if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return code.value != 259  # STILL_ACTIVE
+                return False
+            finally:
+                k32.CloseHandle(handle)
         return k32.GetLastError() == 87
     except Exception:
         return False
@@ -1276,6 +1294,114 @@ def _pid_dead(pid: int) -> bool:
 
 LOCK_HOUR = 3600.0
 LOCK_UNLIMITED = 10 * 365 * 86400.0  # --timeout 0: the deadline is pushed past any run (and kept short of 2038)
+
+
+SECTION_WAIT = 2.0  # seconds a run waits for another's takeover section before it is refused
+
+
+class _SectionUnavailable(OSError):
+    """This filesystem (or platform) gives no OS file lock to the takeover section."""
+
+
+def _os_lock(fd: int) -> bool:
+    """Lock `fd` exclusively through the OS without waiting: True when locked, False when another
+    open file holds it. The kernel releases it when the file is closed or its process ends, killed
+    or not. _SectionUnavailable when the filesystem or platform has no such lock."""
+    if os.name == "nt":
+        import errno
+        import msvcrt
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # one byte; a lock past the end of a file is allowed
+            return True
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK), errno.EDEADLK):
+                return False
+            raise _SectionUnavailable(str(exc)) from exc
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise _SectionUnavailable(f"no fcntl here: {exc}") from exc
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+    except OSError as exc:
+        raise _SectionUnavailable(str(exc)) from exc
+
+
+class _TakeoverSection:
+    """The section in which a stale output lock is judged, removed and replaced, and in which a
+    holder removes its own lock: `<lock>.takeover`, held through an OS file lock (flock on POSIX,
+    msvcrt.locking on Windows), never through the file's existence or age. The kernel releases it
+    when the run closes it or ends, killed included, so nothing in it expires while its holder
+    lives -- a paused holder still holds it -- and nothing is left for anyone to recover (review of
+    #530: every timed or claimed scheme before this had a window where a paused run lost it).
+
+    The file itself means nothing: its name is removed when the section is left, so no file stays
+    beside the output. On POSIX the name is removed while the lock is still held, and a run that
+    opened the old file before that finds, once it has the lock, that the name is now another file
+    or none, and starts again (the usual lock-file race). On Windows a file another handle has open
+    cannot be removed: the holder closes it first and a failed removal is left alone; the file then
+    serves the next run as it is."""
+
+    def __init__(self, lock_path: str) -> None:
+        self.path = lock_path + ".takeover"
+        self.fd: Optional[int] = None
+
+    def acquire(self, wait: float = SECTION_WAIT) -> Optional[str]:
+        """None when held; "busy" when another run held it all through `wait` seconds;
+        _SectionUnavailable when the OS lock cannot be had here at all."""
+        import time
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                got = _os_lock(fd)
+            except BaseException:
+                os.close(fd)
+                raise
+            if got:
+                if os.name == "nt" or self._names(fd):
+                    self.fd = fd
+                    return None
+                os.close(fd)  # locked a file whose name was removed meanwhile: start again
+                continue
+            os.close(fd)
+            if time.monotonic() >= deadline:
+                return "busy"
+            time.sleep(0.05)
+
+    def _names(self, fd: int) -> bool:
+        try:
+            mine, there = os.fstat(fd), os.stat(self.path)
+        except FileNotFoundError:
+            return False
+        return (mine.st_dev, mine.st_ino) == (there.st_dev, there.st_ino)
+
+    def release(self) -> None:
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
+        if os.name != "nt":
+            try:
+                os.remove(self.path)  # still locked: whoever opened this file re-checks its name
+            except OSError:
+                pass
+            os.close(fd)  # closing releases the lock
+            return
+        try:
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        os.close(fd)
+        try:
+            os.remove(self.path)  # fails while another run has it open: it is left to that run
+        except OSError:
+            pass
 
 
 class _OutputLock:
@@ -1308,47 +1434,89 @@ class _OutputLock:
     def __enter__(self) -> "_OutputLock":
         if not self.path:
             return self
-        taken: Optional[Dict[str, Any]] = None
-        for attempt in (0, 1):
-            try:
-                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-                os.write(self.fd, str(os.getpid()).encode())
-                self._set_deadline()
-                if taken is not None:
-                    self._record_takeover(taken)
+        try:
+            self.fd = self._create()
+            return self
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            return self._unlocked(exc)
+        holder = self._holder()
+        if holder["stale"]:
+            holder = self._take_over(holder)
+            if holder.get("unlocked"):
                 return self
-            except FileExistsError:
-                holder = self._holder()
-                if attempt == 0 and holder["stale"]:
-                    try:
-                        os.remove(self.path)
-                    except OSError as exc:
-                        # Windows will not delete a file another process holds open, and a live
-                        # holder keeps its lock open until it finishes: the takeover fails and
-                        # the run is refused below, with the reason, instead of passing silently
-                        holder["takeover_error"] = str(exc)
-                        holder["stale"] = False
-                    else:
-                        taken = holder
-                        continue
-                name = os.path.basename(self.path)[1:-len(".ffskill-lock")]
-                msg = (f"another run is writing {name!r} right now (lock {self.path}"
-                       + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path")
-                hint = ("wait for that run, or choose another -o path; if pid "
-                        f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}")
-                details = dict(lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
-                if self.on_locked:
-                    self.on_locked(msg, hint, details)
-                refuse("input", "output_locked", msg, hint=hint, **details)
-            except OSError as exc:
-                # an unlockable location (a read-only directory surfaces elsewhere): the run goes
-                # on without a lock, and says so -- two runs could now both write this output
-                details = {"lock": self.path, "output": os.path.abspath(self.output), "error": str(exc)}
-                warn(f"could not create the output lock {self.path} ({exc}); running without one, so a second run "
-                     "writing the same output at the same time would not be refused", "output_unlocked", **details)
-                audit("output_unlocked", details, default_path=self._audit_default())
+            if self.fd is not None:
+                self._record_takeover(holder)
                 return self
+        name = os.path.basename(self.path)[1:-len(".ffskill-lock")]
+        if holder.get("why") == "takeover_unavailable":
+            msg = (f"the lock on {name!r} ({self.path}) is stale ({holder.get('stale_why')}), but it cannot be taken over "
+                   f"safely here: this filesystem gives no OS file lock ({holder.get('takeover_error')})")
+            hint = f"if no other run is writing {name!r}, delete {self.path} and run again"
+        else:
+            msg = (f"another run is writing {name!r} right now (lock {self.path}"
+                   + (f", pid {holder['pid']}" if holder.get("pid") else "") + "); wait for it or choose a different --output/-o path")
+            hint = ("wait for that run, or choose another -o path; if pid "
+                    f"{holder.get('pid')} is not an ffmpeg-skill run, delete {self.path}")
+        details = dict(lock=self.path, output=os.path.abspath(self.output), **{k: v for k, v in holder.items() if k != "stale"})
+        if self.on_locked:
+            self.on_locked(msg, hint, details)
+        refuse("input", "output_locked", msg, hint=hint, **details)
         return self
+
+    def _unlocked(self, exc: OSError) -> "_OutputLock":
+        # an unlockable location (a read-only directory surfaces elsewhere): the run goes
+        # on without a lock, and says so -- two runs could now both write this output
+        details = {"lock": self.path, "output": os.path.abspath(self.output), "error": str(exc)}
+        warn(f"could not create the output lock {self.path} ({exc}); running without one, so a second run "
+             "writing the same output at the same time would not be refused", "output_unlocked", **details)
+        audit("output_unlocked", details, default_path=self._audit_default())
+        return self
+
+    def _take_over(self, judged: Dict[str, Any]) -> Dict[str, Any]:
+        """Take a lock judged stale over inside the takeover section (A186, #465; review of #530):
+        judge it again there, remove it only if it is still stale, and create this run's own lock
+        before leaving, so no other run can judge, remove or create between those steps. Sets
+        self.fd and returns the holder as judged last when this run now holds the lock; otherwise
+        returns why not (held, `takeover_in_progress`, `takeover_unavailable`, `takeover_error`).
+        Returns {"unlocked": True} when the lock cannot be created at all (the run goes on
+        without one, as __enter__ says)."""
+        section = _TakeoverSection(self.path)
+        try:
+            busy = section.acquire()
+        except OSError as exc:
+            # no OS lock on this filesystem: nothing safe to fall back on, so the stale lock is
+            # left for a person to remove (the refusal says so)
+            return dict(judged, stale=False, why="takeover_unavailable", stale_why=judged.get("why"),
+                        takeover_error=str(exc))
+        if busy:
+            return dict(judged, stale=False, why="takeover_in_progress")
+        try:
+            now = judged
+            if os.path.lexists(self.path):
+                now = self._holder()
+                if not now["stale"]:
+                    return now  # taken over, or written again, since our look
+                try:
+                    os.remove(self.path)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    # Windows will not delete a file another process holds open, and a live
+                    # holder keeps its lock open until it finishes: the takeover fails and
+                    # the run is refused, with the reason, instead of passing silently
+                    return dict(now, stale=False, takeover_error=str(exc))
+            try:
+                self.fd = self._create()
+            except FileExistsError:
+                return self._holder()  # a run that found no lock created one: it holds it
+            except OSError as exc:
+                self._unlocked(exc)
+                return {"unlocked": True}
+            return now
+        finally:
+            section.release()
 
     def _audit_default(self) -> Optional[str]:
         if not self.path:
@@ -1356,19 +1524,63 @@ class _OutputLock:
         d, base = os.path.split(os.path.abspath(self.output))
         return os.path.join(d, f".{base}.ffskill-audit.jsonl")
 
-    def _set_deadline(self) -> None:
+    def _create(self) -> int:
+        """Create the lock, already holding this run's pid and dated with its deadline, and
+        return an open descriptor on it; FileExistsError when another run's lock is there.
+
+        The pid and the date are written to a file of this run's own first, which is then
+        hard-linked to the lock's name: the link is atomic and fails when the name exists, as
+        O_EXCL does, so no other run ever reads this lock empty (an empty lock reads as
+        `unreadable`, which is stale, and was open to a takeover between the create and the
+        write) or undated. Where a hard link cannot be made (a FAT volume, some network shares)
+        the lock is created with O_EXCL and written at once, as before."""
+        import uuid
+        tmp = f"{self.path}.{os.getpid()}-{uuid.uuid4().hex[:12]}.new"
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except OSError:
+            return self._create_in_place()
+        try:
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)  # closed before the link: Windows links and removes only a closed file
+            self._set_deadline(tmp)
+            try:
+                os.link(tmp, self.path)
+            except FileExistsError:
+                raise
+            except (OSError, NotImplementedError, AttributeError):
+                return self._create_in_place()
+            return os.open(self.path, os.O_WRONLY)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    def _create_in_place(self) -> int:
+        fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.write(fd, str(os.getpid()).encode())
+        self._set_deadline(self.path)
+        return fd
+
+    def _set_deadline(self, path: Optional[str] = None) -> None:
         import time
+        path = path or self.path
         limit = child_limit()
         deadline = time.time() + (limit if limit else LOCK_UNLIMITED)
         try:
-            os.utime(self.path, (deadline - LOCK_HOUR, deadline - LOCK_HOUR))
+            os.utime(path, (deadline - LOCK_HOUR, deadline - LOCK_HOUR))
         except (OSError, OverflowError, ValueError) as exc:
             warn(f"could not date the output lock {self.path} ({exc}); another run may take it over an hour from now",
                  "lock_deadline_unset", lock=self.path, error=str(exc))
 
     def _holder(self) -> Dict[str, Any]:
         """Who holds the lock and whether it is stale: {pid, pid_alive, deadline (UTC, the
-        mtime plus an hour), why: pid_dead | past_deadline | unreadable | held, stale}."""
+        mtime plus an hour), why: pid_dead | past_deadline | unreadable | held, stale}.
+        _take_over() adds why `takeover_in_progress` (another run is in the takeover section) and
+        `takeover_unavailable` (no OS file lock here)."""
         import datetime
         import time
         out: Dict[str, Any] = {"pid": None, "pid_alive": None, "deadline": None, "why": "unreadable", "stale": True}
@@ -1401,16 +1613,46 @@ class _OutputLock:
         record_fallback(f"took over the stale output lock {self.path}: {why}", "stale_lock_taken_over", **details)
 
     def __exit__(self, *exc: Any) -> None:
-        if self.fd is not None:
+        """Remove this run's own lock, inside the takeover section: a holder past its deadline
+        whose lock another run is taking over, or has taken over, never removes that run's lock
+        by its name. On POSIX the lock at the name is removed only when it is still this run's
+        file; on Windows no other run can remove a lock this run has open, so the name is still
+        ours. When the section is busy (a takeover of this lock is under way) the lock is left to
+        that run; when there is no OS lock here, the same file check alone decides."""
+        fd, self.fd = self.fd, None
+        if fd is None or not self.path:
+            if fd is not None:
+                os.close(fd)
+            return
+        section = _TakeoverSection(self.path)
+        try:
+            busy = section.acquire()
+        except OSError:
+            busy = None  # no OS lock: the file check below alone
+        try:
+            if busy == "busy":
+                return
+            if os.name == "nt":
+                os.close(fd)
+                fd = None
+                try:
+                    os.remove(self.path)
+                except OSError:
+                    pass
+                return
             try:
-                os.close(self.fd)
+                mine, there = os.fstat(fd), os.stat(self.path)
+                if (mine.st_dev, mine.st_ino) == (there.st_dev, there.st_ino):
+                    os.remove(self.path)
             except OSError:
                 pass
-        if self.path:
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            section.release()
 
 
 def _odd_dimension_retry(cmd: List[str], stderr: str) -> Optional[List[str]]:
@@ -1460,8 +1702,7 @@ def guard_sidecar(path: str, *inputs: str, siblings: Sequence[str] = ()) -> None
     if not path:
         return
     for other in siblings:
-        if other and (os.path.realpath(other) == os.path.realpath(path)
-                      or (os.path.exists(other) and os.path.exists(path) and os.path.samefile(other, path))):
+        if other and same_file(other, path):
             refuse("input", "output_path_taken",
                    f"{path!r} is also another file this run writes ({other!r}); give each its own path",
                    output=path, other=other)
@@ -2029,6 +2270,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     """
     ctx = ctx or STATE
     is_ffmpeg = _is_ffmpeg(cmd)
+    cmd = guard_still_patterns(cmd)  # before it is checked, recorded or run
     if not is_ffmpeg:
         _refuse_url_media(cmd)  # ffprobe reads a URL or a playlist as readily as ffmpeg does
     if is_ffmpeg:
@@ -2194,6 +2436,7 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     wall-clock limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg`
     failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
     lists the command in the --json `commands` like run() does."""
+    cmd = guard_still_patterns(cmd)
     _refuse_url_media(cmd)
     if record:
         STATE.commands.append(_cmdline(cmd))
@@ -2241,30 +2484,125 @@ def child_limit(per_call: Optional[float] = None) -> Optional[float]:
     return limit * 4 + 60
 
 
+# How long a sibling script past its outer ceiling gets to stop on SIGTERM before it is killed:
+# its handler waits up to 5 s for each ffmpeg it runs (stop_children()), then removes the partial
+# output and exits with its failure document.
+STOP_GRACE = 15.0
+
+
+def _taskkill() -> Optional[str]:
+    """Windows' own taskkill.exe, by its full path under %SystemRoot% (never a `taskkill` found on
+    PATH), or None when it is not there."""
+    root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    path = os.path.join(root, "System32", "taskkill.exe")
+    return path if os.path.isfile(path) else None
+
+
+TREE_KILL_TIMEOUT = 30.0
+
+
+def terminate_tree(child: subprocess.Popen, windows: Optional[bool] = None) -> bool:
+    """Ask a sibling script to stop, so that its ffmpeg stops too (review of #530).
+
+    POSIX: SIGTERM to the script; its handler stops its ffmpeg (up to 5 s each), removes the
+    partial output and releases the output lock, then exits. Returns True.
+
+    Windows: terminate() is TerminateProcess on the script alone, no handler runs, and its ffmpeg
+    would keep encoding with the lock and the partial output in place. The whole tree is killed
+    with taskkill /T /F and this returns once taskkill has (True when it says it did). Without
+    taskkill, or when it fails or does not finish in TREE_KILL_TIMEOUT, the script alone is
+    killed and this returns False: its ffmpeg may outlive it."""
+    if windows is None:
+        windows = os.name == "nt"
+    if child.poll() is not None:
+        return True
+    if not windows:
+        try:
+            child.terminate()
+        except OSError:
+            pass
+        return True
+    exe = _taskkill()
+    if exe:
+        try:
+            done = subprocess.run([exe, "/T", "/F", "/PID", str(child.pid)], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=TREE_KILL_TIMEOUT)
+            if done.returncode == 0:
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if child.poll() is not None:
+            return True  # taskkill failed because the tree was already gone
+    try:
+        child.kill()
+    except OSError:
+        pass
+    return False
+
+
+def _stop_child(child: subprocess.Popen, communicate: bool = True) -> "Tuple[bool, str]":
+    """Stop a sibling script with terminate_tree(): on POSIX SIGTERM, then SIGKILL if it has not
+    exited within STOP_GRACE; on Windows its whole tree at once (taskkill /T /F). Returns
+    (stopped, stderr): stopped is True when it exited on the SIGTERM, which a sibling script
+    handles by removing its partial output and its output lock, and False when it had to be
+    killed (always on Windows, where no handler runs). communicate=False waits without reading the
+    pipes (stop_children(), whose caller is already reading them or exiting)."""
+    def wait(timeout: Optional[float] = None) -> str:
+        if communicate:
+            return child.communicate(timeout=timeout)[1] or ""
+        child.wait(timeout=timeout)
+        return ""
+    if os.name != "nt":
+        try:
+            terminate_tree(child, windows=False)
+            return True, wait(STOP_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
+            return False, wait()
+        try:
+            child.kill()
+        except OSError:
+            pass
+        return False, wait()
+    terminate_tree(child, windows=True)
+    return False, wait()
+
+
 def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
-             env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+             env: Optional[Dict[str, str]] = None,
+             on_start: "Optional[Callable[[subprocess.Popen], None]]" = None) -> subprocess.CompletedProcess:
     """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
-    child is killed and a CompletedProcess is returned whose stdout is this skill's own failure
+    child is stopped (_stop_child()) and a CompletedProcess is returned whose stdout is this skill's own failure
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
-    exactly as they would from the child itself. `env` replaces the inherited environment."""
+    exactly as they would from the child itself. `env` replaces the inherited environment.
+    `on_start(child)` is called once the child is running (the MCP server keeps it to stop a call
+    the client cancels)."""
     limit = child_limit(per_call)
     child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
+    if on_start is not None:
+        on_start(child)
     try:
         out, err = child.communicate(timeout=limit)
         _unwatch(child)
         return subprocess.CompletedProcess(child.args, child.returncode, out, err)
-    except subprocess.TimeoutExpired as e:
-        child.kill()
-        child.communicate()
+    except subprocess.TimeoutExpired:
+        # A183: the child is asked to stop first. A sibling script's SIGTERM handler stops its
+        # ffmpeg, removes the partial output and releases its output lock before it exits; a
+        # SIGKILL left the partial file under the final output name and a stale lock beside it,
+        # under a document that said kind timeout. Killed only when it has not exited in
+        # STOP_GRACE seconds (and at once on Windows, where terminate() is a kill).
+        stopped_cleanly, rest = _stop_child(child)
         _unwatch(child)
         name = os.path.basename(str(argv[0]))
-        msg = f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was killed"
+        msg = (f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was "
+               + ("stopped" if stopped_cleanly else "killed"))
         doc = {"status": "failed", "exit_code": 124,
                "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
                "commands": []}
-        partial = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
-        return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), partial + f"\nerror: {msg}\n")
+        # communicate() after a timeout returns everything the child wrote, the part read before too
+        return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), rest + f"\nerror: {msg}\n")
 
 
 def option_args(flag: str, value: Any) -> List[str]:
@@ -2304,7 +2642,7 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     if not src or not os.path.isfile(src):
         return True
     try:
-        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", src],
+        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *still_input_args(src), src],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                              timeout=_probe_limit()).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -2345,7 +2683,7 @@ def carried_stream_maps(src: Optional[str], output: str, *, chapters: bool = Tru
         return []
     try:
         out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries",
-                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", src],
+                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *still_input_args(src), src],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                              errors="replace", timeout=_probe_limit()).stdout
         doc = json.loads(out or "{}")
@@ -2684,6 +3022,40 @@ def still_input_args(path: str) -> List[str]:
     with a `%` in its name included: their demuxers never expand it and reject the option."""
     p = str(path)
     return ["-pattern_type", "none"] if "%" in p and os.path.splitext(p)[1].lower() in _IMAGE2_EXT else []
+
+
+def guard_still_patterns(cmd: Sequence[str]) -> List[str]:
+    """`cmd` with still_input_args() in front of every input that needs it and has neither its
+    own `-pattern_type` nor a forced `-f`: each `-i` of an ffmpeg command, the last argument of an
+    ffprobe one. run() and run_analysis() apply it to every command (A7, #465): the emoji overlay
+    PNGs, grid.py's and broll.py's stills and join.py's had no guard, so `%d` in such a path made
+    image2 open a different file. Every other command is returned as it is."""
+    cmd = [str(a) for a in cmd]
+    base = os.path.basename(cmd[0]) if cmd else ""
+    if not any("%" in a for a in cmd[1:]):
+        return cmd
+    if base.startswith("ffprobe"):
+        if still_input_args(cmd[-1]) and "-pattern_type" not in cmd and "-f" not in cmd[:-1]:
+            return cmd[:-1] + still_input_args(cmd[-1]) + cmd[-1:]
+        return cmd
+    if not base.startswith("ffmpeg"):
+        return cmd
+    out: List[str] = []
+    since = 0  # where the current input's options start in `out`
+    i = 0
+    while i < len(cmd):
+        a = cmd[i]
+        if a == "-i" and i + 1 < len(cmd):
+            opts = out[since:]
+            if still_input_args(cmd[i + 1]) and "-pattern_type" not in opts and "-f" not in opts:
+                out += still_input_args(cmd[i + 1])
+            out += [a, cmd[i + 1]]
+            since = len(out)
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out
 
 
 def sibling_temp(dst: str, tag: str) -> str:

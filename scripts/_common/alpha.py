@@ -122,6 +122,7 @@ def frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object
     # Read frame by frame as ffmpeg writes them, not the whole pipe at once: the raw copy is 2304
     # bytes a frame (~250 MB for an hour at 30 fps), the per-frame means a float each. The same
     # wall-clock limit as run_analysis(), which this replaces here.
+    cmd = _runner.guard_still_patterns(cmd)  # a still named with a % is that one file (#465 A7)
     _runner._refuse_url_media(cmd)
     limit = _runner._limit_for(cmd)
     size = w * h
