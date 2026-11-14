@@ -109,21 +109,32 @@ def resolve_font(font_name: str) -> "Dict[str, object]":
 
 
 def font_choice(asked: "Optional[str]", *, font_file: "Optional[str]" = None, script_file: "Optional[str]" = None,
-                script_family: "Optional[str]" = None, renderer: str = "drawtext") -> "Dict[str, object]":
+                script_family: "Optional[str]" = None, renderer: str = "drawtext",
+                bold: bool = False) -> "Dict[str, object]":
     """The font a text-drawing tool draws with, as its result's `font_used`: {asked, file, family,
     how, substituted}. `how`: font_file (the caller's own file), script (a font picked to cover the
     text's script, 1.12), resolved (the asked family resolved to a file: fc-match, or the Windows
     Fonts folder), by_name (no file resolved; ffmpeg/libass look the family up themselves, so the
     file is not known here). For libass (`renderer="libass"`) a resolved file is the one fontconfig
     picks for the family, which is what libass loads through fontconfig; on Windows libass is
-    given the family by name, so nothing is resolved for it."""
+    given the family by name, so nothing is resolved for it.
+
+    `bold` (libass drawing a Bold style): libass asks fontconfig for the family at bold weight, so
+    the file reported is the one `fc-match FAMILY:bold` names -- the family's bold face where it
+    has one, its regular face (emboldened by libass) where it has none. The regular face was
+    reported whatever was drawn (A70, #457). Not on Windows, where nothing is resolved for libass."""
+    weight = ":bold" if bold and renderer == "libass" and platform.system() != "Windows" else ""
     if font_file:
         return {"asked": font_file, "file": font_file, "family": None, "how": "font_file", "substituted": False}
     if script_file:
+        if weight and script_family:
+            face = resolve_font(script_family + weight)
+            if face["file"] and not face["substituted"]:
+                script_file = face["file"]
         return {"asked": asked, "file": script_file, "family": script_family, "how": "script", "substituted": False}
     if renderer == "libass" and platform.system() == "Windows":
         return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": False}
-    found = resolve_font(asked or "")
+    found = resolve_font((asked or "") + weight)
     if not found["file"]:
         return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": False}
     return {"asked": asked, "file": found["file"], "family": found["family"], "how": "resolved",
@@ -147,13 +158,18 @@ def record_font_choice(choice: "Dict[str, object]") -> "Dict[str, object]":
 # request and ffmpeg exits 0 either way. The tools now detect the script of the text they are about
 # to draw and resolve a font file that actually covers it; nothing found is a failed job, not a
 # warning (a video full of boxes is not a delivery).
-SCRIPTS = ("ja", "zh", "ko", "ar", "he", "hi", "bn", "ta", "th", "lo", "ru", "el", "latin")
+# A65 (#457): gu, pa, te, kn, ml, si, km and my were in SHAPING_SCRIPTS but had no range
+# below, so their text was detected as Latin, drawn in the Latin font and reported verified.
+SCRIPTS = ("ja", "zh", "ko", "ar", "he", "hi", "bn", "pa", "gu", "ta", "te", "kn", "ml", "si", "th", "lo",
+           "km", "my", "ru", "el", "latin")
 
 
 LANGUAGE_NAMES = {
     "ja": "Japanese", "zh": "Chinese", "ko": "Korean", "ar": "Arabic", "he": "Hebrew",
     "hi": "Devanagari (Hindi/Marathi/Nepali)", "th": "Thai", "ru": "Cyrillic (Russian and others)",
     "el": "Greek", "latin": "Latin", "bn": "Bengali", "ta": "Tamil", "lo": "Lao",
+    "pa": "Gurmukhi (Punjabi)", "gu": "Gujarati", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
+    "si": "Sinhala", "km": "Khmer", "my": "Myanmar (Burmese)",
     "zh-hant": "Traditional Chinese",
 }
 
@@ -161,7 +177,8 @@ LANGUAGE_NAMES = {
 # fontconfig's own :lang= codes for each script we detect (zh uses zh-cn, the Simplified subset
 # every CJK font that claims zh carries; the rest are the plain two-letter codes).
 FC_LANG = {"ja": "ja", "zh": "zh-cn", "ko": "ko", "ar": "ar", "he": "he", "hi": "hi", "th": "th", "ru": "ru", "el": "el",
-           "bn": "bn", "ta": "ta", "lo": "lo", "zh-hant": "zh-tw"}
+           "bn": "bn", "ta": "ta", "lo": "lo", "zh-hant": "zh-tw",
+           "pa": "pa", "gu": "gu", "te": "te", "kn": "kn", "ml": "ml", "si": "si", "km": "km", "my": "my"}
 
 
 # Families tried in order, best first. The names are matched case-insensitively against the start
@@ -180,6 +197,14 @@ PREFERRED_FAMILIES = {
     "bn": ["Noto Sans Bengali", "Noto Serif Bengali", "Lohit Bengali", "Mukti Narrow", "Vrinda", "Nirmala UI", "FreeSerif"],
     "ta": ["Noto Sans Tamil", "Noto Serif Tamil", "Lohit Tamil", "Latha", "Nirmala UI", "FreeSerif"],
     "lo": ["Noto Sans Lao", "Noto Serif Lao", "Phetsarath OT", "Souliyo Unicode", "Saysettha OT", "DokChampa", "Leelawadee UI"],
+    "pa": ["Noto Sans Gurmukhi", "Noto Serif Gurmukhi", "Lohit Gurmukhi", "Raavi", "Nirmala UI", "FreeSerif"],
+    "gu": ["Noto Sans Gujarati", "Noto Serif Gujarati", "Lohit Gujarati", "Shruti", "Nirmala UI", "FreeSerif"],
+    "te": ["Noto Sans Telugu", "Noto Serif Telugu", "Lohit Telugu", "Gautami", "Nirmala UI"],
+    "kn": ["Noto Sans Kannada", "Noto Serif Kannada", "Lohit Kannada", "Tunga", "Nirmala UI"],
+    "ml": ["Noto Sans Malayalam", "Noto Serif Malayalam", "Lohit Malayalam", "Kartika", "Nirmala UI"],
+    "si": ["Noto Sans Sinhala", "Noto Serif Sinhala", "LKLUG", "Iskoola Pota", "Nirmala UI"],
+    "km": ["Noto Sans Khmer", "Noto Serif Khmer", "Khmer OS", "Leelawadee UI", "Khmer UI"],
+    "my": ["Noto Sans Myanmar", "Noto Serif Myanmar", "Padauk", "Myanmar Text"],
     "ru": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
     "el": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
 }
@@ -201,6 +226,10 @@ WINDOWS_FONTS = {
     "bn": [("Nirmala.ttf", "Nirmala UI"), ("Nirmala.ttc", "Nirmala UI"), ("vrinda.ttf", "Vrinda")],
     "ta": [("Nirmala.ttf", "Nirmala UI"), ("Nirmala.ttc", "Nirmala UI"), ("latha.ttf", "Latha")],
     "lo": [("leelawui.ttf", "Leelawadee UI"), ("DokChamp.ttf", "DokChampa")],
+    # Nirmala UI carries every Indic script Windows supports, Sinhala included
+    **{k: [("Nirmala.ttf", "Nirmala UI"), ("Nirmala.ttc", "Nirmala UI")] for k in ("pa", "gu", "te", "kn", "ml", "si")},
+    "km": [("leelawui.ttf", "Leelawadee UI"), ("KhmerUI.ttf", "Khmer UI")],
+    "my": [("mmrtext.ttf", "Myanmar Text")],
     "ru": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
     "el": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
 }
@@ -233,9 +262,17 @@ _SCRIPT_RANGES = (
     ("he", ((0x0590, 0x05FF), (0xFB1D, 0xFB4F))),
     ("hi", ((0x0900, 0x097F), (0xA8E0, 0xA8FF))),
     ("bn", ((0x0980, 0x09FF),)),
+    ("pa", ((0x0A00, 0x0A7F),)),
+    ("gu", ((0x0A80, 0x0AFF),)),
     ("ta", ((0x0B80, 0x0BFF),)),
+    ("te", ((0x0C00, 0x0C7F),)),
+    ("kn", ((0x0C80, 0x0CFF),)),
+    ("ml", ((0x0D00, 0x0D7F),)),
+    ("si", ((0x0D80, 0x0DFF), (0x111E0, 0x111FF))),
     ("th", ((0x0E00, 0x0E7F),)),
     ("lo", ((0x0E80, 0x0EFF),)),
+    ("km", ((0x1780, 0x17FF), (0x19E0, 0x19FF))),
+    ("my", ((0x1000, 0x109F), (0xA9E0, 0xA9FF), (0xAA60, 0xAA7F))),
     ("ru", ((0x0400, 0x04FF), (0x0500, 0x052F), (0x2DE0, 0x2DFF))),
     ("el", ((0x0370, 0x03FF), (0x1F00, 0x1FFF))),
 )

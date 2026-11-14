@@ -321,12 +321,15 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
     scale = float(getattr(args, "emoji_scale", 1.0) or 1.0)
     # --animate moves the TEXT (\fad/\fscx in the ASS); the PNG has to move with it, or the emoji
     # pops in against a line that is still fading up. These match the \fad values below.
-    fade_in, fade_out = {"fade": (0.2, 0.2), "pop": (0.08, 0.12),
-                         "slide": (0.15, 0.15)}.get(getattr(args, "animate", None) or "none", (0.0, 0.0))
+    fade_in, fade_out = (ms / 1000.0 for ms in ANIMATE_FADE_MS.get(getattr(args, "animate", None) or "none", (0, 0)))
     size_px = args.size * play_h / 288.0
     margin_px = args.margin * play_h / 288.0
     line_h = size_px * 1.2
     box_px = size_px * scale
+    # A62 (#457): libass lays a line out between the Style's MarginL and MarginR (margins_x, the
+    # horizontal safe zone), not --margin, which is the vertical distance: a left-aligned PNG was
+    # drawn over the first words and a right-aligned one left of its gap
+    margin_l, margin_r = margins_x(args, play_w)
     out_cues = []
     for start, end, text in cues:
         lines = _cue_lines(text)
@@ -342,11 +345,11 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
                 y_top = play_h - margin_px - (n - i) * line_h
             line_w = text_width_em(strip_srt_markup(line), scale) * size_px
             if align in (1, 4, 7):
-                x0 = margin_px
+                x0 = float(margin_l)
             elif align in (3, 6, 9):
-                x0 = play_w - margin_px - line_w
+                x0 = play_w - margin_r - line_w
             else:
-                x0 = (play_w - line_w) / 2.0
+                x0 = margin_l + (play_w - margin_l - margin_r - line_w) / 2.0
             # libass lays an RTL line out right-to-left, so the LOGICAL prefix of a cluster
             # occupies the RIGHT end of the rendered line. Measuring the prefix from the left
             # edge put the PNG on top of the text, mirrored, on every Arabic/Hebrew cue (1.15.0).
@@ -561,23 +564,31 @@ def safe_width_fraction(args, play_w: Optional[int]) -> float:
     return max(0.05, (play_w - left - right) / float(play_w))
 
 
+def line_fraction(args, play_w: Optional[int]) -> float:
+    """The width fraction one line is wrapped to: safe_width_fraction, narrowed under
+    --karaoke-style word by --karaoke-scale.
+
+    --karaoke-style word scales its active word up by --karaoke-scale and freezes the line break
+    (WrapStyle: 2 in write_ass) so libass can never re-wrap around that scale-up. The budget is
+    narrowed by the same factor so the longest wrapped line -- computed at the UNscaled width --
+    still fits once its active word is drawn --karaoke-scale%% larger; without this, a line that
+    exactly filled the safe width would overflow it the moment its emphasised word appears. The
+    size fit measures against the same budget, or a cue it reported as fitting was split by the
+    layout after it (A58, #457).
+    """
+    frac = safe_width_fraction(args, play_w)
+    if getattr(args, "karaoke", False) and getattr(args, "karaoke_style", "sweep") == "word":
+        frac = frac / max(1.0, getattr(args, "karaoke_scale", 112) / 100.0)
+    return frac
+
+
 def max_line_em(args, play_w: Optional[int], play_h: Optional[int]) -> Optional[float]:
     """How many em fit on one caption line at the chosen size, or None without video geometry.
 
     --size is in ASS points against a 288-line script (what libass's force_style uses), so the
-    rendered pixel size is size * play_h / 288.
-
-    --karaoke-style word scales its active word up by --karaoke-scale and freezes the line break
-    (WrapStyle: 2 in write_ass) so libass can never re-wrap around that scale-up. The budget here
-    is narrowed by the same factor so the longest wrapped line -- computed at the UNscaled width --
-    still fits once its active word is drawn --karaoke-scale%% larger; without this, a line that
-    exactly filled the safe width would overflow it the moment its emphasised word appears.
+    rendered pixel size is size * play_h / 288; the width is line_fraction's.
     """
-    em = line_em_for_size(args.size, play_w, play_h,
-                          safe_fraction=safe_width_fraction(args, play_w))
-    if em is not None and getattr(args, "karaoke", False) and getattr(args, "karaoke_style", "sweep") == "word":
-        em = em / max(1.0, getattr(args, "karaoke_scale", 112) / 100.0)
-    return em
+    return line_em_for_size(args.size, play_w, play_h, safe_fraction=line_fraction(args, play_w))
 
 
 def parse_ass_dialogue(path: str) -> str:
@@ -692,35 +703,139 @@ def shift_ass_text(source: str, offset: float) -> Tuple[str, int, int]:
 
 
 def word_durations_from_timings(words: List[Tuple[float, float, str]], start: float, end: float,
-                                n_words: int) -> Optional[List[int]]:
-    """Centiseconds per word for one cue, from real word timings; None when they don't cover it."""
+                                n_words: int) -> Optional[Tuple[int, List[int]]]:
+    """(lead, centiseconds per word) for one cue from real word timings; None when they don't
+    cover it. `lead` is the silence between the cue's start and its first word: the highlight
+    waits for it rather than starting at the cue and running ahead of the speech by that much
+    (A59, #457)."""
     inside = [w for w in words if w[1] > start + 0.01 and w[0] < end - 0.01]
     if len(inside) != n_words or n_words <= 0:
         return None
     total_cs = max(1, int(round((end - start) * 100)))
-    bounds = [max(start, inside[0][0])] + [max(start, min(end, w[1])) for w in inside]
+    first = min(end, max(start, inside[0][0]))
+    lead = int(round((first - start) * 100))
+    bounds = [first] + [max(first, min(end, w[1])) for w in inside]
     out = [max(1, int(round((bounds[i + 1] - bounds[i]) * 100))) for i in range(n_words)]
-    out[-1] += total_cs - sum(out)
+    out[-1] += total_cs - lead - sum(out)
     if out[-1] < 1:
         return None
-    return out
+    return lead, out
 
 
-def _karaoke_word_durations(args, video: Optional[str], start: float, end: float, n_words: int) -> List[int]:
-    """Centiseconds per word for one cue, shared by --karaoke-style sweep and word.
+def _karaoke_word_durations(args, video: Optional[str], start: float, end: float,
+                            n_words: int) -> Tuple[int, List[int]]:
+    """(lead, centiseconds per word) for one cue, shared by --karaoke-style sweep and word.
 
     Real word timings from the transcript beat both the energy estimate and the even split --
-    they are what the speaker actually did, not a proxy for it.
+    they are what the speaker actually did, not a proxy for it. Only they carry a lead (the
+    silence before the first word); the other two share the whole cue out from its start.
     """
     dur_cs = max(1, int(round((end - start) * 100)))
-    durs = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, n_words)
-    if durs is None:
-        if getattr(args, "karaoke_timing", "even") == "energy" and video:
-            durs = word_durations_from_audio(video, start, end, n_words, getattr(args, "audio_stream", 0))
+    timed = word_durations_from_timings(getattr(args, "_word_timings", None) or [], start, end, n_words)
+    if timed is not None:
+        return timed
+    if getattr(args, "karaoke_timing", "even") == "energy" and video:
+        return 0, word_durations_from_audio(video, start, end, n_words, getattr(args, "audio_stream", 0))
+    per = max(1, dur_cs // max(1, n_words))
+    return 0, [per] * n_words
+
+
+def shift_words(words: List[Tuple[float, float, str]], offset: float) -> List[Tuple[float, float, str]]:
+    """Word timings moved by --offset, as the cues they belong to are (#505): the offset corrects a
+    transcript that runs early or late against the sound, and its word timings come from the same
+    transcript."""
+    if not offset:
+        return list(words or [])
+    return [(s + offset, e + offset, w) for s, e, w in (words or [])]
+
+
+# A `{...}` that ffmpeg's SRT reader passes on to libass as text, where it is an override block and
+# draws nothing: not `{\...}` (ffmpeg removes those itself), not a MicroDVD `{y:i}` style code, not
+# the `\{` escape
+SRT_HIDDEN_BRACES_RE = re.compile(r"(?<!\\)\{(?!\\)(?![CcFfoPSsYy]:)[^{}]*\}")
+
+
+# --animate's envelope in ms (fade in, fade out), and the slide's rise: one table for the ASS
+# below and the emoji PNGs that ride it (plan_emoji)
+ANIMATE_FADE_MS = {"fade": (200, 200), "pop": (80, 120), "slide": (150, 150)}
+SLIDE_MS = 250
+
+
+def line_anchor(align: int, play_w: int, play_h: int, margin: int, margin_l: int, margin_r: int) -> Tuple[int, int]:
+    """The point libass anchors a line of alignment `align` (numpad) at, from the Style's margins:
+    what a `\\move` has to end on so that --animate slide lands where the line is drawn without it
+    (A56, #457: the slide always ended at the bottom centre)."""
+    if align in (1, 4, 7):
+        x = margin_l
+    elif align in (3, 6, 9):
+        x = play_w - margin_r
+    else:
+        x = margin_l + (play_w - margin_l - margin_r) // 2
+    if align in (7, 8, 9):
+        y = margin
+    elif align in (4, 5, 6):
+        y = play_h // 2
+    else:
+        y = play_h - margin
+    return x, y
+
+
+def animate_fx(kind: str, o: int, e: int, dur: int, anchor: Tuple[int, int], rise: int) -> str:
+    """The --animate override for an event shown from `o` to `e` ms into a cue `dur` ms long.
+
+    A whole cue (o == 0, e == dur) gets the envelope it always had. --karaoke-style word draws a
+    cue as one event per word: each gets the part of the cue's one envelope that falls inside it,
+    started where the event before left it, so the fade-out comes at the cue's end and not at the
+    end of the first word, and a slide or a pop does not restart or jump at a word (A57, #457)."""
+    if kind not in ANIMATE_FADE_MS:
+        return ""
+    fin, fout = ANIMATE_FADE_MS[kind]
+    x, y2 = anchor
+    y1 = y2 + rise
+    whole = o == 0 and e == dur
+    if whole:
+        fade = "\\fad(%d,%d)" % (fin, fout)
+    else:
+        out_at = dur - fout
+
+        def alpha(t: float) -> int:
+            a = 0.0
+            if t < fin:
+                a = 255.0 * (1.0 - t / float(fin))
+            if t > out_at and fout:
+                a = max(a, 255.0 * (t - out_at) / float(fout))
+            return int(round(min(255.0, max(0.0, a))))
+        if o >= fin and e <= out_at:
+            fade = ""
         else:
-            per = max(1, dur_cs // max(1, n_words))
-            durs = [per] * n_words
-    return durs
+            a1 = alpha(o)
+            t2 = max(0, fin - o)
+            t3 = max(t2, out_at - o)
+            fade = "\\fade(%d,%d,255,0,%d,%d,%d)" % (a1, a1 if o > out_at else 0, t2, t3, max(t3, dur - o))
+    if kind == "fade":
+        tags = fade
+    elif kind == "pop":
+        if o == 0:
+            scale = "\\fscx60\\fscy60\\t(0,120,\\fscx110\\fscy110)\\t(120,200,\\fscx100\\fscy100)"
+        elif o < 120:
+            v = int(round(60 + 50 * o / 120.0))
+            scale = ("\\fscx%d\\fscy%d\\t(0,%d,\\fscx110\\fscy110)\\t(%d,%d,\\fscx100\\fscy100)"
+                     % (v, v, 120 - o, 120 - o, 200 - o))
+        elif o < 200:
+            v = int(round(110 - 10 * (o - 120) / 80.0))
+            scale = "\\fscx%d\\fscy%d\\t(0,%d,\\fscx100\\fscy100)" % (v, v, 200 - o)
+        else:
+            scale = ""
+        tags = fade + scale
+    else:
+        if o == 0:
+            move = "\\move(%d,%d,%d,%d,0,%d)" % (x, y1, x, y2, SLIDE_MS)
+        elif o < SLIDE_MS:
+            move = "\\move(%d,%d,%d,%d,0,%d)" % (x, int(round(y1 + (y2 - y1) * o / float(SLIDE_MS))), x, y2, SLIDE_MS - o)
+        else:
+            move = "\\pos(%d,%d)" % (x, y2)
+        tags = fade + move
+    return "{" + tags + "}" if tags else ""
 
 
 # an override block this file wrote (a converted SRT tag), not the escaped `\{` a user typed
@@ -751,7 +866,8 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     primary = ass_color(args.highlight_color if args.karaoke else args.color)
     secondary = ass_color(args.color)
     outline = ass_color(args.outline_color)
-    back = ass_color(args.outline_color, 0x80)
+    back_alpha = 0x80     # the --box colour is half transparent; an emoji placeholder restores it
+    back = ass_color(args.outline_color, back_alpha)
     word_style = args.karaoke and getattr(args, "karaoke_style", "sweep") == "word"
     word_past = ass_color(args.color)
     word_active = ass_color(args.highlight_color)
@@ -786,14 +902,12 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         # an override block. Newlines become \N in the same pass.
         # SRT markup is the exception (#X2): <i>/<b>/<u>/<s>, <font color> and {\anN} become the
         # overrides ffmpeg's SRT reader gives them, so this route draws what the plain one draws
+        # the line's anchor for --animate slide: the cue's own {\anN} first, as libass reads it
+        anchor = line_anchor(srt_alignment(text) or ALIGN[args.position], play_w, play_h, margin, margin_l, margin_r)
         text = ass_escape_markup(text, colour=not args.karaoke)
-        fx = ""
-        if args.animate == "fade":
-            fx = "{\\fad(200,200)}"
-        elif args.animate == "pop":
-            fx = "{\\fad(80,120)\\fscx60\\fscy60\\t(0,120,\\fscx110\\fscy110)\\t(120,200,\\fscx100\\fscy100)}"
-        elif args.animate == "slide":
-            fx = "{\\fad(150,150)\\move(%d,%d,%d,%d,0,250)}" % (play_w // 2, play_h - margin + int(30 * scale), play_w // 2, play_h - margin)
+        cue_ms = max(1, int(round((end - start) * 100))) * 10
+        fx = animate_fx(args.animate, 0, cue_ms, cue_ms, anchor, int(30 * scale))
+        size_fx = ""
         body = text
         # --fit-size-scope cue: one size per cue, as a leading {\fsN} override. Opt-in only --
         # see fit_size()'s docstring for why a size that changes cue to cue is not the default.
@@ -803,7 +917,8 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         own_sizes = getattr(args, "_fit_sizes_out", None) or []
         own = own_sizes[cue_index] if cue_index < len(own_sizes) else None
         if own and own != args.size:
-            fx += "{\\fs%d}" % int(round(own * scale))
+            size_fx = "{\\fs%d}" % int(round(own * scale))
+            fx += size_fx
         if args.karaoke and word_style:
             # One Dialogue event per WORD, each carrying the whole cue -- \k/\kf can only
             # interpolate colour, so scaling/emboldening the active word (and a third "upcoming"
@@ -819,18 +934,21 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
                 # today's karaoke-off rendering, rather than zero Dialogue lines for this cue
                 out_body = body
                 if EMOJI_SENTINEL in out_body:
-                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
+                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size), back_alpha))
                 lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{out_body}")
                 continue
             n_words = len(real_idx)
-            durs = _karaoke_word_durations(args, video, start, end, n_words)
-            starts_cs, acc = [], 0
-            for d in durs:
-                starts_cs.append(acc)
+            lead, durs = _karaoke_word_durations(args, video, start, end, n_words)
+            # (first cs, cs, active word): the silence before the first word is an event of its
+            # own in which no word is active yet (A59)
+            events, acc = ([(0, lead, -1)] if lead > 0 else []), lead
+            for j, d in enumerate(durs):
+                events.append((acc, d, j))
                 acc += d
-            for j in range(n_words):
-                w_start = start + starts_cs[j] / 100.0
-                w_end = start + (starts_cs[j] + durs[j]) / 100.0
+            span_ms = acc * 10   # the --animate envelope spans the events, first to last
+            for ev_cs, ev_len, j in events:
+                w_start = start + ev_cs / 100.0
+                w_end = start + (ev_cs + ev_len) / 100.0
                 # colour/scale each real word by its rank against the active one (j); an
                 # emoji-placeholder token is never active and just keeps its plain text
                 styled, flat_pos = [], 0
@@ -855,18 +973,19 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
                     styled.append(" ".join(styled_line))
                 out_body = "\\N".join(styled)
                 if EMOJI_SENTINEL in out_body:
-                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
-                # the size/fit override (\fsN) belongs on every event; the entrance animation
-                # (\fad/\move/pop) only on the cue's FIRST word event -- replaying it on every
-                # later word would re-fade/re-pop the whole cue each time the highlight advances
-                event_fx = fx if j == 0 else (fx[fx.index("{\\fs"):] if "{\\fs" in fx else "")
+                    out_body = out_body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size), back_alpha))
+                # the size/fit override (\fsN) belongs on every event; --animate is the cue's one
+                # envelope, and each event takes the part of it that falls inside the event: the
+                # fade-out at the cue's end, the slide and the pop carried on, not restarted (A57)
+                event_fx = animate_fx(args.animate, ev_cs * 10, (ev_cs + ev_len) * 10, span_ms, anchor,
+                                      int(30 * scale)) + size_fx
                 lines.append(f"Dialogue: 0,{t(w_start)},{t(w_end)},Default,,0,0,0,,{event_fx}{out_body}")
             continue
         if args.karaoke:
             # split each line into words and give every word an equal share of the cue (\k is in centiseconds)
             segments = body.split("\\N")
             words = [w for seg in segments for w in seg.split(" ") if w and _karaoke_word(w)]
-            durs = _karaoke_word_durations(args, video, start, end, len(words))
+            lead, durs = _karaoke_word_durations(args, video, start, end, len(words))
             it = iter(durs)
             out_segments = []
             for seg in segments:
@@ -877,8 +996,12 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
                 out_segments.append(" ".join(
                     ("{\\kf0}" + w) if not _karaoke_word(w) else f"{{\\kf{next(it)}}}{w}" for w in ws))
             body = "\\N".join(out_segments)
+            if lead > 0:
+                # the silence before the first word: an empty \k syllable, so the fill starts
+                # with the speech and not at the cue's start (A59)
+                body = "{\\k%d}" % lead + body
         if EMOJI_SENTINEL in body:
-            body = body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size)))
+            body = body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size), back_alpha))
         lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{body}")
     with open(path, "w", encoding="utf-8-sig") as fh:
         fh.write("\n".join(header + lines) + "\n")
@@ -1214,6 +1337,13 @@ def main() -> int:
                 "ASS carries burn-only styling with no soft-subtitle equivalent; use --mode burn for an ASS file")
         if args.animate != "none" or args.karaoke:
             die("--animate/--karaoke render pixels into the picture and require --mode burn")
+        if args.max_lines != 2 or args.wrap != "phrase":
+            # A55: a soft track is wrapped by the player at the size it draws; this run does not wrap
+            # or split it, so a layout flag would be accepted and do nothing
+            asked = f"--max-lines {args.max_lines}" if args.max_lines != 2 else f"--wrap {args.wrap}"
+            die(f"{asked} lays out burned captions; --mode mux adds the cues as they are and the player wraps "
+                "a soft subtitle at the size it draws it", kind="input",
+                hint=f"drop {asked.split()[0]}, or use --mode burn")
 
     args.offset = signed_time_arg(str(args.offset), "--offset")
     if args.max_lines < 1:
@@ -1289,7 +1419,7 @@ def main() -> int:
         return dict(size=fit_stats["size_requested"], min_size=args._fit_floor,
                     max_lines=args.max_lines, play_w=play_w, play_h=play_h,
                     mode=args.wrap, lang=args.language, scope=args.fit_size_scope,
-                    safe_fraction=safe_width_fraction(args, play_w))
+                    safe_fraction=line_fraction(args, play_w))
 
     def fit_the_size(cue_list):
         """Shrink --size until every cue fits --max-lines, BEFORE the cue is split.
@@ -1331,7 +1461,7 @@ def main() -> int:
             # budget and then drawing some cues large put lines off the side of the frame.
             args._fit_cue_em = [line_em_for_size(fit["per_cue"].get(i, fit["size"]),
                                                  play_w, play_h,
-                                                 safe_fraction=safe_width_fraction(args, play_w))
+                                                 safe_fraction=line_fraction(args, play_w))
                                 for i in range(len(cue_list))]
             args._fit_cue_size = [fit["per_cue"].get(i, fit["size"]) for i in range(len(cue_list))]
 
@@ -1340,7 +1470,9 @@ def main() -> int:
         --offset -- the one place every cue source goes through, so an SRT, a cue file and a
         transcript all come out equally readable."""
         fit_the_size(cue_list)
-        out, stats = layout_cues(cue_list, max_em=max_line_em(args, play_w, play_h),
+        # A55 (#457): a soft subtitle is laid out by the player, at a size this run does not
+        # know; wrapping it at the burn-in size split a cue on a portrait video into three
+        out, stats = layout_cues(cue_list, max_em=None if args.mode == "mux" else max_line_em(args, play_w, play_h),
                                  max_lines=args.max_lines, min_duration=args.min_duration,
                                  offset=args.offset, wrap=args.wrap, lang=args.language,
                                  per_cue_em=getattr(args, "_fit_cue_em", None),
@@ -1360,15 +1492,24 @@ def main() -> int:
     for token in (args.srt or []):
         path_part, lang_part = split_srt_lang(token)
         srt_tracks.append((path_part, lang_part))
-    if len(srt_tracks) == 1 and srt_tracks[0][1] is None and args.language:
+    # --language tags the track only where there is a track to tag (A71, #457): a burn reads it as
+    # the script and wrap hint, and refusing it as an --srt suffix named a flag nobody had given
+    tagged_by_language = False
+    if args.mode == "mux" and len(srt_tracks) == 1 and srt_tracks[0][1] is None and args.language:
         srt_tracks[0] = (srt_tracks[0][0], args.language)
+        tagged_by_language = True
+    if args.mode == "mux" and args.language and not srt_tracks and not LANG_TOKEN_RE.match(args.language):
+        # the --text/--transcribe track is tagged with it too, and was tagged unchecked
+        die(f"--language: '{args.language}' is not a language code (two or three letters, optionally with a "
+            "region, e.g. en, ja, pt-BR)", kind="input")
     if srt_tracks and args.mode != "mux" and len(srt_tracks) > 1:
         die("burning renders pixels; only one language can be in the picture -- burn one and mux "
             "the rest (caption.py OUT --mode mux --srt en.srt:en --srt ja.srt:ja)", kind="input")
     seen_langs = [lang for _p, lang in srt_tracks if lang]
     for lang in seen_langs:
         if not LANG_TOKEN_RE.match(lang):
-            die(f"--srt: '{lang}' is not a language code (two or three letters, optionally with a "
+            die(f"{'--language' if tagged_by_language else '--srt'}: '{lang}' is not a language code (two or "
+                "three letters, optionally with a "
                 "region, e.g. en, ja, pt-BR)", kind="input")
     if len(set(seen_langs)) != len(seen_langs):
         dup = sorted({l for l in seen_langs if seen_langs.count(l) > 1})
@@ -1464,7 +1605,8 @@ def main() -> int:
             cues = asr_run.cues
             args._asr = dict(asr_run.facts)
             args._asr_notes = list(asr_run.notes)
-            args._word_timings = whisper_word_timings(srt_path) or sorted((w["start"], w["end"], w["word"]) for w in asr_run.words)
+            args._word_timings = shift_words(whisper_word_timings(srt_path) or sorted(
+                (w["start"], w["end"], w["word"]) for w in asr_run.words), args.offset)
             cues, changed = lay_out(cues)
             if changed:
                 write_srt(cues, srt_path)
@@ -1629,11 +1771,11 @@ def main() -> int:
                 side_notes.append(f"subtitle track {n} is {copy}, a copy of {os.path.basename(path)} with its timings "
                                   "rewritten as hh:mm:ss,mmm, which ffmpeg reads as this tool does")
                 added[n] = (copy, lang)
-        if len(added) > 1 and any(caption_stats.get(k) for k in ("wrapped", "split", "extended")):
-            # --max-lines and --min-duration lay out the first --srt, the track the size fit is
-            # made for; the others keep their own line breaks and durations, and the result says so
-            side_notes.append(f"--max-lines/--min-duration laid out the first --srt only: the other {len(added) - 1} "
-                              "added track(s) keep the line breaks and cue lengths of their own files")
+        if len(added) > 1 and caption_stats.get("extended"):
+            # --min-duration lengthens the first --srt's cues; the others keep their own durations,
+            # and the result says so (no track is wrapped or split in a mux, A55)
+            side_notes.append(f"--min-duration lengthened cues of the first --srt only: the other {len(added) - 1} "
+                              "added track(s) keep the cue lengths of their own files")
         titles = list(args.track_title or [])
         mp4_family = Path(output).suffix.lower() in (".mp4", ".m4v", ".mov")
         dropped_titles: List[str] = []
@@ -1773,7 +1915,7 @@ def main() -> int:
     elif font_file or not args.fonts_dir:
         # the family libass is given is the sanitised one (ass_font_name): that is what it resolves
         font_used = record_font_choice(font_choice(ass_font_name(args.font), script_file=font_file, script_family=font_family,
-                                                   renderer="libass"))
+                                                   renderer="libass", bold=bool(args.bold)))
     else:
         font_used = {"asked": ass_font_name(args.font), "file": None, "family": ass_font_name(args.font), "how": "fonts_dir",
                      "fonts_dir": args.fonts_dir, "substituted": False}
@@ -1801,6 +1943,15 @@ def main() -> int:
                                                 brand if args.brand else None)
     # the PNG route and --emoji none both change the drawn text, so they need the generated ASS
     force_ass = bool(emoji_plan and (emoji_plan.get("overlays") or emoji_plan.get("mode") == "none"))
+    if (not args.ass and not force_ass and args.animate == "none" and not args.karaoke
+            and any(SRT_HIDDEN_BRACES_RE.search(t) for _s, _e, t in src_cues)):
+        # A68 (#457): ffmpeg's SRT reader hands `{curly}` to libass as an override block, which
+        # draws nothing of it, while the generated ASS draws the braces and their text; the cues
+        # go the generated-ASS way, so the burned words are the words given
+        force_ass = True
+        info("cue text has braces that ffmpeg's SRT reader would hide; drawing the cues through the generated ASS")
+        side_notes.append("the cues hold text in braces, which a plain SRT burn does not draw ({...} is an override "
+                          "block to libass), so they were drawn through the generated ASS, braces included")
     if emoji_plan and emoji_plan.get("box_px"):
         args._emoji_box_px = emoji_plan["box_px"]
 
@@ -1812,7 +1963,8 @@ def main() -> int:
                 planned_cues if planned_cues is not None else parse_srt(srt_path)))
         if args.karaoke and not getattr(args, "_word_timings", None):
             # Use the cue source's sidecar, even when layout rewrites the caller's SRT.
-            args._word_timings = whisper_word_timings(args.srt if args.srt and not (args.text or args.transcribe) else srt_path)
+            args._word_timings = shift_words(whisper_word_timings(
+                args.srt if args.srt and not (args.text or args.transcribe) else srt_path), args.offset)
         ass_path = args.write_ass or os.path.splitext(output)[0] + ".ass"
         claim([(ass_path, "ASS")])
         w, h = display_size(meta["video"])
