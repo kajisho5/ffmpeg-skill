@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.9
+
+_Automated release: version and notes generated from pull requests merged since 3.8.8._
+
 ### Fixed
 
 - **An encoder or a filter this ffmpeg build lacks is refused before ffmpeg runs, dry runs
@@ -78,6 +84,7 @@
   words, and `result.language` for `--filler-lang auto`, as `--transcribe` does), and now warns
   (`words_outside_input`) when word timings start at or after the end of the input. Noto Emoji's file
   names (`emoji_u1f600.png`, a keycap's `emoji_u0031_20e3.png`) are found in `--emoji-assets`.
+- fix: refuse a component the build lacks before FFmpeg runs; say what was not measured; name a file in the wrong format (#402, #403, #404) (#509)
 
 ## 3.8.8
 
