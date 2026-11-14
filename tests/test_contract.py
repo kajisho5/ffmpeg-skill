@@ -10522,6 +10522,7 @@ class Audit467Tests(unittest.TestCase):
         (repo / "bin" / "install.js").write_text("", encoding="utf-8")
         (repo / ".gitignore").write_text("runs/\n", encoding="utf-8")
         (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+        (repo / "clean.txt").write_text("one\n", encoding="utf-8")
         for name, body in (("node", 'mkdir -p "$3/ffmpeg-skill"\n'),
                            ("claude", 'cd "$STUB_REPO" && eval "$STUB_ACTION"\n')):
             (stubs / name).write_text("#!/bin/sh\n" + body, encoding="utf-8")
@@ -10549,7 +10550,8 @@ class Audit467Tests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 1, proc.stderr)
                 self.assertTrue((outside / "a" / ".tree_changed").is_file())
         with self.subTest("an edit the run commits"):
-            proc = run(outside, "echo four >> tracked.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qam run")
+            # only this file is committed: the status and the diff of the others stay as they were
+            proc = run(outside, "echo two >> clean.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm run -- clean.txt")
             self.assertEqual(proc.returncode, 1, proc.stderr)
             self.assertTrue((outside / "a" / ".tree_changed").is_file())
         with self.subTest("a snapshot that cannot be taken"):
