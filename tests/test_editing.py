@@ -4205,6 +4205,21 @@ class CompositingAndEdgeInputTests(unittest.TestCase):
         self.assertLess(abs(float(streams["video"]["duration"]) - float(streams["audio"]["duration"])), frame / 2, streams)
         self.assertLess(abs(float(streams["video"]["duration"]) - float(src["video"]["duration"])), frame / 2, streams)
 
+    def test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame(self):
+        """#513 review: with the closing rate the delivered one (about 20 fps here), the trim that
+        drops the hold's spare clones cut half a DELIVERED frame before the end, and a real last
+        frame nearer the end than that (1.983 s on the source's 1/60 grid) was dropped before the
+        reversal, which then opened on the frame before it. The last frame is the only white one."""
+        vfr = OUT / "a460_vfr_last.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=160x120:r=60:d=2",
+           "-f", "lavfi", "-i", "sine=d=2",
+           "-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='eq(n,119)',select='not(mod(n,3))+eq(n,119)'",
+           "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", vfr)
+        self.assertTrue(probe(str(vfr))["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        out = OUT / "a460_vfr_last_rev.mp4"
+        script("reverse.py", vfr, "--fast", "-o", out)
+        self.assertGreater(min(frame_rgb(out, 0, 80, 60)), 200, "the reversed clip must open on the source's last frame")
+
     def test_loop_crossfade_keeps_a_late_picture_with_its_sound(self):
         """A168: the crossfade's unit rebased each stream to its own start (the picture's setpts,
         the sound's aresample first_pts=0), so a picture that starts 0.2 s after its sound came out
