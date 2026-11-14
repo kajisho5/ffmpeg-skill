@@ -655,6 +655,55 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
+def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> str:
+    """The `fps` filter that puts the picture on the grid cfr_args() delivers, as the last filter of
+    the video chain; "" when cfr_args() forces no rate. The encoder line's `-fps_mode cfr -r` alone
+    let a frame fall up to about two frames behind its slot before it dropped one, so a VFR clip
+    conformed at its average rate showed its picture up to 56 ms after its sound (#512); the
+    filter takes the nearest frame for every slot. The encoder line keeps cfr_args(), which then
+    moves no frame."""
+    args = cfr_args(meta, fps)
+    return f"fps={args[-1]}" if args else ""
+
+
+def with_cfr(chain: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> str:
+    """`chain` (a -vf value or one filtergraph chain) with cfr_filter() appended when there is one.
+    A -vf value that is a graph of its own (drawn_chain()'s split/maskedmerge) gets it first
+    instead: maskedmerge, like overlay, ends its output at its last frame's start, and an fps
+    filter after it lost the last frame (graphics.py --template chapter: 3.963 s of 4)."""
+    f = cfr_filter(meta, fps)
+    if not f:
+        return chain
+    if ";" in chain:
+        return f"{f},{chain}"
+    return f"{chain},{f}" if chain else f
+
+
+def graph_with_cfr(graph: str, label: str, meta: Optional[Dict[str, Any]],
+                   fps: Optional[float] = None) -> Tuple[str, str]:
+    """A -filter_complex graph and the video output label to map, with cfr_filter() after that
+    label when there is one: (graph + ";[v]fps=R[vcfr]", "[vcfr]"), else both unchanged."""
+    f = cfr_filter(meta, fps)
+    if not f:
+        return graph, label
+    bare = label.strip("[]")
+    return f"{graph};[{bare}]{f}[{bare}cfr]", f"[{bare}cfr]"
+
+
+def cfr_at_input(graph: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None, src: str = "[0:v]") -> str:
+    """A -filter_complex graph with cfr_filter() on its main picture as it is decoded (`src`, which
+    the graph reads once), for a graph that composites onto that picture and moves no frame in
+    time. After an overlay the conform comes too late: FFmpeg 6.1's overlay ends its output at its
+    last frame's start, so an fps filter there lost the last frame (3.963 s of a 4 s picture)."""
+    f = cfr_filter(meta, fps)
+    if not f:
+        return graph
+    if graph.count(src) != 1:
+        # a graph that read the picture twice, or not at all, would go unconformed or not parse
+        raise ValueError(f"cfr_at_input: the graph reads {src} {graph.count(src)} times, not once")
+    return f"{src}{f}[cfrin];" + graph.replace(src, "[cfrin]")
+
+
 def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Optional[float]:
     """The constant rate cfr_args() forces on the output (its -r), or None when it forces none and
     the output keeps the source's rate -- what a start timecode is counted at

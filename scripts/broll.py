@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from _common.decision import (av_trim, conform_output_t, conform_to_length, frame_durations, frame_rate, frame_window,
                               grid_at_or_after, silence_filter, stream_starts, window_expr, windowed_overlay_x)
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.emit import input_length
@@ -242,7 +242,10 @@ def main() -> int:
             parts.append(f"{''.join(layers)}amix=inputs={len(layers)}:normalize=0:dropout_transition=0,{tail}[aout]")
             aout = "[aout]"
 
-    cmd += ["-filter_complex", ";".join(parts), "-map", vout]
+    # a VFR A-roll is conformed by the fps filter as it is decoded, at the rate cfr_args() delivers:
+    # -fps_mode cfr alone let a frame run up to two frames late against the sound (#512)
+    graph = cfr_at_input(";".join(parts), meta_a)
+    cmd += ["-filter_complex", graph, "-map", vout]
     if aout:
         cmd += ["-map", aout]
     cmd += video_args(meta_a, args.crf, args.preset, convert_matrix=False) + cfr_args(meta_a, None)

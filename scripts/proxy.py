@@ -26,7 +26,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, fmt_secs
+from _common import add_common, apply_common, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, fmt_secs
 from _common.emit import note
 from _common.probe import display_size, square_pixels, square_pixels_note
 
@@ -77,7 +77,7 @@ def main() -> int:
              + (f"the source is {sw}px wide and a proxy is not upscaled" if asked > ceiling else "2px is the smallest width"))
     output = args.output or default_output(args.input, "proxy")
 
-    cmd = ffmpeg_base() + ["-i", args.input, "-vf", (square + "," if square else "") + f"scale={out_w}:-2"]
+    cmd = ffmpeg_base() + ["-i", args.input, "-vf", with_cfr((square + "," if square else "") + f"scale={out_w}:-2", meta, args.fps)]
     cmd += video_args(meta, args.crf, "veryfast")
     cmd += cfr_args(meta, args.fps)
     cmd += ["-map", "0:v:0"] + (["-map", "0:a:0", "-c:a", "aac", "-b:a", "96k"] if has_audio else ["-an"])

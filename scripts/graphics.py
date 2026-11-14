@@ -36,7 +36,7 @@ from typing import List, Optional, Tuple
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
 from _common.drawtext import shaping_refusal
-from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args,
+from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, cfr_at_input, with_cfr,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, probe, rgb_chain_to_bt709, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
@@ -837,14 +837,17 @@ def main(force_route: Optional[str] = None) -> int:
         if finish:
             chains.append(f"[{last}]{finish}[ka_v]")
             last = "ka_v"
-        cmd += ["-filter_complex", ";".join(chains), "-map", f"[{last}]",
+        # the conform of a VFR source is the fps filter on the picture as it is decoded (#512)
+        cmd += ["-filter_complex", cfr_at_input(";".join(chains), meta), "-map", f"[{last}]",
                 "-map", f"0:a:{args.audio_stream}?"]
     elif fc:
         if finish:
             fc.append(f"[vout]{finish}[ka_v]")
-        cmd += ["-filter_complex", ";".join(fc), "-map", "[ka_v]" if finish else "[vout]", "-map", f"0:a:{args.audio_stream}?"]
+        cmd += ["-filter_complex", cfr_at_input(";".join(fc), meta), "-map", "[ka_v]" if finish else "[vout]",
+                "-map", f"0:a:{args.audio_stream}?"]
     else:
-        cmd += ["-vf", ",".join(p for p in (square, text, finish) if p) if finish else (square + "," if square else "") + text,
+        vf = ",".join(p for p in (square, text, finish) if p) if finish else (square + "," if square else "") + text
+        cmd += ["-vf", with_cfr(vf, meta),
                 "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
     if alpha_codec:
         cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta)

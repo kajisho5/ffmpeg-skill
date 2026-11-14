@@ -92,6 +92,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
 - [After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3813--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
 - [After 3.8.13 — tests, CI, distribution and the site (#467)](#after-3813--tests-ci-distribution-and-the-site-467)
+- [After 3.8.14 — odd positions, the CFR conform and the timeline's aspect (#512, #506)](#after-3814--odd-positions-the-cfr-conform-and-the-timelines-aspect-512-506)
 <!-- contents:end -->
 
 ## Time limits
@@ -1109,9 +1110,11 @@ not a new file format this tool would have to maintain.
   reads `--aspect` with too: two sides split at `:`, each read with `int()` as fit.py read them
   in 2.2.1 (`+16:9` and `1_6:9` parse, `0:9` is a zero ratio that sizes as no aspect). So the
   export refuses `16/9` where the render hands it to fit.py, which refuses it too, and fit.py
-  refuses nothing it took in 2.2.1. When the project's own `fit.aspect` replaces it, the render
-  never gives fit.py the frame's aspect and completes, so the export sizes the sequence
-  without it. `frame_from_preset()` keeps 2.2.1's looser match (`16/9`, `1.78:1`) for the
+  refuses nothing it took in 2.2.1. With one clip the sequence takes the project's `fit` object
+  first and the frame only where it has none, as the render's fit stage does (#506, in the
+  "After 3.8.11" section below). With several clips, when the project's own `fit.aspect`
+  replaces it, the render never gives fit.py the frame's aspect and completes, so the export
+  sizes the sequence without it. `frame_from_preset()` keeps 2.2.1's looser match (`16/9`, `1.78:1`) for the
   preset size: it drops nothing a 2.2.1 render was sized by.
   A render of several clips gives fit.py the frame's side when the frame gives an aspect and
   one side, and the project's `fit` object gives no width, height or other aspect. Before,
@@ -4082,9 +4085,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   input on the chroma grid), so no luma sample outside the rectangle changes and every one inside
   it is redacted (audit A170). A 4:2:0 chroma sample on that edge covers a pixel inside and one
   outside, and is half mixed: there is no exact answer at that resolution. `crop.py` cuts with
-  `exact=1`, so the rectangle written is the one asked for. Not changed: `overlay.py --position
-  X,Y` still lands on the even position before an odd one (10,12 for 11,13, measured on 6.1.1)
-  and `fit.py`'s computed crop offset is rounded the same way. Code: `redact.main()`, `crop.main()`.
+  `exact=1`, so the rectangle written is the one asked for. `overlay.py --position X,Y` and
+  `fit.py`'s computed crop offset still landed on the even position before an odd one (10,12 for
+  11,13, measured on 6.1.1); both are exact since #512 (the "After 3.8.11" section). Code: `redact.main()`, `crop.main()`.
   Test: `test_an_odd_rectangle_is_taken_and_redacted_where_it_was_asked`.
 - **A hold of the last frame keeps the subtitle track.** `freeze.py` with no `--at` (or an `--at`
   at the clip's end) appends frames past the end and moves no cue, so it keeps the track as
@@ -4547,3 +4550,85 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   container or a throwaway account when that matters. Tests:
   `test_the_agent_eval_installs_the_shipped_skill_and_watches_the_checkout`,
   `test_the_agent_eval_sees_a_second_edit_and_refuses_a_run_dir_it_would_see`.
+
+## After 3.8.14 — odd positions, the CFR conform and the timeline's aspect (#512, #506)
+
+- **A VFR source is conformed by the `fps` filter, in the picture's graph; the encoder line keeps
+  `-fps_mode cfr -r` as well, and then moves no frame.** The encoder line's conform alone let a
+  frame fall up to about two frames behind its slot before it dropped one: on a 30 fps clip with
+  two runs of six frames dropped (27 fps on average) every tool through `cfr_args` wrote flashes
+  18 and 56 ms after their beeps and a picture 74 ms longer than the source's. The filter takes
+  the nearest frame for every slot; on that clip each of those tools wrote every flash 18-19 ms
+  after its beep (within half a 27 fps frame) and a 4.000 s picture (FFmpeg 6.1.1). It is the last
+  filter of a plain `-vf` chain, and the first of a `-vf` that is a graph of its own
+  (drawn_chain()'s split/maskedmerge for a colour with chroma) and of a `-filter_complex` graph
+  that composites onto the main picture without moving it in time (`overlay`, `redact`, `broll`,
+  `graphics`, `caption`'s emoji route, `color --keep-alpha`): FFmpeg 6.1's overlay and maskedmerge
+  end their output at the last frame's start, so an fps filter after them lost the last frame
+  (3.963 s of 4). `pad.py` conforms right after `tpad`, inside its drawn chain: in front of it the
+  padding was rounded to the 27 fps grid on top of the frames' own rounding (37 ms late).
+  `cfr_at_input()` raises when such a graph does not read the main picture exactly once, so no
+  graph goes unconformed without a word. A graph that moves frames in time closes on the delivered
+  rate (`speedramp.py`, `freeze.py` inside the clip) or takes the filter after its concat (`cut.py
+  --segments`). The rate is cfr_args()'s own, so a 29.97 average is still written as `29.97`. A
+  rate the caller names (`--fps`), an `export.py` social preset's `-r 30`, a youtube preset's
+  divided rate for a source above the platform's limit (120 to 60: `_platform_rate_args`, after
+  3.8.11) and `fit.py --method speed`'s retimed picture (the picture only: its `atempo` track keeps
+  its own length, see "After 3.8.11") go through the same filter (a 1.11x speed-up of a constant 30 fps clip
+  showed each flash 50 ms late; the 30 fps social presets measured no shift on that VFR clip
+  before or after). `grid.py` already conformed each cell with `fps=`, and `join.py` measured
+  18-19 ms before the change; both are unchanged. Not changed, each with its own cause:
+  `speedramp.py` puts its sound 21 ms early (atempo; a segment at 1.0 on a constant-rate clip, 40
+  ms after a 0.5x segment), so its test measures the picture alone; and a `freeze.py --at` inside
+  a VFR gap writes the picture after the hold early (56 ms at `--at 0.15`, 93 ms at `--at 2.2` on
+  that clip). `reverse.py` is not changed either: `reverse` hands its frames the forward
+  timestamps in order, so a reversed VFR picture keeps its gaps where they were in forward time
+  and showed each flash 0.19 s late on that clip (its closing rate is already the delivered one,
+  A234). Conforming before the `reverse` filter puts it within half a frame but can drop the
+  source's last frame before the reversal (one that falls past the delivered grid's last slot),
+  which `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame` pins; that is left for a
+  decision (#512). Code: `decision.cfr_filter()`, `with_cfr()`, `cfr_at_input()`,
+  `graph_with_cfr()`. Tests:
+  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
+  `test_a_speed_change_puts_each_picture_within_half_a_frame`.
+- **A VFR hold is counted at the rate its frames are cloned at.** `freeze.py` counted `--hold` in
+  frames of the average rate and `tpad` cloned them at the nominal one, so 1 s held 27 frames
+  spaced 1/30 s (0.9 s) while the sound was padded by 1 s. The count, and the sound's pad, are now
+  in frames of the nominal rate. Code: `freeze.main()`. Test: the `freeze` case of
+  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`.
+- **An `overlay.py` layer lands at its position in luma; the chroma sample on an odd edge is
+  shared.** `overlay` places a layer on a 4:2:0 picture on the chroma grid, so an odd x or y was
+  taken down to the even one before it (`--position 11,13` drew at 10,12; a right-aligned,
+  bottom-aligned or centred layer whose position came out odd moved the same way). The position is
+  computed from the main picture's and the layer's sizes (its integer part, as overlay takes it);
+  where it is odd the layer gets a transparent column or row on that side (in RGBA for an
+  `--image`, at 4:4:4 for a `--video` layer) and is overlaid at the even position before it. A
+  4:2:0 chroma sample on that edge covers a pixel inside the layer and one outside, so it is half
+  mixed: there is no exact answer at that resolution, as for `redact.py` (A170). A dry run whose
+  input or layer does not exist yet has no sizes and plans the expressions as before. `--text`
+  (drawtext) was already exact. The layer's own size is computed for the position as `scale`
+  computes it (`-1`/`-2`, rounded half away from zero); the pad is written in `iw`/`ih`, so the
+  layer is never resized by it. Code: `overlay.on_grid()`. Test:
+  `test_an_overlay_lands_where_its_position_says_in_luma`.
+- **`fit.py --fit crop` keeps its crop offset even by widening the scaled frame, not with
+  `crop=exact=1`.** `crop` floored the computed offset `(in_w-out_w)*crop_x` to the chroma grid,
+  so over an odd margin `--crop-x 1` kept one column of the margin and lost the source's last
+  column, and a centred crop sat a pixel left of / above the centre. The scaled frame is now the
+  size `force_original_aspect_ratio=increase` gives, with the margin on each axis rounded up to a
+  multiple of 4 (at most 3 px more on the cropped axis, a scale off the source's aspect by under a
+  pixel), and the offset is computed in the tool, to even: `--crop-x/-y` 0, 0.5 and 1 land on the
+  edge or the centre exactly, any other anchor on the even offset nearest it. This is
+  `straighten.py --fit crop`'s rule (A235). `exact=1` keeps the scale but puts the chroma half a
+  sample off the luma on an odd offset. A dry run whose input does not exist yet plans the old
+  expressions. Code: `fit.main()`. Test:
+  `test_fit_crop_anchor_lands_on_the_edge_or_the_centre_it_names`.
+- **A one-clip `--export-timeline` sequence takes the `fit` object first, by the render's rule.**
+  The render's fit stage gives fit.py the `fit` object's aspect, mode, width, height and fps and
+  the frame's only where the object has none (`setdefault`), so the export does the same before it
+  sizes the sequence: frame 16:9 with `fit` 1:1 rendered a square and exported 16:9, and a frame
+  aspect `16/9` replaced by `fit.aspect` exported the source's size (#506). A `fit.aspect` or
+  `fit.fit` fit.py would refuse is refused under its own name. Several clips are unchanged: their
+  join is sized from the frame before fit.py reframes it, and the three render gaps listed under
+  "The sequence is the project's frame" (one side and no aspect, padding before a crop, a `fit`
+  object over the join) are still open there. Code: `render.export_timeline()`. Test:
+  `test_a_one_clip_sequence_takes_the_fit_objects_frame`.

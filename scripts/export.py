@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
-from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
+from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
@@ -206,7 +206,11 @@ def _key_fill(args, p: Dict, meta: Dict, output: str, cmd: List[str], vf: List[s
     key_chain = ",".join(vf + ["alphaextract", "format=yuv422p10le"])
     tc = ((meta.get("timecode") or {}).get("value"))
     tc_args = ["-timecode", tc] if tc else []
-    cmd = cmd + ["-filter_complex", f"[0:{PROBED_VIDEO}]split[f][k];[f]{fill_chain}[fill];[k]{key_chain}[key]"]
+    # a VFR source is conformed by the fps filter, once, ahead of the split: both files hold the same
+    # frames, and -fps_mode cfr alone let a frame run up to two frames late against the sound (#512)
+    conform = cfr_filter(meta)
+    cmd = cmd + ["-filter_complex", f"[0:{PROBED_VIDEO}]{conform + ',' if conform else ''}split[f][k];"
+                                    f"[f]{fill_chain}[fill];[k]{key_chain}[key]"]
     cmd += ["-map", "[fill]"] + probed_maps(meta, video=False, audio=has_audio) + p["video"] + tc_args + cfr_args(meta)
     # the fill is always written to a hidden sibling and moved into place only after the encode
     # succeeds: run() stages and cleans up only ffmpeg's last output (the key), so a failed encode
@@ -695,8 +699,20 @@ def main() -> int:
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
+        rate_args: List[str] = []
         if "-r" not in video:
-            cmd += _platform_rate_args(args.preset, meta) or cfr_args(meta)
+            rate_args = _platform_rate_args(args.preset, meta) or cfr_args(meta)
+            cmd += rate_args
+        # the rate the line delivers (a preset's own -r, a platform's divided rate, or a VFR
+        # source's average) is reached by the fps filter, the nearest frame for each slot: the
+        # encoder line's -r alone let a frame run up to two frames late against the sound before
+        # it dropped one (#512)
+        rate_f = (f"fps={video[video.index('-r') + 1]}" if "-r" in video
+                  else f"fps={rate_args[rate_args.index('-r') + 1]}" if "-r" in rate_args else "")
+        if rate_f and "-vf" in cmd:
+            cmd[cmd.index("-vf") + 1] += "," + rate_f
+        elif rate_f:
+            cmd += ["-vf", rate_f]
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
         if not p.get("intermediate"):

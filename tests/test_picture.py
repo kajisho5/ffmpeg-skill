@@ -2517,6 +2517,46 @@ class PictureTests(MediaFixtures):
         self.assertGreater(px(out, 1100, 660)[2], 100, "PiP area should show the blue overlay")
         self.assertGreater(px(out, 100, 100)[0], 100, "outside the PiP area, the red background must remain")
 
+    def test_an_overlay_lands_where_its_position_says_in_luma(self):
+        """#512: overlay places a layer on a 4:2:0 picture on the chroma grid, so --position 11,13
+        drew the logo at 10,12, and a right-aligned or centred layer whose position came out odd
+        moved the same way. The layer now gets a transparent column/row where the position is
+        odd and is overlaid at the even one before it. Read in stored luma (extractplanes=y) on a
+        BT.709-tagged black main; the layers' own sizes are checked first."""
+        tags = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+        main = OUT / "i512_main.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=96x64:r=25:d=0.4",
+           "-pix_fmt", "yuv420p", *tags, "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", main)
+        png = OUT / "i512_logo.png"   # 9x7: an odd size, made RGB so no 4:2:0 step rounds it
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=9x7,format=rgb24",
+           "-frames:v", "1", png)
+        pip = OUT / "i512_pip.mp4"    # 11x9 at 4:4:4
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=white:s=11x9:r=25:d=0.4,format=yuv444p", "-pix_fmt", "yuv444p", *tags,
+           "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", pip)
+        self.assertEqual((probe(str(png))["video"]["width"], probe(str(png))["video"]["height"]), (9, 7))
+        self.assertEqual((probe(str(pip))["video"]["width"], probe(str(pip))["video"]["height"]), (11, 9))
+
+        def box(path):
+            raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-frames:v", "1",
+                                  "-vf", "extractplanes=y", "-f", "rawvideo", "-"], stdout=subprocess.PIPE).stdout
+            pts = [(i % 96, i // 96) for i, v in enumerate(raw[:96 * 64]) if v > 128]
+            return (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts))
+
+        cases = (
+            (["--image", png, "--position", "11,13"], (11, 13, 19, 19)),
+            (["--image", png, "--position=-12,-14"], (75, 43, 83, 49)),     # W-w-12, H-h-14
+            (["--image", png, "--position", "bottom-right", "--margin", "12"], (75, 45, 83, 51)),
+            (["--image", png, "--position", "center"], (43, 28, 51, 34)),   # (96-9)/2 and (64-7)/2, their integer parts
+            (["--video", pip, "--position", "11,13"], (11, 13, 21, 21)),
+            (["--video", pip, "--position=-12,-14"], (73, 41, 83, 49)),
+        )
+        for argv, want in cases:
+            with self.subTest(argv=[str(a) for a in argv[1:]]):
+                out = OUT / "i512_pos.mp4"
+                script("overlay.py", main, *argv, "-o", out, "--overwrite")
+                self.assertEqual(box(out), want)
+
     def test_overlay_chromakey_removes_the_key_color(self):
         red_bg = OUT / "ck_red_bg.mp4"
         green_fg = OUT / "ck_green_fg.mp4"

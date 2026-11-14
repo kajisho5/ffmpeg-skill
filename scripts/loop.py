@@ -32,7 +32,7 @@ import os
 import sys
 import tempfile
 
-from _common import STATE, concat_list_line, add_common, aac_args, apply_common, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, concat_list_line, add_common, aac_args, apply_common, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
 from _common.decision import HELD_FRAMES_WARN_BYTES, av_trim, held_frames_bytes, length_output_t, stream_starts
 from _common.probe import decode_gray_frames, decode_pcm_mono
@@ -296,7 +296,9 @@ def main() -> int:
             die(f"--duration ({target:g}s) must be longer than one repeat ({unit:.3f}s) -- use cut.py to trim instead")
         stream_loop = math.ceil(target / unit) - 1
 
-    # a variable-rate source is conformed by the output's own -fps_mode cfr -r (cfr_args)
+    # a variable-rate source is conformed to the rate cfr_args() delivers, by the fps filter in the
+    # picture's chain (below) and the output's -fps_mode cfr -r; the fps stage for a sound that
+    # outlasts the picture is for a constant-rate clip only, so the two never meet
     forced_rate = cfr_args(meta, fps if fade_frames and v.get("variable_frame_rate_suspected") else None)
     if args.boomerang:
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", _boomerang_graph(meta, src_dur, args.times), "-map", "[v]"]
@@ -319,6 +321,9 @@ def main() -> int:
         with open(listfile, "w", encoding="utf-8") as fh:
             fh.write((concat_list_line(repeat) + "\n") * (stream_loop + 1))
         vtrim, atrim = av_trim(concat_first_frame(listfile), None, fill_gaps=True)
+        # the conform of a VFR source is the fps filter at the end of the picture's chain, at the
+        # rate cfr_args() below delivers (#512)
+        vtrim = with_cfr(vtrim, meta, fps if fade_frames and v.get("variable_frame_rate_suspected") else None)
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
         v_end = stream_starts(meta)[0] + (v.get("duration") or 0.0)
         if has_audio and not forced_rate and not fade_frames and src_dur - v_end > 0.5 / fps:

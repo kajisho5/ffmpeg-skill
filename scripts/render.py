@@ -1326,7 +1326,19 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
     export = proj.get("export")
     frame_from_preset(frame, export if isinstance(export, dict) else {})
     fit = proj.get("fit")
-    if isinstance(fit, dict) and fit.get("aspect") and frame.get("aspect") and aspect_ratio(frame["aspect"]) is None:
+    if isinstance(fit, dict) and len(proj.get("clips") or []) == 1:
+        # one clip: the render's fit stage reframes the clip's own picture with the fit object's
+        # aspect, mode, sides and rate, the frame's only where the fit object has none (the
+        # render's setdefault), so the sequence takes them by the same rule (#506: frame 16:9 with
+        # fit 1:1 rendered a square and exported 1920x1080). Several clips are fitted inside the
+        # join, which join.py sizes from the frame first; their sequence stays the frame's
+        if fit.get("aspect") and aspect_ratio(str(fit["aspect"])) is None:
+            die(f"--export-timeline: fit.aspect {fit['aspect']!r}: use W:H with whole numbers, like 16:9 "
+                "(fit.py refuses it too)", kind="input")
+        if fit.get("fit") is not None and fit["fit"] not in ("pad", "crop", "blur"):
+            die(f"--export-timeline: fit.fit {fit['fit']!r}: use pad, crop or blur (fit.py's --fit)", kind="input")
+        frame.update({k: fit[k] for k in ("aspect", "fit", "width", "height", "fps") if fit.get(k) is not None})
+    elif isinstance(fit, dict) and fit.get("aspect") and frame.get("aspect") and aspect_ratio(frame["aspect"]) is None:
         # the render hands fit.py the fit object's own aspect, never this one (only the preset
         # match above reads it), and completes: the sequence is the frame's size without it
         del frame["aspect"]

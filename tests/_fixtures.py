@@ -104,6 +104,21 @@ def make_flash_beep(path, *, audio_late=0.0, video_late=0.0, video_short=0.0, ta
     return path
 
 
+def make_vfr_flash_beep(path):
+    """A 4 s variable-rate clip whose flash and beep coincide every second from 0.5 s: 30 fps with
+    two runs of six frames dropped (from 0.1 s and from 2.1 s), so its average is 27 fps and the
+    frames between the gaps arrive faster than that. Each flash lasts two source frames, so a
+    conform to 27 fps keeps it (a one-frame flash may fall between two 27 fps slots)."""
+    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+       "color=c=black:s=160x120:r=30:d=4,drawbox=c=white:t=fill:enable='lt(mod(t-0.5\\,1)\\,0.06)*gte(t\\,0.5)',"
+       "select='not(between(n\\,3\\,8))*not(between(n\\,63\\,68))'",
+       "-f", "lavfi", "-i", f"aevalsrc='{_BEEP}':s=48000:d=4", "-fps_mode", "passthrough",
+       "-c:v", "libx264", "-preset", "veryfast", "-g", "30", "-pix_fmt", "yuv420p",
+       "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+       "-c:a", "aac", "-b:a", "128k", path)
+    return path
+
+
 def make_tones_take(path, *, start=0.0, audio_late=0.0, dur=10.0):
     """A camera take of the TONES bed (not periodic, so sync.py's correlation has one answer): its
     picture and its clock start at `start` on the bed, and its sound track starts `audio_late`

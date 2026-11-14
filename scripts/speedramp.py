@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import List, Tuple
 
-from _common.decision import av_trim, frame_durations, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import av_trim, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length
 
@@ -111,7 +111,9 @@ def main() -> int:
         # duration: concat starts the next segment after the last frame's duration, which setpts
         # leaves at the unscaled 1/rate, so every 2x segment pushed the rest of the picture two
         # frames late against the sound (and added those frames)
-        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, rate)}[{vlabel}]")
+        # on a VFR source the closing rate is the one the encoder line delivers (its average): closed
+        # on r_frame_rate, -r then resampled the joined picture and it drifted 113 ms late (#512)
+        vparts.append(f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, delivered_rate(meta) or rate)}[{vlabel}]")
         labels.append(f"[{vlabel}]")
         if has_audio:
             aparts.append(f"[0:a]{atrim},{atempo_chain(factor)}[{alabel}]")

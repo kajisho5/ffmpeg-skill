@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
-from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_tones_take, stream_spans  # noqa: E402
+from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_vfr_flash_beep, make_tones_take, stream_spans  # noqa: E402
 from _fixtures import frame_lumas, frame_numbers, numbered_clip, pcm_of, plain_clip, stretches  # noqa: E402
 from _common import probe  # noqa: E402
 import _common  # noqa: E402
@@ -483,6 +483,55 @@ class EditingTests(MediaFixtures):
             self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
         # different horizontal anchors must crop different content, not just resize the same crop
         self.assertLess(self._psnr(left, right), 40, "crop-x=0 vs crop-x=1 kept the same picture")
+
+    def test_fit_crop_anchor_lands_on_the_edge_or_the_centre_it_names(self):
+        """#512: crop floored fit.py's computed offset to the chroma grid, so over a margin of 35
+        px --crop-x 1 kept a column of the margin and lost the source's last one, and a centred
+        crop sat a pixel left of the centre. The source has two 30-px white bars at its edges
+        (mirror-symmetric, stored luma read with extractplanes=y on a BT.709-tagged fixture), so
+        the bar kept by --crop-x 0 and the one kept by --crop-x 1 are as wide, and a centred crop
+        keeps both as wide; on each axis. The fixture's bars are checked first."""
+        tags = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+
+        def luma(path, w, h):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-vf", "extractplanes=y",
+                                  "-f", "rawvideo", "-"], stdout=subprocess.PIPE).stdout
+            return [list(raw[r * w:(r + 1) * w]) for r in range(h)]
+
+        def bars(line):
+            # the sub-pixel widths of the white run at each end of a line (crossing 128)
+            def run(seq):
+                for i in range(len(seq) - 1):
+                    if seq[i] >= 128 > seq[i + 1]:
+                        return i + (seq[i] - 128) / (seq[i] - seq[i + 1]) + 0.5
+                return 0.0 if seq[0] < 128 else float(len(seq))
+            return run(line), run(line[::-1])
+
+        for axis, size, boxes, flags in (
+                ("x", "102x60", "drawbox=x=0:y=0:w=30:h=60:c=white:t=fill,drawbox=x=72:y=0:w=30:h=60:c=white:t=fill",
+                 ["--width", "50"]),
+                ("y", "60x102", "drawbox=x=0:y=0:w=60:h=30:c=white:t=fill,drawbox=x=0:y=72:w=60:h=30:c=white:t=fill",
+                 ["--height", "50"])):
+            src = OUT / f"i512_fitcrop_{axis}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c=black:s={size}:r=25:d=0.2,{boxes}", "-pix_fmt", "yuv420p", *tags,
+               "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", src)
+            w, h = (int(v) for v in size.split("x"))
+            rows = luma(src, w, h)
+            line = rows[h // 2] if axis == "x" else [r[w // 2] for r in rows]
+            for bar in bars(line):
+                self.assertAlmostEqual(bar, 30.0, delta=0.05, msg=f"the fixture's bars: {bars(line)}")
+            got = {}
+            for anchor in ("0", "0.5", "1"):
+                out = OUT / f"i512_fitcrop_{axis}_{anchor}.mp4"
+                script("fit.py", src, "--aspect", "1:1", *flags, "--fit", "crop", f"--crop-{axis}", anchor,
+                       "-o", out, "--overwrite")
+                rows = luma(out, 50, 50)
+                got[anchor] = bars(rows[25] if axis == "x" else [r[25] for r in rows])
+            with self.subTest(axis=axis):
+                self.assertAlmostEqual(got["0"][0], got["1"][1], delta=0.25, msg=f"edge bars {got}")
+                self.assertAlmostEqual(got["0.5"][0], got["0.5"][1], delta=0.25, msg=f"centred bars {got}")
+                self.assertGreater(got["0.5"][0], 0.5, f"a centred crop keeps some of each bar: {got}")
 
     def test_fit_crop_anchor_out_of_range_is_refused(self):
         script("fit.py", self.src, "--aspect", "9:16", "--fit", "crop", "--crop-x", "1.5", expect_fail=True)
@@ -1656,6 +1705,76 @@ class EditingTests(MediaFixtures):
         m2 = probe(str(out2))
         self.assertClose(m2["video"]["fps"], 30.0, 0.05)
         self.assertFalse(m2["video"]["variable_frame_rate_suspected"])
+
+    def test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame(self):
+        """#512: a VFR clip conformed to its average rate (27 fps here) by the encoder line's
+        `-fps_mode cfr -r` alone let each frame run up to about two frames late before one was
+        dropped: every tool through cfr_args wrote its picture up to 56 ms after the sound
+        (speedramp, closed on the source's 30 fps and resampled to 27, 114 ms), and the picture
+        ran 74 ms past it. The conform is the fps filter now, the nearest frame for every slot.
+        Measured on the picture (the flashes' times against where they belong) and against the
+        sound where no atempo moves it; the fixture's own timing is checked first. reverse.py is
+        not here: see docs/design-decisions.md, "After 3.8.11"."""
+        src = make_vfr_flash_beep(OUT / "i512_vfr.mp4")
+        meta = probe(str(src))
+        self.assertTrue(meta["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        self.assertAlmostEqual(meta["video"]["fps"], 27.0, delta=0.05)
+        self.assertEqual([round(t, 3) for t in flash_times(src)], [0.5, 1.5, 2.5, 3.5])
+        half = 0.5 / 27 + 0.001
+        same = [0.5, 1.5, 2.5, 3.5]
+        cases = (
+            ("denoise", ["denoise.py"], same, True),
+            ("crop", ["crop.py", "--x", "0", "--y", "0", "--width", "120", "--height", "100"], same, True),
+            ("redact", ["redact.py", "--x", "10", "--y", "10", "--width", "40", "--height", "40"], same, True),
+            ("overlay", ["overlay.py", "--text", "A"], same, True),
+            ("export", ["export.py", "--preset", "youtube"], same, True),
+            ("cut", ["cut.py", "--start", "0", "--end", "4", "--accurate"], same, True),
+            ("segments", ["cut.py", "--segments", "0-2,2.2-4"], [0.5, 1.5, 2.3, 3.3], False),
+            ("pad", ["pad.py", "--start", "0.5"], [1.0, 2.0, 3.0, 4.0], False),
+            # a fill with chroma is drawn in a split/maskedmerge graph (drawn_chain)
+            ("pad-colour", ["pad.py", "--start", "0.5", "--color", "red"], [1.0, 2.0, 3.0, 4.0], False),
+            ("graphics", ["graphics.py", "--template", "chapter", "--title", "C"], same, True),
+            ("freeze", ["freeze.py", "--at", "1.2", "--hold", "1"], [0.5, 2.5, 3.5, 4.5], False),
+            ("loop", ["loop.py", "--times", "2"], same + [4.5, 5.5, 6.5, 7.5], False),
+            # its sound is moved early by atempo (about 21 ms, at any factor): the picture alone here
+            ("speedramp", ["speedramp.py", "--segment", "0-2:1", "--segment", "2-3:0.5", "--segment", "3-4:1"],
+             [0.5, 1.5, 3.0, 4.5], None),
+        )
+        for name, argv, want, unchanged in cases:
+            with self.subTest(tool=name):
+                out = OUT / f"i512_vfr_{name}.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                got = flash_times(out)
+                self.assertEqual(len(got), len(want), f"flashes at {got}")
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), half, f"flashes at {got}, want {want}")
+                if unchanged is not None:
+                    for o in av_offsets_ms(out):
+                        self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
+                if unchanged:
+                    vlen = stream_spans(out)["video"][1]
+                    self.assertLessEqual(abs(vlen - 4.0), half, f"the picture lasts {vlen} s of 4")
+
+    def test_a_speed_change_puts_each_picture_within_half_a_frame(self):
+        """#512's class on a constant rate: fit --method speed retimed the picture with setpts and
+        left the encoder line to put it back on the source's 30 fps grid, so a 1.11x speed-up
+        showed every flash 50 ms late (0.5 s for 0.45). Measured on the picture: atempo moves the
+        sound by itself (about 21 ms)."""
+        src = OUT / "i512_cfr.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=black:s=160x120:r=30:d=4,drawbox=c=white:t=fill:enable='lt(mod(t-0.5\\,1)\\,0.06)*gte(t\\,0.5)'",
+           "-f", "lavfi", "-i", "sine=d=4", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", src)
+        self.assertEqual([round(t, 3) for t in flash_times(src)], [0.5, 1.5, 2.5, 3.5])
+        for target in (3.6, 3.0, 4.4):
+            with self.subTest(duration=target):
+                out = OUT / "i512_speed.mp4"
+                script("fit.py", src, "--duration", f"{target:g}", "--method", "speed", "--fast", "-o", out, "--overwrite")
+                got = flash_times(out)
+                want = [t * target / 4.0 for t in (0.5, 1.5, 2.5, 3.5)]
+                self.assertEqual(len(got), 4, got)
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), 0.5 / 30 + 0.001, f"flashes at {got}, want {want}")
 
     def test_rotated_source_uses_display_orientation(self):
         out = OUT / "rot_fit.mp4"

@@ -33,7 +33,7 @@ import sys
 from typing import List, Optional
 
 from _common.runner import carried_stream_maps, fail_if_classified
-from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
@@ -648,13 +648,14 @@ def main() -> int:
         # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
         fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}{matrix_label(meta)}[ka_g];[ka_a]alphaextract[ka_m];"
               f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode, meta)}[ka_v]")
+        fc = cfr_at_input(fc, meta)  # the conform of a VFR source: the fps filter (#512)
         cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
                                                                      "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]
         cmd += video_line(alpha_codec) + tag_args(meta) + cfr_args(meta) + (audio_line(alpha_codec) if has_audio else [])
         if STATE.hw:
             note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
     else:
-        cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
+        cmd = ffmpeg_base() + ["-i", args.input, "-vf", with_cfr(vf, meta), "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
         # --lut/--correct grade the source's own pixels, so a BT.601 source is converted to the BT.709
         # the line is tagged with; --to-sdr's zscale chain already writes BT.709 and converts nothing more
         cmd += x264_args(args.crf, args.preset, source=None if args.to_sdr else meta) + cfr_args(meta) + (aac_args() if has_audio else [])

@@ -118,7 +118,9 @@ wrong frame — respect the automatic re-encode rather than forcing the copy.
 ### Variable frame rate
 `probe.py` sets `variable_frame_rate_suspected` when `r_frame_rate` and
 `avg_frame_rate` disagree (phone and screen recordings). Every re-encoding
-script then adds `-fps_mode cfr` at the source's average rate. That flag is a
+script then conforms the picture to the source's average rate with the `fps` filter (the
+nearest frame for each slot; `-fps_mode cfr` alone let a frame run up to two frames late
+against the sound, #512). That flag is a
 whole-file average, and a phone clip at 29.98 against a nominal 30 trips it, so
 `cut.py` decides on packet timestamps sampled in up to five windows (`vfr_check`)
 instead: by default (`--vfr-guard sampled`, since 3.0.0) it switches to
