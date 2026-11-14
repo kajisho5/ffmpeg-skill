@@ -4110,19 +4110,23 @@ class CompositingAndEdgeInputTests(unittest.TestCase):
         """A179: cutaways that do not overlap, given later one first, were refused as 'overlaps the
         previous one'. Both windows are now written, and an overlap is still refused, naming both."""
         out = OUT / "a460_broll_order.mp4"
-        doc = json.loads(script("broll.py", self.clip, "--insert", self.clip, "--at", "2", "--duration", "0.5",
-                                "--insert", self.clip, "--at", "0.4", "--duration", "0.5", "--fast", "-o", out,
+        # the cutaway is plain red, which the main clip (testsrc2) never is at the pixel read: one
+        # sample of two moving test patterns could not tell them apart on every encoder
+        red = tiny_clip(OUT / "a460_broll_red.mp4", "color=c=red:s=320x180:r=25", seconds=1, audio=True)
+        doc = json.loads(script("broll.py", self.clip, "--insert", red, "--at", "2", "--duration", "0.5",
+                                "--insert", red, "--at", "0.4", "--duration", "0.5", "--fast", "-o", out,
                                 "--json").stdout)
         self.assertEqual(doc["status"], "completed")
         self.assertEqual([round(c["at"], 3) for c in doc["cutaways"]], [2.0, 0.4])
-        # B starts at its own 0 s in both windows, so the frame at --at + 0.2 is B's frame at 0.2,
-        # while A there shows its own frame at --at + 0.2
+
+        def is_red(t):
+            r, g, b = frame_rgb(out, t, 160, 90)
+            return r > 150 and g < 90 and b < 90
+
         for at in (0.4, 2.0):
-            got = frame_rgb(out, at + 0.2, 160, 90)
-            b_frame = frame_rgb(self.clip, 0.2, 160, 90)
-            a_frame = frame_rgb(self.clip, at + 0.2, 160, 90)
-            self.assertLess(sum(abs(x - y) for x, y in zip(got, b_frame)), sum(abs(x - y) for x, y in zip(got, a_frame)),
-                            f"the cutaway at {at}s must show B")
+            self.assertTrue(is_red(at + 0.2), f"the cutaway at {at}s must show the inserted clip: {frame_rgb(out, at + 0.2, 160, 90)}")
+        for t in (0.1, 1.4, 2.8):
+            self.assertFalse(is_red(t), f"the main clip must show at {t}s: {frame_rgb(out, t, 160, 90)}")
         proc = script("broll.py", self.clip, "--insert", self.clip, "--at", "2", "--duration", "0.5",
                       "--insert", self.clip, "--at", "1.8", "--duration", "0.5", "-o", OUT / "a460_broll_bad.mp4",
                       "--json", expect_fail=True)
