@@ -90,8 +90,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
 - [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
 - [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
-- [After 3.8.12 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3812--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
-- [After 3.8.12 — tests, CI, distribution and the site (#467)](#after-3812--tests-ci-distribution-and-the-site-467)
+- [After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)](#after-3813--frame-size-colour-tags-delivery-limits-and-verifys-outputs-463-464)
+- [After 3.8.13 — tests, CI, distribution and the site (#467)](#after-3813--tests-ci-distribution-and-the-site-467)
 <!-- contents:end -->
 
 ## Time limits
@@ -4408,7 +4408,7 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
   the tools that always write a picture refuse an audio-only input. Test:
   `test_waveform_of_an_audio_input_is_a_video_by_default`.
-## After 3.8.12 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)
+## After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)
 
 - **A BT.2020 source with no transfer tag is re-encoded as `bt2020-10`, not HLG** (A153).
   `probe()` reads BT.2020 primaries without a transfer tag as `hdr: false`, "BT.2020 SDR"; the
@@ -4482,7 +4482,7 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   export's platform trim keeps it, so the container can be longer than the picture by the rest
   of that cue. Test: `EditingTests.test_fit_trim_from_the_start_keeps_the_subtitle_track`.
 
-## After 3.8.12 — tests, CI, distribution and the site (#467)
+## After 3.8.13 — tests, CI, distribution and the site (#467)
 
 - **Decoded audio is still the whole file, at 4 bytes a sample** (A217). `decode_pcm_mono()` returns
   an `array('f')` instead of a list of Python floats: about 8 bytes a sample at the peak (the

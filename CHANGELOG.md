@@ -4,7 +4,85 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A BT.2020 source with no transfer tag is no longer written as HLG** (#463 A153). probe reads
+  BT.2020 primaries with no transfer tag as "BT.2020 SDR", and every re-encode on the 10-bit line
+  (x265, SVT-AV1, libaom, ProRes, VideoToolbox) tagged the output `arib-std-b67`. It is tagged
+  `bt2020-10`, the SDR curve BT.2020 defines, and reads back as BT.2020 SDR. A Dolby Vision
+  source with no transfer tag keeps the HLG tag it had.
+- **`color.py --to-sdr --force` on a file that is not HDR** (#463 A161). The note said "tone-mapped
+  untagged input as PQ" for every such file, a BT.709-tagged one included, which the chain reads
+  as BT.709; it now names the transfer and primaries the chain read the file as. On a file with no
+  colour tags at all the run failed as `kind: ffmpeg` (zscale on FFmpeg 6.1: "no path between
+  colorspaces"); a frame missing a tag is labelled with what the chain assumes first.
+- **`fit.py --method trim` from the start keeps subtitle and data tracks** (#463 A158): it added
+  `-ss 0.000`, which the tool treats as moving the timeline. A trim with `--from-center` still
+  seeks and drops them, as decided.
+- **An `-o` without an image extension is a stem in every `look.py` mode** (#463 A159): `--compare`
+  and the contact sheet used it verbatim and failed as `kind: ffmpeg`; they now write
+  `<stem>_vs_<other>_<i>_<t>s.png` and `<stem>_sheet.png`, as `--at` already did.
+- **A media output with no file extension is refused before ffmpeg runs** (the sweep of A159).
+  Every tool that writes media handed it to ffmpeg, which failed as `kind: ffmpeg` ("Unable to
+  choose an output format"), and the dry run said completed. It is `kind: input`,
+  `error.reason: output_extension_missing`, dry runs included, unless the command names its format
+  with `-f`. Side files (a report, an SRT) are not checked; `look.py` takes such an `-o` as a stem.
+- **`proxy.py` never writes a proxy wider than its source** (#463 A162): the default `--width 640`
+  upscaled a smaller source, and a `--scale` that rounded to 0 became `scale=0`, which FFmpeg reads
+  as the source's width. The width is capped at the source's (even) width and floored at 2, with a
+  `notes` line when either applies.
+- **`sphere.py`'s default view has square pixels** (#463 A163): `--v-fov` defaulted to 60 whatever
+  `--h-fov` and the frame were, and 90 x 60 at 16:9 squashed the view 2.6 % vertically. Without
+  `--v-fov` the vertical field of view now follows from `--h-fov`, `--width` and `--height`
+  (58.7 at the defaults); a pair given that is not square-pixel is drawn as given, with a `notes`
+  line.
+- **`stabilize.py --zoom` is the only zoom** (#463 A156): vidstab's own "optimal zoom" was always
+  on, so `--zoom 0` did not keep the original framing and `--crop black` rarely had an edge to
+  fill. The default output now keeps the framing and shows the edges stabilizing reveals.
+- **The youtube presets stay within YouTube's frame-rate limit** (#464 A115): they keep the
+  source's rate, so a 120 fps source was exported at 120 fps and `check.py --platform youtube`
+  failed it. A source above the platform's `fps_max` is exported at its rate over the smallest
+  whole divisor within the limit (120 to 60, 119.88 to 59.94, 100 to 50), with a `notes` line.
+- **`export.py --max-mb` with `--normalize` stays within the size it was encoded to** (#464 A112):
+  the loudness pass re-encoded the sound at 192k (raised to 256k or 320k on a true-peak overshoot)
+  against a budget built on the preset's 128k. Under `--max-mb` it runs at the preset's bitrate.
+- **`probe.py --field` prints JSON, not Python** (#464 A123): a boolean, a missing field or an
+  object came out as `True`, `None` or `{'codec': ...}`. A string is printed as itself and any
+  other value as JSON; with `--json` every line is JSON (a missing field is `null`).
+- **`verify.py` keeps its outputs apart and where it says** (#464 A121, A119, A120). Two `clip.mp4`
+  and a `clip_1.mp4` were given the output stem `clip_1` twice; an indexed stem now skips every
+  stem already taken, compared case-folded. `--overwrite` and `--fast` reach every step, so a
+  rerun into the same `--out` replaces the earlier outputs instead of failing every step.
+  `--keep` without `--out` kept nothing (the temporary folder was deleted at exit) and named no
+  folder; it keeps the outputs in a new folder, named in the new `out_dir` (also set for `--out`,
+  `null` when the outputs were deleted) and on stderr.
+- **One tool's contract without the other 41** (#467: A220). SKILL.md and `references/flags.md`
+  sent an agent to `contract --json`, about 950 KB, for one tool's `dry_run`. `contract --json
+  --tool NAME` keeps only the named tools under `tools` (repeatable; `cut` or `cut.py`), in the
+  order given, and every other key as it is: about 55 to 85 KB for one tool. An unknown name is
+  refused (exit 2) with the list of tools; the two pages now name the flag.
+- **`verify.py` walks every media extension the skill reads** (#467: A218). A folder argument
+  skipped `.ts`, `.3gp`, `.wmv`, `.gif`, `.ogg`, `.opus`, `.aif`/`.aiff`, `.caf` and `.wma`: verify
+  kept a list of its own. It uses `_common`'s list less the stills, as `batch.py` does.
+- **The npm package no longer ships Python bytecode** (#467: A222, A27, A36). With npm 10,
+  `package.json`'s `files` wins over `.npmignore`, so a checkout that had run the tests packed
+  59 `scripts/__pycache__/*.pyc` files carrying the machine's paths. `files` ends with negated
+  entries for them, and `tests/release_check.sh` fails a tarball that has one.
+- **Dead code and unused imports in the runtime** (#467: A224): 39 unused imports, the unused
+  `loudness.py` loudnorm string and `graphics.py` list, and two functions nothing called
+  (`_platforms.has_frame`, `_contract._ff_list`) are gone, and a test fails on an import a shipped
+  module never uses.
+- **The gallery prints the command its picture was made with** (#467: A243, A244).
+  `cropdetect_crop` read the rectangle from the wrong level of cropdetect's document and cropped a
+  hard-coded one labelled "detected"; `scenes_highlights` printed a cut list (`0.00-1.50,4.00-5.50`)
+  the build never ran. Both run the measured value, `docs/demos.md` prints the one the build
+  measures (`0.00-2.00,2.00-4.00`), and a build that measures anything else stops.
+- **The agent eval runs the shipped skill and notices a changed checkout** (#467: A271, A274).
+  `evals/run_agents_25.sh` linked the whole repository in as the skill, the eval's answer keys
+  included, and with every permission check off a run could edit the tracked tree unnoticed. It
+  installs the skill with `bin/install.js --dir`, and exits 1 naming the runs during which the
+  checkout's `git status` changed.
+
 
 ## 3.8.13
 
@@ -141,84 +219,6 @@ _Automated release: version and notes generated from pull requests merged since 
   probe is given `-f wav` for a file that opens with a RIFF/WAVE header. A WAV like that given as an
   input still meets the same misread inside ffmpeg on 9.0.2 (#518).
 - fix: the open items of audit #462 (cut, smart cut, silence) and #459 (audio, sync, multicam, scenes, waveform) (#516)
-- **A BT.2020 source with no transfer tag is no longer written as HLG** (#463 A153). probe reads
-  BT.2020 primaries with no transfer tag as "BT.2020 SDR", and every re-encode on the 10-bit line
-  (x265, SVT-AV1, libaom, ProRes, VideoToolbox) tagged the output `arib-std-b67`. It is tagged
-  `bt2020-10`, the SDR curve BT.2020 defines, and reads back as BT.2020 SDR. A Dolby Vision
-  source with no transfer tag keeps the HLG tag it had.
-- **`color.py --to-sdr --force` on a file that is not HDR** (#463 A161). The note said "tone-mapped
-  untagged input as PQ" for every such file, a BT.709-tagged one included, which the chain reads
-  as BT.709; it now names the transfer and primaries the chain read the file as. On a file with no
-  colour tags at all the run failed as `kind: ffmpeg` (zscale on FFmpeg 6.1: "no path between
-  colorspaces"); a frame missing a tag is labelled with what the chain assumes first.
-- **`fit.py --method trim` from the start keeps subtitle and data tracks** (#463 A158): it added
-  `-ss 0.000`, which the tool treats as moving the timeline. A trim with `--from-center` still
-  seeks and drops them, as decided.
-- **An `-o` without an image extension is a stem in every `look.py` mode** (#463 A159): `--compare`
-  and the contact sheet used it verbatim and failed as `kind: ffmpeg`; they now write
-  `<stem>_vs_<other>_<i>_<t>s.png` and `<stem>_sheet.png`, as `--at` already did.
-- **A media output with no file extension is refused before ffmpeg runs** (the sweep of A159).
-  Every tool that writes media handed it to ffmpeg, which failed as `kind: ffmpeg` ("Unable to
-  choose an output format"), and the dry run said completed. It is `kind: input`,
-  `error.reason: output_extension_missing`, dry runs included, unless the command names its format
-  with `-f`. Side files (a report, an SRT) are not checked; `look.py` takes such an `-o` as a stem.
-- **`proxy.py` never writes a proxy wider than its source** (#463 A162): the default `--width 640`
-  upscaled a smaller source, and a `--scale` that rounded to 0 became `scale=0`, which FFmpeg reads
-  as the source's width. The width is capped at the source's (even) width and floored at 2, with a
-  `notes` line when either applies.
-- **`sphere.py`'s default view has square pixels** (#463 A163): `--v-fov` defaulted to 60 whatever
-  `--h-fov` and the frame were, and 90 x 60 at 16:9 squashed the view 2.6 % vertically. Without
-  `--v-fov` the vertical field of view now follows from `--h-fov`, `--width` and `--height`
-  (58.7 at the defaults); a pair given that is not square-pixel is drawn as given, with a `notes`
-  line.
-- **`stabilize.py --zoom` is the only zoom** (#463 A156): vidstab's own "optimal zoom" was always
-  on, so `--zoom 0` did not keep the original framing and `--crop black` rarely had an edge to
-  fill. The default output now keeps the framing and shows the edges stabilizing reveals.
-- **The youtube presets stay within YouTube's frame-rate limit** (#464 A115): they keep the
-  source's rate, so a 120 fps source was exported at 120 fps and `check.py --platform youtube`
-  failed it. A source above the platform's `fps_max` is exported at its rate over the smallest
-  whole divisor within the limit (120 to 60, 119.88 to 59.94, 100 to 50), with a `notes` line.
-- **`export.py --max-mb` with `--normalize` stays within the size it was encoded to** (#464 A112):
-  the loudness pass re-encoded the sound at 192k (raised to 256k or 320k on a true-peak overshoot)
-  against a budget built on the preset's 128k. Under `--max-mb` it runs at the preset's bitrate.
-- **`probe.py --field` prints JSON, not Python** (#464 A123): a boolean, a missing field or an
-  object came out as `True`, `None` or `{'codec': ...}`. A string is printed as itself and any
-  other value as JSON; with `--json` every line is JSON (a missing field is `null`).
-- **`verify.py` keeps its outputs apart and where it says** (#464 A121, A119, A120). Two `clip.mp4`
-  and a `clip_1.mp4` were given the output stem `clip_1` twice; an indexed stem now skips every
-  stem already taken, compared case-folded. `--overwrite` and `--fast` reach every step, so a
-  rerun into the same `--out` replaces the earlier outputs instead of failing every step.
-  `--keep` without `--out` kept nothing (the temporary folder was deleted at exit) and named no
-  folder; it keeps the outputs in a new folder, named in the new `out_dir` (also set for `--out`,
-  `null` when the outputs were deleted) and on stderr.
-- **One tool's contract without the other 41** (#467: A220). SKILL.md and `references/flags.md`
-  sent an agent to `contract --json`, about 950 KB, for one tool's `dry_run`. `contract --json
-  --tool NAME` keeps only the named tools under `tools` (repeatable; `cut` or `cut.py`), in the
-  order given, and every other key as it is: about 55 to 85 KB for one tool. An unknown name is
-  refused (exit 2) with the list of tools; the two pages now name the flag.
-- **`verify.py` walks every media extension the skill reads** (#467: A218). A folder argument
-  skipped `.ts`, `.3gp`, `.wmv`, `.gif`, `.ogg`, `.opus`, `.aif`/`.aiff`, `.caf` and `.wma`: verify
-  kept a list of its own. It uses `_common`'s list less the stills, as `batch.py` does.
-- **The npm package no longer ships Python bytecode** (#467: A222, A27, A36). With npm 10,
-  `package.json`'s `files` wins over `.npmignore`, so a checkout that had run the tests packed
-  59 `scripts/__pycache__/*.pyc` files carrying the machine's paths. `files` ends with negated
-  entries for them, and `tests/release_check.sh` fails a tarball that has one.
-- **Dead code and unused imports in the runtime** (#467: A224): 39 unused imports, the unused
-  `loudness.py` loudnorm string and `graphics.py` list, and two functions nothing called
-  (`_platforms.has_frame`, `_contract._ff_list`) are gone, and a test fails on an import a shipped
-  module never uses.
-- **The gallery prints the command its picture was made with** (#467: A243, A244).
-  `cropdetect_crop` read the rectangle from the wrong level of cropdetect's document and cropped a
-  hard-coded one labelled "detected"; `scenes_highlights` printed a cut list (`0.00-1.50,4.00-5.50`)
-  the build never ran. Both run the measured value, `docs/demos.md` prints the one the build
-  measures (`0.00-2.00,2.00-4.00`), and a build that measures anything else stops.
-- **The agent eval runs the shipped skill and notices a changed checkout** (#467: A271, A274).
-  `evals/run_agents_25.sh` linked the whole repository in as the skill, the eval's answer keys
-  included, and with every permission check off a run could edit the tracked tree unnoticed. It
-  installs the skill with `bin/install.js --dir`, and exits 1 naming the runs during which the
-  checkout's `git status` changed.
-
-
 
 ## 3.8.12
 
