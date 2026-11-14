@@ -1228,6 +1228,57 @@ class Audit459AudioTests(MediaFixtures):
             pcm.byteswap()
         return pcm
 
+    def test_zz_diagnose_the_empty_mix_on_ffmpeg_9(self):
+        """TEMPORARY (removed before merge): FFmpeg 9.0.2 writes an empty file for --voice strong
+        with --music. Runs variants of that graph and fails with the table, on FFmpeg 9+ only."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common.runner import ffmpeg_version
+        if ffmpeg_version()[0] < 9:
+            self.skipTest("diagnostic for FFmpeg 9+")
+        hp, de1, nr = "highpass=f=80", "deesser=i=0.4", "afftdn=nf=-25:tn=1"
+        c1 = "acompressor=threshold=-18dB:ratio=3:attack=5:release=80:makeup=2"
+        de2, c2 = "deesser=i=0.6", "acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3"
+        lim = "alimiter=limit=0.891251:level=disabled:latency=1"
+        tail = "aformat=sample_rates=48000,apad=whole_len=288000,atrim=end_sample=288000,atrim=end=6.000010"
+        bed = "[1:a:0]volume=-3dB,atrim=0:6.000000[music]"
+        mix = "[main][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mix]"
+
+        def g(chain, post=f"{lim},{tail}", mixer=mix):
+            return f"[0:a:0]{','.join(chain)}[main];{bed};{mixer};[mix]{post}[out]"
+        full = [hp, de1, nr, c1, de2, c2]
+        variants = {
+            "A full": g(full),
+            "B no limiter": g(full, tail),
+            "C no tail": g(full, lim),
+            "D no afftdn": g([hp, de1, c1, de2, c2]),
+            "E no deessers": g([hp, nr, c1, c2]),
+            "F no compressors": g([hp, de1, nr, de2]),
+            "G highpass only": g([hp]),
+            "H afftdn only": g([nr]),
+            "I deesser only": g([de1]),
+            "J compressor only": g([c1]),
+            "K limiter no latency": g(full, f"alimiter=limit=0.891251:level=disabled,{tail}"),
+            "L mix longest": g(full, mixer=mix.replace("duration=first", "duration=longest")),
+            "M limiter before mix": g(full + [lim], tail),
+            "N dbl before limiter": g(full, f"aformat=sample_fmts=dbl,{lim},{tail}"),
+            "O asetpts before limiter": g(full, f"asetpts=N/SR/TB,{lim},{tail}"),
+            "P aresample before limiter": g(full, f"aresample=48000,{lim},{tail}"),
+            "Q no apad": g(full, f"{lim},aformat=sample_rates=48000,atrim=end_sample=288000"),
+            "R chain then flt": g(full + ["aformat=sample_fmts=flt"]),
+            "S chain, no mix": f"[0:a:0]{','.join(full)},{lim},{tail}[out]",
+        }
+        rows = []
+        for name, graph in variants.items():
+            out = OUT / "a459_diag.wav"
+            if out.exists():
+                out.unlink()
+            proc = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin", "-y", "-i", str(self.voice),
+                                   "-i", str(self.bed), "-filter_complex", graph, "-map", "[out]", "-c:a", "pcm_s16le", str(out)],
+                                  capture_output=True, text=True)
+            size = out.stat().st_size if out.exists() else -1
+            rows.append(f"{name}: rc={proc.returncode} bytes={size} stderr={proc.stderr.strip()[-300:]!r}")
+        self.fail("\n".join(rows))
+
     @staticmethod
     def _db(value):
         return 20 * math.log10(value) if value > 0 else -120.0
