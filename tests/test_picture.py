@@ -6492,8 +6492,10 @@ class CompositingAuditPictureTests(unittest.TestCase):
         the rectangle one pixel left of / above the asked one. Lossless in and out, so every luma
         sample is compared."""
         src = OUT / "a460_odd_src.mkv"
+        # one picture held for ten frames: testsrc2 moves, and which frame a read at 0 returns from the
+        # written file is not what this test is about (FFmpeg 8.0.1 returned a neighbouring one)
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=0.4",
-           "-c:v", "ffv1", "-pix_fmt", "yuv420p", src)
+           "-vf", "loop=loop=9:size=1:start=0", "-frames:v", "10", "-c:v", "ffv1", "-pix_fmt", "yuv420p", src)
         before, w, _h = self._gray(src)
         x, y, rw, rh = 11, 13, 40, 40
         for mode in ("pixelate", "blur"):
