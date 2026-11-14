@@ -6458,9 +6458,18 @@ class CompositingAuditPictureTests(unittest.TestCase):
         w, h = (int(n) for n in subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
              str(path)], stdout=subprocess.PIPE, text=True, check=True).stdout.strip().split(","))
-        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
-                              "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+        # the Y plane as stored (extractplanes), not a conversion to gray: swscale's yuv->gray is a
+        # range/matrix conversion whose result depends on the file's colour tags and the FFmpeg
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1",
+                              "-vf", "extractplanes=y", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             stdout=subprocess.PIPE, check=True).stdout
         return raw, w, h
+
+    @staticmethod
+    def _colour(path):
+        return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream=codec_name,pix_fmt,color_range,color_space,color_transfer,color_primaries",
+                               "-of", "csv=p=0", str(path)], stdout=subprocess.PIPE, text=True).stdout.strip()
 
     def test_background_gradient_runs_corner_to_corner_at_any_angle(self):
         """A169: --angle outside 0-90 failed as kind ffmpeg (`gradients` refuses a point below -1),
@@ -6492,10 +6501,11 @@ class CompositingAuditPictureTests(unittest.TestCase):
         the rectangle one pixel left of / above the asked one. Lossless in and out, so every luma
         sample is compared."""
         src = OUT / "a460_odd_src.mkv"
-        # one picture held for ten frames: testsrc2 moves, and which frame a read at 0 returns from the
-        # written file is not what this test is about (FFmpeg 8.0.1 returned a neighbouring one)
+        # one picture held for ten frames and tagged BT.709: the comparison is of stored luma, so it
+        # must not depend on which frame a read at 0 returns or on what an untagged file is read as
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=0.4",
-           "-vf", "loop=loop=9:size=1:start=0", "-frames:v", "10", "-c:v", "ffv1", "-pix_fmt", "yuv420p", src)
+           "-vf", "loop=loop=9:size=1:start=0,setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709",
+           "-frames:v", "10", "-c:v", "ffv1", "-pix_fmt", "yuv420p", src)
         before, w, _h = self._gray(src)
         x, y, rw, rh = 11, 13, 40, 40
         for mode in ("pixelate", "blur"):
@@ -6506,7 +6516,10 @@ class CompositingAuditPictureTests(unittest.TestCase):
                 after, _w, _h = self._gray(out)
                 inside = lambda i: x <= i % w < x + rw and y <= i // w < y + rh  # noqa: E731
                 outside = [i for i in range(len(before)) if not inside(i) and before[i] != after[i]]
-                self.assertEqual(outside, [], f"luma outside the rectangle changed at {[(i % w, i // w) for i in outside[:4]]}")
+                self.assertEqual(len(outside), 0,
+                                 f"luma outside the rectangle changed at {[(i % w, i // w) for i in outside[:4]]}, "
+                                 f"largest step {max((abs(before[i] - after[i]) for i in outside), default=0)}; "
+                                 f"source {self._colour(src)}; written {self._colour(out)}")
                 self.assertTrue(any(before[i] != after[i] for i in range(len(before)) if inside(i)),
                                 f"{mode} did not change the rectangle")
                 if mode == "pixelate":  # one block: the whole rectangle is one value, its last column and row included
@@ -6518,7 +6531,9 @@ class CompositingAuditPictureTests(unittest.TestCase):
         got, cw, _ch = self._gray(out)
         want = bytes(before[(y + r) * w + x + c] for r in range(rh) for c in range(rw))
         self.assertEqual(cw, rw)
-        self.assertEqual(got, want, "crop.py must cut the rectangle at the odd position asked for")
+        self.assertEqual(got == want, True, "crop.py must cut the rectangle at the odd position asked for: "
+                         f"{sum(1 for g, x_ in zip(got, want) if g != x_)} of {len(want)} samples differ; "
+                         f"source {self._colour(src)}; written {self._colour(out)}")
 
     def test_sticker_rises_into_place_on_both_routes(self):
         """A177: on the drawtext route a bottom sticker started above its rest and dropped into
