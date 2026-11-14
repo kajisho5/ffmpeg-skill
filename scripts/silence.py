@@ -431,7 +431,11 @@ def resolve_filler(args, meta):
             if primary in names:
                 return names[primary]
             return primary[:2] if len(primary) > 3 else primary
-        spoken = _code((raw or {}).get("language")) if isinstance(raw, dict) else ""
+        # openai-whisper's top-level `language`, or whisper.cpp's `result.language` (its
+        # --output-json-full document is read for its words too: _words_from_words_file())
+        result = raw.get("result") if isinstance(raw, dict) else None
+        spoken = _code(raw.get("language") or (result.get("language") if isinstance(result, dict) else None)) \
+            if isinstance(raw, dict) else ""
         spoken = spoken or _code(transcription.get("language") or transcription.get("detected_language"))
         if spoken and spoken not in FILLER_WORDS and not args.filler_words:
             die(f"the transcript is in {spoken}, which has no built-in filler list. The languages with one are "

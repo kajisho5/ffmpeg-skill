@@ -119,8 +119,9 @@ def refuse_not_a_cue_file(path: str, lines: List[str]) -> None:
         die(f"--text: {path} is a WebVTT subtitle file (it starts with {head[:20]!r}); pass it as --srt, which reads "
             f"WebVTT (render.py: --srt, not --cues). {cue_shape}", kind="input")
     if head.lower() in ASS_SECTIONS or head.startswith("Dialogue:"):
-        die(f"--text: {path} is an ASS/SSA subtitle file (it starts with {head[:20]!r}); pass it as --srt, which reads "
-            f"ASS (render.py: --srt, not --cues). {cue_shape}", kind="input")
+        die(f"--text: {path} is an ASS/SSA subtitle file (it starts with {head[:20]!r}); pass it as --ass, which burns "
+            f"it with the styles inside it (in a render.py project, the captions stage's \"ass\" key). {cue_shape}",
+            kind="input")
     if head[:1] in "{[":
         try:
             doc = json.loads("\n".join(lines))

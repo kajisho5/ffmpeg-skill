@@ -304,9 +304,11 @@ def read_list(path: str) -> List[str]:
                 line = line[1:-1].replace("'\\''", "'")
         elif line.split()[0] == "ffconcat" and line.split()[1:2] == ["version"]:
             continue  # the concat demuxer's header line names no file
-        elif line.split()[0] in CONCAT_DIRECTIVES and len(line.split()) > 1 and not os.path.exists(os.path.join(base, line)):
+        elif line.split()[0] in CONCAT_DIRECTIVES and not os.path.exists(os.path.join(base, line)):
             # only `file` lines are read: a directive was taken for a path, reported as a missing
-            # (or, under --dry-run, pending) input, and with --on-missing skip its trim was lost
+            # (or, under --dry-run, pending) input, and with --on-missing skip its trim was lost.
+            # `stream` takes no argument (FFmpeg 6.1's concat demuxer); a line naming a file that is
+            # there is a path, whatever its first word
             die(f"--list {path}: `{line}` is an ffmpeg concat directive, which join.py does not apply: the list is "
                 "read for its `file` lines only", kind="input",
                 hint="trim a clip with cut.py first and list the cut file (inpoint/outpoint/duration), "

@@ -1048,7 +1048,7 @@ _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec
 
 
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
-    """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a")
+    """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a"/"s")
     stream, and no filter graph could make one. An encoder option for a stream the output will
     not have selects nothing (FFmpeg applies -c:a after stream selection), so it is not a reason
     to refuse: cut.py names -c:a aac for a silent source too. Anything not known counts as present."""
@@ -1112,7 +1112,9 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
 
 # the options whose value is a filter graph this module can read the filter names out of
 _GRAPH_OPTIONS = frozenset({"-vf", "-af", "-filter:v", "-filter:a", "-filter_complex", "-lavfi"})
-_ENCODER_OPTION_RE = re.compile(r"^-(?:c|codec):[vas](?::\d+)?$|^-[vas]codec$")
+_ENCODER_OPTION_RE = re.compile(r"^-(?:c|codec):([vas])(?::\d+)?$|^-([vas])codec$")
+# the output option that drops every stream of a kind: an encoder named for that kind selects nothing
+_NO_STREAM_OPTION = {"v": "-vn", "a": "-an", "s": "-sn"}
 # one row of `ffmpeg -encoders` / `ffmpeg -filters` (the filter row by its io-spec token, so the
 # flag-column width of FFmpeg 6/7 and 8+ does not matter): ffmpeg_encoders(), ffmpeg_filters()
 _ENCODER_ROW = r"^\s*[VAS][.\w]{5}\s+(\S+)"
@@ -1180,23 +1182,38 @@ def _check_build_components(cmd: Sequence[str]) -> None:
     ffmpeg's "Unknown encoder" / "No such filter" (#402): the dry run said completed, and a real
     run found out after its earlier commands had run. Read from the command as built, so every tool
     and every route to an encoder (an HDR source kept as HEVC, --codec, a preset) is covered.
-    Only output options are read (a -c:v before an -i picks a decoder). A VideoToolbox encoder is
+    Only output options are read (a -c:v before an -i picks a decoder), and an encoder only for a
+    stream kind the output keeps: not one -an/-vn/-sn drops or no input file carries. A VideoToolbox encoder is
     left to --hw's own checks and its CPU retry, a -filter_complex_script and a lavfi input are not
     parsed, and a list that could not be read refuses nothing."""
     last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
     encoders: List[str] = []
+    streams: Dict[str, set] = {}  # encoder -> the stream kinds ("v", "a", "s") it is named for
     filters: List[str] = []
+    output_opts = {str(tok) for tok in cmd[last_input + 2:-1]}
     for i in range(1, len(cmd) - 1):
         tok, value = str(cmd[i]), str(cmd[i + 1])
+        m = _ENCODER_OPTION_RE.match(tok)
         if tok in _GRAPH_OPTIONS:
             filters += [n for n in graph_filter_names(value) if n not in filters]
-        elif i > last_input and _ENCODER_OPTION_RE.match(tok) and value != "copy" \
-                and not value.endswith("_videotoolbox") and value not in encoders:
-            encoders.append(value)
+        elif i > last_input and m and value != "copy" and not value.endswith("_videotoolbox"):
+            if value not in encoders:
+                encoders.append(value)
+            streams.setdefault(value, set()).add(m.group(1) or m.group(2))
+
+    def selected(name: str) -> bool:
+        # ffmpeg picks an encoder per output stream, after stream selection: one named for a kind
+        # the output drops (-an/-vn/-sn) or that no input carries (cut.py names -c:a aac for a
+        # silent source too) is never opened. What the command cannot tell (a -filter_complex graph, a
+        # lavfi or unreadable input) counts as selected; explicit -map lists are not read.
+        return any(_NO_STREAM_OPTION[k] not in output_opts and _an_input_has(cmd, k) for k in streams.get(name, ()))
+
     for flag, wanted, what, reason in (("-encoders", encoders, "encoder", "encoder_missing"),
                                        ("-filters", filters, "filter", "filter_missing")):
         have = _build_list(flag) if wanted else set()
         missing = [n for n in wanted if n not in have] if have else []
+        if what == "encoder":
+            missing = [n for n in missing if selected(n)]  # asked last: only an encoder that would be refused is probed for
         if missing:
             name = missing[0]
             hint = filter_missing_hint(name) if what == "filter" else filter_missing_hint(name).replace(

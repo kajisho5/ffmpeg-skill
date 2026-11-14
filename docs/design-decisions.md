@@ -3911,15 +3911,20 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
 - **A command that names an encoder or a filter the build lacks is refused in `run()`, not tool
   by tool.** #402 listed some twenty tools; the cause they share is that nothing looked at the
   command before ffmpeg did, so the dry run completed. `_check_build_components()` reads each
-  ffmpeg command as built: `-c:v`/`-c:a`/`-c:s` values after the last `-i` (one before an input
-  picks a decoder), and the filter names of `-vf`, `-af`, `-filter:v`, `-filter:a`,
+  ffmpeg command `run()` is given, as built: `-c:v`/`-c:a`/`-c:s` values after the last `-i` (one
+  before an input picks a decoder), each only for a stream kind the output keeps (ffmpeg opens an
+  encoder per output stream, after selection: `-an`/`-vn`/`-sn` drops the kind, and `_an_input_has()`
+  finds an input file without it, so `cut.py --accurate`'s `-c:a aac` on a video-only source needs
+  no AAC; a `-filter_complex` graph, a lavfi or unreadable input counts as carrying it, and explicit `-map`s
+  are not read), and the filter names of `-vf`, `-af`, `-filter:v`, `-filter:a`,
   `-filter_complex` and `-lavfi` (`graph_filter_names()`: split at `,` and `;` outside quotes and
   escapes, labels dropped). It is `kind: ffmpeg` with `reason: encoder_missing` /
   `filter_missing` and `details: {name}`, what the failed run already carried, so a caller keyed
   on those sees the same refusal earlier; `--codec av1`/`prores` keep their own `missing_tool`
   refusal, which is decided before a command exists. Left out on purpose: a `*_videotoolbox`
   encoder (`--hw` has its own platform check and CPU retry), `copy`, a lavfi input and a
-  `-filter_complex_script`, every `run_analysis()` measurement (several callers take a failed
+  `-filter_complex_script`, every `run_analysis()` measurement (`loudness.measure()`'s loudnorm
+  pass among them, which still fails in ffmpeg on a build without the filter; several callers take a failed
   reading as "no reading": cropdetect's windows, `probe.py --analyze`; the others now carry the
   cause through `ffmpeg_failure_extra()`), and any list that could not be read (an empty list
   proves nothing; the read for this check is quiet and records no `ffmpeg_list_unreadable`).
@@ -3949,14 +3954,19 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `key_fill_pair` (the two written files against each other) have none, and wrote `measurement`
   and `output_measurement`, values the schema's enum does not have. Dropping the field, not adding
   a value, keeps the enum's meaning. Test: `test_every_provenance_a_tool_writes_is_one_the_schema_lists`.
-- **`--emoji mono` on a build whose libass draws colour reports `mode: color`.** `mono` and
-  `color` build the same text, so nothing makes the glyph monochrome there; the result says what
-  is drawn and warns (`emoji_mono_drawn_in_colour`). `graphics.py` sends `color` through libass
-  as it sent `mono`. Tests: `EmojiClaimTests`.
-- **`caption.py --text` refuses a file that starts as WebVTT, ASS or JSON.** A first line in
-  brackets that is not JSON (`[Music]`) is still a cue. `metadata.py --chapters` drops one
+- **`--emoji mono` on a build whose libass draws colour reports `mode: color` on the libass
+  route.** `mono` and `color` build the same text, so nothing makes the glyph monochrome there; the
+  result says what is drawn and warns (`emoji_mono_drawn_in_colour`). `graphics.py` sends `color`
+  through libass as it sent `mono`; with `--text-render drawtext` nothing draws them, so the mode is
+  `none`, they are stripped with `emoji_not_drawn`, and no colour warning is given. Tests:
+  `EmojiClaimTests`.
+- **`caption.py --text` refuses a file that starts as WebVTT, ASS or JSON**, naming `--srt` for
+  WebVTT and `--ass` for ASS/SSA. The JSON refused is an object, or a non-empty array whose first
+  element is an object or an array; an array of plain values (`["hello"]`) is cue text, as is a
+  first line in brackets that is not JSON (`[Music]`). `metadata.py --chapters` drops one
   separator (`-`, a dash, `|`, `:`) followed by a space from the start of a title. `join.py
-  --list` refuses concat directives rather than applying them: a trim is `cut.py`'s job, and a
+  --list` refuses concat directives rather than applying them (the argument-free `stream` too; a
+  line that names a file that is there is a path): a trim is `cut.py`'s job, and a
   list that trims would otherwise join untrimmed files. `color.py --lut` checks a `.cube` for
   what lut3d needs (`LUT_3D_SIZE`, size^3 rows starting with three numbers) and leaves the other
   LUT formats to ffmpeg. `--image` (overlay, waveform) takes what the image demuxers read; a

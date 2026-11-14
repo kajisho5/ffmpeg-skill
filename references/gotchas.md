@@ -271,9 +271,11 @@ directory of PNGs — and on most builds only the second one exists.
   to 48 pixels: invalid library handle`, and at the font's own strike
   `Monocromatic (1bpp) fonts are not supported.`) and no file is written. That
   is why the colour route is a PNG overlay, never a drawtext font.
-- **PNGs**: `--emoji-assets DIR`, a directory of files named by code point in
-  the Twemoji/Noto convention — lowercase hex joined by `-`: `1f389.png`,
-  `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png`. Twemoji's `assets/72x72`
+- **PNGs**: `--emoji-assets DIR`, a directory of files named by code point:
+  Twemoji's lowercase hex joined by `-` (`1f389.png`, `1f1ef-1f1f5.png`,
+  `1f469-200d-1f4bb.png`), or Noto Emoji's `emoji_u` names, each code point at
+  least four hex digits, joined by `_` (`emoji_u1f389.png`,
+  `emoji_u0031_20e3.png`). Twemoji's `assets/72x72`
   (CC-BY 4.0) and Noto Emoji's `png/128` (OFL/Apache-2.0) are the two people
   already have. **The skill never downloads anything**: a missing directory is
   `kind: input`, never a silent fetch. The same directory can come from

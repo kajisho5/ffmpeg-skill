@@ -307,9 +307,9 @@ def main(force_route: Optional[str] = None) -> int:
     emoji_count = len(emoji_clusters(all_text))
     emoji_names = sorted({emoji_codepoint_name(cl) for _i, cl in emoji_clusters(all_text)})
     not_drawn = None
-    if emoji_mode == "mono" and args.emoji == "mono" and support.get("libass_color"):
+    mono_in_colour = emoji_mode == "mono" and args.emoji == "mono" and bool(support.get("libass_color"))
+    if mono_in_colour:
         emoji_mode = "color"
-        warn(emoji_mono_on_colour_note(support), "emoji_mono_drawn_in_colour")
     if emoji_mode in ("mono", "color") and route == "drawtext":
         if args.text_render == "auto":
             route = "ass"
@@ -319,6 +319,9 @@ def main(force_route: Optional[str] = None) -> int:
     elif emoji_mode == "none" and args.emoji == "auto":
         not_drawn = ("libass draws no emoji glyph on this build (an empty box at best)"
                      if support.get("libass_glyph") is False else "no face here draws them")
+    if mono_in_colour and emoji_mode == "color":
+        # said once the route is final: a pinned drawtext route strips them instead (mode none)
+        warn(emoji_mono_on_colour_note(support), "emoji_mono_drawn_in_colour")
     if emoji_mode == "mono":
         warn("emoji rendered monochrome (no colour path on this ffmpeg; "
              "--emoji-assets DIR for colour). " + support["detail"], "emoji_monochrome")

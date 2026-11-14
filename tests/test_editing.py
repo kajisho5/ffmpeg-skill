@@ -4049,6 +4049,31 @@ class WordsFileTests(unittest.TestCase):
         self.assertIn("milliseconds", warn[0]["message"])
         self.assertIn("ms.json", warn[0]["message"])
 
+    def test_a_whisper_cpp_document_s_language_picks_the_filler_list(self):
+        """With the default --filler-lang auto, whisper.cpp's `result.language` is the transcript's
+        language as openai-whisper's top-level `language` is: Norwegian has no built-in list, and the
+        English one would cut "er" ("is"), so the run is refused; an English document is cut as before."""
+        tok = lambda text, a, b: {"text": text, "offsets": {"from": a, "to": b}}  # noqa: E731
+        for lang, refused in (("no", True), ("en", False)):
+            with self.subTest(language=lang):
+                doc = {"result": {"language": lang},
+                       "transcription": [{"offsets": {"from": 0, "to": 3000}, "text": " det er bra",
+                                          "tokens": [tok(" det", 500, 900), tok(" er", 1500, 1700), tok(" bra", 2500, 2900)]}]}
+                words = self.dir / f"cpp_{lang}.json"
+                words.write_text(json.dumps(doc), encoding="utf-8")
+                out = self.dir / f"cpp_{lang}.mp4"
+                out.unlink(missing_ok=True)
+                proc = script("silence.py", self.src, "--filler", "--words", words, "-o", out, "--dry-run", "--json",
+                              expect_fail=refused)
+                result = json.loads(proc.stdout)
+                if refused:
+                    self.assertEqual((proc.returncode, result["error"]["kind"]), (1, "input"), result)
+                    self.assertIn("the transcript is in no,", result["error"]["message"])
+                else:
+                    self.assertEqual((result["status"], result["filler"]["lang"]), ("completed", "en"), result)
+                    self.assertEqual([s["word"] for s in result["filler"]["removed"]], ["er"])
+                self.assertFalse(out.exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

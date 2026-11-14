@@ -875,7 +875,8 @@ packet count must equal the clips' total and its video length their summed lengt
 audio-only join (which resamples every clip to one format) is refused with it.
 `--list FILE` (2.2) reads the clips from a file, one per line in order, paths relative to the
 file (blank lines and `#` comments ignored; ffmpeg's `file 'x.wav'` lines and the `ffconcat version` header accepted,
-any other concat directive -- `inpoint`, `outpoint`, `duration` -- refused, since join.py applies none), for the
+any other concat directive -- `inpoint`, `outpoint`, `duration`, the argument-free `stream` -- refused, since join.py
+applies none, unless the line names a file that is there), for the
 segments a TTS or render step wrote. Every input -- listed or given as arguments -- is checked
 before anything runs: missing, empty (0 bytes) or unreadable as media. By default all of them
 are named in one refusal (`kind: input`, `problems: [{index, path, reason}]`, nothing encoded);
@@ -1799,8 +1800,8 @@ stays text (escaped), and under `--karaoke` `<font color>` is dropped for the hi
 colours. The ASS is kept next to the
 user can hand-tune timings and re-run with `--ass`.
 Emoji (1.15): `--emoji-assets DIR` is a directory of PNGs named by code point
-(`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji/Noto
-convention), also read from `brand.json` `styles.caption.emoji_assets` and
+(`1f389.png`, `1f1ef-1f1f5.png`, `1f469-200d-1f4bb.png` — the Twemoji
+convention; Noto Emoji's `emoji_u1f389.png`, `emoji_u0031_20e3.png` are found too), also read from `brand.json` `styles.caption.emoji_assets` and
 `FFMPEG_SKILL_EMOJI_ASSETS`. With one, the cue text keeps its place in the ASS
 with an invisible placeholder reserving the emoji's box and each PNG is
 composited on top (`--emoji-scale` sizes the box, `--emoji-max` caps the count).

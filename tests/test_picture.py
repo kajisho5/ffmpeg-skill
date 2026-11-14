@@ -6443,12 +6443,15 @@ class BuildComponentPreflightTests(unittest.TestCase):
         return code, json.loads(out.getvalue())
 
     def test_a_missing_encoder_or_filter_is_refused_before_ffmpeg_runs_dry_runs_included(self):
+        # --no-hw on the missing-encoder cases: on Apple Silicon a build without libx265 but with
+        # hevc_videotoolbox encodes on VideoToolbox instead (_vt_in_place_of, decided), and these
+        # cases are about a missing CPU encoder
         cases = [  # tool, arguments, the hidden component, its list, the reason, needs libx265 to build the input
             ("overlay", [self.sdr, "--text", "Hello"], "drawtext", "filters", "filter_missing", False),
-            ("reverse", [self.sdr, "--codec", "hevc"], "libx265", "encoders", "encoder_missing", False),
-            ("crop", [self.hdr, "--x", "0", "--y", "0", "--width", "80", "--height", "44"], "libx265", "encoders", "encoder_missing", True),
-            ("export", [self.hdr, "--preset", "youtube-hdr"], "libx265", "encoders", "encoder_missing", True),
-            ("cut", [self.hevc, "--start", "0.5", "--end", "1.5", "--accurate"], "libx265", "encoders", "encoder_missing", True),
+            ("reverse", [self.sdr, "--codec", "hevc", "--no-hw"], "libx265", "encoders", "encoder_missing", False),
+            ("crop", [self.hdr, "--x", "0", "--y", "0", "--width", "80", "--height", "44", "--no-hw"], "libx265", "encoders", "encoder_missing", True),
+            ("export", [self.hdr, "--preset", "youtube-hdr", "--no-hw"], "libx265", "encoders", "encoder_missing", True),
+            ("cut", [self.hevc, "--start", "0.5", "--end", "1.5", "--accurate", "--no-hw"], "libx265", "encoders", "encoder_missing", True),
             ("color", [self.hdr, "--to-sdr"], "zscale", "filters", "filter_missing", True),
             ("stabilize", [self.sdr], "vidstabdetect", "filters", "filter_missing", False),
         ]
@@ -6469,6 +6472,36 @@ class BuildComponentPreflightTests(unittest.TestCase):
                     self.assertEqual((err["kind"], err["reason"], err["details"]), ("ffmpeg", reason, {"name": name}), err)
                     self.assertIn("doctor", err["hint"])
                     self.assertFalse(out.exists(), "a refused run writes nothing")
+
+    def test_an_encoder_for_a_stream_the_output_does_not_have_is_not_required(self):
+        """ffmpeg opens an encoder per output stream, after stream selection: cut.py --accurate names
+        -c:a aac for a video-only source too, and a build without AAC encodes that source; with sound
+        it is still refused. -an drops the sound an input has, so it needs no audio encoder either."""
+        if "aac" not in self.encoders:
+            self.skipTest("this build has no aac to hide")
+        from _common import STATE
+        silent = OUT / "pre_silent.mp4"
+        if not silent.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=2", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", silent)
+        r = self.runner
+        r._ENCODERS, r._FILTERS = self.encoders - {"aac"}, self.filters
+        for src, refused in ((silent, False), (self.sdr, True)):
+            with self.subTest(source=src.name):
+                out = OUT / f"pre_cut_{src.stem}.mp4"
+                out.unlink(missing_ok=True)
+                code, doc = self._run("cut", [src, "--start", "0.5", "--end", "1.5", "--accurate", "--no-hw", "-o", out, "--json", "--dry-run"])
+                if refused:
+                    self.assertEqual((code, doc["error"]["reason"], doc["error"]["details"]), (1, "encoder_missing", {"name": "aac"}), doc)
+                else:
+                    self.assertEqual((code, doc["status"]), (0, "completed"), doc)
+        r._check_build_components(["ffmpeg", "-i", str(self.sdr), "-c:v", "libx264", "-an", "-c:a", "aac", "out.mp4"])
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                r._check_build_components(["ffmpeg", "-i", str(self.sdr), "-c:v", "libx264", "-c:a", "aac", "out.mp4"])
+        finally:
+            STATE.reset()
 
     def test_only_what_the_build_list_lacks_is_refused(self):
         """A decoder named before an input, a stream copy, a VideoToolbox encoder (left to --hw's
@@ -6602,12 +6635,15 @@ class WrongFormatFileTests(unittest.TestCase):
             ("WebVTT with cue settings as cues", "caption.py",
              ["--text", self.write("set.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000 align:start position:0%\nHello\n")], "set.vtt", ["WebVTT", "--srt"]),
             ("headerless mm:ss timing lines as cues", "caption.py", ["--text", self.write("bare.txt", "00:01.000 --> 00:02.000\nHello\n")], "bare.txt", ["subtitle file", "--srt"]),
-            ("ASS as cues", "caption.py", ["--text", self.write("x.ass", "[Script Info]\nScriptType: v4.00+\n\n[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi\n")], "x.ass", ["ASS", "--srt"]),
+            ("ASS as cues", "caption.py", ["--text", self.write("x.ass", "[Script Info]\nScriptType: v4.00+\n\n[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi\n")], "x.ass", ["ASS", "--ass"]),
             ("JSON as cues", "caption.py", ["--text", self.write("cues.json", '[{"start": 1.0, "end": 2.0, "text": "Hello"}]\n')], "cues.json", ["JSON"]),
             ("SRT as chapters", "metadata.py", [self.src, "--chapters", srt], "subs.srt", ["subtitle", "chapter list"]),
             ("WebVTT as chapters", "metadata.py", [self.src, "--chapters", self.write("ch.vtt", "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n")],
              "ch.vtt", ["WebVTT header", "chapter list"]),
             ("a concat directive in a list", "join.py", ["--list", self.write("parts.ffconcat", f"ffconcat version 1.0\nfile '{self.src}'\ninpoint 1\nfile '{self.src}'\n")], "parts.ffconcat", ["inpoint 1", "directive"]),
+            ("the argument-free stream directive in a list", "join.py",
+             ["--list", self.write("streams.ffconcat", f"ffconcat version 1.0\nfile '{self.src}'\nstream\nfile '{self.src}'\n")],
+             "streams.ffconcat", ["`stream`", "directive"]),
             ("a .cube with no LUT", "color.py", [self.src, "--lut", self.write("bad.cube", "not a cube\n")], "bad.cube", ["LUT_3D_SIZE"]),
             ("a .cube cut short", "color.py", [self.src, "--lut", self.write("short.cube", "LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")], "short.cube", ["2 rows", "has 8"]),
             ("a 1D .cube", "color.py", [self.src, "--lut", self.write("one.cube", "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n")], "one.cube", ["1D"]),
@@ -6644,6 +6680,14 @@ class WrongFormatFileTests(unittest.TestCase):
         doc = json.loads(script("join.py", "--list", lst, "-o", self.dir / "ok_join.mp4", "--dry-run", "--json").stdout)
         self.assertEqual(doc["status"], "completed")
         self.assertEqual((doc.get("diagnostics") or {}).get("skipped", []), [])
+        # a line that names a file that is there is a path, even when its name is a directive's
+        named = self.dir / "named"  # its own folder: the refusal case's list must not find this file
+        named.mkdir(exist_ok=True)
+        shutil.copyfile(self.src, named / "stream")
+        lst = named / "ok_named.txt"
+        lst.write_text(f"stream\n{self.src}\n", encoding="utf-8")
+        doc = json.loads(script("join.py", "--list", lst, "-o", self.dir / "ok_join_named.mp4", "--dry-run", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc)
         cube = self.write("ok.cube", "LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)))
         graded = self.dir / "ok_lut.mp4"
         self.assertTrue(json.loads(script("color.py", self.src, "--lut", cube, "-o", graded, "--json").stdout)["verified"])
@@ -6659,10 +6703,16 @@ class WrongFormatFileTests(unittest.TestCase):
         self.assertEqual(asr.parse_srt(str(plain))[0][2], "a <c>b</c>", "an SRT's text is not WebVTT")
         noto = self.dir / "noto"
         noto.mkdir(exist_ok=True)
-        for name in ("emoji_u1f600.png", "emoji_u1f469_200d_1f4bb.png"):
+        for name in ("emoji_u1f600.png", "emoji_u1f469_200d_1f4bb.png", "emoji_u0031_20e3.png"):
             (noto / name).write_bytes(b"png")
         self.assertEqual(os.path.basename(emoji.emoji_asset_for("\U0001F600", str(noto))), "emoji_u1f600.png")
         self.assertEqual(os.path.basename(emoji.emoji_asset_for("\U0001F469‍\U0001F4BB", str(noto))), "emoji_u1f469_200d_1f4bb.png")
+        # a keycap: Noto pads each code point to four digits (0031), Twemoji does not (31-20e3.png)
+        self.assertEqual(os.path.basename(emoji.emoji_asset_for("1\ufe0f\u20e3", str(noto))), "emoji_u0031_20e3.png")
+        twemoji = self.dir / "twemoji"
+        twemoji.mkdir(exist_ok=True)
+        (twemoji / "31-20e3.png").write_bytes(b"png")
+        self.assertEqual(os.path.basename(emoji.emoji_asset_for("1\ufe0f\u20e3", str(twemoji))), "31-20e3.png")
 
 
 class EmojiClaimTests(unittest.TestCase):
@@ -6750,6 +6800,12 @@ class EmojiClaimTests(unittest.TestCase):
         doc = self._graphics(self._support(mode="color", libass_color=True), "--emoji", "mono")
         self.assertEqual(doc["emoji"]["mode"], "color")
         self.assertIn("emoji_mono_drawn_in_colour", [w["code"] for w in doc["diagnostics"]["warnings"]])
+        # ... unless drawtext is pinned: then nothing draws them, and no warning says they are drawn in colour
+        doc = self._graphics(self._support(mode="color", libass_color=True), "--emoji", "mono", "--text-render", "drawtext")
+        codes = [w["code"] for w in doc["diagnostics"]["warnings"]]
+        self.assertEqual(doc["emoji"]["mode"], "none")
+        self.assertIn("emoji_not_drawn", codes)
+        self.assertNotIn("emoji_mono_drawn_in_colour", codes)
 
     def test_overlay_says_drawtext_has_one_font_and_no_fallback(self):
         if not shutil.which("ffmpeg"):

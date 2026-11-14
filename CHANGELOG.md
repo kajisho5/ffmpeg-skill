@@ -11,13 +11,16 @@
   did `--codec hevc`, `export.py --preset youtube-hdr` and `cut.py` on an SDR HEVC source, after
   the dry run had said completed; the same for `overlay.py --text` without drawtext and
   `color.py --to-sdr` or `look.py` on an HDR source without zscale. `run()` now reads the encoders
-  (`-c:v`/`-c:a`/`-c:s` after the last input) and the filter names (`-vf`, `-af`,
-  `-filter_complex`) of each command it is given and refuses one the build's own list lacks, with
+  (`-c:v`/`-c:a`/`-c:s` after the last input, each for a stream kind the output keeps: not one
+  `-an`/`-vn`/`-sn` drops or no input file carries, so `cut.py --accurate` on a video-only source
+  needs no AAC) and the filter names (`-vf`, `-af`, `-filter:v`, `-filter:a`, `-filter_complex`,
+  `-lavfi`) of each command it is given and refuses one the build's own list lacks, with
   the `kind: ffmpeg`, `reason` (`encoder_missing`, `filter_missing`), `details.name` and hint the
   failed run carried (under `--dry-run` the list is ffprobe's, as for `--codec av1`). A missing
   zscale is refused, not worked around: `look.py` has no other tone map, so `report.py` still has
-  no contact sheet for an HDR source on such a build (it says why). Not read: a VideoToolbox encoder (left to `--hw`), a lavfi input, a
-  measurement pass (`run_analysis()`), and anything when the list could not be read.
+  no contact sheet for an HDR source on such a build (it says why). Not read: a VideoToolbox encoder (left to `--hw`), a lavfi input, an
+  explicit `-map` selection, a measurement pass (`run_analysis()`: `loudness.py`'s loudnorm
+  measurement, for one, fails in ffmpeg as before), and anything when the list could not be read.
   `stabilize.py` checks vidstabdetect and vidstabtransform itself, since its pass 1 is a
   measurement. `cut.py`'s re-encode failure, `stabilize.py`'s pass 1, `loudness.py`'s measurement
   and the shared silence, content, dropout and decode passes keep their own message and now carry
@@ -49,26 +52,32 @@
   box: the text goes through libass, and with `--text-render drawtext` the emoji are left out and
   an `emoji_not_drawn` warning says so (as it now does when auto finds nothing that draws them;
   `emoji.count` is counted before they are removed). `--emoji mono` on such a build is drawn in
-  colour and now reports `mode: color` with an `emoji_mono_drawn_in_colour` warning, where it
-  warned of "no colour path". `caption.py`'s note no longer cites `--emoji none` when auto chose
+  colour through libass and now reports `mode: color` with an `emoji_mono_drawn_in_colour` warning, where it
+  warned of "no colour path" (`graphics.py --text-render drawtext` leaves them out, as above: `mode:
+  none`, `emoji_not_drawn`). `caption.py`'s note no longer cites `--emoji none` when auto chose
   it, `emoji_assets_missing` says whether libass draws a glyph for the clusters without a PNG, and
   `overlay.py`'s warning says drawtext has one font and no fallback.
 - **A file in another format is refused by name** (#404). `caption.py --text` (and `render.py
   --cues`) burned a WebVTT file with `mm:ss` times or cue settings, an ASS file or a JSON document
-  in line by line; each is refused, naming the format and `--srt`. A WebVTT file's inline word
+  in line by line; each is refused, naming the format and the flag that reads it (`--srt` for
+  WebVTT, `--ass` for ASS/SSA). The JSON refused is an object, or a non-empty array whose first
+  element is an object or an array; an array of plain values (`["hello"]`) is still read as cue
+  text, and so is a first line in brackets that is not JSON (`[Music]`). A WebVTT file's inline word
   timestamps and `<c>`/`<v>`/`<lang>` spans were burned as text when caption.py builds the ASS
   itself (`--animate`, for one); they are dropped, in a file that starts `WEBVTT`.
   `metadata.py --chapters` kept the `- ` of `0:00 - Intro` in the title, and failed on an SRT or
-  WebVTT file without naming it. `join.py --list` took a concat directive (`inpoint 1`) for a path; it is
-  refused, and the `ffconcat version` header is skipped. `color.py --lut` with a `.cube` that has
+  WebVTT file without naming it. `join.py --list` took a concat directive (`inpoint 1`, or the
+  argument-free `stream`) for a path; it is refused unless the line names a file that is there,
+  and the `ffconcat version` header is skipped. `color.py --lut` with a `.cube` that has
   no `LUT_3D_SIZE` line or fewer than size^3 rows failed inside ffmpeg with a hint about an
   unreadable video. `cut.py --snap-source` with a file that is neither a `scenes.py` document nor
   decodable audio said "no reliable beat grid". `overlay.py --image` and `waveform.py --image`
   given a video or a GIF failed as "Option loop not found" (and `waveform.py --dry-run` completed);
   each is refused by name, the GIF with the way to make a PNG of it. `silence.py --words` did
-  not read the whisper.cpp `--output-json-full` document its own refusal asks for, and now warns
+  not read the whisper.cpp `--output-json-full` document its own refusal asks for (it reads its
+  words, and `result.language` for `--filler-lang auto`, as `--transcribe` does), and now warns
   (`words_outside_input`) when word timings start at or after the end of the input. Noto Emoji's file
-  names (`emoji_u1f600.png`) are found in `--emoji-assets`.
+  names (`emoji_u1f600.png`, a keycap's `emoji_u0031_20e3.png`) are found in `--emoji-assets`.
 
 ## 3.8.8
 

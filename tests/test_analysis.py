@@ -1047,6 +1047,13 @@ class AnalysisTests(MediaFixtures):
         wrote = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--trim-second", "-o", out, "--json").stdout)
         self.assertIn("is resampled to match", wrote["drift"]["meaning"])
         self.assertNotIn("nothing is resampled", wrote["drift"]["meaning"])
+        # a dry run of the same writes nothing: the resampling is planned, not done
+        out.unlink(missing_ok=True)
+        planned = json.loads(script("sync.py", self.long_ref, self.long_drift, "--fix-drift", "--trim-second", "-o", out,
+                                    "--dry-run", "--json").stdout)
+        self.assertFalse(out.exists())
+        self.assertIn("would be resampled to match in the file this run plans", planned["drift"]["meaning"])
+        self.assertNotIn("this run writes", planned["drift"]["meaning"])
 
     # ---------------------------------------------------------------- v0.3: look / silence / join / agent flags
     def test_look_contact_sheet_and_frames(self):
