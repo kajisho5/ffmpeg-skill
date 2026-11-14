@@ -124,6 +124,10 @@
   note, and a run where none fits is refused (`kind: input`) before any `--edl` is written.
 - **`waveform.py -o` refuses every audio-only extension** (`.aif`, `.aiff`, `.caf`, `.wma` too),
   a dry run as well; they failed in ffmpeg's muxer, or were planned.
+- **`audio.py --music-fade-out` ends where the bed is cut**: at the main track's end when
+  `--length-samples` makes the output longer (the fade sat past the trimmed bed), and on the bed's
+  timestamps when its sound starts late in its file (a fade timed on the length ran over the
+  bed's first second and silenced the rest).
 - **A WAV this skill has just written is read as a WAV on FFmpeg 9.0.2.** Its MPEG-TS probe outscores
   the WAV one when the PCM holds `0x47` at a transport packet's spacing (a steady tone can), so
   ffprobe read the finished file as a broken transport stream and the run failed with "output

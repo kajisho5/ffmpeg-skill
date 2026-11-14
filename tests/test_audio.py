@@ -1313,6 +1313,31 @@ class Audit459AudioTests(MediaFixtures):
         pcm = self._pcm(out)
         self.assertLess(self._rms_db(pcm, 5.88, 5.98), self._rms_db(pcm, 0.1, 0.3) - 20, "faded out by the output's end")
 
+    def test_a_bed_fade_ends_where_the_bed_is_heard_to_end(self):
+        """Two more ends a bed's fade was timed past. An output longer than the main track
+        (--length-samples): the bed is trimmed at the main track's end, and the fade sat on the
+        output's end, after the bed had stopped at full level. A bed whose sound starts late in
+        its file (Matroska, picture from 0, sound from 2 to 5 s): afade reads the timestamps, 2 to
+        5 s, so a fade timed on the 3 s length ran over the bed's FIRST second and silenced the
+        rest (amix plays the bed from the output's start whatever its timestamps)."""
+        out = OUT / "a459_fade_long_output.wav"
+        script("audio.py", self.silence, "--music", self.bed, "--music-volume", "0", "--music-fade-out", "1",
+               "--length-samples", str(8 * self.RATE), "-o", out)
+        pcm = self._pcm(out)
+        self.assertGreater(self._rms_db(pcm, 1.0, 2.0), -12, "the bed plays at its level")
+        self.assertLess(self._rms_db(pcm, 5.88, 5.98), self._rms_db(pcm, 1.0, 2.0) - 20, "faded out by the end of the main track")
+        late = OUT / "a459_late_bed.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=64x36:r=25:d=5",
+           "-itsoffset", "2", "-f", "lavfi", "-i", "sine=f=500:d=3:r=48000,volume=4", "-map", "0:v", "-map", "1:a",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "pcm_s16le", late)
+        out = OUT / "a459_fade_late_bed.wav"
+        script("audio.py", self.silence, "--music", late, "--music-volume", "0", "--music-fade-out", "1", "-o", out)
+        pcm = self._pcm(out)
+        level = self._rms_db(pcm, 0.5, 1.5)
+        self.assertGreater(level, -12, "the bed plays from the start")
+        self.assertGreater(self._rms_db(pcm, 1.6, 1.9), level - 1, "and is not faded before its last second")
+        self.assertLess(self._rms_db(pcm, 2.9, 2.98), level - 20, "faded out by its own end")
+
     def test_a_key_just_over_the_duck_threshold_ducks_the_bed(self):
         """agate's default soft knee (2.82843) opened the duck's gate only about 2 dB over the
         threshold: speech peaking 1.5 dB over --duck-threshold left the bed at its level (0 of

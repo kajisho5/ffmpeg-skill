@@ -29,7 +29,7 @@ from typing import Any, Dict, List
 
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
-from _common.emit import own_length, warn
+from _common.emit import file_origin, stream_end, warn
 from _common.decision import LOSSLESS_AUDIO_EXT, conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
@@ -588,11 +588,17 @@ def main() -> int:
         mfx = [f"volume={args.music_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
         # A142: a bed shorter than the output (and not looped) stops at its own end, so its fade
         # ends there: timed on the output's end it started after the bed had stopped at full level
-        bed_end = end_dur
+        # ... and at the main track's end when the output runs past it (--length-samples): the
+        # atrim above has cut the bed there. All three are timestamps, which is what afade reads:
+        # a bed whose sound starts late in its file (2 to 5 s) keeps those, so its fade ends at 5,
+        # not at its 3 s length (that fade ran over the bed's first second)
+        ends = [t for t in (end_dur, main_dur) if t]
         if args.music_fade_out and not args.music_loop and not dry_run_input_pending(args.music):
-            bed_len = own_length(probe(args.music).get("audio"))
-            if bed_len and (not bed_end or bed_len < bed_end):
-                bed_end = bed_len
+            bed_meta = probe(args.music)
+            bed_stop = stream_end(bed_meta, "audio")
+            if bed_stop is not None and bed_stop - file_origin(bed_meta) > 0:
+                ends.append(bed_stop - file_origin(bed_meta))
+        bed_end = min(ends) if ends else None
         if args.music_fade_out and bed_end:
             # a fade longer than the bed is cut to it, so the bed still ends silent (a 5 s fade on
             # a 2 s bed started at 0 and stopped at 60% gain)
