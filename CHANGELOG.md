@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.8.15
+
+_Automated release: version and notes generated from pull requests merged since 3.8.14._
+
+- fix(export): convert extracted alpha to limited-range key luma (#524)
+
 ## 3.8.14
 
 _Automated release: version and notes generated from pull requests merged since 3.8.13._
