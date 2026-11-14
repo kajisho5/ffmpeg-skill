@@ -147,7 +147,7 @@ by default since 3.0.0 (`--keep-hevc`; `--no-keep-hevc` uses x264 as 2.x did);
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
-Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start` (even `--start 0`), `--end`, `--duration` or `--snap beats` (a snapped edge could move into a dropped range). Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
+Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, nor (to a video output) one that holds less than one frame of picture, such as sound that runs past the last frame (a note names it), and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start` (even `--start 0`), `--end`, `--duration` or `--snap beats` (a snapped edge could move into a dropped range). Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
 `--start` that would stream-copy instead, so the trade can be offered.
@@ -530,7 +530,9 @@ Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
 `showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
 draws a frequency-over-time heatmap instead, reading more out of dense
 mixes at the cost of being less immediately readable. The output always
-carries the audio it visualizes. For an audio-only input (no video stream
+carries the audio it visualizes. The default output of an audio input is
+`<name>_waveform.mp4` (an audio extension cannot hold the picture), and `-o` with an audio
+extension is refused. For an audio-only input (no video stream
 needed) or any file with an audio track worth visualizing.
 
 **Audiogram (1.16).** `--image PATH` puts a local still behind the
@@ -719,12 +721,14 @@ silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|z
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
            [--model MODEL] [--filler-list] [--max-cuts 400]
 ```
-Runs `silencedetect`, keeps `--margin` seconds of air around speech, drops
+Runs `silencedetect`, keeps `--margin` seconds of air around speech (none at the start or the
+end of the sound, where there is no speech to keep it for), drops
 gaps shorter than `--min-silence`, and re-encodes the kept ranges the way `cut.py --segments
 --accurate` does: both streams cut on the same frame times, so the sound never drifts from the
 picture at the cuts, and a sound that starts late keeps its offset. `--list` prints silences, kept ranges and seconds removed
 without rendering; `--edl` saves the kept ranges in `cut.py --segments` format
-so the user can edit the list by hand. Quiet rooms need `--threshold -40`
+so the user can edit the list by hand (written once the cut is, as `--timemap` is). `--max-cuts N`
+(400) refuses to render more than N removal ranges; `--list` reports them whatever their number. Quiet rooms need `--threshold -40`
 to `-45`; noisy ones `-30`. Always tell the user how many seconds were removed.
 
 **Breaths and weak word endings.** `--margin` is the padding kept on each side of every cut
@@ -766,9 +770,10 @@ unchanged, and filler-word cuts (which sit in sound by design) are measured but 
 source and output times, and every removed range with the output time it was cut at. `.csv`
 gives `type,source_start,source_end,output_start,output_end` rows (a removed row's two output
 columns are its cut point); any other path must end in `.json`. Use it to re-time subtitles
-made on the source, or to find a removed sentence again. Its times advance by the
-millisecond-rounded ranges the render cuts on; they are computed, not measured on the written
-file, so each kept range can be off by up to one video frame or audio block. An existing map is refused without `--overwrite`,
+made on the source, or to find a removed sentence again. Its times advance by the exact
+lengths of the ranges the render cuts on (with a picture, each bound on its nearest frame time;
+with sound alone, as asked), rounded only when written, so nothing adds up over many cuts; they
+are computed, not measured on the written file. An existing map is refused without `--overwrite`,
 and a missing directory or a directory at the path as `kind: input`, before anything runs (a dry
 run predicts both); the map is written only after the cut is, so a failed or refused encode
 leaves none. A dry run writes nothing.
@@ -1201,7 +1206,8 @@ scenes.py INPUT [--shots] [--audio-peaks] [--speech] [--json]
 ```
 Lists scenes with audio energy, the loudest moments, and (with
 `--highlights`) proposes N ranges that add up to `--target` seconds, biased to
-the loudest window of each scene. Review the sheet + JSON, adjust the EDL, then
+the loudest window of each scene; each range lies inside its scene (it starts at the cut or on
+the 0.5 s grid after it, to the hundredth rounded inward). Review the sheet + JSON, adjust the EDL, then
 `cut.py --segments`. Cut detection is a one-frame spike test (benchmark on
 hard cuts between real single takes: precision 0.95, recall 1.00 at the default
 threshold; raise `--threshold` to 12 for 0.98 precision at 0.94 recall).
@@ -1619,8 +1625,14 @@ multicam.py REF CAM2 [CAM3 ...] [--switch "START-END:CAM,..."|energy [--min-shot
 ```
 All inputs are aligned to the first one by audio (same engine as `sync.py`,
 `--fix-drift` for long takes). `--switch` names which camera is on screen for
-each range of the reference timeline (gaps fall back to camera 0), `--auto N`
-simply alternates every N seconds. Audio comes from the reference unless
+each range of the reference timeline (gaps fall back to camera 0; ranges that overlap are
+refused, `kind: input`, since each moment has one camera), `--auto N`
+simply alternates every N seconds. Under `--fix-drift` a drifting camera's picture is retimed
+with its sound (`setpts=(PTS-STARTPTS)/ratio`), so a range lasts its reference length on both;
+`--write-project`'s clips name that camera's own in/out, with the ratio as the clip's `speed`
+(render.py plays it at that rate, so it lasts its reference length there too), and the project states
+`"transition": {"type": "none"}`: a switch is a cut, and render.py's default 0.5 s crossfade at every join
+would run the timeline 0.5 s a switch short and move each later switch. Audio comes from the reference unless
 `--audio` picks another input, e.g. an external recorder that has no video.
 `--offsets-only` reports offsets and confidence without rendering. `cuts` names
 the camera actually rendered: a range whose camera has not started yet plays
@@ -2015,7 +2027,8 @@ sync.py REFERENCE SOURCE [SOURCE ...] [--json] [--max-offset 30] [--analyze-seco
 ```
 Cross-correlates loudness envelopes: coarse FFT search (20 ms), then a direct
 1 ms refinement (pure Python, a 2-minute window takes ~1-3 s). Positive offset
-= the source recording started later. `--replace-audio` writes the reference
+= the source recording started later, so `--trim-second`/`--replace-audio` delay it by that
+much (a negative one drops its first -offset seconds). `--replace-audio` writes the reference
 video with the source file's audio aligned (video stream copied); the output
 keeps the reference's full length -- a shorter or head-trimmed source file is
 padded with silence, never allowed to cut the picture.
@@ -2031,8 +2044,11 @@ could not be measured is skipped and says why: `drift_skipped_reason` is
 `too_short` (no tail window far enough from the head) or `low_confidence`
 (top level for one source, and in each `sources` entry; null when applied).
 Check `confidence`
-(0–1, normalised correlation with a runner-up penalty); below 0.3 the match is
-doubtful. Benchmark on real dialogue/music (±30 s offsets, gain, noise, EQ):
+(0–1, normalised correlation with a runner-up penalty: the best other peak more than five
+steps from the winner); below 0.3 the match is doubtful. Since A126 the runner-up is never the
+winner's own neighbour, which held an exact match at 0.59, so a clean match can read near 1.0 and a
+tie between two offsets reads at most 0.5. The benchmark below was measured with the earlier runner-up and has
+not been re-run since; on real dialogue/music (±30 s offsets, gain, noise, EQ):
 with the default 120 s window 40/40 within 10 ms (max 1.1 ms); with a 60 s
 window 95 %, misses flagged below 0.3. Keep `--analyze-seconds` at least 4×
 `--max-offset` (default 120 s vs 30 s): lags with under 35 % overlap are
@@ -2169,10 +2185,13 @@ highpass, and `medium`/`strong` run their own denoise stage at that strength
 that is off is refused, as the `--duck-*` flags are: `--denoise-strength` without
 `--denoise`, `--music-volume`, `--music-fade-out` or `--music-loop` without `--music`,
 `--effects-volume` without `--effects` (a value equal to the default is not seen as given).
-`--duck` uses a sidechain compressor keyed by the speech so music dips under
-dialogue and swells in pauses:
-`sidechaincompress=threshold=0.05:ratio=<amount/3, min 2>:attack=20:release=400:makeup=1`
-by default. `--duck-threshold DB` (default −26.02 dBFS, i.e. the 0.05 linear),
+`--duck` lowers the music by `--duck-amount` dB (0..60, default 12) while the speech is above
+`--duck-threshold`, and leaves it at its level in the pauses: a sidechain gate keyed by the
+speech passes the bed under speech, and that part, scaled by `-(1 - 10^(-amount/20))`, is added
+back to the bed (`sidechaingate=threshold=0.05:ratio=9000:range=0:knee=1:attack=20:release=400`, then
+`volume=-0.748811` for 12 dB, by default). Through 3.8.8 it was a sidechain compressor whose
+ratio was `amount/3` (at least 2), so the depth followed the speech's level, not the flag
+(audit A134). `--duck-threshold DB` (default −26.02 dBFS, i.e. the 0.05 linear),
 `--duck-attack MS` (20) and `--duck-release MS` (400) move each one; a lower
 threshold ducks on quieter speech, a shorter release brings the bed back faster.
 `--json`'s `audio` block reports the settings the run actually used.
@@ -2200,7 +2219,19 @@ swresample. Video is always stream-copied, and so is a subtitle/data track
 when the container can hold it (`dropped_non_av_streams` says when it could not).
 `--limit` (and `--voice strong`'s limiter) is `alimiter` with `level=disabled:latency=1`: the
 look-ahead is compensated, so the limited sound starts on the input's own sample instead of
-`--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476).
+`--limit-attack` (5 ms, 240 samples at 48 kHz) late against the picture (#476). With `--music`
+or `--effects` both limiters run on the mix, after the beds are added: the combined mix is
+limited before it is encoded (A129). A lossy output (`.m4a`, `.mp3`, `.opus`, AAC beside a
+picture) can then peak over the ceiling, since the encoder works after the limiter; use
+`loudness.py` for final levels, which measures the written file. Without a bed they run on the
+main track, where they always ran.
+The typed dynamics flags speak dB where the filter takes a linear value: a knee
+(`--comp-knee`, `--gate-knee`) is 0..18.06 dB, the filters' linear 1..8, default 9.03 dB
+(2.82843); the defaults `--help` gives are ffmpeg's own, in the flag's unit (A135).
+`--bitrate` is the AAC rate beside a picture (192k) and the rate of a lossy audio output's
+codec (`.m4a`/`.aac` 256k, `.mp3` `-q:a 0`, `.ogg` `-q:a 6`, `.opus` 128k when it is not given);
+`.wav` and `.flac` refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
+not `--music-loop`ed) ends where the bed ends (A142).
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
 so it is exact to the sample, not to the millisecond (#478). Sound that starts after the picture
@@ -2249,8 +2280,11 @@ video containers or the codec matching the extension (.wav → PCM, .flac, .mp3)
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
 +3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
-did not pass `--audio-bitrate`, then with the loudnorm ceiling lowered by the
-overshoot -- until the file itself meets `--tp`. `result` reports
+did not pass `--audio-bitrate` (an `.m4a`/`.aac` output starts at its 256k, so only 320k is
+left), then with the loudnorm ceiling lowered by the overshoot -- until the file itself meets
+`--tp`. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
+container's AAC (through 3.8.8 an `.m4a` was 256k whatever was asked, and its retries too);
+`.wav`/`.flac` refuse it. `result` reports
 `tp_ceiling_used`, `audio_bitrate_used`, `encodes`, and a `note` when the
 integrated loudness ended more than 1 LU from the target because of it.
 

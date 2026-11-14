@@ -110,6 +110,48 @@ def speech_music_ratio(samples: "List[float]", rate: int, step_s: float = SPEECH
     return [{"time": round(i * step_s, 2), "speech_music_ratio": round(z / med, 3)} for i, z in enumerate(zcrs)]
 
 
+# A --sheet picks one frame a scene with select. One expression summing a term a scene was refused
+# by FFmpeg 7.1 and later at 3,000 scenes ("Error while parsing expression", ENOMEM) and taken by
+# 6.1. No expression here grows with the scene count: the scenes are dealt round-robin to branches
+# of at most SHEET_SELECT_TERMS terms, each summed as a balanced tree (at most
+# ceil(log2(SHEET_SELECT_TERMS)) = 6 nested parentheses), and the branches' frames are merged back in
+# time order by interleave. Round-robin keeps the branches level, so interleave holds about one
+# thumbnail a branch.
+SHEET_SELECT_TERMS = 64
+
+
+def _first_at(t: float) -> str:
+    """The select term for the first frame at or after `t`. The starts are presentation times, so
+    the frame is chosen by its time, not by start x fps as a frame number -- on a
+    variable-frame-rate source that number is another frame (#411)."""
+    a = f"{max(0.0, t - 0.0006):.4f}"
+    return f"gte(t\\,{a})*(isnan(prev_t)+lt(prev_t\\,{a}))"
+
+
+def _balanced_sum(terms: List[str]) -> str:
+    if len(terms) == 1:
+        return terms[0]
+    mid = len(terms) // 2
+    return f"({_balanced_sum(terms[:mid])}+{_balanced_sum(terms[mid:])})"
+
+
+def sheet_graph(starts: List[float], src: str, thumb: str, tile: str) -> str:
+    """The --sheet filter graph: exactly one frame a scene (the first at or after its start), each
+    made a thumbnail by `thumb`, laid out by `tile`, out as [sheet]."""
+    # no scene (a dry run whose input an earlier step has yet to write, a clip of under one scene):
+    # the sheet is its one tile, the first frame, as the 1x1 layout the caller sized for it
+    starts = starts or [0.0]
+    k = max(1, math.ceil(len(starts) / SHEET_SELECT_TERMS))
+    if k == 1:
+        return f"{src}select='{_balanced_sum([_first_at(t) for t in starts])}',{thumb},{tile}[sheet]"
+    parts = [f"{src}split={k}" + "".join(f"[s{j}]" for j in range(k))]
+    for j in range(k):
+        expr = _balanced_sum([_first_at(t) for t in starts[j::k]])
+        parts.append(f"[s{j}]select='{expr}',{thumb}[t{j}]")
+    parts.append("".join(f"[t{j}]" for j in range(k)) + f"interleave=nb_inputs={k},{tile}[sheet]")
+    return ";".join(parts)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -305,6 +347,7 @@ def main() -> int:
             rank_key = lambda sc: (-sc["audio_rms"], sc["start"])
         ranked = sorted(scenes, key=rank_key)[: args.highlights]
         picks: List[Tuple[float, float]] = []
+        empty: List[Tuple[float, float]] = []
         budget = args.target if args.target else None
         per = (budget / max(1, len(ranked))) if budget else args.max_scene
         for sc in ranked:
@@ -314,36 +357,44 @@ def main() -> int:
             if env and length < sc["duration"]:
                 best, best_s = -1.0, sc["start"]
                 win = max(1, int(length / step_s))
-                lo, hi = int(sc["start"] / step_s), max(int(sc["start"] / step_s) + 1, int(sc["end"] / step_s) - win)
-                for i in range(lo, hi + 1):
+                # A139: a window starts at the scene's start or on the step grid after it, and
+                # ends inside the scene. The grid point at or before the start (floor) was a
+                # candidate, so a pick opened up to one step (0.5 s) early, on the previous shot
+                latest = sc["end"] - length
+                starts = [sc["start"]] + [i * step_s for i in range(math.ceil(sc["start"] / step_s - 1e-9),
+                                                                      math.floor(latest / step_s + 1e-9) + 1)
+                                          if sc["start"] < i * step_s <= latest]
+                for t in starts:
+                    i = int(t / step_s + 1e-9)
                     val = sum(env[i:i + win])
                     if val > best:
-                        best, best_s = val, i * step_s
-            picks.append((round(best_s, 2), round(min(sc["end"], best_s + length), 2)))
+                        best, best_s = val, t
+            # to the hundredth the result and the EDL are written in, inward: a start of 3.333
+            # written as 3.33 opened on the frame before the cut
+            pick_s = math.ceil(best_s * 100 - 1e-6) / 100
+            pick_e = math.floor(min(sc["end"], pick_s + length) * 100 + 1e-6) / 100
+            if pick_e <= pick_s:
+                # no hundredth fits inside it: written as 0.00-0.00 it was a range cut.py refuses
+                empty.append((sc["start"], sc["end"]))
+                continue
+            picks.append((pick_s, pick_e))
+        if empty and not picks:
+            die(f"--highlights found no range of at least 0.01 s, the precision the ranges are written in "
+                f"(each pick is at most {min(per, args.max_scene):g} s, or its scene is shorter)",
+                kind="input", hint="raise --target (or drop it), or lower --highlights")
+        for s, e in empty:
+            note(f"--highlights: the scene {s:.3f}-{e:.3f}s holds no range of at least 0.01 s and has no pick")
         picks.sort()
         result["highlights"] = [{"start": s, "end": e, "duration": round(e - s, 2)} for s, e in picks]
         result["highlights_total"] = round(sum(e - s for s, e in picks), 2)
         result["highlights_rank_by"] = args.rank_by
         info(f"proposed {len(picks)} highlight ranges totalling {result['highlights_total']:.1f}s")
-        if args.edl:
-            if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
-                with open(args.edl, "w", encoding="utf-8") as fh:
-                    for s, e in picks:
-                        fh.write(f"{s:.2f}-{e:.2f}\n")
-            info(f"wrote {args.edl}")
 
     if args.sheet:
         n = len(scenes)
         cols = min(4, max(1, n))
         rows = max(1, math.ceil(n / cols))
         tile_w = 1280 // cols // 2 * 2
-        # exactly one frame per scene: the first frame at or after the scene start. The starts are
-        # presentation times, so the frame is chosen by its time, not by start x fps as a frame
-        # number -- on a variable-frame-rate source that number is another frame (#411)
-        def first_at(t: float) -> str:
-            a = f"{max(0.0, t - 0.0006):.4f}"
-            return f"gte(t\\,{a})*(isnan(prev_t)+lt(prev_t\\,{a}))"
-        expr = "+".join(first_at(sc["start"]) for sc in scenes)
         stamp = ""
         if not args.no_timecode and ffmpeg_filters() and "drawtext" not in ffmpeg_filters():
             # as look.py (#394): the sheet needs drawtext only for its stamps
@@ -360,12 +411,22 @@ def main() -> int:
         # a non-square-pixel source is squared at its display aspect (#411)
         lab = bt709_label_filter(meta)
         square = square_pixels(meta["video"])
-        vf = (f"select='{expr}'," + (lab + "," if lab else "") + (square + "," if square else "")
-              + f"scale={tile_w}:-2{stamp},"
-              f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        run(ffmpeg_base() + ["-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-an", "-vf", vf, "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
+        thumb = (lab + "," if lab else "") + (square + "," if square else "") + f"scale={tile_w}:-2{stamp}"
+        graph = sheet_graph([sc["start"] for sc in scenes], f"[0:{PROBED_VIDEO}]", thumb,
+                            f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
+        run(ffmpeg_base() + ["-i", args.input, "-filter_complex", graph, "-map", "[sheet]", "-an",
+                             "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet
+
+    # after the sheet, as silence.py writes its EDL after the cut (#462 A41): a --sheet refused as an
+    # existing file, or failed, left the EDL behind, and the corrected retry was then refused for it
+    if args.highlights and args.edl:
+        if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
+            with open(args.edl, "w", encoding="utf-8") as fh:
+                for s, e in picks:
+                    fh.write(f"{s:.2f}-{e:.2f}\n")
+        info(f"wrote {args.edl}")
 
     if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)
         emit(None, **result)

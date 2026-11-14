@@ -1630,6 +1630,12 @@ class AnalysisTests(MediaFixtures):
                 self.assertFalse(doc["beat_grid"]["usable"])
                 self.assertEqual(doc["audio_peaks_db"], [])
                 self.assertEqual(doc["speech"], [])
+        # with --sheet too: no scene was measured, and the sheet's select summed an empty list by
+        # recursing on it (RecursionError, a traceback instead of the plan); it plans one tile
+        doc = json.loads(script("scenes.py", OUT / "pending_stage.mp4", "--dry-run", "--sheet",
+                                OUT / "pending_sheet.png", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        self.assertIn("tile=1x1", doc["commands"][-1])
 
     def test_scenes_beats_decodes_with_check_so_a_failed_decode_is_not_no_pulse(self):
         """A decode that failed came back as [] and was reported as "no steady pulse in this audio".
@@ -1716,6 +1722,204 @@ class AnalysisTests(MediaFixtures):
         doc = json.loads(proc.stdout)
         self.assertIn("not enough audio to analyse", doc["error"]["message"])
         self.assertIn(str(blip), doc["error"]["message"])
+
+    # ---------------------------------------------------------------- issue #459: sync, scenes
+    @staticmethod
+    def _bursts(name, lead=0.0, seconds=20.0, repeat=1, rate=16000):
+        """Seeded noise bursts of random length, level and spacing: an envelope with one true
+        alignment. `lead` seconds of zeros go first; `repeat` plays the bursts that many times."""
+        import random
+        import struct
+        import wave
+        rnd = random.Random(7)
+        n = int(rate * seconds)
+        data = [0.0] * n
+        t = 0.2
+        while t < seconds:
+            length, amp = rnd.uniform(0.05, 0.4), rnd.uniform(0.2, 0.9)
+            for i in range(int(t * rate), min(n, int((t + length) * rate))):
+                data[i] = amp * (rnd.random() * 2 - 1)
+            t += length + rnd.uniform(0.1, 0.8)
+        data = [0.0] * int(lead * rate) + data * repeat
+        path = OUT / name
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(b"".join(struct.pack("<h", int(x * 32767)) for x in data))
+        return path
+
+    def test_sync_confidence_tells_an_exact_match_from_a_tie(self):
+        """A126: the runner-up the confidence is penalised by was the peak's own neighbour, one
+        lag away, so a file against itself read 0.59 and a tie between two offsets (the same
+        material twice) 0.50. The runner-up is now the best other peak."""
+        bursts = self._bursts("a459_bursts.wav")
+        later = self._bursts("a459_bursts_lead.wav", lead=1.5)
+        twice = self._bursts("a459_bursts_twice.wav", repeat=2)
+        same = json.loads(script("sync.py", bursts, bursts, "--json").stdout)
+        self.assertEqual(same["offset_seconds"], 0.0)
+        self.assertGreater(same["confidence"], 0.95)
+        shifted = json.loads(script("sync.py", bursts, later, "--json").stdout)
+        self.assertAlmostEqual(shifted["offset_seconds"], -1.5, delta=0.002)
+        self.assertGreater(shifted["confidence"], 0.95)
+        tie = json.loads(script("sync.py", twice, bursts, "--json").stdout)
+        self.assertLess(tie["confidence"], 0.55, "two offsets fit equally well")
+
+    def test_sync_help_states_the_correction_the_code_applies(self):
+        """A133: --help said a positive offset means the second file must be shifted earlier; the
+        code delays it, which is what lines it up. Measured: the --trim-second output's first
+        burst lands on the reference's."""
+        help_text = " ".join(script("sync.py", "--help").stdout.split())
+        self.assertIn("a positive offset means the SECOND input starts LATER than the reference (it began recording "
+                      "after it), so its sound is delayed by that amount", help_text)
+        self.assertNotIn("shifted earlier", help_text)
+        ref = self._bursts("a459_sync_ref.wav", lead=1.0, rate=48000)
+        second = self._bursts("a459_sync_second.wav", rate=48000)
+        data = json.loads(script("sync.py", ref, second, "--json").stdout)
+        self.assertAlmostEqual(data["offset_seconds"], 1.0, delta=0.002, msg="the second started 1 s later")
+        out = OUT / "a459_sync_trimmed.wav"
+        script("sync.py", ref, second, "--trim-second", "-o", out)
+
+        def onset(path):
+            raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-ac", "1", "-ar", "48000",
+                                  "-f", "s16le", "-"], stdout=subprocess.PIPE, check=True).stdout
+            import array
+            pcm = array.array("h")
+            pcm.frombytes(raw[:len(raw) // 2 * 2])
+            if sys.byteorder == "big":
+                pcm.byteswap()
+            return next(i for i, s in enumerate(pcm) if abs(s) > 300)
+        self.assertLessEqual(abs(onset(out) - onset(ref)), 48, "delayed onto the reference, to the millisecond")
+
+    def test_scenes_highlight_never_opens_before_its_scene(self):
+        """A139: a pick's window started on the 0.5 s grid point at or before the scene's start,
+        so with the loudness just before a cut at 3.4 s the pick was 3.0-4.0: it opened on the
+        previous shot. Every pick (and every --edl line) now lies inside one scene."""
+        src = OUT / "a459_highlight.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:s=64x64:r=30:d=3.4",
+           "-f", "lavfi", "-i", "color=blue:s=64x64:r=30:d=4.6", "-f", "lavfi", "-i",
+           "sine=f=400:d=8:r=48000,volume='if(between(t,2.9,3.9),6,0.05)':eval=frame",
+           "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-map", "2:a",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        edl = OUT / "a459_highlight.edl"
+        data = json.loads(script("scenes.py", src, "--highlights", "2", "--max-scene", "1", "--edl", edl, "--json").stdout)
+        scenes = [(s["start"], s["end"]) for s in data["scenes"]]
+        self.assertEqual(len(scenes), 2, "fixture: one cut")
+        self.assertAlmostEqual(scenes[1][0], 3.4, delta=0.034)
+        lines = [tuple(float(x) for x in line.split("-")) for line in edl.read_text().split()]
+        self.assertEqual(lines, [(h["start"], h["end"]) for h in data["highlights"]])
+        for start, end in lines:
+            with self.subTest(pick=(start, end)):
+                self.assertTrue(any(s <= start and end <= e for s, e in scenes), f"{start}-{end} spans a cut: {scenes}")
+        self.assertIn(3.4, [start for start, _ in lines], "the loud window of the second scene starts on its cut")
+
+    def test_scenes_highlight_never_writes_an_empty_range(self):
+        """A pick shorter than the hundredth it is written in was rounded inward to 0.00-0.00 and
+        written to --edl, a range cut.py --segments refuses. No range fits: the run is refused
+        (kind input) and no EDL is written."""
+        src = OUT / "a459_one_second.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=1:r=48000", src)
+        edl = OUT / "a459_empty_picks.txt"
+        if edl.exists():
+            edl.unlink()
+        proc = script("scenes.py", src, "--highlights", "1", "--target", "0.006", "--edl", edl, "--json", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual(err["kind"], "input")
+        self.assertIn("0.01 s", err["message"])
+        self.assertFalse(edl.exists(), "no EDL of an empty range")
+        # a pick that fits is written as before
+        data = json.loads(script("scenes.py", src, "--highlights", "1", "--target", "0.5", "--edl", edl, "--json").stdout)
+        self.assertEqual(len(data["highlights"]), 1)
+        self.assertGreater(data["highlights"][0]["end"], data["highlights"][0]["start"])
+
+    def test_decoded_pcm_takes_a_few_bytes_a_sample(self):
+        """A140: decode_pcm_mono() returned a list of Python floats, ~32 bytes a sample, which is
+        what scenes.py (and multicam --switch energy per camera) held for a whole file: ~2.3 GB an
+        hour. Measured with tracemalloc on 20 s at 8 kHz; the values are the s16 samples / 32768."""
+        import array
+        import tracemalloc
+        src = OUT / "a459_pcm_src.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=20:r=8000,volume=5",
+           "-c:a", "pcm_s16le", src)
+        tracemalloc.start()
+        try:
+            samples = content_probe.decode_pcm_mono(str(src), 8000)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(len(samples), 160000)
+        self.assertLess(peak / len(samples), 12, f"{peak / len(samples):.1f} bytes a sample at the peak")
+        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(src), "-ac", "1", "-ar", "8000",
+                              "-f", "s16le", "-"], stdout=subprocess.PIPE, check=True).stdout
+        ref = array.array("h")
+        ref.frombytes(raw[:len(raw) // 2 * 2])
+        if sys.byteorder == "big":
+            ref.byteswap()
+        self.assertEqual(list(samples[:4000]), [v / 32768.0 for v in ref[:4000]], "the same values, exactly")
+
+    def test_scenes_sheet_of_thousands_of_scenes_is_written(self):
+        """A138: --sheet's select expression is ~50 characters a scene, and 3,000 scenes exceed
+        Linux's 128 KiB argument limit: OSError E2BIG, a traceback and no JSON. The runner hands a
+        filter graph that long to ffmpeg in a file. Measured: one tile per scene, in order, each
+        the grey of its own scene."""
+        src = OUT / "a459_many_scenes.mp4"
+        # a new grey every 3 frames (luma 97*k mod 256): 3,000 cuts in 300 s of 32x18
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "nullsrc=s=32x18:r=30,geq=lum='mod(floor(N/3)*97\\,256)':cb=128:cr=128,format=yuv420p",
+           "-frames:v", "9000", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", src)
+        sheet = OUT / "a459_many_scenes.png"
+        data = json.loads(script("scenes.py", src, "--min-scene", "0.05", "--sheet", sheet, "--no-timecode", "--json").stdout)
+        self.assertEqual(data["scene_count"], 3000, "fixture")
+        self.assertEqual(data["status"], "completed")
+        # 4 columns of 320x180 tiles with a 2 px margin and padding: 750 rows
+        self.assertEqual(png_size(sheet), (4 * 320 + 3 * 2 + 4, 750 * 180 + 749 * 2 + 4))
+        for k in (1, 2, 7, 1201, 2998):
+            row, col = divmod(k, 4)
+            x, y = 2 + col * 322 + 160, 2 + row * 182 + 90
+            px = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(sheet), "-vf",
+                                 f"crop=1:1:{x}:{y},format=gray", "-f", "rawvideo", "-"],
+                                stdout=subprocess.PIPE, check=True).stdout[0]
+            luma = (k * 97) % 256
+            want = min(255, max(0, round((min(235, max(16, luma)) - 16) * 255 / 219)))
+            with self.subTest(scene=k):
+                self.assertAlmostEqual(px, want, delta=4)
+        sheet.unlink()
+
+    def test_scenes_sheet_select_expressions_do_not_grow_with_the_scene_count(self):
+        """One select expression of 3,000 summed terms reached ffmpeg and FFmpeg 7.1 and later refused
+        it ("Error while parsing expression", Cannot allocate memory); 6.1 took it. Every select
+        in the --sheet graph holds at most SHEET_SELECT_TERMS terms, nested at most 6 deep, for any
+        number of scenes, and every scene start is in exactly one of them."""
+        import scenes
+        self.assertLessEqual(scenes.SHEET_SELECT_TERMS, 64)
+        for n in (1, 5, 64, 65, 3000, 30000):
+            with self.subTest(scenes=n):
+                starts = [0.1 * i for i in range(n)]
+                graph = scenes.sheet_graph(starts, "[0:V:0]", "scale=320:-2", "tile=4x4")
+                exprs = re.findall(r"select='([^']*)'", graph)
+                self.assertTrue(exprs)
+                terms = [e.count("gte(t") for e in exprs]
+                self.assertLessEqual(max(terms), scenes.SHEET_SELECT_TERMS)
+                self.assertEqual(sum(terms), n, "each scene is selected in one expression")
+                for e in exprs:
+                    depth = deepest = 0
+                    for ch in e:
+                        depth += {"(": 1, ")": -1}.get(ch, 0)
+                        deepest = max(deepest, depth)
+                    # 6 levels of the balanced sum, and 3 of one term: gte(), (isnan()+lt())
+                    self.assertLessEqual(deepest, 6 + 3, e[:120])
+                self.assertTrue(graph.endswith("[sheet]"))
+
+    def test_scenes_beats_keep_their_refit_on_a_range_bound(self):
+        """A146: the least-squares refit of the beat grid was discarded when it landed a hair past
+        a --beat-range bound, so a tempo on the bound kept the step-rounded interval: 90 BPM under
+        60-90 was measured 89.76 and the grid ended 80 ms off the clicks."""
+        path, times = self._click_track("clicks_90_0.0", 90, 0.0)
+        for bounds in ("60-90", "90-200", "60-200"):
+            with self.subTest(beat_range=bounds):
+                data = json.loads(script("scenes.py", path, "--beats", "--beat-range", bounds, "--json").stdout)
+                self.assertAlmostEqual(data["beat_grid"]["tempo_bpm"], 90.0, delta=0.05)
+                self._assert_every_click_within(data, times, 0.020)
 
 
 class ProposeChaptersTests(unittest.TestCase):

@@ -88,6 +88,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.9 — captions and text drawing (audit #457, #505)](#after-389--captions-and-text-drawing-audit-457-505)
 - [After 3.8.10 — compositing, time and edge inputs (#460, #461)](#after-3810--compositing-time-and-edge-inputs-460-461)
 - [After 3.8.11 — a window, a start or a length on the frame or the sample it names (#470's open items)](#after-3811--a-window-a-start-or-a-length-on-the-frame-or-the-sample-it-names-470s-open-items)
+- [After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut](#after-3812--audit-462-where-cutpy-the-smart-cut-and-silencepy-cut)
+- [After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform](#after-3812--issue-459-audio-sync-multicam-scenes-and-waveform)
 <!-- contents:end -->
 
 ## Time limits
@@ -1947,7 +1949,8 @@ not a new file format this tool would have to maintain.
   the sound a frame ahead. An MP4/MOV edit list still hides the priming, so the sound
   presents with the picture; a Matroska file keeps the priming packet at a negative time
   and the picture at 0. A source whose audio starts late keeps that offset. Audio-only
-  `--accurate` still uses `make_zero`: `asetpts` already starts the samples at 0, and the
+  `--accurate` still uses `make_zero`: the sound is padded from 0 (`aresample=async=1:first_pts=0`,
+  since #462 A46; `asetpts=PTS-STARTPTS` before it dropped a late sound's offset), and the
   flag is what folds the priming into the length `precision: codec_frame` reports. A stream
   copy is unchanged
   (`make_zero` by default, `--edit-list` to hide the keyframe's pre-roll). Code:
@@ -2662,7 +2665,8 @@ What was decided there:
   hands it to the same code, so a removal is cut, joined, declicked and verified exactly as the
   equivalent `--segments` would be. Overlaps merge and the ranges are clamped to the file; a
   leftover shorter than one frame (10 ms without a frame rate) is not a piece anyone asked to
-  keep. A range may start before 0 (it is clamped like the end). `--snap beats` is refused with
+  keep, and to a video output neither is one that holds less than one frame of the picture (#462
+  A51, below). A range may start before 0 (it is clamped like the end). `--snap beats` is refused with
   it: a snapped edge of what is kept could move into a range the caller asked to drop, and the
   flag's promise is that those ranges are gone. Test: `test_cut_remove_keeps_the_rest`.
 
@@ -3254,7 +3258,8 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   carries one SPS/PPS out of band, and a concat of the encoder's part and the source's packets would
   decode one of them with the other's. In MPEG-TS every keyframe carries its own, and the output
   keeps them in-band. The delimiter NAL units the TS muxer adds are removed again (`filter_units`). The
-  output's MP4 time scale is set to the source's time base (`-video_track_timescale`).
+  output's MP4 time scale is set to the source's time base (`-video_track_timescale`); a Matroska
+  output has Matroska's own 1/1000 and is checked against that (#462 A45, below).
 - **Verified against the source, not trusted.** Each check below would catch a different way the
   join can go wrong:
   - a frame dropped or repeated at a join (the count and the frame grid);
@@ -4230,3 +4235,174 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `fit.picture_output_t()`. Tests: `test_a_window_or_a_length_on_a_frame_time_keeps_that_frame`,
   `test_a_start_a_gate_or_a_retimed_length_is_written_to_the_sample`,
   `test_a_loop_whose_sound_outlasts_its_picture_repeats_the_last_frame_on_the_grid`.
+## After 3.8.12 — audit #462: where cut.py, the smart cut and silence.py cut
+
+Eleven items of the 2026-11 audit of `cut.py`, `_smartcut.py` and `silence.py` that were still real
+on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFmpeg 6.1.1 first.
+
+- **A silence with no speech on one side keeps no margin on that side (A40).** A silence that starts
+  where the sound starts is removed from the file's start, and one that runs to where the sound ends
+  is removed to the file's end. `--margin` is air kept beside speech. At the file's edges it kept a
+  piece of dead air of its own (`keep [0, 0.2]` before the first word) with a jump cut after it.
+  FFmpeg 6.1 closes a silence that runs to the end at the file's end (`silence_end: 7.50933` for a
+  7.5 s file), so the `inf` end the code tested for never came. "Where the sound starts and ends" is
+  the audio stream's start and its start plus its own length, within `SOUND_EDGE` (50 ms):
+  silencedetect closes a silence at its last decoded block, and an AAC stream's stated start sits a
+  priming frame off its samples; a sound shorter than that before a leading silence (or after a
+  trailing one) is no word to keep air beside. Code: `silence.inside_margin()`, `silence.sound_span()`. Test:
+  `test_silence_keeps_no_margin_where_there_is_no_speech`.
+- **An EDL is written once the cut it describes exists (A41).** This is the `--timemap` rule
+  ("written only after the cut", 2.22). It now holds for `silence.py --edl`, `scenes.py --highlights
+  --edl` (after its `--sheet`) and `multicam.py --edl`/`--write-project` (after the render). Before,
+  a refused run (an existing `-o`, `-o` the input, nothing kept, an existing `--sheet`) left an EDL
+  of media never made, and the corrected retry was refused for that EDL. `--list` writes it as
+  before. The path checks still run up front (`guard_sidecar`), so a dry run predicts them. Test:
+  `test_silence_writes_its_cut_lists_only_once_the_media_exists`.
+- **The level at each cut is read on the file's clock (A42).** `cut_levels()` decoded the sound to
+  PCM from its first sample and read each window at `t x rate`. A sound 0.5 s late was read 0.5 s
+  after every cut, giving -24 dB at a cut in digital silence. The decode ends in
+  `aresample=async=1:first_pts=0`, as `decode_pcm_mono` does ("both streams on one clock", above).
+  It was the one PCM decode indexed by time that did not; the others (`decode_pcm_mono`,
+  `caption.py`'s level read) already pad. Test: `test_silence_measures_each_cut_on_the_files_clock`.
+- **A kept bound never lies before the file's start (A43).** `rendered_ranges()` moves each bound
+  to the nearest frame time, on the grid that runs from the picture's first frame. With a picture
+  that starts 0.29 s after its sound, the nearest grid point to 0 was -0.011. A bound that rounds
+  below 0 now takes the first grid point at or after 0 (0.022), which is where `cut.py`'s re-cut
+  starts that range anyway (`grid_at_or_after`). So `keep`, `--edl` and `--timemap` agree with the
+  render, and `cut.py --segments` takes the EDL. Test:
+  `test_silence_never_keeps_a_range_before_the_files_start`.
+- **`--list` and `--filler-list` take the picture from the `-o` they are given (A48).** A list
+  writes no media, and the picture test read that media path as none, so with an audio `-o` it
+  reported frame-snapped ranges (1.2, 1.833) that the audio run cuts at 1.213 and 1.817. Test:
+  `test_silence_list_for_an_audio_output_reports_the_ranges_the_audio_run_cuts`.
+- **`--max-cuts` counts removal ranges, refuses only a render, and gives a reason that holds
+  (A49).** The help says removal ranges, and the check counted keep
+  ranges. One pause (two kept pieces) was refused at `--max-cuts 1`. It also refused `--list`,
+  which is how a caller sees what the limit is about. Its reason was the one-graph filter's size,
+  which the chunked re-cut (#409) no longer has. The flag stays, with its default of 400, as a
+  guard against an edit chopped by a `--threshold` that catches speech. The count is
+  `time_map()["removed"]` (a lead-in and a tail count as cuts too), checked before the render and
+  under `--dry-run`. Test: `test_silence_max_cuts_counts_the_removal_ranges_and_never_refuses_a_list`.
+- **The time map's documentation says what #409 made it (A47).** `docs/contract.md` and
+  `references/scripts.md` still said the map advanced by millisecond-rounded bounds and drifted over
+  many cuts. Since #409 it is the sum of the rendered ranges' exact lengths (2.22's `--timemap`
+  entry, above). Documentation only.
+- **`--smart` copies the last GOP of a cut that runs to the end of the video (A44).** The copy
+  stopped at the last keyframe and re-encoded the GOP after it as a tail (30 frames of a cut from
+  1.5 s of a 4 s source). The module docstring says that part is left out, and a GOP that ends with
+  the video is whole. Code: `_smartcut.plan_segment()`. Test:
+  `test_smart_cut_to_the_end_copies_the_last_gop`.
+- **A Matroska smart cut is checked against Matroska's time base (A45).** A `.mkv` output always
+  reads 1/1000 (the muxer's millisecond timestamps), and the check compared it with an MP4 source's
+  1/15360. Every such cut fell back, and only after it had been built and verified. The frame-grid,
+  packet and decode checks are what show a join gone wrong. The time base check is there to see
+  the MP4 time scale `execute()` sets. Code: `_smartcut.expected_time_base()`. Test:
+  `test_smart_cut_into_matroska_from_an_mp4_source`.
+- **A single-range audio extraction pads a late sound from 0 (A46).** `cut.py --start 0 --end 2 -o
+  part.wav` of a source whose sound starts 0.355 s after its picture wrote 1.645 s with the sound
+  moved earlier. `--segments ... --accurate` already kept the offset. The re-encode of one range to
+  an audio output ends in `aresample=async=1:first_pts=0` instead of `asetpts=PTS-STARTPTS`.
+  Not covered: a stream copy of the sound (`-o part.m4a` without `--accurate`) still starts at its
+  first packet (`make_zero`). A copy cannot add silence, and leaving the timestamp in place
+  (measured without `make_zero`) did not give a decoder a leading gap either. Test:
+  `test_an_audio_extraction_keeps_a_late_sounds_offset`.
+- **`--remove` does not keep a leftover with no picture (A51).** `--remove 1-6` of a 6 s picture
+  with 6.3 s of sound left 6.0-6.3, which was then refused as "segment 6.000-6.300s is shorter than
+  one frame", a segment the caller never gave. A cut keeps a picture in every segment, so a
+  leftover that holds less than one frame of the picture (sound before its first frame or after its
+  last) is left out to a video output, and a note names it. A removal that leaves only such
+  sound is refused (`kind: input`) with the way out (an audio `-o`). To an audio output the sound is
+  kept, as before. `silence.py` is not changed by this: its last range past the picture is a
+  range of the render, which ends the picture there as the source does. Code:
+  `cut.keep_ranges_after_removing()`. Test: `test_remove_drops_a_leftover_with_no_picture_and_says_so`.
+## After 3.8.12 — issue #459: audio, sync, multicam, scenes and waveform
+
+- **`audio.py --duck-amount` is the depth in dB, made with a gate, not a compressor.** A
+  compressor's gain reduction is how far its key rises over the threshold times `1 - 1/ratio`, so
+  no ratio gives a stated depth: the ratio `max(2, amount/3)` used through 3.8.8 ducked 0 and 3
+  the same 9.7 dB on the test's speech and 60 by 18. The bed is now split: one copy goes through
+  `sidechaingate` keyed by the speech (`ratio=9000:range=0:knee=1`: all of the bed above the threshold,
+  none below; agate's default soft knee of 2.82843 opened it only about 2 dB over the threshold,
+  so a key 1.5 dB over it left the bed unducked), that copy is scaled by `-(1 - 10^(-amount/20))` and added to the other, which
+  leaves `10^(-amount/20)` of the bed under speech and all of it in the pauses (measured: 3, 12
+  and 30 dB asked, 3.0, 12.0 and 30.1 written). The key gets `dcshift=shift=0.000001` (-120 dBFS):
+  agate's detector starts at zero and leaves the gate open while the key is exact zeros, so a
+  voice track that begins with digital silence ducked the bed until its first word. The
+  threshold, attack and release keep their meaning (the gate opens at the threshold over
+  `--duck-attack` and closes over `--duck-release`); the result's `duck.ratio` is the gate's 9000,
+  and `amount_db` is the depth. The default command line moved: the "unchanged to the byte" the
+  1.13 test pinned was a compressor string, and it now pins the gate's. Code: `audio.duck_graph()`.
+  Test: `test_duck_amount_is_the_depth_in_db`, `test_audio_duck_parameters_reach_the_sidechain_filter`,
+  `test_a_key_just_over_the_duck_threshold_ducks_the_bed`.
+- **A limiter runs on what is delivered.** With `--music` or `--effects`, `--limit` and `--voice
+  strong`'s `alimiter` move from the main track to the mix, ahead of the fades and the conform; a
+  limiter on the voice let the beds added after it pass the ceiling (`--limit-ceiling -6` wrote 0
+  dBFS). The ducking key is the voice before that limiter, which only lowers peaks above the
+  ceiling. Without a bed the chain is the one it was. What is limited is the mix before it is
+  encoded: a lossy encoder after the limiter can peak over the ceiling in the written file (the
+  test writes PCM), and `loudness.py` is the tool that measures and holds a written file's peak. Code: `audio.py` (`post_limit`). Test:
+  `test_a_limiter_is_the_ceiling_of_the_mix_it_delivers`.
+- **A dynamics knee is 0..18.06 dB.** The filters take a linear knee of 1..8 (default 2.82843); the
+  flag converts dB to linear and accepted 1..8 *dB* (linear 1.12..2.51), so nothing from 2.51 up to
+  ffmpeg's own default could be asked for. The range is widened to the filter's, in dB, rounded
+  down to 18.06 so the linear value stays inside 8; a value that ran before still writes the same
+  knee. The help's defaults are ffmpeg's, converted (threshold -18.06, range -24.26, knee 9.03).
+  Test: `test_dynamics_help_gives_the_filters_own_defaults_in_the_flags_unit`.
+- **`--bitrate` (`loudness.py --audio-bitrate`) given for an audio output replaces that
+  extension's own setting; `.wav`/`.flac` refuse it.** `.mp3`'s `-q:a 0` becomes `-b:a`, CBR at
+  the rate asked; libopus and libvorbis keep their VBR around it. Not given, every extension keeps
+  the setting it had. `loudness.py`'s unpinned `.m4a`/`.aac` starts at the 256k it was always
+  written at and reports it (`audio_bitrate_used` said 192k), so its overshoot retry is 320k
+  only; a pinned rate is reported for `.mp3`/`.ogg`/`.opus` too, which had no
+  `audio_bitrate_used`. Code: `decision.audio_codec_for()`. Test: `test_bitrate_reaches_the_codec_of_an_audio_output`.
+- **A filter graph over 100,000 characters (8,000 on Windows) reaches ffmpeg in a file.** Linux
+  refuses one argument over 128 KiB and Windows a command line over 32,767 characters; a graph
+  built per item (`scenes.py --sheet`'s select, ~50 characters a scene) crossed it between 2,400 and
+  3,000 scenes and raised OSError with no JSON. `run()` and `run_analysis()` write the graph to a temp
+  file and pass `-/filter_complex`, `-/filter:v` ... on FFmpeg 7.0 and later and
+  `-filter_complex_script`, `-filter_script:v` ... before it, removing the file afterwards; the
+  command a run records and prints keeps the graph inline. Only the 6.1 spelling was run here.
+  Code: `runner.long_filters_in_files()`. Test: `test_scenes_sheet_of_thousands_of_scenes_is_written`.
+- **`scenes.py --sheet` has no expression that grows with the scene count.** One `select` summing a
+  term a scene reached FFmpeg in the file above and 7.1 and later refused it at 3,000 scenes
+  (ENOMEM from the expression parser; 6.1 took 30,000, flat or nested). The scenes are dealt
+  round-robin to `split` branches of at most 64 terms (`SHEET_SELECT_TERMS`), each summed as a
+  balanced tree (6 nested levels), and `interleave` merges the branches' thumbnails in time order;
+  dealt round-robin, the branches stay level and interleave holds about one thumbnail a branch.
+  Only 6.1 was run here: that 7.1+ takes 64-term expressions is unverified until CI. Code:
+  `scenes.sheet_graph()`. Test: `test_scenes_sheet_select_expressions_do_not_grow_with_the_scene_count`.
+- **`decode_pcm_mono()` returns an `array('f')`.** Four bytes a sample instead of a Python
+  float's ~32, and every value is the double the list held (an s16 sample over 32768 is exact in
+  a float32). It is still the whole decode in memory, now about 0.3 GB an hour at scenes.py's
+  22.05 kHz (twice that while the decode is converted); streaming the envelope instead is a
+  larger change and was not made. Test: `test_decoded_pcm_takes_a_few_bytes_a_sample`.
+- **`sync.py`'s confidence penalises the best other peak.** The runner-up is the highest local
+  maximum more than five steps from the winner; the running "previous best" it was took the
+  winner's own neighbour, so an exact match read 0.59 and a tie 0.50. A file against itself or a
+  shifted copy now reads above 0.95 on the test's bursts; a tie stays at most 0.5 (the formula,
+  `min(1, 0.5 + margin)`, is unchanged). The benchmark sentences in references/scripts.md and
+  README ("misses flagged below 0.3", "4 of 5 misses flagged") were measured with the old
+  runner-up and could not be re-run here (no corpus); both now say so. Test:
+  `test_sync_confidence_tells_an_exact_match_from_a_tie`.
+- **`multicam.py --switch` ranges that overlap are refused** (`kind: input`) rather than merged or
+  resolved by order: which camera a caller meant for the overlap is theirs to say. Ranges that
+  touch run. **`--fix-drift` retimes the picture** with `setpts=(PTS-STARTPTS)/ratio`, as
+  `sync.py --trim-second` does; `--write-project`'s clip of a retimed camera carries the ratio as
+  `speed`, the per-clip rate render.py plays a clip at (fit to its length / speed), so the
+  project's clips last what the direct render's do; a camera that is not retimed (camera 0, a
+  fallback to it, a ratio of 1) carries no `speed`, as render.py skips 1. Tests: `test_multicam_switch_ranges_that_overlap_are_refused`,
+  `test_multicam_fix_drift_retimes_the_picture_with_the_sound`.
+- **A `scenes.py --highlights` range lies inside its scene.** Its window starts at the scene's
+  start or on the 0.5 s grid after it and ends by the scene's end, and is written to the
+  hundredth rounded inward (3.333 is 3.34, not 3.33). A grid point before the cut was a candidate
+  and opened up to 0.5 s early. Test: `test_scenes_highlight_never_opens_before_its_scene`.
+- **The beat grid's refit is held on a `--beat-range` bound, not discarded.** A fit a hair past the
+  bound (90 BPM under 60-90) kept the step-rounded interval (89.76 BPM, 80 ms off by 30 s); the
+  tempo still cannot leave the range, and a fit more than an eighth of the interval away is
+  still discarded. Shared by `cut.py --snap beats`. Code: `decision._refine_grid()`. Test:
+  `test_scenes_beats_keep_their_refit_on_a_range_bound`.
+- **`waveform.py` of an audio input writes `<name>_waveform.mp4` by default**, and `-o` with an
+  audio extension is refused (`kind: input`): the output always has a picture. Other tools keep an
+  audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
+  the tools that always write a picture refuse an audio-only input. Test:
+  `test_waveform_of_an_audio_input_is_a_video_by_default`.

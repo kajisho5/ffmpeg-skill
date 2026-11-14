@@ -5342,7 +5342,7 @@ def garbage_payload(p):
         # silence at both ends too, so the leading and trailing removed ranges are exercised
         ffmpeg("-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*440*t)*(between(t\\,1\\,2)+between(t\\,3\\,5)+between(t\\,6\\,7))':s=48000:d=8", wav)
         jmap, cmap = self.out("tm.json"), self.out("tm.csv")
-        # --margin 0: the margin is kept at the file's ends too, which would hide the edge ranges
+        # --margin 0: no margin between the ranges either, so each removed range is its silence
         doc = json.loads(tool("silence", wav, "-o", self.out("tm_out.wav"), "--timemap", jmap, "--margin", "0",
                               "--overwrite", "--json").stdout)
         tm = json.loads(jmap.read_text(encoding="utf-8"))

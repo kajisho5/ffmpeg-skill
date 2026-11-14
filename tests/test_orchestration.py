@@ -161,7 +161,7 @@ class OrchestrationTests(MediaFixtures):
             "chapters": [{"at": "0:00", "title": "Intro"}, {"at": 3, "title": "Body"}],
         }), encoding="utf-8")
         data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
-        graph = next(c for c in data["commands"] if "sidechaincompress" in c)
+        graph = next(c for c in data["commands"] if "sidechaingate" in c)
         self.assertIn("volume=-2dB", graph, "stems.dialogue is the main track's gain")
         self.assertIn("volume=-18dB", graph, "stems.music is the bed's level")
         self.assertIn("volume=-24dB", graph, "stems.effects is the effects bed's level")
@@ -526,9 +526,16 @@ class OrchestrationTests(MediaFixtures):
             self.assertEqual(clip["src"], inputs[c])
             self.assertAlmostEqual(clip["in"], s - offsets[c], delta=0.01)
             self.assertAlmostEqual(clip["out"], e - offsets[c], delta=0.01)
+        # a switch is a cut: without a stated transition render.py crossfades 0.5 s at every join,
+        # so the project ran 0.5 s a switch short of the direct render and moved each later switch
+        self.assertEqual(project["transition"], {"type": "none"})
         r = script("render.py", proj, "--dry-run", "--json")
         rdata = json.loads(r.stdout)
         self.assertEqual(rdata["status"], "completed")
+        joined = [c for c in rdata["commands"] if "joined.mp4" in c and "-filter_complex" in c]
+        self.assertEqual(len(joined), 1, rdata["commands"])
+        self.assertIn(f"concat=n={len(clips)}", joined[0])
+        self.assertNotIn("xfade", joined[0])
 
     def test_multicam_write_project_does_not_change_default_behavior(self):
         """Without --write-project, multicam.py's existing behavior (combined output, --edl,
@@ -578,6 +585,87 @@ class OrchestrationTests(MediaFixtures):
         with t decreasing every iteration, meaning t < ref_dur never becomes false: the process
         hangs forever instead of erroring on invalid input. Must be refused up front instead."""
         script("multicam.py", self.src, self.src, "--auto", "-1", "--fast", "-o", OUT / "mc_auto_neg.mp4", expect_fail=True)
+
+    def test_multicam_switch_range_under_a_millisecond_is_refused(self):
+        """The sibling of scenes.py --highlights' 0.00-0.00: --switch "0-0.0004:1" passed (end is
+        after start) and the cut list, written to the millisecond, held "0.000-0.000", which
+        cut.py --segments refuses."""
+        edl = OUT / "mc_tiny.txt"
+        for extra in ([], ["--dry-run"]):
+            with self.subTest(extra=extra):
+                r = script("multicam.py", self.src, self.src, "--switch", "0-0.0004:1,0.0004-3:0", "--edl", edl,
+                           "-o", OUT / "mc_tiny.mp4", "--json", *extra, expect_fail=True)
+                doc = json.loads(r.stdout)
+                self.assertEqual(doc["error"]["kind"], "input")
+                self.assertIn("millisecond", doc["error"]["message"])
+                self.assertFalse(edl.exists())
+        # the gap the fill makes before a range that starts 0.4 ms in was the same line: the
+        # range takes it, and every line of the cut list is a range cut.py --segments accepts
+        data = json.loads(script("multicam.py", self.src, self.src, "--switch", "0.0004-3:1", "--edl", edl,
+                                 "--fast", "-o", OUT / "mc_tiny.mp4", "--json").stdout)
+        self.assertEqual(data["cuts"][0], [0.0, 3.0, 1])
+        lines = edl.read_text(encoding="utf-8").split()
+        self.assertEqual(lines[0], "0.000-3.000")
+        for line in lines:
+            a, b = (float(x) for x in line.split("-"))
+            self.assertLess(a, b, line)
+        edl.unlink()
+
+    def test_multicam_switch_ranges_that_overlap_are_refused(self):
+        """A132: two --switch ranges over the same reference time were both rendered, so the
+        overlap's picture played twice beside sound that played once, and every later cut ran
+        behind the sound. Refused before ffmpeg runs, in a dry run too; ranges that touch run."""
+        for extra in ((), ("--dry-run",)):
+            with self.subTest(extra=extra):
+                proc = script("multicam.py", self.src, self.src, "--switch", "0-6:0,5-12:1", "--fast",
+                              "-o", OUT / "mc_overlap.mp4", "--json", *extra, expect_fail=True)
+                doc = json.loads(proc.stdout)
+                self.assertEqual(doc["error"]["kind"], "input")
+                self.assertIn("overlap", doc["error"]["message"])
+                self.assertNotIn("$ ", proc.stderr, "refused before ffmpeg ran")
+        doc = json.loads(script("multicam.py", self.src, self.src, "--switch", "0-6:0,6-12:1", "--fast",
+                                "-o", OUT / "mc_touching.mp4", "--json").stdout)
+        self.assertEqual([c[:2] for c in doc["cuts"]], [[0.0, 6.0], [6.0, 12.0]])
+
+    def test_multicam_fix_drift_retimes_the_picture_with_the_sound(self):
+        """A130: --fix-drift resampled a drifting camera's sound to the reference clock, but its
+        picture played at its own rate: a range of `d` reference seconds took d * ratio of it, so
+        a camera running 2000 ppm slow held a 59 s range 0.12 s too long and the next cut came
+        four frames late. Camera A is red, camera B blue with B's sound 0.2 % slow; the cut back
+        to A at 60 s is measured on the decoded frames."""
+        base = OUT / "mc459_base.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+           "-t", "140", "-c:a", "pcm_s16le", base)
+        slow = OUT / "mc459_slow.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", base, "-af", "asetrate=48000*0.998,aresample=48000",
+           "-c:a", "pcm_s16le", slow)
+        cams = []
+        for colour, sound in (("red", base), ("blue", slow)):
+            cam = OUT / f"mc459_{colour}.mp4"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color={colour}:s=32x32:r=30",
+               "-i", sound, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", cam)
+            cams.append(cam)
+        out = OUT / "mc459_drift.mp4"
+        proj = OUT / "mc459_drift.json"
+        data = json.loads(script("multicam.py", *cams, "--switch", "1-60:1,60-130:0", "--fix-drift", "--fast",
+                                 "--write-project", proj, "-o", out, "--json").stdout)
+        self.assertAlmostEqual(data["drift_ppm"][1], 2000, delta=150, msg="fixture: the drift is measured")
+        self.assertEqual([c[2] for c in data["cuts"][:3]], [0, 1, 0])
+        frames = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "59", "-i", str(out), "-t", "2",
+                                 "-vf", "scale=2:2,format=rgb24", "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+                                stdout=subprocess.PIPE, check=True).stdout
+        first_red = next(i for i in range(len(frames) // 12) if frames[i * 12] > frames[i * 12 + 2])
+        self.assertLessEqual(abs(59 + first_red / 30 - 60.0), 1.5 / 30, f"camera A is back at frame {first_red} after 59 s")
+        # the project times each clip as the render does: render.py plays a clip at its speed, so
+        # a drift-corrected camera's clip lasts its reference range, not (ratio - 1) longer (it
+        # carried no speed); camera A, not retimed, carries none
+        clips = json.loads(proj.read_text(encoding="utf-8"))["clips"]
+        self.assertEqual(len(clips), len(data["cuts"]))
+        for clip, (s, e, cam) in zip(clips, data["cuts"]):
+            self.assertEqual("speed" in clip, cam == 1, clip)
+            self.assertAlmostEqual((clip["out"] - clip["in"]) / clip.get("speed", 1.0), e - s, delta=0.005, msg=clip)
+        for p in [base, slow, out, proj] + cams:
+            p.unlink()
 
     def test_multicam_warns_on_a_camera_with_no_shared_audio_event(self):
         """A camera whose audio has nothing in common with the reference must not align silently."""

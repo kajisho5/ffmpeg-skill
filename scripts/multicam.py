@@ -30,7 +30,7 @@ import json
 import math
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, x264_args, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
@@ -60,8 +60,19 @@ def parse_switch(spec: str, n: int) -> List[Tuple[float, float, int]]:
             die(f"camera {c} does not exist (inputs are 0..{n - 1})")
         if e <= s:
             die(f"switch entry '{raw}': end must be after start")
+        if round(e, 3) <= round(s, 3):
+            # the cut list (--edl, `cuts`) is written to the millisecond: this range was its
+            # "0.000-0.000", a line cut.py --segments refuses (the scenes.py --edl sibling)
+            die(f"switch entry '{raw}': shorter than a millisecond, the precision the cut list is written in",
+                kind="input")
         out.append((s, e, c))
     out.sort()
+    # A132: ranges on one timeline cannot overlap. The fill below kept both, so the picture of the
+    # overlap played twice while the sound played once, and every later cut ran behind it
+    for (s0, e0, _c0), (s1, e1, _c1) in zip(out, out[1:]):
+        if s1 < e0:
+            die(f"--switch ranges overlap: {fmt_secs(s0)}-{fmt_secs(e0)} and {fmt_secs(s1)}-{fmt_secs(e1)} "
+                "(on the reference timeline each moment has one camera)", kind="input")
     return out
 
 
@@ -158,7 +169,7 @@ def main() -> int:
         media_out = args.output or default_output(args.inputs[0], "multicam", "mp4")
         guard_sidecar(args.edl, *args.inputs, siblings=(args.write_project, media_out))
         guard_sidecar(args.write_project, *args.inputs, siblings=(media_out,))
-        if args.edl or args.write_project:  # they are written before the cut: refuse its output first
+        if args.edl or args.write_project:  # refused up front with them, before any decode
             guard_sidecar(media_out, *args.inputs)
     if args.analyze_seconds > 900:
         die(f"--analyze-seconds {args.analyze_seconds:g}: the window is decoded into memory; 900 s is the ceiling")
@@ -272,16 +283,25 @@ def main() -> int:
         cursor = max(cursor, e)
     if cursor < ref_dur:
         filled.append((cursor, ref_dur, 0))
+    # a gap or a clipped range under a millisecond is nothing at the precision the cut list is
+    # written in (--switch "0.0004-3:1" left a leading "0.000-0.000", the line cut.py --segments
+    # refuses, and a 0.4 ms trim in the render): its neighbour takes it, so the timeline stays whole
+    whole: List[Tuple[float, float, int]] = []
+    carry: Optional[float] = None
+    for s, e, c in filled:
+        if carry is not None:
+            s, carry = carry, None
+        if round(e, 3) <= round(s, 3):
+            if whole:
+                whole[-1] = (whole[-1][0], e, whole[-1][2])
+            else:
+                carry = s
+            continue
+        whole.append((s, e, c))
+    filled = whole
     for s, e, c in filled:
         if not metas[c].get("video"):
             die(f"camera {c} ({args.inputs[c]}) has no video; it can only be used with --audio")
-
-    if args.edl:
-        if not STATE.dry_run:
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e, _c in filled:
-                    fh.write(f"{s:.3f}-{e:.3f}\n")
-        info(f"wrote {args.edl}")
 
     v0 = metas[0]["video"]
     # camera 0's displayed frame: rotation applied, non-square pixels squared (#411)
@@ -322,9 +342,18 @@ def main() -> int:
             c, src_s, src_e = 0, s, e
         rendered.append((s, e, c))
         sq = (square_pixels(metas[c]["video"]) + ",") if square_pixels(metas[c]["video"]) else ""
-        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts=PTS-STARTPTS,{convert[c]}{sq}{geo}[v{i}]")
+        # A130: a drift-corrected camera's range is (e - s) * ratio of its own time; played at that
+        # rate it lasts e - s on the reference, as its sound does (asetrate) -- at its own rate the
+        # picture ran (ratio - 1) * (e - s) long and every later cut fell behind the sound
+        retime = f"(PTS-STARTPTS)/{ratios[c]:.9f}" if abs(ratios[c] - 1.0) > 1e-7 else "PTS-STARTPTS"
+        parts.append(f"[{c}:v]trim=start={src_s:.4f}:end={src_e:.4f},setpts={retime},{convert[c]}{sq}{geo}[v{i}]")
         labels.append(f"[v{i}]")
-        project_clips.append({"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)})
+        clip = {"src": args.inputs[c], "in": round(src_s, 3), "out": round(src_e, 3)}
+        if abs(ratios[c] - 1.0) > 1e-7:
+            # render.py plays a clip at clips[].speed (its length / speed), as the retime above
+            # does: without it a drift-corrected camera's clip ran (ratio - 1) * (e - s) long
+            clip["speed"] = round(ratios[c], 9)
+        project_clips.append(clip)
     parts.append("".join(labels) + f"concat=n={len(filled)}:v=1:a=0[vout]")
     a = args.audio
     a_start = -offsets[a] if offsets[a] < 0 else 0.0
@@ -358,17 +387,29 @@ def main() -> int:
         # render.py project instead of the direct render this tool already does -- additive, not
         # a replacement: the combined output below is still written as usual.
         project = {"output": default_output(args.inputs[0], "multicam_project", "mp4"),
-                   "clips": project_clips}
+                   "clips": project_clips,
+                   # a switch is a cut: render.py's default is a 0.5 s crossfade at every join,
+                   # which shortens the timeline by 0.5 s a switch and moves every later one
+                   "transition": {"type": "none"}}
         # the inputs are named as given, relative to the working directory, and render.py reads a
         # project's relative paths against the project file's directory: written elsewhere
         # (--write-project out/cut.json), they named files that are not there
         project = rebase_project_paths(project, os.getcwd())
+
+    run(cmd)
+    # the EDL and the project record the cut: written once it exists, not before an encode that then
+    # failed (#462 A41, the silence.py --edl sibling)
+    if args.edl:
+        if not STATE.dry_run:
+            with open(args.edl, "w", encoding="utf-8") as fh:
+                for s, e, _c in filled:
+                    fh.write(f"{s:.3f}-{e:.3f}\n")
+        info(f"wrote {args.edl}")
+    if args.write_project:
         if not STATE.dry_run:
             with open(args.write_project, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(project, indent=2) + "\n")
         info(f"wrote {args.write_project}")
-
-    run(cmd)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {len(filled)} cuts, audio from input {a})")
     extra = {"switch_mode": "energy", "min_shot": args.min_shot} if energy_mode else {}

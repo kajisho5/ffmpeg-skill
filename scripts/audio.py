@@ -29,8 +29,8 @@ from typing import Any, Dict, List
 
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
-from _common.emit import warn
-from _common.decision import conform_filter, conform_to_length
+from _common.emit import file_origin, stream_end, warn
+from _common.decision import LOSSLESS_AUDIO_EXT, conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -43,10 +43,11 @@ VOICE_CHAIN = f"highpass=f=80,deesser=i=0.4,{VOICE_DENOISE},acompressor=threshol
 # which is what a good room recording needs; "strong" is for phone/laptop audio: a harder
 # de-esser, a second compression stage and a soft limiter at -1 dBFS so the peaks stop there
 # instead of at whatever the make-up gain produced.
+VOICE_LIMITER = "alimiter=limit=0.891251:level=disabled:latency=1"  # --voice strong's -1 dBFS ceiling
 VOICE_LEVELS = {
     "light": "highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=5:release=80:makeup=1",
     "medium": VOICE_CHAIN,
-    "strong": VOICE_CHAIN + ",deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3,alimiter=limit=0.891251:level=disabled:latency=1",
+    "strong": VOICE_CHAIN + ",deesser=i=0.6,acompressor=threshold=-24dB:ratio=4:attack=5:release=120:makeup=3," + VOICE_LIMITER,
 }
 
 
@@ -66,10 +67,39 @@ def voice_chain(level: str, denoise_strength: "float | None") -> str:
     return chain.replace("highpass=f=80,", f"highpass=f=80,{stage},", 1)
 
 
-# The sidechain threshold the music bed has used since 1.4 is the linear 0.05 that ffmpeg's
-# sidechaincompress takes; -26.0206 dBFS is that same number in the unit the flag speaks, so the
-# default command line is unchanged to the byte while the value is now sayable.
+# The sidechain threshold the music bed has used since 1.4 is the linear 0.05 the filter takes;
+# -26.0206 dBFS is that same number in the unit the flag speaks.
 DUCK_THRESHOLD_DB = -26.0206
+
+# the knee the filters take is a linear 1..8 (default 2.82843): in the dB the flag speaks that is
+# 0..18.06 dB, default 9.03 dB. The flag used to accept 1..8 *dB* (linear 1.12..2.51), so no knee
+# from 2.51 up to ffmpeg's own default could be asked for, and the help gave the default as 2.83 dB
+KNEE_MAX_DB = 18.06  # 20*log10(8) = 18.0618, rounded down so the linear value stays inside 1..8
+
+# --duck (A134): the bed is lowered by exactly --duck-amount dB while the speech is above the
+# threshold. A sidechain gate keyed by the speech passes the bed where there is speech and nothing
+# elsewhere; that part, scaled by -(1 - 10^(-amount/20)), is added back to the bed, which leaves
+# 10^(-amount/20) of it under speech and all of it in the pauses. The sidechain compressor used
+# through 3.8.8 took the amount as ratio = max(2, amount/3), and a compressor's depth is how far
+# the speech rises over its threshold: on the test's speech 0 and 3 ducked the same 9.7 dB, 60 ducked 18.
+# The key gets a DC offset far below any threshold (-120 dBFS) because agate's detector leaves the
+# gate open on a key that is exact zeros from its first sample. The knee is hard (knee=1): agate's
+# default soft knee (2.82843) opened the gate only about 2 dB over the threshold, so a key just
+# over it left the bed at its level (measured: a sine 1.5 dB over -7.5 dBFS ducked 0 dB of 12).
+DUCK_GATE_RATIO = 9000.0  # agate's largest: closed below the threshold
+DUCK_KEY_DC = "dcshift=shift=0.000001"
+
+
+def duck_graph(threshold_db: float, amount_db: float, attack: float, release: float) -> List[str]:
+    """The filter-graph lines that turn `[music]` and the speech key `[sc]` into `[ducked]`."""
+    cut = 1.0 - 10 ** (-amount_db / 20.0)
+    return ["[music]asplit=2[mdry][mwet]",
+            f"[sc]{DUCK_KEY_DC}[key]",
+            f"[mwet][key]sidechaingate=threshold={db_to_linear(threshold_db):.6g}:ratio={DUCK_GATE_RATIO:g}:range=0:knee=1"
+            f":attack={attack:g}:release={release:g}[mspeech]",
+            f"[mspeech]volume={-cut:.6g}[mcut]",
+            "[mdry][mcut]amix=inputs=2:normalize=0[ducked]"]
+
 
 # Typed dynamics: every flag maps to one real option of one ffmpeg filter, validated against the
 # range that filter documents (ffmpeg -h filter=acompressor / alimiter / agate). dB flags are
@@ -81,7 +111,7 @@ DYNAMICS = {
         "comp_attack": ("attack", "ms", 0.01, 2000.0),
         "comp_release": ("release", "ms", 0.01, 9000.0),
         "comp_makeup": ("makeup", "dB", 0.0, 36.0),               # 1..64 linear
-        "comp_knee": ("knee", "dB", 1.0, 8.0),
+        "comp_knee": ("knee", "dB", 0.0, KNEE_MAX_DB),         # 1..8 linear (A135: was 1..8 dB, linear 1.12..2.51)
     },
     "alimiter": {
         "limit_ceiling": ("limit", "dB", -24.0, 0.0),             # 0.0625..1 linear
@@ -94,7 +124,7 @@ DYNAMICS = {
         "gate_attack": ("attack", "ms", 0.01, 9000.0),
         "gate_release": ("release", "ms", 0.01, 9000.0),
         "gate_range": ("range", "dB", -90.0, 0.0),                # 0..1 linear: how far the gate closes
-        "gate_knee": ("knee", "dB", 1.0, 8.0),
+        "gate_knee": ("knee", "dB", 0.0, KNEE_MAX_DB),         # 1..8 linear
     },
 }
 
@@ -289,8 +319,8 @@ def main() -> int:
     music = ap.add_argument_group("music")
     music.add_argument("--music", help="music file to mix underneath")
     music.add_argument("--music-volume", type=float, default=-14.0, help="music level in dB relative to full scale (default -14)")
-    music.add_argument("--duck", action="store_true", help="auto-duck the music when the main track has speech (sidechain compressor)")
-    music.add_argument("--duck-amount", type=float, default=12.0, help="how many dB to duck (default 12)")
+    music.add_argument("--duck", action="store_true", help="auto-duck the music by --duck-amount dB while the main track has speech (a sidechain gate keyed by it)")
+    music.add_argument("--duck-amount", type=float, default=12.0, help="how many dB the music is lowered under speech, 0..60 (default 12)")
     music.add_argument("--duck-threshold", type=float, default=DUCK_THRESHOLD_DB,
                        help="sidechain threshold in dBFS: the main track is heard as speech above this (default -26.02, the 0.05 linear used since 1.4)")
     music.add_argument("--duck-attack", type=float, default=20.0, help="ms the bed takes to duck once speech starts (default 20)")
@@ -326,25 +356,27 @@ def main() -> int:
                              "(an audio output only: beside a picture the sound is conformed to the picture)")
     dyn = ap.add_argument_group("dynamics (typed; each flag is one option of ffmpeg's acompressor / alimiter / agate)")
     dyn.add_argument("--compress", action="store_true", help="compressor (acompressor); order: gate -> compressor -> limiter")
-    dyn.add_argument("--comp-threshold", type=float, help="dBFS above which gain is reduced, -60..0 (ffmpeg default -12.4)")
+    dyn.add_argument("--comp-threshold", type=float, help="dBFS above which gain is reduced, -60..0 (ffmpeg default -18.06, its linear 0.125)")
     dyn.add_argument("--comp-ratio", type=float, help="ratio 1..20 (default 2)")
     dyn.add_argument("--comp-attack", type=float, help="ms 0.01..2000 (default 20)")
     dyn.add_argument("--comp-release", type=float, help="ms 0.01..9000 (default 250)")
     dyn.add_argument("--comp-makeup", type=float, help="make-up gain dB 0..36 (default 0)")
-    dyn.add_argument("--comp-knee", type=float, help="knee dB 1..8 (default 2.83)")
+    dyn.add_argument("--comp-knee", type=float, help="knee width dB 0..18.06 (ffmpeg's linear 1..8; default 9.03, its 2.82843)")
     dyn.add_argument("--limit", action="store_true", help="look-ahead limiter (alimiter), level left as is")
     dyn.add_argument("--limit-ceiling", type=float, help="ceiling dBFS -24..0 (default 0)")
     dyn.add_argument("--limit-attack", type=float, help="ms 0.1..80 (default 5)")
     dyn.add_argument("--limit-release", type=float, help="ms 1..8000 (default 50)")
     dyn.add_argument("--gate", action="store_true", help="noise gate (agate)")
-    dyn.add_argument("--gate-threshold", type=float, help="dBFS below which the gate closes, -60..0 (default -18.1)")
+    dyn.add_argument("--gate-threshold", type=float, help="dBFS below which the gate closes, -60..0 (default -18.06, ffmpeg's linear 0.125)")
     dyn.add_argument("--gate-ratio", type=float, help="ratio 1..9000 (default 2)")
     dyn.add_argument("--gate-attack", type=float, help="ms 0.01..9000 (default 20)")
     dyn.add_argument("--gate-release", type=float, help="ms 0.01..9000 (default 250)")
-    dyn.add_argument("--gate-range", type=float, help="attenuation when closed, dB -90..0 (default -6.1)")
-    dyn.add_argument("--gate-knee", type=float, help="knee dB 1..8 (default 2.83)")
+    dyn.add_argument("--gate-range", type=float, help="attenuation when closed, dB -90..0 (default -24.26, ffmpeg's linear 0.06125)")
+    dyn.add_argument("--gate-knee", type=float, help="knee width dB 0..18.06 (ffmpeg's linear 1..8; default 9.03, its 2.82843)")
     ap.add_argument("--audio-stream", type=int, default=0, help="which audio stream of the input to process, 0-based in file order (probe lists them under audio_streams)")
-    ap.add_argument("--bitrate", default="192k")
+    ap.add_argument("--bitrate", default=None,
+                    help="audio bitrate: AAC's beside a picture (default 192k), and the codec's of a lossy audio output "
+                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac")
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
                          "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")
@@ -391,7 +423,7 @@ def main() -> int:
                                 ("--duck-attack", args.duck_attack, 0.01, 2000.0),
                                 ("--duck-release", args.duck_release, 0.01, 9000.0)):
         if not (lo <= value <= hi):
-            die(f"{flag} {value:g} is outside {lo:g}..{hi:g} (the range ffmpeg's sidechaincompress accepts)")
+            die(f"{flag} {value:g} is outside {lo:g}..{hi:g}")
     if args.stereo_widen is not None and not (0.0 <= args.stereo_widen <= 1.0):
         die(f"--stereo-widen must be 0..1 (0 = untouched, 1 = maximum), got {args.stereo_widen:g}")
 
@@ -421,6 +453,9 @@ def main() -> int:
         die("input has no audio stream (use --replace to add one)")
     output = args.output or default_output(args.input, "audio")
     audio_out = is_audio_output(output)
+    if args.bitrate is not None and Path(output).suffix.lower() in LOSSLESS_AUDIO_EXT:
+        # A143: the rate used to be dropped without a word for every audio extension
+        die(f"--bitrate has no effect on a lossless {Path(output).suffix.lower()} output; drop it, or write a lossy one (.m4a, .mp3, ...)")
     streams = meta.get("audio_streams") or []
     if streams and not (0 <= args.audio_stream < len(streams)) and not STATE.dry_run:
         die(f"--audio-stream {args.audio_stream}: input has {len(streams)} audio stream(s), 0..{len(streams) - 1}")
@@ -486,8 +521,17 @@ def main() -> int:
         # 7.1), so in-phase channels at full scale cannot clip; '=' summed 2.7x and clipped a loud
         # 5.1 while the run said verified.
         fx.append(DOWNMIX_PAN)
+    # A129: a limiter is the ceiling of what is delivered, so with a bed mixed in it runs after the
+    # mix: on the voice alone, the music and effects added on top of it peaked over the ceiling
+    # (--limit-ceiling -6 delivered 0 dBFS, --voice strong's -1 dBFS -0.2)
+    limit_after_mix = bool(args.music or args.effects)
+    post_limit: List[str] = []
     if args.voice:
-        fx.append(voice_chain(args.voice, args.denoise_strength if args.denoise else None))
+        chain = voice_chain(args.voice, args.denoise_strength if args.denoise else None)
+        if limit_after_mix and chain.endswith("," + VOICE_LIMITER):
+            chain = chain[: -len("," + VOICE_LIMITER)]
+            post_limit.append(VOICE_LIMITER)
+        fx.append(chain)
     elif args.denoise:
         fx.append(f"afftdn=nf=-{args.denoise_strength:g}:tn=1")
     if args.gain:
@@ -497,7 +541,7 @@ def main() -> int:
     if args.compress:
         fx.append(dynamics_filter("acompressor", args))
     if args.limit:
-        fx.append(dynamics_filter("alimiter", args))
+        (post_limit if limit_after_mix else fx).append(dynamics_filter("alimiter", args))
     if args.mono:
         # after --downmix the track is the stereo fold-down, whatever the source had
         in_ch = 2 if args.downmix else (in_channels or 2)
@@ -542,15 +586,28 @@ def main() -> int:
         m = f"{idx}:a:0"
         idx += 1
         mfx = [f"volume={args.music_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
-        if args.music_fade_out and end_dur:
-            mfx.append(f"afade=t=out:st={max(0.0, end_dur - args.music_fade_out):.3f}:d={args.music_fade_out:g}")
+        # A142: a bed shorter than the output (and not looped) stops at its own end, so its fade
+        # ends there: timed on the output's end it started after the bed had stopped at full level
+        # ... and at the main track's end when the output runs past it (--length-samples): the
+        # atrim above has cut the bed there. All three are timestamps, which is what afade reads:
+        # a bed whose sound starts late in its file (2 to 5 s) keeps those, so its fade ends at 5,
+        # not at its 3 s length (that fade ran over the bed's first second)
+        ends = [t for t in (end_dur, main_dur) if t]
+        if args.music_fade_out and not args.music_loop and not dry_run_input_pending(args.music):
+            bed_meta = probe(args.music)
+            bed_stop = stream_end(bed_meta, "audio")
+            if bed_stop is not None and bed_stop - file_origin(bed_meta) > 0:
+                ends.append(bed_stop - file_origin(bed_meta))
+        bed_end = min(ends) if ends else None
+        if args.music_fade_out and bed_end:
+            # a fade longer than the bed is cut to it, so the bed still ends silent (a 5 s fade on
+            # a 2 s bed started at 0 and stopped at 60% gain)
+            m_fade = min(args.music_fade_out, bed_end)
+            mfx.append(f"afade=t=out:st={bed_end - m_fade:.3f}:d={m_fade:g}")
         graph.append(f"[{m}]{','.join(mfx)}[music]")
         if args.duck:
             graph.append("[main]asplit=2[mainA][sc]")
-            graph.append(
-                f"[music][sc]sidechaincompress=threshold={db_to_linear(args.duck_threshold):.6g}"
-                f":ratio={max(2.0, args.duck_amount / 3):.1f}:attack={args.duck_attack:g}:release={args.duck_release:g}:makeup=1[ducked]"
-            )
+            graph += duck_graph(args.duck_threshold, args.duck_amount, args.duck_attack, args.duck_release)
             graph.append("[mainA][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mix]")
         else:
             graph.append("[main][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mix]")
@@ -567,11 +624,12 @@ def main() -> int:
         graph.append(f"[{last}][effects]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mixfx]")
         last = "mixfx"
 
-    post: List[str] = []
+    post: List[str] = list(post_limit)
     if args.fade_in:
         post.append(f"afade=t=in:st=0:d={args.fade_in:g}")
     if args.fade_out and end_dur:
-        post.append(f"afade=t=out:st={max(0.0, end_dur - args.fade_out):.3f}:d={args.fade_out:g}")
+        fade_out = min(args.fade_out, end_dur)  # cut to the output, so it still ends silent
+        post.append(f"afade=t=out:st={end_dur - fade_out:.3f}:d={fade_out:g}")
     # The audio track is conformed to the source duration whenever it is known: padded with
     # silence if the graph came out short, trimmed if long. A mixed track can come out a few
     # hundredths short (amix's dropout_transition, a looped bed's atrim boundary), and with
@@ -628,7 +686,7 @@ def main() -> int:
         audio_block["music_volume"] = args.music_volume
         audio_block["duck"] = ({"amount_db": args.duck_amount, "threshold_db": round(args.duck_threshold, 4),
                                 "threshold_linear": float(f"{db_to_linear(args.duck_threshold):.6g}"),
-                                "ratio": round(max(2.0, args.duck_amount / 3), 1),
+                                "ratio": DUCK_GATE_RATIO,
                                 "attack_ms": args.duck_attack, "release_ms": args.duck_release}
                                if args.duck else None)
     verification: List[Dict[str, Any]] = []

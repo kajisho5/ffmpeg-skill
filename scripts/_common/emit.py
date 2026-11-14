@@ -640,14 +640,43 @@ def stream_inventory_step(meta: Dict[str, Any], expect: Dict[str, Any]) -> Dict[
     return step
 
 
+def _finite(v: Any) -> Optional[float]:
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
+
+
+def own_length(s: Optional[Dict[str, Any]]) -> Optional[float]:
+    """The length of one probed stream (`meta["video"]`, `meta["audio"]`): its duration, else the
+    DURATION tag Matroska/WebM keep, which is where the stream ENDS on the file's clock (the
+    muxer's last timestamp plus its packet's duration), not how long it lasts: a sound from 1 s
+    to 6 s is tagged 6. The tag less the stream's start (from 0 when the start is a priming
+    frame before 0). A value that is not a finite number is no length (a NaN compares false and
+    would pass every check)."""
+    s = s or {}
+    duration = _finite(s.get("duration"))
+    if duration is not None and duration > 0:
+        return duration
+    tagged = _finite(s.get("tagged_duration"))
+    if tagged is None:
+        return None
+    length = tagged - max(_finite(s.get("start_time")) or 0.0, 0.0)
+    return length if length > 0 else None
+
+
+def own_end(s: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Where one probed stream ends on the file's own timestamps: its start plus its duration,
+    else the Matroska/WebM DURATION tag, which is already that end."""
+    s = s or {}
+    duration = _finite(s.get("duration"))
+    if duration is not None and duration > 0:
+        return (_finite(s.get("start_time")) or 0.0) + duration
+    if own_length(s) is None:
+        return None
+    return _finite(s.get("tagged_duration"))
+
+
 def stream_length(meta: Dict[str, Any], kind: str) -> Optional[float]:
-    """One stream's own length: its duration, else the DURATION tag Matroska/WebM keep. A value
-    that is not a finite number is no length (a NaN compares false and would pass every check)."""
-    s = meta.get(kind) or {}
-    for v in (s.get("duration"), s.get("tagged_duration")):
-        if isinstance(v, (int, float)) and math.isfinite(v) and v > 0:
-            return float(v)
-    return None
+    """One stream's own length (own_length())."""
+    return own_length(meta.get(kind))
 
 
 LENGTH_UNREAD_HINT = ("remux the file so its container states a length (export.py INPUT --preset copy -o remuxed.mkv), "
@@ -674,9 +703,8 @@ def input_length(meta: Optional[Dict[str, Any]], path: Optional[str] = None) -> 
 
 
 def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
-    """Where one stream ends on the file's timeline: its start plus its own length."""
-    length = stream_length(meta, kind)
-    return None if length is None else ((meta.get(kind) or {}).get("start_time") or 0.0) + length
+    """Where one stream ends on the file's timeline (own_end())."""
+    return own_end(meta.get(kind))
 
 
 def file_origin(meta: Dict[str, Any]) -> float:

@@ -56,7 +56,7 @@ import os
 import sys
 import tempfile
 import zlib
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from _common.runner import ffmpeg_failure_extra, JsonTooDeep, fail_if_classified, read_json
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
@@ -81,12 +81,27 @@ def _t(value: str, fps, flag: str = "--segments") -> float:
     return time_arg(value, flag, fps)
 
 
-def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float, fps=None) -> List[Tuple[float, float]]:
+def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float, fps=None,
+                               picture: Optional[Tuple[float, float]] = None,
+                               dropped: Optional[List[Tuple[float, float]]] = None) -> List[Tuple[float, float]]:
     """--remove: what is left of [0, total] once `removed` is dropped (merged where they overlap,
     clamped to the file). A leftover shorter than one frame (10 ms without a frame rate) is not a
-    piece anyone asked to keep. Refuses a removal that would leave nothing."""
+    piece anyone asked to keep. With `picture` (where the video starts and ends, for a video
+    output), neither is a leftover that holds less than one frame of it: sound before the first
+    frame or after the last (a track that outlasts its picture) has no picture to cut, and was
+    kept and then refused as a segment the caller never gave (#462 A51). Such leftovers are added
+    to `dropped`. Refuses a removal that would leave nothing."""
     least = 1.0 / fps if fps else 0.01
     keep, cursor = [], 0.0
+
+    def add(a: float, b: float) -> None:
+        if b - a < least:
+            return
+        if picture is not None and min(b, picture[1]) - max(a, picture[0]) < least - 1e-6:
+            if dropped is not None:
+                dropped.append((a, b))
+            return
+        keep.append((a, b))
     outside = [(s, e) for s, e in removed if min(total, e) <= min(total, max(0.0, s))]
     if outside:
         die("--remove " + ", ".join(f"{s:g}-{e:g}" for s, e in outside) + f" lies outside the file (0-{total:.3f}s), "
@@ -94,12 +109,14 @@ def keep_ranges_after_removing(removed: List[Tuple[float, float]], total: float,
     for s, e in sorted((min(total, max(0.0, s)), min(total, e)) for s, e in removed):
         if e <= cursor:
             continue
-        if s - cursor >= least:
-            keep.append((cursor, s))
+        add(cursor, s)
         cursor = max(cursor, e)
-    if total - cursor >= least:
-        keep.append((cursor, total))
+    add(cursor, total)
     if not keep:
+        if dropped:
+            die(f"--remove leaves only sound with no picture ({', '.join(f'{a:.3f}-{b:.3f}s' for a, b in dropped)}, "
+                f"outside the video's {picture[0]:.3f}-{picture[1]:.3f}s); nothing with a picture would be left to keep. "
+                "Write the sound out with an audio -o (e.g. -o part.wav) instead", kind="input")
         die(f"--remove drops the whole file ({total:.3f}s); nothing would be left to keep")
     return keep
 
@@ -277,11 +294,12 @@ def source_skew(src: str, meta: dict, t: float) -> float:
 
 def video_end(src: str, meta: dict):
     """Where the video stream ends on the cut's clock (seconds from the file's start), or None when
-    the stream's length is unknown."""
-    v = meta.get("video") or {}
-    if not v.get("duration"):
-        return None
-    return (v.get("start_time") or 0.0) + v["duration"] - file_origin(src)
+    the stream's length is unknown. A Matroska/WebM stream states no duration, only its DURATION
+    tag, which is already that end (own_end()); read from `duration` alone, a .mkv had no picture
+    end and --remove kept a sound-only leftover past it."""
+    from _common.emit import own_end
+    end = own_end(meta.get("video"))
+    return None if end is None else end - file_origin(src)
 
 
 _SEEK_SHIFTS: dict = {}
@@ -893,9 +911,12 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         if is_audio_output(dst) or not meta.get("video"):
             # -ss before -i seeks, then decoding discards samples up to the exact start
             # (accurate_seek); atrim bounds the decoded stream to the requested length at sample
-            # resolution.
+            # resolution. The input seek counts from the file's start, so a sound that starts after
+            # it (late against its picture) arrives at its offset from `start`; it is padded with
+            # silence from 0, as the --segments re-cut pads it (av_trim), not rebased to its own
+            # first sample, which moved it earlier and made the cut shorter than asked (#462 A46)
             cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=False)
-            cmd += ["-af", f"atrim=end={dur:.6f},asetpts=PTS-STARTPTS"]
+            cmd += ["-af", f"atrim=end={dur:.6f},aresample=async=1:first_pts=0"]
         else:
             # Seek SEEK_MARGIN early, then drop the margin on the output side, which decodes and
             # discards it from both streams alike. An input seek straight to `start` can land (the
@@ -1515,6 +1536,7 @@ def main() -> int:
         forced.append("codec")
 
     fps = (meta.get("video") or {}).get("fps")
+    remove_notes: List[str] = []
     if args.remove:
         if args.segments or args.end or args.duration or args.start is not None:
             die("--remove names what to drop from the whole file: it does not combine with --segments, --start, --end or --duration")
@@ -1525,7 +1547,18 @@ def main() -> int:
         if not total:
             die(f"--remove needs the input's duration, which {args.input} does not report"
                 + (" yet (it is an earlier step's output)" if dry_run_input_pending(args.input) else ""))
-        args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(parse_segments(args.remove, fps, clamp=True), total, fps))
+        picture = None
+        if (meta.get("video") or {}).get("fps") and not is_audio_output(args.output or "") and not dry_run_input_pending(args.input):
+            vend = video_end(args.input, meta)
+            if vend is not None:
+                picture = ((meta["video"].get("start_time") or 0.0) - file_origin(args.input), vend)
+        sound_only: List[Tuple[float, float]] = []
+        args.segments = ",".join(f"{s:.6f}-{e:.6f}" for s, e in keep_ranges_after_removing(
+            parse_segments(args.remove, fps, clamp=True), total, fps, picture, sound_only))
+        for a, b in sound_only:
+            remove_notes.append(f"--remove left {a:.3f}-{b:.3f}s, which holds sound but no frame of the picture "
+                                f"(the video runs {picture[0]:.3f}-{picture[1]:.3f}s); it is not kept")
+            info(remove_notes[-1])
     elif args.segments and (args.end or args.duration or args.start is not None):
         # A50: the single-range flags were accepted beside --segments and not read, where --remove
         # refuses the same combination
@@ -1588,7 +1621,7 @@ def main() -> int:
     # clean copy). clip_length's rule, as join.py uses it: less than a frame past -> end the
     # segment with its picture; more -> hold the last frame for the sound, which only a re-cut
     # can do. The last segment is left as the source had it: nothing is placed after it.
-    join_notes: List[str] = []
+    join_notes: List[str] = list(remove_notes)
     hold_needed = False
     vend = (video_end(args.input, meta) if len(segments) > 1 and video.get("fps") and not is_audio_output(output)
             and not dry_run_input_pending(args.input) else None)

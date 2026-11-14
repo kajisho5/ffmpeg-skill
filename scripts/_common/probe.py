@@ -43,11 +43,16 @@ def fingerprint(path: str) -> Dict[str, Any]:
 
 
 def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
-                    *, check: bool = True) -> List[float]:
+                    *, check: bool = True) -> "Sequence[float]":
     """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
     single ffmpeg pass under --timeout. Shared by scenes.py (audio envelope for cut scoring) and
     sync.py (cross-correlation); an undecodable input is kind ffmpeg when check=True, else [].
-    The samples are on the file's clock: a sound that starts late is padded at its head."""
+    The samples are on the file's clock: a sound that starts late is padded at its head.
+
+    The samples are an array('f'), 4 bytes each: a list of Python floats took about 32 (24 for the
+    float, 8 for the slot), so scenes.py held ~2.3 GB per hour of audio at 8 kHz + 22.05 kHz and
+    multicam --switch energy one such list per camera (A140). An s16 sample divided by 32768 is
+    exact in a float32, so every value read back is the double the list held."""
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if start:
@@ -65,9 +70,15 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
         if check:
             die(f"could not decode audio from {path}:\n{proc.stderr.decode(errors='replace').strip()}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr.decode(errors="replace")))
         return []
-    n = len(proc.stdout) // 2
-    import struct
-    return [v / 32768.0 for v in struct.unpack(f"<{n}h", proc.stdout[: n * 2])]
+    import array
+    import sys
+    data, proc = proc.stdout, None
+    pcm = array.array("h")
+    pcm.frombytes(memoryview(data)[: len(data) // 2 * 2])
+    del data
+    if sys.byteorder == "big":
+        pcm.byteswap()  # s16le on the pipe
+    return array.array("f", (v / 32768.0 for v in pcm))
 
 
 def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool = False, remove_mean: bool = False) -> List[float]:
@@ -203,6 +214,23 @@ def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
     return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
 
 
+def riff_wave_args(path: str) -> List[str]:
+    """`-f wav` for a file that opens with a RIFF/WAVE header. FFmpeg 9.0.2 scores its MPEG-TS
+    probe above the WAV one when the PCM happens to hold 0x47 at a transport packet's spacing (a
+    steady tone can): ffprobe then reads a file this skill has just written as a broken transport
+    stream and fails with "End of file". The header says what the file is, so the probe is told.
+    Measured on 9.0.2 (CI): the same file fails unforced and reads with `-f wav`; 6.1 to 8.0 read
+    it either way."""
+    if not os.path.isfile(path):  # a pipe or a device is never opened here: the open would block
+        return []
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return []
+    return ["-f", "wav"] if head[:4] == b"RIFF" and head[8:12] == b"WAVE" else []
+
+
 def probe(path: str, role: str = "input") -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -229,7 +257,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", *still_input_args(path),
+        [ffprobe, "-v", "error", *still_input_args(path), *riff_wave_args(path),
          "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
