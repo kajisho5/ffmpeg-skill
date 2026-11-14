@@ -179,7 +179,8 @@ class ContractTests(unittest.TestCase):
         cls.garbage.write_bytes(bytes((i * 7919) % 256 for i in range(200_000)))
         cls.empty = OUT / "c_empty.mp4"
         cls.empty.write_bytes(b"")
-        cls.badlut = OUT / "c_bad.cube"
+        # .3dl: a .cube is checked before ffmpeg runs (#404); this one fails inside ffmpeg's lut3d
+        cls.badlut = OUT / "c_bad.3dl"
         cls.badlut.write_text("this is not a LUT\n", encoding="utf-8")
         cls.work = Path(tempfile.mkdtemp(prefix="ffskill_contract_"))
         cls.input_hashes = {p: cls._sha(p) for p in (cls.src, cls.wav, cls.mic, cls.camb, cls.vfr, cls.hdr, cls.surround)}
@@ -4638,7 +4639,7 @@ class ContractTests(unittest.TestCase):
         """docs/design-decisions.md: an ffmpeg failure exits 1 whatever ffmpeg returned (the raw code
         travels as ffmpeg_returncode); tools that leave the timeline alone keep a subtitle track
         (audio/loudness/proxy joined fit/color/overlay), tools that move it say so."""
-        bad = self.out("policy_bad.cube")
+        bad = self.out("policy_bad.3dl")  # not .cube: that is refused before ffmpeg runs (#404)
         bad.write_text('TITLE "x"\nLUT_3D_SIZE 2\ngarbage\n')
         proc = tool("color", self.src, "--lut", bad, "--json", "-o", self.out("policy_lut.mp4"), check=False)
         self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
@@ -4753,7 +4754,7 @@ class ContractTests(unittest.TestCase):
         keep = self.out("deliverable.mp4")
         self.assertEqual(tool("cut", self.src, "--start", "0", "--end", "1", "-o", keep).returncode, 0)
         before = (keep.stat().st_size, keep.stat().st_mtime_ns)
-        bad = self.out("bad.cube")
+        bad = self.out("bad.3dl")  # not .cube: that is refused before ffmpeg runs (#404)
         bad.write_text('TITLE "x"\nLUT_3D_SIZE 2\ngarbage\n')
         # without --overwrite 2.0 refuses before ffmpeg runs; with it, ffmpeg fails on the LUT
         for extra, kind in (((), "input"), (("--overwrite",), "ffmpeg")):
@@ -5865,6 +5866,18 @@ class OutputSchemaDriftTests(unittest.TestCase):
                 self.assertIn("dropped_non_av_streams", _contract.output_schema(name, {})["properties"])
         self.assertEqual(sorted(emitting - _contract.NON_AV_STREAM_TOOLS), [])
 
+    def test_every_provenance_a_tool_writes_is_one_the_schema_lists(self):
+        """#403: the decode step said "measurement" and export's key/fill pair "output_measurement",
+        neither of them a value of the verification schema's provenance enum."""
+        enum = set(_contract.output_schema("cut", {})["properties"]["verification"]["items"]["properties"]["provenance"]["enum"])
+        written = {}
+        for path in script_sources():
+            for value in re.findall(r"""["']provenance["']\s*:\s*["']([^"']*)["']|provenance=["']([^"']*)["']""",
+                                    path.read_text(encoding="utf-8")):
+                written.setdefault("".join(value), set()).add(path.name)
+        self.assertTrue(written)
+        self.assertEqual({v: sorted(files) for v, files in written.items() if v not in enum}, {})
+
     def test_every_emitted_top_level_key_is_in_the_output_schema(self):
         """#466 A194: cropdetect emitted crop, confidence, file, source_width and source_height,
         none of them in its output_schema, and a sweep found fourteen more tools with the same gap.
@@ -6161,6 +6174,31 @@ class SilentResultTests(unittest.TestCase):
         self.assertEqual((doc["status"], doc["ok"]), ("failed", False))
         self.assertEqual((doc["error"]["reason"], doc["error"]["exit_code"]), ("check_output_unparsed", 1))
         self.assertIn("ValueError: boom", doc["error"]["message"])
+
+    def test_a_check_that_could_not_run_is_not_reported_as_a_failed_check(self):
+        """#403: render said "the youtube check failed" when check.py graded nothing (no document
+        that parses, check.py's own refusal). The delivery is written either way; the message
+        says the check could not run, and why."""
+        import render
+        unrun = {"status": "failed", "platform": "youtube", "ok": False,
+                 "error": {"kind": "verification", "reason": "check_output_unparsed", "exit_code": 1,
+                           "message": "check.py printed no JSON document: ValueError: boom", "stderr_tail": "boom"}}
+        self.assertIn("boom", render.check_not_run(unrun))
+        self.assertIsNone(render.check_not_run({"status": "completed", "failed": 0, "checks": []}))
+        self.assertIsNone(render.check_not_run({"status": "completed", "failed": 2, "checks": [{"check": "fps", "status": "FAIL"}]}))
+        self.assertIsNone(render.check_not_run(None))
+        for label, result, said, unsaid in (
+                ("could not run", unrun, "check could not run, so nothing was checked: check.py printed no JSON document", "check failed"),
+                ("failed a row", {"status": "completed", "platform": "youtube", "failed": 1,
+                                  "checks": [{"check": "fps", "status": "FAIL", "value": "25", "fix": "x"}]}, "check failed: fps", "could not run")):
+            with self.subTest(check=label):
+                proj = self.project("rc_" + label.replace(" ", "_"), check={"platform": "youtube"})
+                proc = self.patched("render", "m.run_check = lambda output, platform, content: %r" % (result,), proj, "--fast", "--json")
+                doc = json.loads(proc.stdout)
+                self.assertEqual((proc.returncode, doc["status"], doc["error"]["kind"]), (1, "failed", "verification"), doc)
+                self.assertIn(said, doc["error"]["message"])
+                self.assertNotIn(unsaid, doc["error"]["message"])
+                self.assertTrue(Path(doc["output"]).exists(), "the delivery was written before the check")
 
     def test_render_cache_says_why_a_stage_missed_and_replays_what_a_hit_verified(self):
         """--cache missed silently (no sidecar, a corrupt one, a truncated artifact), stored

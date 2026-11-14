@@ -33,7 +33,7 @@ import sys
 from typing import Dict, List
 
 from _common.runner import fail_if_classified
-from _common import video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
+from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, x264_args, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
 from _common.timeline import output_timecode_args
@@ -259,8 +259,13 @@ def measure_one(reference: str, path: str, args) -> Dict:
                 offset = offset + (drift_ratio - 1.0) * head_mid
                 drift_info = {"residual_at_end_seconds": round(residual, 4), "measured_over_seconds": round(elapsed, 2),
                               "drift_ppm": round((drift_ratio - 1) * 1e6, 1),
-                              "meaning": "second file runs %.1f ppm %s (%.3fs over %.0fs); it will be resampled to match" % (
-                                  abs(drift_ratio - 1) * 1e6, "long/slow" if drift_ratio > 1 else "short/fast", abs(residual), elapsed),
+                              # a measure-only run writes nothing (#403: it said "will be resampled")
+                              "meaning": "second file runs %.1f ppm %s (%.3fs over %.0fs); %s" % (
+                                  abs(drift_ratio - 1) * 1e6, "long/slow" if drift_ratio > 1 else "short/fast", abs(residual), elapsed,
+                                  ("it would be resampled to match in the file this run plans (--dry-run writes nothing)" if STATE.dry_run
+                                   else "it is resampled to match in the file this run writes")
+                                  if args.replace_audio or args.trim_second else
+                                  "nothing is resampled in this measure-only run (--replace-audio or --trim-second writes the corrected file)"),
                               "confidence": round(end_score, 3)}
             else:
                 skipped_reason = "low_confidence"

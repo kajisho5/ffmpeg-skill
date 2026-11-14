@@ -391,13 +391,19 @@ jobs:
           if [ "$AUTO_BUMPED" = "true" ] && [ "${EXPECTED%%.*}" != "${PREVIOUS%%.*}" ]; then
             echo "::error::automatic release crossed a major boundary: $PREVIOUS -> $EXPECTED"; exit 1
           fi
-          for i in $(seq 1 30); do
-            HAVE=$(npm view "$PKG@$EXPECTED" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+          # 15 minutes, and --prefer-online so a cached "not found" is not what gets re-read: 3.8.8
+          # took more than the 5 minutes this loop used to wait, which failed the job after a
+          # good publish and skipped the MCP Registry step
+          # Bounded by elapsed time, not by a count: one `npm view` can itself take minutes when
+          # the registry stalls (the last request may overshoot the deadline by its own timeout)
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            HAVE=$(npm view "$PKG@$EXPECTED" version --prefer-online --cache /tmp/npm-verify-cache 2>"$RUNNER_TEMP/npm-verify.err" || true)
             [ "$HAVE" = "$EXPECTED" ] && break
-            echo "npm has no $PKG@$EXPECTED yet (attempt $i/30)"; sleep 10
+            echo "npm has no $PKG@$EXPECTED yet (${SECONDS}s elapsed)"; sleep 10
           done
           if [ "$HAVE" != "$EXPECTED" ]; then
-            echo "::error::npm does not have $PKG@$EXPECTED after publishing it"; exit 1
+            echo "::error::npm does not have $PKG@$EXPECTED after publishing it; the last npm view said: $(tail -n 3 "$RUNNER_TEMP/npm-verify.err" 2>/dev/null | tr '\n' ' ')"; exit 1
           fi
           for i in $(seq 1 60); do
             LATEST=$(npm view "$PKG" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
@@ -668,13 +674,19 @@ jobs:
           EXPECTED: ${{ steps.gate.outputs.version }}
           DIST_TAG: ${{ steps.state.outputs.dist_tag }}
         run: |
-          for i in $(seq 1 30); do
-            HAVE=$(npm view "$PKG@$EXPECTED" version --cache /tmp/npm-verify-cache 2>/dev/null || true)
+          # 15 minutes, and --prefer-online so a cached "not found" is not what gets re-read: 3.8.8
+          # took more than the 5 minutes this loop used to wait, which failed the job after a
+          # good publish and skipped the MCP Registry step
+          # Bounded by elapsed time, not by a count: one `npm view` can itself take minutes when
+          # the registry stalls (the last request may overshoot the deadline by its own timeout)
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            HAVE=$(npm view "$PKG@$EXPECTED" version --prefer-online --cache /tmp/npm-verify-cache 2>"$RUNNER_TEMP/npm-verify.err" || true)
             [ "$HAVE" = "$EXPECTED" ] && break
-            echo "npm has no $PKG@$EXPECTED yet (attempt $i/30)"; sleep 10
+            echo "npm has no $PKG@$EXPECTED yet (${SECONDS}s elapsed)"; sleep 10
           done
           if [ "$HAVE" != "$EXPECTED" ]; then
-            echo "::error::npm does not have $PKG@$EXPECTED after publishing it"; exit 1
+            echo "::error::npm does not have $PKG@$EXPECTED after publishing it; the last npm view said: $(tail -n 3 "$RUNNER_TEMP/npm-verify.err" 2>/dev/null | tr '\n' ' ')"; exit 1
           fi
           for i in $(seq 1 60); do
             TAGGED=$(npm view "$PKG" "dist-tags.$DIST_TAG" --cache /tmp/npm-verify-cache 2>/dev/null || true)

@@ -128,11 +128,22 @@ def srt_timing_times(line: str) -> Tuple[str, str]:
     return a.strip(), words[0] if words else ""
 
 
+# WebVTT's inline word timestamps and its class, voice and language spans (YouTube's automatic
+# captions: `hello<00:00:01.500><c> world</c>`); <i>, <b> and <u> are SRT's too and stay
+_VTT_INLINE = re.compile(r"<\d{1,2}:\d{2}(?::\d{2})?\.\d{3}>|</?(?:c|v|lang)(?:[.\s][^>]*)?>")
+
+
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
-    for times, body in srt_blocks(read_text_or_die(path, "--srt")):
+    source = read_text_or_die(path, "--srt")
+    # only in a file that says it is WebVTT: ffmpeg's own WebVTT reader drops these tags, and the
+    # cues this function returns were burned with them in the text (#404)
+    vtt = source.lstrip().upper().startswith("WEBVTT")
+    for times, body in srt_blocks(source):
         a, b = srt_timing_times(times)
         text = "\n".join(body).strip()
+        if vtt:
+            text = _VTT_INLINE.sub("", text).strip()
         try:
             cues.append((parse_time(a), parse_time(b), text))
         except ValueError as e:  # includes MissingFpsError: SRT timings are hh:mm:ss,ms, never frames

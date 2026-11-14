@@ -1090,6 +1090,18 @@ def _from_plan_cwd(output: Any) -> Any:
     return os.path.abspath(str(output)) if isinstance(output, str) and output else output
 
 
+def check_not_run(check_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Why check.py graded nothing, or None when it did: a document with no FAIL count that is
+    failed or carries an error is a check that could not run (an unparsed document, check.py's own
+    refusal), not a check the delivery failed (#403: both were reported as "check failed")."""
+    if not check_result or check_result.get("failed"):
+        return None
+    err = check_result.get("error")
+    if not err and check_result.get("status") != "failed":
+        return None
+    return str((err.get("message") if isinstance(err, dict) else err) or "check.py reported status failed with no rows")
+
+
 def execute_plan(plan: Dict[str, Any], path: str) -> int:
     """Run a plan written by `<tool> --plan FILE`: refuse if any fingerprinted input changed since
     the plan was made (the plan's commands would then describe a different edit), run the tool
@@ -1189,7 +1201,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     # same command run by hand)
     if exit_code:
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
-        info(f"plan done: {output}, but the {check_result.get('platform') or 'content'} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""))
+        unrun = check_not_run(check_result)
+        info(f"plan done: {output}, but the {check_result.get('platform') or 'content'} check "
+             + (f"could not run, so nothing was checked: {unrun}" if unrun else "failed" + (f": {', '.join(failed_rows)}" if failed_rows else "")))
     else:
         advised = guidance_warns(check_result)
         info(f"plan done: {output}" + (" — upload-limit guidance, the uploader checks the current limit: "
@@ -1197,7 +1211,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     # the tool's own steps (export's loudness, ...) come in through absorb_stage() above, tagged
     # with `stage`, so `verified` is theirs and the check's together
     emit(output, plan=path, plan_sha256=digest, unbound_inputs=unbound, tool=tool, stages=[tool] + (["check"] if check_result else []), check=check_result, tool_result=doc,
-         verification=([{"step": "check", "ok": not exit_code, "platform": check_result.get("platform")}] if check_result else []))
+         verification=([dict({"step": "check", "ok": not exit_code, "platform": check_result.get("platform")},
+                             **({"reason": "not_measured: " + check_not_run(check_result)} if check_not_run(check_result) else {}))]
+                       if check_result else []))
     return 0
 
 
@@ -2084,7 +2100,9 @@ def main() -> int:
         # The deliverable is written and verified, but it does not meet the requested platform
         # spec (or the check itself could not run): a failed delivery, reported as one.
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
-        die(f"rendered {output} but the {check_label} check failed" + (f": {', '.join(failed_rows)}" if failed_rows else ""),
+        unrun = check_not_run(check_result)
+        die(f"rendered {output} but the {check_label} check "
+            + (f"could not run, so nothing was checked: {unrun}" if unrun else "failed" + (f": {', '.join(failed_rows)}" if failed_rows else "")),
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
             probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")

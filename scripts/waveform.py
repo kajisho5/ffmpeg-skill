@@ -36,7 +36,7 @@ import os
 import sys
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS, square_pixels, square_pixels_note
+from _common.probe import SILENT_PEAK_DBFS, refuse_not_a_still, square_pixels, square_pixels_note
 from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
@@ -119,10 +119,13 @@ def main() -> int:
                 "the image locally and pass its path", kind="input")
         if not os.path.exists(args.image):
             die(f"--image file not found: {args.image}", kind="input")
-        if not STATE.dry_run:
-            plate = probe(args.image, role="input")
-            if not (plate.get("video") or {}).get("width"):
-                die(f"--image is not an image ffmpeg can decode: {args.image}", kind="input")
+        # read under --dry-run too (the file exists, checked above): a plate the real run refuses
+        # is refused by the plan (#404: a dry run completed on a video given as --image)
+        plate = probe(args.image, role="input")
+        if not (plate.get("video") or {}).get("width"):
+            die(f"--image is not an image ffmpeg can decode: {args.image}", kind="input")
+        refuse_not_a_still(args.image, plate, "--image",
+                           "`look.py FILE --at T` writes one frame of a video as a PNG")
         if args.background != "black":
             die("--image and a non-default --background exclude each other: the plate is either "
                 "the picture or the colour", kind="input")
@@ -375,8 +378,12 @@ def _child(script_name: str, argv: "list") -> None:
         extra = {"hint": err["hint"]} if err.get("hint") else {}
         if doc.get("encoder"):
             extra["encoder"] = doc["encoder"]
+        # the stage's own reason and details ride along (#402: a caller keyed on error.reason saw
+        # filter_missing from caption.py and graphics.py run by hand, and nothing from here)
+        why = {k: err[k] for k in ("reason", "details") if err.get(k) is not None}
         die(f"{script_name} failed: {err.get('message') or (proc.stderr.strip().splitlines() or ['?'])[-1][:300]}",
-            code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script_name, **extra)
+            code=int(doc.get("exit_code") or 1), kind=err.get("kind") or "input", stage=script_name,
+            error_extra=why or None, **extra)
 
 if __name__ == "__main__":
     sys.exit(main())

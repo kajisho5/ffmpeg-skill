@@ -121,6 +121,17 @@ def drawtext_shaping() -> "Dict[str, bool]":
     return dict(_SHAPING_BUILD_CACHE)
 
 
+def shaping_refusal(script: str) -> str:
+    """Why drawtext cannot draw `script` here, as the clause after "<Language> text": on any build
+    for the scripts harfbuzz reorders, on this build for Arabic and Hebrew, which a build with
+    fribidi draws (#402: both were refused as "on any ffmpeg build")."""
+    if script in BIDI_SCRIPTS:
+        return ("cannot be shaped by drawtext on this ffmpeg build (it was built without libfribidi, which "
+                "drawtext needs for right-to-left order and Arabic joining; a build with it draws this text)")
+    return ("cannot be shaped by drawtext on any ffmpeg build (the marks are reordered by harfbuzz, which "
+            "drawtext does not use)")
+
+
 def needs_shaping(script: str) -> bool:
     """Whether drawtext would render `script` wrongly on this build."""
     if script in SHAPING_SCRIPTS:
