@@ -46,7 +46,7 @@ from _common.probe import display_size, refuse_not_a_still, square_pixels, squar
 from _common.drawtext import shaping_refusal
 from _common.wrap import wrap_text
 from _common import text_width_em
-from _common.fonts import font_choice, record_font_choice
+from _common.fonts import font_choice, record_font_choice, require_font_file
 from _common import drawtext_fontfile  # noqa: E402
 
 # Per-edge margins: a platform's UI does not cover the same fraction of every edge (TikTok's
@@ -361,6 +361,7 @@ def main() -> int:
     # at --font-size), so a project that asked for 200 px text completed with the 42 px default.
     if args.text and not (args.image or args.video) and (args.scale is not None or args.scale_percent is not None):
         die("--scale and --scale-percent size an image, logo or video layer; text size is --font-size", kind="input")
+    font_file_from = "--font-file"  # what the refusal of a font file that is not one names
     if args.brand:
         if args.margin == ap.get_default("margin"):
             args.margin = int(brand.get("safe_margin", args.margin))
@@ -368,6 +369,7 @@ def main() -> int:
             args.font = brand.get("font", args.font)
         if not args.font_file and brand.get("font_file"):
             args.font_file = brand["font_file"]
+            font_file_from = "the --brand file's font_file"
     if args.text:
         # 1.15: drawtext never reorders or re-clusters (no harfbuzz), so Devanagari matras and
         # Thai/Lao mark stacking come out wrong on EVERY build. A wrong frame is not a delivery:
@@ -393,6 +395,8 @@ def main() -> int:
                      "a font without the glyph draws an empty box (monochrome at best with one). --emoji none "
                      "leaves them out; caption.py/graphics.py composite colour PNGs with --emoji-assets",
                      "emoji_monochrome")
+    if args.text and args.font_file:
+        require_font_file(args.font_file, font_file_from)
     script_file = script_family = None
     if args.text and not args.font_file:
         # 1.12: non-Latin overlay text picks a font by script, so a title in Japanese, Korean,
@@ -533,6 +537,11 @@ def main() -> int:
         # a --start/--end window is in the layer's position, which is evaluated on the main
         # picture's frames; overlay's enable is evaluated on the layer's frames too
         ov = f"overlay={windowed_overlay_x(x, enable) if enable else x}:{y}" + (overlay_format(meta) or ":format=auto")
+        if not meta.get("duration"):
+            # nothing to bound by -t: the overlay ends with the main picture. -shortest alone never
+            # ended a still main (one picture, no duration): overlay kept repeating it under the
+            # looped layer and the run went on until its timeout (#510)
+            ov += ":shortest=1"
         # -loop 1 turns the still into a timed stream so fade/enable expressions see real timestamps
         cmd = ffmpeg_base() + ["-i", args.input, "-loop", "1", *still_input_args(args.image), "-i", args.image]
         # the RGBA still is converted to the BT.709 the output is tagged with (overlay's own

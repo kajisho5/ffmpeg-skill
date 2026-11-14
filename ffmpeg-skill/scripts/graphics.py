@@ -47,7 +47,7 @@ from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_
 from _common.emit import note, warn
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            report as alpha_report, source_alpha, source_format, tag_args, video_line)
-from _common.fonts import font_choice, record_font_choice
+from _common.fonts import font_choice, record_font_choice, require_font_file
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 from _common import drawtext_fontfile  # noqa: E402
@@ -175,6 +175,9 @@ def main(force_route: Optional[str] = None) -> int:
     if args.brand and style.get("color") and not args.text_color:
         text_c = color_hex(style["color"])
     args.lang = args.lang or (brand.get("lang") if args.brand else None)
+    # checked where text is drawn with it: the progress template draws a bar only (review of #532)
+    if args.template != "progress" and (args.font_file or brand.get("font_file")):
+        require_font_file(args.font_file or brand["font_file"], "--font-file" if args.font_file else "the --brand file's font_file")
     # a font that covers the text before drawtext renders boxes instead of glyphs (1.12)
     _script, script_file, _family = script_font_for_text(
         " ".join(t for t in (args.name, args.title, args.subtitle, args.text, args.top, args.bottom) if t),

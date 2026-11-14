@@ -32,7 +32,7 @@ from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.fonts import script_font_for_text  # noqa: E402
-from _common.probe import square_pixels  # noqa: E402
+from _common.probe import is_still_input, square_pixels, still_loop_args  # noqa: E402
 from _common.wrap import text_width_em  # noqa: E402
 from _common.emit import input_length  # noqa: E402
 from _common.decision import conform_output_t, conform_to_length  # noqa: E402
@@ -116,8 +116,15 @@ def main() -> int:
     if args.audio_from is not None and not metas[args.audio_from].get("audio"):
         die(f"--audio-from {args.audio_from}: {args.inputs[args.audio_from]} has no audio stream")
 
-    durations = [input_length(m) for m in metas]
+    # a still picture has no length of its own: it lasts as long as the grid (#510). Counted as a
+    # clip of 0 s, it made the grid 0 s long, and the run ended in a traceback on the empty file.
+    stills = [is_still_input(m) for m in metas]
+    if all(stills):
+        die("every cell is a still picture, so the grid has no length to take from a clip", kind="input",
+            hint="give at least one video cell, or make a clip of a still first (insert.py STILL --duration T)")
+    durations = [input_length(m) for m, still in zip(metas, stills) if not still]
     target_duration = max(durations) if args.pad else min(durations)
+    durations = [target_duration if still else input_length(m) for m, still in zip(metas, stills)]
 
     # each label is drawn with a font that covers its own script, as every other text-drawing tool
     # picks one (through 3.1.3 a Japanese or Thai filename came out as tofu, #411); `font_used` is
@@ -139,11 +146,13 @@ def main() -> int:
     if args.label == "auto" and cut:
         note(f"{len(cut)} cell label(s) wider than the {args.cell_width} px cell at --font-size "
              f"{args.font_size} were shortened from the end with an ellipsis")
-    output = args.output or default_output(args.inputs[0], "grid")
+    # named after the first cell; a still there would give its own extension (white_grid.png), and
+    # the image muxer cannot write the grid's frames to one file name (review of #532)
+    output = args.output or default_output(args.inputs[0], "grid", "mp4" if stills[0] else None)
 
     cmd = ffmpeg_base()
-    for p in args.inputs:
-        cmd += ["-i", p]
+    for p, still in zip(args.inputs, stills):
+        cmd += (still_loop_args(p, target_duration) if still else []) + ["-i", p]
 
     # each cell converted by its own tags to the BT.709 the grid is tagged with (a BT.601 or an RGB
     # input): without it 5.1/6.1 relabelled them, and 7.1+ converted cells to one another's matrix.

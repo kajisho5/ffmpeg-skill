@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
-from _common.emit import die, input_length, record_fallback, refuse, warn
+from _common.emit import die, input_length, note, record_fallback, refuse, warn
 from _common.runner import read_json
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -1295,6 +1295,46 @@ BRAND_DEFAULTS: Dict[str, Any] = {
 }
 
 
+# Every key a tool reads from a brand file, per block (#510). `styles.caption` is merged over the
+# top-level `caption` block (brand_caption_style()), so the two take the same keys. `colors.accent`
+# is a palette entry BRAND_DEFAULTS and examples/brand.json carry; `loudness` is read by no tool
+# (A107) and is kept out of the refusal, since the example shipped it until 3.8.8: it gets a note.
+BRAND_KEYS: Dict[str, frozenset] = {
+    "": frozenset({"font", "font_file", "colors", "logo", "logo_position", "logo_scale", "logo_opacity",
+                   "safe_margin", "caption", "styles", "lang", "emoji_assets", "loudness"}),
+    "colors": frozenset({"primary", "text", "outline", "background", "accent", "upcoming"}),
+    "caption": frozenset({"size", "position", "animate", "karaoke", "bold", "outline", "box", "color", "colour",
+                          "font", "emoji_assets"}),
+    "styles": frozenset({"caption"}),
+}
+BRAND_KEYS["styles.caption"] = BRAND_KEYS["caption"]
+
+
+def check_brand_keys(data: Dict[str, Any], path: str) -> None:
+    """Refuse a brand file key no tool reads, as render.py refuses a project's (check_keys()): a
+    misspelt `"safe_margn"` or `"colours"` was dropped without a word and the defaults drawn."""
+    import difflib
+    import json
+    blocks = [("", data)]
+    for name in ("colors", "caption", "styles"):
+        if isinstance(data.get(name), dict):
+            blocks.append((name, data[name]))
+    if isinstance(data.get("styles"), dict) and isinstance(data["styles"].get("caption"), dict):
+        blocks.append(("styles.caption", data["styles"]["caption"]))
+    for block, obj in blocks:
+        for key in obj:
+            if key in BRAND_KEYS[block]:
+                continue
+            where = f"{block}.{key}" if block else str(key)
+            near = difflib.get_close_matches(str(key), sorted(BRAND_KEYS[block]), n=1)
+            # quoted as JSON: the key is the caller's text, and a quote or a line break in it stays one line
+            die(f"brand file {path}: unknown key {json.dumps(where)}" + (f' (did you mean "{near[0]}"?)' if near else ""),
+                kind="input", hint=f"the keys read{' in ' + block if block else ''}: " + ", ".join(sorted(BRAND_KEYS[block])))
+    if "loudness" in data:
+        note(f'brand file {path}: "loudness" is read by no tool and was ignored (a target is loudness.py -I, '
+             'export.py\'s preset, or a render project\'s "loudness")')
+
+
 def load_brand(path: Optional[str]) -> Dict[str, Any]:
     """Load brand.json (fonts, colours, logo, safe margins, caption defaults); missing keys fall back to defaults."""
     import copy
@@ -1322,6 +1362,7 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
             die(f'brand file {path}: "{key}" must be an object {{...}}, got {type(value).__name__}', kind="input")
         if key in ("logo", "font_file", "font") and not isinstance(value, str):
             die(f'brand file {path}: "{key}" must be a string, got {type(value).__name__}', kind="input")
+    check_brand_keys(data, path)
     base = Path(path).resolve().parent
     for k, v in data.items():
         if v is None and isinstance(brand.get(k), dict):
