@@ -636,7 +636,9 @@ class HwEverywhereTests(_RealFfmpegCase):
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
            "testsrc2=s=160x96:r=25:d=1,format=rgba", "-c:v", "qtrle", src)
         export = importlib.import_module("export")
-        with mock.patch.object(export, "_run_analysis", side_effect=AssertionError("decoded under --dry-run")):
+        # alpha_stats is the decode: the name patched before (an alias of run_analysis that export
+        # imported and never called) made this check pass whatever the dry run did
+        with mock.patch.object(export, "alpha_stats", side_effect=AssertionError("decoded under --dry-run")):
             for preset in ("prores4444", "key-fill"):
                 with self.subTest(preset=preset):
                     doc = self._tool("export", src, "--preset", preset, "--hw", "--dry-run", "-o", self.work / f"{preset}.mov")

@@ -113,7 +113,9 @@ def main() -> int:
             # boxblur refuses a radius above half the plane: the chroma planes of 4:2:0 are half-size,
             # so they get their own (halved) radius; a 30 px region with the default 20 used to fail
             radius = max(1, min(args.blur_strength, min(args.width, args.height) // 2 - 1))
-            chroma = max(1, min(radius // 2, min(args.width, args.height) // 4 - 1))
+            # (FFmpeg 7.1 refuses a chroma radius of 1 on a 2 px chroma plane, a 4 px wide region;
+            # 6.1 took it.) 0 is a plane too small to blur: the luma still is
+            chroma = max(0, min(radius // 2, (min(args.width, args.height) // 2 - 1) // 2))
             region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
         else:
             region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"
