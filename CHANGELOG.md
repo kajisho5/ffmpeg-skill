@@ -36,7 +36,8 @@
     replaced it. The side-file guards compare files the same way, and `caption.py` refuses such an
     `-o` before it writes its SRT or ASS.
   - Two runs that find the same stale output lock no longer both take it over (A186), nor two
-    that find the same expired takeover guard. A new lock holds its pid from the moment it
+    that find the same expired takeover guard, and a guard's owner never removes a guard that
+    replaced its own. A new lock holds its pid from the moment it
     exists (it was briefly empty, which reads as stale), and on Windows a finished process whose
     handle is still open no longer counts as a live holder.
   - `batch.py` leaves no `out/` or `out/.work` behind when it refuses a run before any item starts

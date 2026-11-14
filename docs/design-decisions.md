@@ -4729,9 +4729,12 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   #530). Now each run that judged it expired creates a claim named after that guard's device,
   inode and time with O_EXCL; only the run whose create succeeds looks again and removes the guard
   if it is still that one; any other run, or one that finds another guard there, removes nothing
-  and is refused. A run removes its own guard only while the file at that name is still the one it
-  created. A run killed while it holds a claim leaves the claim, and that expired guard then stays
-  until both are removed by hand. The lock itself appears with its holder's pid and deadline
+  and is refused. The run that owns the guard removes it under the same claim when it is done: a
+  look at the name followed by a removal is not atomic, and an owner paused between the two until
+  its guard expired removed the replacement a recoverer had made meanwhile, which let a third run
+  in beside the recoverer. So exactly one of the owner and a recoverer removes a given guard, and
+  an owner that cannot get the claim leaves its guard to the run that holds it. A run killed while
+  it holds a claim leaves the claim, and that guard then stays until both are removed by hand. The lock itself appears with its holder's pid and deadline
   already in it: they are written to a file of the run's own, which is hard-linked to the lock's
   name (atomic, and refused when the name exists, as O_EXCL is). A lock created empty and written
   after read as `unreadable`, which is stale, to a run that looked in between; where no hard link
@@ -4739,9 +4742,10 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   even while a handle to it is open (its exit code is read): the Windows CI judged such a child
   alive and refused its stale lock as held. Not changed: a holder that outlived its own deadline still
   removes the lock by name when it ends, which can be the lock of the run that took it over. Code:
-  `_OutputLock._remove_stale()`, `_recover_guard()`, `_create()`, `_pid_dead()`. Tests:
+  `_OutputLock._remove_stale()`, `_remove_guard()`, `_create()`, `_pid_dead()`. Tests:
   `test_two_runs_taking_over_one_stale_lock_do_not_both_hold_it`,
   `test_two_runs_recovering_one_expired_takeover_guard_do_not_both_go_in`,
+  `test_the_owner_of_a_takeover_guard_never_removes_a_replacement`,
   `test_an_output_lock_is_never_seen_without_its_pid`,
   `test_a_finished_process_is_dead_while_its_handle_is_open`.
 - **`batch.py` removes the directories it created when no item started** (A187): a refusal before

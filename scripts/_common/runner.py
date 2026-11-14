@@ -1311,16 +1311,18 @@ def _expired_guard(guard: str) -> "Optional[Tuple[int, int, int]]":
     return _identity(st) if time.time() - st.st_mtime > TAKEOVER_STALE else None
 
 
-def _recover_guard(guard: str, expired: "Tuple[int, int, int]") -> bool:
-    """Remove the expired takeover guard `expired` names, if this run is the one that recovers it.
+def _remove_guard(guard: str, expired: "Tuple[int, int, int]") -> bool:
+    """Remove the takeover guard instance `expired` names, if this run is the one that gets to.
 
-    Every run that judged the same expired guard reaches for the same claim file, named after that
-    guard's identity, and only one O_EXCL create of it succeeds: that run looks at `guard` again
-    and removes it only if it is still the expired instance, then removes the claim. A run that
-    loses the claim, or finds another guard at the name (a run that recovered it first and is now
-    inside), removes nothing and returns False (the caller refuses as takeover_in_progress), so no
-    run ever removes a guard another run holds. A run killed while it holds a claim leaves it: that
-    expired guard then stays until it and its claim are removed by hand (the refusal names it)."""
+    Both runs that may remove a guard go through here: its owner when it is done, and a run that
+    judged it expired (its owner killed, or paused past TAKEOVER_STALE). Each reaches for the same
+    claim file, named after that guard's identity, and only one O_EXCL create of it succeeds: that
+    run looks at `guard` again, removes it only if it is still that instance, and removes the claim
+    (each file closed before it is removed, as Windows needs). A run that loses the claim, or finds
+    another guard at the name (a recoverer's replacement), removes nothing and returns False (a
+    recoverer then refuses as takeover_in_progress; an owner leaves its guard to the run holding the
+    claim), so no run removes a guard another run holds. A run killed while it holds a claim leaves
+    it: that guard then stays until it and its claim are removed by hand (the refusal names it)."""
     claim = f"{guard}.{expired[0]}-{expired[1]}-{expired[2]}.claim"
     try:
         cfd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -1425,7 +1427,7 @@ class _OutputLock:
         than TAKEOVER_STALE seconds; until then a takeover in progress counts as held. Recovery
         never removes a guard by its name alone (review of #530: two runs that found the same
         expired guard both removed "it", the second removing the first's new guard, and both went
-        on inside): see _recover_guard()."""
+        on inside): see _remove_guard()."""
         guard = self.path + ".takeover"
         for _ in (0, 1, 2):
             try:
@@ -1438,14 +1440,17 @@ class _OutputLock:
                     continue  # gone since: the other takeover finished, try again
                 except OSError:
                     return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
-                if expired is None or not _recover_guard(guard, expired):
+                if expired is None or not _remove_guard(guard, expired):
                     return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
             except OSError as exc:
                 return dict(judged, stale=False, takeover_error=str(exc))
         else:
             return dict(judged, stale=False, why="takeover_in_progress", guard=guard)
         try:
-            mine = _identity(os.fstat(gfd))
+            # read the way a recoverer reads it (os.stat by name, not fstat: on Windows the two can
+            # differ in how much of the file id st_ino carries), so both name the same claim; the
+            # guard is seconds old, and no run recovers it before TAKEOVER_STALE
+            mine = _identity(os.stat(guard))
         except OSError:
             mine = None
         try:
@@ -1473,13 +1478,12 @@ class _OutputLock:
                 os.close(gfd)
             except OSError:
                 pass
-            # our own guard only: the file at that name is removed when it is still the one this
-            # run created (same device, inode and mtime), never another run's by its name
-            try:
-                if mine is not None and _identity(os.stat(guard)) == mine:
-                    os.remove(guard)
-            except OSError:
-                pass
+            # our own guard only, and under the claim a recoverer of it would need: a look at the
+            # name followed by a removal is not atomic, and a run paused between the two until its
+            # guard expired removed the replacement a recoverer had made by then (review of #530).
+            # Without the claim (a recoverer holds it) the guard is the recoverer's to remove.
+            if mine is not None:
+                _remove_guard(guard, mine)
 
     def _audit_default(self) -> Optional[str]:
         if not self.path:

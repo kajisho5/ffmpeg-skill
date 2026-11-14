@@ -11259,6 +11259,77 @@ class ReviewOf530Tests(unittest.TestCase):
                 if getattr(lk, "fd", None) is not None:
                     lk.__exit__()
 
+    def test_the_owner_of_a_takeover_guard_never_removes_a_replacement(self):
+        """The owner of a guard checked that the file at its name was still its own and then
+        removed it by name; paused between the two until its guard expired, a contender that had
+        seen the stale lock recovered the guard and made its own, which the owner then removed,
+        letting a third run in beside the contender. The owner now removes its guard under the
+        same claim a recoverer needs, so exactly one of them removes it."""
+        import threading
+        from unittest import mock
+        runner = sys.modules["_common.runner"]
+        out = str(self.work / "owned.mp4")
+        lock = Path(self.work / ".owned.mp4.ffskill-lock")
+        guard = str(lock) + ".takeover"
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lock.write_text(str(dead.pid), encoding="utf-8")
+        owner, contender, third = (runner._OutputLock(out) for _ in range(3))
+        stale = owner._holder()
+        self.assertTrue(stale["stale"], stale)
+        a_at_remove, a_go, c_paused, c_go = (threading.Event() for _ in range(4))
+        state = {"c_inside": False, "c_guard_removes": 0}
+        real_remove, real_open = os.remove, os.open
+
+        def remove(path, *a, **k):
+            if str(path) == guard:
+                who = threading.current_thread().name
+                if who == "owner" and not a_at_remove.is_set():
+                    a_at_remove.set()  # checked that the guard is its own; about to remove it
+                    a_go.wait(10)
+                elif who == "contender" and state["c_inside"]:
+                    c_paused.set()  # the contender is inside, holding its replacement guard
+                    c_go.wait(10)
+            return real_remove(path, *a, **k)
+
+        def open_(path, flags, *a, **k):
+            fd = real_open(path, flags, *a, **k)
+            if str(path) == guard and flags & os.O_EXCL and threading.current_thread().name == "contender":
+                state["c_inside"] = True
+            return fd
+
+        results = {}
+
+        def run(name, lk):
+            try:
+                results[name] = lk._remove_stale(dict(stale))
+            finally:
+                if name == "contender":
+                    c_paused.set()
+        with mock.patch("os.remove", remove), mock.patch("os.open", open_):
+            ta = threading.Thread(target=run, args=("owner", owner), name="owner")
+            ta.start()
+            self.assertTrue(a_at_remove.wait(10), "the owner never reached its cleanup")
+            with mock.patch.object(runner, "TAKEOVER_STALE", -1.0):  # the owner's guard has expired meanwhile
+                tc = threading.Thread(target=run, args=("contender", contender), name="contender")
+                tc.start()
+                self.assertTrue(c_paused.wait(10))
+            a_go.set()
+            ta.join(10)
+            try:
+                if state["c_inside"]:
+                    self.assertTrue(os.path.exists(guard), "the owner removed the contender's replacement guard")
+                    entered = third._remove_stale(dict(stale))
+                    self.assertEqual(entered.get("why"), "takeover_in_progress",
+                                     f"a third run went in beside the contender: {entered}")
+                else:
+                    self.assertEqual(results["contender"].get("why"), "takeover_in_progress", results)
+            finally:
+                c_go.set()
+                tc.join(10)
+        self.assertEqual(sorted(p.name for p in self.work.iterdir() if ".takeover" in p.name), [],
+                         "no guard or claim is left behind")
+
     def test_a_finished_process_is_dead_while_its_handle_is_open(self):
         """Windows CI: a child that had exited was judged alive while its Popen (and so a handle
         to it) was still open, so its stale lock was refused as held. Its exit code is read now."""
