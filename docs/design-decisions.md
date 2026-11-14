@@ -83,6 +83,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.3 — the millisecond in fit.py, broll.py and sync.py, and where it changes nothing (follow-ups of #470)](#after-383--the-millisecond-in-fitpy-brollpy-and-syncpy-and-where-it-changes-nothing-follow-ups-of-470)
 - [After 3.8.5 — a flag value the tool cannot honour is refused (audit group: out of range, contradictory, ignored)](#after-385--a-flag-value-the-tool-cannot-honour-is-refused-audit-group-out-of-range-contradictory-ignored)
 - [After 3.8.6 — the contract says what a dry run decodes, and a pending input has no length (#466)](#after-386--the-contract-says-what-a-dry-run-decodes-and-a-pending-input-has-no-length-466)
+- [After 3.8.7 — render.py, batch.py and sequence.py, the audit's remaining findings (#458)](#after-387--renderpy-batchpy-and-sequencepy-the-audits-remaining-findings-458)
 <!-- contents:end -->
 
 ## Time limits
@@ -3822,3 +3823,84 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `loop`, `redact`, `speedramp` and `multicam` refuse a dry run on a pending input (swept on
   FFmpeg 6.1.1 and left for a fix of their own). Code: `graphics.main()`. Test:
   `test_graphics_dry_run_plans_on_an_input_an_earlier_step_writes`.
+
+## After 3.8.7 — render.py, batch.py and sequence.py, the audit's remaining findings (#458)
+
+- **A cache key reads a file's modification time in nanoseconds, not its every byte.**
+  `batch.file_key()` (render.py's `--cache` uses it too) is the name, size, mtime and first and
+  last MiB. The mtime was whole seconds, so a same-size rewrite of the middle within one second
+  kept the key and the old output was served as cached (A277). It is `st_mtime_ns` now, the
+  identity "An output is identified by size and modification time" already settled on (2.24).
+  Still not seen: a rewrite whose mtime is set back (`touch -r`, a copy that keeps it) and a
+  filesystem that stores whole seconds (FAT two). A full hash would read every source on every run
+  and `--watch` pass; `--force` is the answer for those. Every key written before changes once, so
+  the first run after the change runs every item and stage again. A project recipe's key also
+  covers every file the project names (render.py's `project_input_files()`, the clip each item
+  replaces left out: A80), read on every pass of `--watch` (A81). The chapters file an inline
+  chapters list writes is keyed by its content (`render.CONTENT_KEYED`), since a new run writes it
+  anew (A100); the chapters stage then hits when the delivery under it came from the cache (a
+  hardlink keeps the artifact's mtime) and misses when it was copied without an export stage.
+  Code: `batch.file_key()`, `recipe_key()`, `project_files_key()`, `render._content_hash()`.
+  Test: `Issue458Tests.test_a_cache_key_changes_with_every_file_the_output_depends_on`.
+- **render.py's work directory belongs to one run; an explicit `--work` replaces only render's own
+  unchanged stage files.** The default directory is `mkdtemp()` beside the output
+  (`<output>_work_<pid>_<random>`): named by the PID alone and reused with `exist_ok`, a later run
+  that drew the same PID adopted and then deleted an earlier run's kept preview (A77). With
+  `--work DIR`, the stage files a render wrote are recorded with their identity (size, mtime_ns,
+  inode, device) in `DIR/.ffskill-render-stages.json`; a later render with the same `--work`
+  passes `--overwrite` to the stage whose output is one of them and still that file, so a re-run
+  is not refused on its own intermediates (A98). That is the overwrite rule's "a path this same
+  run wrote" extended to an earlier render of the same directory; a file edited, replaced or not
+  written by render there is refused as before, and nothing in `DIR` is ever deleted. A stage's
+  sidecar (caption.py's `.ass`) is replaced with it under that `--overwrite`. A `--dry-run` writes
+  its chapters list to a temporary directory and removes a `--work` it had to create, `--keep` or
+  not (A99). Code: `render.own_stage_files()`, `_earlier_own_stage_file()`. Test:
+  `Issue458Tests.test_the_work_directory_belongs_to_one_run`.
+- **An output is named for the container that is written into it.** batch.py names a `.webm`
+  source's output `.mp4` unless the recipe sets `ext`, the #415 `default_output()` rule: every WebM
+  item of a re-encoding recipe was refused `output_container_codecs` (A83). A recipe whose last
+  step keeps WebM (a stream copy, `export.py --preset vp9-alpha`) sets `"ext": "webm"`. render.py
+  without an export stage copies the last stage's file, so an output named for another container
+  than that file's (`.webm`, `.mkv` for an MP4 intermediate) is refused, `kind: input`: before the
+  first stage when the last file is certainly an intermediate, at the copy when it may be the
+  source itself (one uncut clip); the MP4 family (`.mp4`, `.mov`, `.m4v`, `.m4a`, `.3gp`) counts as
+  one container (A84). It is not converted: an export stage is the conversion. `sequence.py --dir .`
+  (or `..`) names its default output after the folder's resolved name, beside it (A108).
+  Code: `batch.final_path()`, `render.refuse_copied_container()`. Test:
+  `Issue458Tests.test_an_output_is_named_for_the_container_it_holds`.
+- **Caller text is made to fit the file it is written into, or refused where the change would be
+  silent.** A chapter title in an inline `chapters` list that holds a line feed, carriage return or
+  NUL is refused (`kind: input`): metadata.py's chapters file is one `TIME TITLE` per line, read as
+  text (a CR ends a line), and FFmpeg ends a title at NUL, so `"Intro\n0:01 Evil"` was two
+  chapters, verified (A260); metadata.py refuses a NUL in a `--chapters` file too. Other control
+  characters and U+2028 reach the chapter as they are, as metadata.py keeps them. In an EDL, every
+  name (the title, clip names, SOURCE FILE, LOC titles) has each line break and control character
+  replaced by a space, since CMX 3600 has no escape (A261); FCPXML replaces the characters XML 1.0
+  cannot hold. In the pack table a file name is one line with `|` escaped as `\|` (GFM), which
+  `report.py --pack` reads back (A263). A JSON file with a lone UTF-16 surrogate escape is refused
+  where it is read (`parse_json()`: every project, recipe, brand, plan and transcript), since no
+  file, argument or stdout can encode it (A264). Code: `render.validate_project()`,
+  `timeline._edl_text()`, `timeline._xml_text()`, `render.md_cell()`, `report.md_cells()`,
+  `runner.parse_json()`. Test: `Issue458Tests.test_caller_text_cannot_add_lines_to_a_file_render_writes`.
+- **An EDL refuses what CMX 3600 cannot number, and its source timecode wraps at 24 h.** More than
+  999 events (the three-digit field: A265), or a record that would run past 24:00:00:00 from its
+  01:00:00:00 start, is a `kind: input` refusal naming `.fcpxml`/`.otio`. A source timecode wraps
+  at midnight as the media's own does (`_tc_label()`, the day `output_timecode_args()` counts):
+  23:59:59:00 plus 2 s is 00:00:01:00, not 24:00:01:00 (A266). Code: `timeline.to_edl()`. Test:
+  `Issue458Tests.test_an_edl_refuses_what_cmx_3600_cannot_number`.
+- **`batch.py`'s glob matches without regard to case, on every platform.** `"*.mp4"` found
+  `GOPR0001.MP4` on macOS and Windows and nothing on Linux, where the batch completed with
+  `total: 0` and no note (A82). Each letter outside a `[...]` class is matched in either case
+  (`caseless_glob()`; `pathlib`'s `case_sensitive=` needs 3.12); a class keeps its letters, and
+  two sources that then reach one output name are refused by the case-folded collision check that
+  already existed. A glob that matches nothing is a note. Test:
+  `Issue458Tests.test_render_and_batch_do_what_their_flags_say`.
+- **The rest, in the same test.** `--stop-after export` stops after the delivery (the chapters and
+  check stages do not run, and a `check` it never reads is not read: A87). An executed plan reports
+  its output as an absolute path (A96). `--export-timeline` probes each file once (A267).
+  `--list-templates` and `--init` print a JSON document under `--json` (A102). The audiogram
+  template takes `$BRAND` and draws `$TITLE` as the youtube template does, a lower third from 1 s
+  to 6 s; `$TITLE` is not put inside the audiogram block, since a block whose placeholder has no
+  value is dropped whole (A90). A pack writes into the directory of `-o`, which the reference now
+  says (A86), and the reference lists the ten presets that turn `normalize` on and no `--codec`
+  (A103); `examples/brand.json` lost a `loudness` block no tool reads (A107).

@@ -4,7 +4,56 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Cache keys see every file an output depends on** (#458 A80, A81, A100, A277). `batch.py`'s
+  and `render.py --cache`'s file key read the modification time in whole seconds, so a same-size
+  rewrite of a file's middle within one second was served the old output; it is nanoseconds now. A
+  rewrite whose mtime is set back to the old value, or a filesystem that keeps whole seconds, still
+  keeps the key (no full hash: `--force` re-runs). A project recipe's key now covers every file the
+  project names (cues, music, brand and its logo and font, overlays, chapters, the other clips), and
+  is computed on every `--watch` pass instead of once. `render.py --cache` serves the chapters
+  stage of an inline chapters list when the delivery under it came from the cache; a delivery copied
+  without an export stage is a new file and still misses. Every cache key changes once with this
+  release, so the first run after it runs everything again.
+- **render.py's work directory belongs to one run** (A77, A98, A99). The default directory is new
+  for every run (`<output>_work_<pid>_<random>`), so a later run with the same PID no longer deletes
+  an earlier run's kept preview. A re-run with the same `--work` replaces the stage files an earlier
+  render wrote there and nobody changed since (recorded in `.ffskill-render-stages.json`) instead of
+  refusing them; any other existing file there is still refused, with `--cache` too (a cache hit
+  no longer replaces it: the stage runs and refuses it, `cache.miss_reasons` says
+  `destination_not_owned`). A `--dry-run` writes nothing into
+  `--work` and removes a `--work` directory it had to create.
+- **An output is named for what is written into it** (A83, A84, A108). `batch.py` names a `.webm`
+  source's output `.mp4` (unless the recipe sets `ext`), where every WebM item was refused
+  `output_container_codecs`. `render.py` with no export stage refuses an output named for another
+  container than the file it would copy (`.webm`, `.mkv` for an MP4 intermediate), `kind: input`,
+  before the first stage when it can tell, at the copy otherwise; it used to complete and verify an
+  MP4 named `.webm`. `.mov`, `.m4v`, `.m4a` and `.3gp` are accepted for an MP4. `sequence.py --dir .`
+  without `-o` writes `<folder>_sequence.mp4` beside the folder instead of a traceback.
+- **Caller text no longer adds lines to a file render.py writes** (A260, A261, A263, A264). An
+  inline chapter title holding a line feed, carriage return or NUL is refused (`"Intro\n0:01 Evil"`
+  was two chapters, verified), and metadata.py refuses a NUL in a `--chapters` file; other control
+  characters are kept. An EDL replaces line breaks and control characters in every name with a
+  space, and FCPXML the characters XML cannot hold. The social pack's table escapes `|` in a file
+  name and `report.py --pack` reads it back (a `|` shifted every column and marked passing
+  destinations failed). A JSON file with a lone surrogate escape (`"\ud83d"`) is refused as invalid
+  in a project, recipe, brand, plan, `--words` or transcript file, instead of a `UnicodeEncodeError` traceback with nothing on stdout;
+  surrogates in command-line arguments are not covered.
+- **An EDL refuses what CMX 3600 cannot number** (A265, A266): more than 999 events, or a record
+  past 24:00:00:00, is refused naming `.fcpxml`/`.otio`; a source timecode wraps at midnight
+  (`23:59:59:00` plus 2 s is `00:00:01:00`, not `24:00:01:00`).
+- **render.py and batch.py do what their flags say** (A82, A87, A90, A96, A102, A267).
+  `--stop-after export` stops after the delivery (the chapters and check stages ran, and a non-object
+  `"check"` was a traceback). An executed plan reports its output as an absolute path, not relative
+  to the plan's own directory. `batch.py`'s glob matches names without regard to case on every
+  platform (`*.mp4` found nothing of `GOPR0001.MP4` on Linux), letters inside a `[...]` class
+  excepted, and a glob that matches nothing is a note. `--export-timeline` probes each file once.
+  `--list-templates` and `--init` print a JSON document under `--json`. The audiogram template takes
+  `--brand` and draws `--title` as a lower third. `references/scripts.md` now says that a pack is
+  written into the directory of `-o`, lists the ten presets that turn `normalize` on, and no longer
+  names a `--codec` render.py does not have; `examples/brand.json` lost a `loudness` block no tool
+  reads. Measured on FFmpeg 6.1.1 only.
 
 ## 3.8.7
 
