@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.10
+
+_Automated release: version and notes generated from pull requests merged since 3.8.9._
+
 ### Fixed
 
 - **Captions and text drawing: the thirteen open items of audit #457, and #505.**
@@ -55,6 +61,7 @@
     override block, which draws nothing, while the result said `text_unchanged: true`. Such cues
     are drawn through the generated ASS, braces included, and a note says so; `{\...}` blocks on
     their own are left to ffmpeg's reader as before.
+- fix: captions and text drawing, the open items of audit #457, and #505 (#511)
 
 ## 3.8.9
 
