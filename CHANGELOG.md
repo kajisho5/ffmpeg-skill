@@ -53,6 +53,16 @@
   - A second signal during the stop (Ctrl-C reaches the whole process group, and the parent then
     sends SIGTERM) is ignored instead of raising from inside the cleanup the first one started; it
     left the output lock and its `.takeover` file beside the output.
+  - From the review of #537: the up-front check of a render (and `waveform.py`) ran when the input
+    came after `--` (its `--dry-run --json` were appended after it and refused, and the check was
+    skipped); `batch.py` steps, an executed plan and the MCP server's raw `argv` put the flags they
+    add before a `--` too, where a batch step with `--` was refused. `--srt FILE:LANG` in a batch step
+    is keyed by FILE (the whole token was hashed as a path that does not exist). A batch cache entry
+    stored before the `{out}` check, for a recipe with a step that names no `{out}`, is not served
+    once (`cache_miss.reason: entry_predates_output_check`), so such a recipe meets the refusal. A
+    stopped `project` recipe item names a delivery its render kept (`kept`). A second signal to
+    `batch.py` keeps the first one's exit code and report. A render whose `--work` holds the output
+    watches the export too. `cut.py --dry-run` names `tolerance` for an audio-only copy as well.
 
 ## 3.8.20
 

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
+from _common.runner import (with_flags, HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, rebase_project_paths
@@ -70,6 +70,21 @@ def file_key(path: Path) -> str:
     return h.hexdigest()
 
 
+def side_input_file(value: str) -> Path:
+    """The file a side-input argument reads: the argument itself, or, when that is no file and it
+    ends in `:SUFFIX`, the part before the last colon when that is one (caption.py's
+    `--srt FILE:LANG`, which split_srt_lang() reads the same way). Keying the whole token hashed a
+    path that does not exist, so an edited subtitle file kept its key (#510 review)."""
+    path = Path(value)
+    try:
+        if path.is_file() or ":" not in value:
+            return path
+        head = Path(value.rpartition(":")[0])
+        return head if value.rpartition(":")[0] and head.is_file() else path
+    except OSError:
+        return path
+
+
 def side_inputs_key(recipe: Dict[str, Any]) -> str:
     """The files a recipe's steps name besides {in}/{out} (check.py --compare REF, a LUT, a logo),
     keyed by their own content: editing or removing one is a change the cache must see, or a QC
@@ -83,7 +98,7 @@ def side_inputs_key(recipe: Dict[str, Any]) -> str:
             value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
             if value.startswith("-") or not value:
                 continue
-            path = Path(value)
+            path = side_input_file(value)
             try:
                 if path.is_file():
                     h.update(f"{value}\0{file_key(path)}\0".encode())
@@ -114,7 +129,7 @@ def item_side_inputs_key(recipe: Dict[str, Any], src: Path) -> "tuple[str, Optio
                 return "", {"reason": "side_input_unresolved", "step": i, "argument": arg,
                             "message": f"step {i} names {arg!r}, a file derived from an intermediate that does not "
                                        "exist before the item runs, so the cache cannot key it; the item always runs"}
-            path = Path(value.replace("{in}", str(src)))
+            path = side_input_file(value.replace("{in}", str(src)))
             named = True
             try:
                 if path.is_file():
@@ -291,7 +306,8 @@ def run_step(argv: List[str], per_call: "Optional[float]" = None,
     if _STOP.is_set():
         return False, {"status": "failed", "exit_code": 130,
                        "error": {"kind": "interrupted", "message": f"interrupted before {script} started"}}
-    cmd = [str(HERE / script)] + argv[1:] + child_args() + (["--json"] if "--json" not in argv[1:] else [])
+    # before a bare `--` in the step, where argparse still reads them as options (#510 review)
+    cmd = [str(HERE / script)] + with_flags(argv[1:], child_args() + (["--json"] if "--json" not in argv[1:] else []))
     log("  → " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd)))
     env = dict(os.environ, **{OWNED_ENV: str(owned)}) if owned else None
     proc = run_tool(cmd, per_call=per_call, env=env)
@@ -589,7 +605,16 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         proj["output"] = str(final.resolve())
         pj = work / "project.json"
         pj.write_text(json.dumps(proj, indent=2), encoding="utf-8")
-        ok, _doc = run_step(["render.py", str(pj)], budget(), owned=owned(0))
+        owned_cfg = owned(0)
+        if not STATE.dry_run:
+            # the render writes the final path itself: a stop while it runs reports a file it left
+            # there as kept, as for a steps recipe's last step (#510 review)
+            with _OWN_LOCK:
+                _WATCHED[str(src)] = (str(final), owned_identity(str(final)))
+        ok, _doc = run_step(["render.py", str(pj)], budget(), owned=owned_cfg)
+        if ok:
+            with _OWN_LOCK:
+                _WATCHED.pop(str(src), None)
         step_docs = [("render", _doc)]
         failure = None if ok else step_error(0, "render.py", _doc)
         cut_reencoded: List[bool] = []
@@ -706,11 +731,17 @@ def output_identity(path: str) -> "Optional[Dict[str, int]]":
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
-def cached_output_changed(hit: Dict[str, Any]) -> "Optional[Dict[str, Any]]":
+def cached_output_changed(hit: Dict[str, Any], recipe: "Optional[Dict[str, Any]]" = None) -> "Optional[Dict[str, Any]]":
     """None when the entry's output is still the file this batch wrote; else why it is not served:
-    output_missing, output_changed (size or mtime differ: something replaced or edited it) or
+    output_missing, output_changed (size or mtime differ: something replaced or edited it),
     entry_unverifiable (an entry written by 2.10.11 or earlier recorded no identity, so nothing can say
-    the file is the one it describes)."""
+    the file is the one it describes), or entry_predates_output_check: the recipe has a step that
+    names no {out}, and the entry was stored before such a step's own output was checked (#510), so
+    a step that writes its default output (metadata.py {in}) was cached as one that writes nothing."""
+    steps = (recipe or {}).get("steps") or []
+    if not (recipe or {}).get("project") and any(not step_writes(st) for st in steps) and not hit.get("output_checked"):
+        return {"reason": "entry_predates_output_check", "output": hit.get("output"),
+                "message": "the entry was stored before batch checked what a step naming no {out} writes"}
     if hit.get("written") is False or ("output" in hit and hit["output"] is None):
         return None  # a recipe that writes nothing (check.py over a folder): no file to have changed
     out = str(hit.get("output") or "")
@@ -861,6 +892,11 @@ def main() -> int:
     import signal as _signal
 
     def _interrupt(signum: int, frame: Any) -> None:
+        if interrupted["signal"] is not None:
+            # a second signal while the first one's stop runs (Ctrl-C reaches the whole group, and a
+            # parent then sends SIGTERM): raising again broke into the stop or the table, and the
+            # exit code became the second signal's (#510 review; runner._on_signal() does the same)
+            return
         interrupted["signal"] = signum
         _STOP.set()
         stop_children()
@@ -969,7 +1005,8 @@ def main() -> int:
                 for stale in [k for k, v in cache.items() if r["output"] and r.get("written", True) and k != key and isinstance(v, dict) and v.get("output") == r["output"]]:
                     del cache[stale]
                 # the output as this run left it: a later hit is served only while it is unchanged
-                cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] and r.get("written", True) else None)
+                cache[key] = dict(r, output_identity=output_identity(r["output"]) if r["output"] and r.get("written", True) else None,
+                                  output_checked=True)  # every step's own output was checked (#510): see cached_output_changed()
                 # write_text isn't atomic -- a process killed mid-write (or a --watch loop racing
                 # a concurrent manual run) could leave a truncated file that json.loads() above
                 # then silently treats as "no cache" (a ValueError -> {}), discarding every prior
@@ -1009,10 +1046,10 @@ def main() -> int:
                 key += ":" + per_item
             hit = cache.get(key)
             if isinstance(hit, dict) and not args.force:
-                why = cached_output_changed(hit)
+                why = cached_output_changed(hit, recipe)
                 if why is None:
                     info(f"skip (cached) {src.name}")
-                    slots[i] = {**{k: v for k, v in hit.items() if k != "output_identity"}, "cached": True}
+                    slots[i] = {**{k: v for k, v in hit.items() if k not in ("output_identity", "output_checked")}, "cached": True}
                     continue
                 cache_miss[i] = why
                 facts = {k: v for k, v in why.items() if k not in ("reason", "message")}

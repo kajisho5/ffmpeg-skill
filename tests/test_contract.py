@@ -2060,6 +2060,10 @@ class ContractTests(unittest.TestCase):
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]
         self.assertNotIn("json", resp["result"]["tools"][0]["inputSchema"]["properties"])
         self.assertIn("--json", mcp_server.build_argv("cut", {"input": "/x.mp4", "json": True}))
+        # a raw argv that ends its options with `--` gets --json before it, where it is still an
+        # option (review of #537: appended after it, it was a second positional)
+        self.assertEqual(mcp_server.build_argv("cut", {"argv": ["--start", "1", "--end", "2", "--", "-x.mp4"]}),
+                         ["--start", "1", "--end", "2", "--json", "--", "-x.mp4"])
 
     def test_contract_lists_what_the_next_major_removes_and_what_2_0_removed(self):
         """docs/contract.md, "Deprecation policy" step 1 and "What 2.0 changed": everything a major

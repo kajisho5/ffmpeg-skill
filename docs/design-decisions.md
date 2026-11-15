@@ -5034,7 +5034,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   make every plan as slow as a cut's own measurement, and the plan would still not know a copy that
   fails or loses a stream. So a plan of `mode: copy` names in `possible_reencode_reason` the
   `reencode_reason` values a real run may add, which turn it into `hybrid`: `tolerance` when a
-  copied video part is judged by its written length (not under `--tolerance -1`, and not for a
+  copied part, video or audio-only, is judged by its written length (an audio-only copy was left
+  out until the review of #537; not under `--tolerance -1`, and not for a
   `--segments` part whose end is snapped to a keyframe: the `--segments` dry run reads the packets
   and judges those parts as a real run does), `copy_failed` and `stream_lost` on every copy, and
   `concat_fallback` on a `--segments` copy join; a plan of `mode: smart` names `smart_fallback`,
@@ -5114,3 +5115,37 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `test_ctrl_c_during_the_export_s_loudness_pass_reports_the_kept_delivery`. Seen and not changed:
   `verify.py` runs its steps for real into its own `--out` directory (its stop was not tried here);
   `multicam.py` and `sequence.py` run one ffmpeg command, whose partial output run() removes.
+- **The review of #537: four more places the same decisions reach.**
+  - *The flags a parent adds go before a `--`.* The up-front check ran
+    `render.py ARGV --dry-run --json`; with the input after `--` the two flags were positionals, the
+    child was refused (exit 2, no document) and the check was skipped with only an info line, so
+    the stages ran up to the one that lacks the filter. `runner.with_flags()` puts added flags
+    before the first `--`; batch's steps (a recipe step with `--` was refused: `unrecognized
+    arguments: --dry-run --timeout 1800 --json`), `render.py`'s executed plan and the MCP server's
+    raw `argv` use it too. Tests: `test_a_real_run_is_refused_before_its_first_stage_as_its_dry_run_is`
+    (the `--` case), `test_a_step_with_a_double_dash_still_gets_the_shared_flags`.
+  - *A `FILE:SUFFIX` side input is keyed by FILE.* `caption.py --srt FILE:LANG` reads FILE
+    (`split_srt_lang()`); batch's keys (literal and `{in}`-built) hashed the whole token, which is
+    no file, so an edited subtitle file kept its key. `batch.side_input_file()` takes the token when
+    it is a file, else the part before the last colon when that is one. No other tool takes a
+    file with a suffix (multicam's `--cuts` and speedramp's spans are times). Test:
+    `test_a_file_lang_side_input_is_keyed_by_its_file`.
+  - *An entry stored before the `{out}` check is not served for a recipe that needs it.* A row of
+    `["metadata.py", "{in}"]` cached as `written: false` was served, so the recipe never met
+    `step_writes_without_out`. An entry now records `output_checked`; for a recipe with a step that
+    names no `{out}` an entry without it is a `cache_miss` (`entry_predates_output_check`), runs once
+    and is stored again. A QC recipe (`check.py` over a folder) measures again once after the
+    upgrade; a recipe whose steps all name `{out}` keeps its entries. Test:
+    `test_a_cache_entry_from_before_the_output_check_is_not_served`.
+  - *Interrupted reports.* A `project` recipe item is a render that writes the final path, and is
+    watched as a last step is (`kept`); batch's own handler ignores a second signal as
+    `runner._on_signal()` does (the exit code was the SIGTERM's for a Ctrl-C, and the stop ran
+    again); render watches the delivery even when `--work` is the folder that holds it (it was
+    taken for an intermediate). verify.py and multicam.py use the runner's handler, and the MCP
+    server sets none. Tests: `test_ctrl_c_during_the_export_s_loudness_pass_reports_the_kept_delivery`
+    (the project subtest), `test_a_second_signal_to_batch_keeps_the_first_signal_s_report`,
+    `test_an_interrupted_stage_reports_the_file_it_wrote_and_not_the_work_directory` (the `--work`
+    case).
+  - *An audio-only copy names `tolerance` in its plan.* It is judged by its written length like a
+    video copy but returned before the dry run recorded that (`cut.cut_one()`); a `--segments`
+    audio join's parts go the same way. Test: `test_a_planned_copy_says_a_real_run_may_re_encode_it`.

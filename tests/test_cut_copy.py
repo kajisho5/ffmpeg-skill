@@ -2584,6 +2584,19 @@ class DryRunOutputTests(unittest.TestCase):
                 if tolerance:
                     self.assertEqual((real["mode"], real["reencode_reason"]), ("hybrid", ["tolerance"]))
         out.unlink(missing_ok=True)
+        # review of #537: an audio-only copy is judged by its written length too, and its plan left
+        # tolerance out (it returned before the dry run's note of what is still unjudged)
+        m4a = DIR / "dry_gop.m4a"
+        for dry in (True, False):
+            m4a.unlink(missing_ok=True)
+            doc = json.loads(script("cut.py", src, "--start", "4", "--end", "8", "--tolerance", "0", "-o", m4a, "--json",
+                                    *(["--dry-run"] if dry else [])).stdout)
+            if dry:
+                self.assertEqual(doc["mode"], "copy")
+                self.assertIn("tolerance", doc["possible_reencode_reason"])
+            else:
+                self.assertEqual((doc["mode"], doc["reencode_reason"]), ("hybrid", ["tolerance"]))
+        m4a.unlink(missing_ok=True)
 
     def test_probe_of_an_output_under_dry_run_is_the_stub_whether_or_not_a_file_is_there(self):
         import _common

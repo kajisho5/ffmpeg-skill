@@ -3227,6 +3227,17 @@ def require_filter(name: str, why: str) -> None:
         hint=filter_missing_hint(name))
 
 
+def with_flags(argv: Sequence[str], flags: Sequence[str]) -> List[str]:
+    """`argv` with `flags` added where argparse still reads them as options: before a bare `--`
+    when there is one (everything after it is positional, so `--dry-run --json` appended after
+    `render.py -- project.json` was refused as unrecognised arguments, #510 review), else at the end."""
+    argv = [str(a) for a in argv]
+    if "--" in argv:
+        i = argv.index("--")
+        return argv[:i] + list(flags) + argv[i:]
+    return argv + list(flags)
+
+
 BUILD_COMPONENT_REASONS = ("filter_missing", "encoder_missing")
 
 
@@ -3242,7 +3253,7 @@ def refuse_missing_components_first(script: str, why: str) -> None:
     if STATE.dry_run:
         return
     info(f"checking every {why} against this ffmpeg build first (a dry run of this command)")
-    proc = run_tool([script] + sys.argv[1:] + ["--dry-run", "--json"])
+    proc = run_tool([script] + with_flags(sys.argv[1:], ["--dry-run", "--json"]))
     try:
         doc = json.loads(proc.stdout.strip() or "{}")
     except ValueError:

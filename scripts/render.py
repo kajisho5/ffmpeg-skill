@@ -75,7 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, unwatch_destination, watch_destination
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import rebase_project_paths
 import subprocess
@@ -806,7 +806,9 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
     # a stage that writes outside the work directory (the export writes the delivery itself): what
     # is there now, so a stop while it runs reports a file the stage wrote as kept, not "nothing
     # was written", and never claims the caller's own file (#510)
-    outside = bool(dest) and not _in_work(dest)
+    # the delivery itself is watched wherever --work is (a --work that holds the output's folder
+    # made the export look like an intermediate, #510 review)
+    outside = bool(dest) and (not _in_work(dest) or _is_delivery(dest))
     if outside:
         watch_destination(dest)
     proc = run_tool(cmd)
@@ -857,6 +859,11 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
 
 
 WORK_DIR: Dict[str, Optional[str]] = {"path": None}
+DELIVERY: Dict[str, Optional[str]] = {"path": None}  # the render's output path, set in main()
+
+
+def _is_delivery(path: str) -> bool:
+    return bool(DELIVERY["path"]) and os.path.realpath(path) == os.path.realpath(str(DELIVERY["path"]))
 
 
 def _in_work(path: str) -> bool:
@@ -1304,7 +1311,7 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
              unbound_inputs=unbound)
         return 0
     info(f"executing plan {path}: {tool} " + " ".join(argv))
-    proc = run_tool([str(script)] + argv + child_args() + ["--json"])
+    proc = run_tool([str(script)] + with_flags(argv, child_args() + ["--json"]))  # before a `--` in the plan's argv
     for is_command, line in stderr_records(proc.stderr):
         if is_command and not line.startswith("[dry-run]"):
             STATE.commands.append(line)
@@ -1625,6 +1632,7 @@ def main() -> int:
     apply_common(args)
     PROJECT_SOURCE.update(src=None, timecode=[])
     WORK_DIR["path"] = None
+    DELIVERY["path"] = None
     STATE.audit_log = os.path.abspath(args.audit_log) if args.audit_log else None
 
     if args.list_templates:
@@ -1788,6 +1796,7 @@ def main() -> int:
         atexit.register(lambda: shutil.rmtree(work, ignore_errors=True))
         STATE.temp_dirs.append(str(work))  # removed at exit: a stop does not call its files kept (#510)
     WORK_DIR["path"] = str(work)
+    DELIVERY["path"] = output
     # #510: the captions stage's generated SRT is delivered beside the output, so its guards are
     # the output's, once the output's folder exists (created above, as for the output) and
     # before the first stage: an existing one, an input, the output itself

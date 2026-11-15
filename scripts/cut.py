@@ -1045,7 +1045,10 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
                  f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy{alt}")
             return _with_notes(cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["tolerance"], edit_list_ok), notes)
     if reencode or audio_only:
-        return _outcome(meta, dst, reencode, reasons)
+        # an audio-only copy is judged by its written length too (above): a dry run that wrote
+        # nothing says a real run may still re-encode it (#510 review)
+        pending = {"length_unjudged": True} if (STATE.dry_run and not reencode and copy_t is None and tolerance >= 0) else {}
+        return _outcome(meta, dst, reencode, reasons, **pending)
     if STATE.dry_run:
         # the planned copy: whether it keeps an edit list is known; where it lands is not, so a
         # real run that judges the written copy by its length may still re-encode it (#510)

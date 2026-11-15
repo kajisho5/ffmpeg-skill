@@ -3234,6 +3234,16 @@ class MissingComponentFirstTests(unittest.TestCase):
                 if first_stage:
                     self.assertNotIn(first_stage, stderr)
                 self.assertFalse(out.exists())
+        # review of #537: `--dry-run --json` were appended after a `--` that ends the options, the
+        # child refused them, and the check was skipped without a word
+        out = self.d / "dashdash.mp4"
+        out.unlink(missing_ok=True)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "render.py"), "--template", "reels", "--title", "T", "-o", str(out),
+                               "--json", "--", str(self.clip)], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, encoding="utf-8", errors="replace")
+        rc, real, stderr = proc.returncode, json.loads(proc.stdout), proc.stderr
+        self.assertEqual((rc, real["error"]["reason"], real["commands"]), (1, "filter_missing", []), stderr[-800:])
+        self.assertNotIn("→ fit.py", stderr)
         # with every filter there, the same render completes: the dry run first refuses nothing else
         out = self.d / "render_ok.mp4"
         out.unlink(missing_ok=True)
@@ -3407,16 +3417,20 @@ class Issue429DecidedTests(unittest.TestCase):
         work = self.d / "stop_work"
         work.mkdir(exist_ok=True)
         stage_file = work / "fit.mp4"
-        cases = (("written by the stage", False, True), ("the caller's file, untouched", True, False))
-        for label, preexisting, writes in cases:
+        cases = (("written by the stage", False, True, False), ("the caller's file, untouched", True, False, False),
+                 # review of #537: a --work that holds the output's folder made the export an intermediate
+                 ("--work holds the delivery", False, True, True))
+        for label, preexisting, writes, work_holds_dest in cases:
             with self.subTest(case=label):
                 dest.unlink(missing_ok=True)
                 if preexisting:
                     shutil.copy(self.clip, dest)
                 STATE.reset()
                 STATE.json = True
-                render.WORK_DIR["path"] = str(work)
-                STATE.temp_dirs.append(str(work))
+                render.WORK_DIR["path"] = str(dest.parent if work_holds_dest else work)
+                render.DELIVERY["path"] = str(dest)
+                if not work_holds_dest:
+                    STATE.temp_dirs.append(str(work))
                 shutil.copy(self.clip, stage_file)
                 STATE.written.add(str(stage_file))
 
@@ -3431,7 +3445,7 @@ class Issue429DecidedTests(unittest.TestCase):
                         render.sh("export.py", str(self.clip), "--preset", "youtube", "-o", str(dest))
                 finally:
                     runner._STOPPING["signal"] = None
-                    render.WORK_DIR["path"] = None
+                    render.WORK_DIR["path"] = render.DELIVERY["path"] = None
                     STATE.reset()
                 doc = json.loads(out.getvalue())
                 msg = doc["error"]["message"]
@@ -3442,6 +3456,90 @@ class Issue429DecidedTests(unittest.TestCase):
                 else:
                     self.assertNotIn("output", doc)
                     self.assertTrue(msg.endswith("nothing was written"), msg)
+
+    def test_a_step_with_a_double_dash_still_gets_the_shared_flags(self):
+        """Review of #537's sweep: batch appended --dry-run/--timeout/--json after a step's own `--`,
+        where argparse reads them as positionals and the step was refused."""
+        from _common.runner import with_flags
+        self.assertEqual(with_flags(["a", "--", "b"], ["--json"]), ["a", "--json", "--", "b"])
+        self.assertEqual(with_flags(["a", "b"], ["--json"]), ["a", "b", "--json"])
+        folder = self._folder("dashdash", n=1)
+        recipe = self._recipe(folder, [["fit.py", "--duration", "1", "-o", "{out}", "--", "{in}"]])
+        rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--dry-run")
+        self.assertEqual((rc, doc["status"]), (0, "completed"), err[-800:])
+
+    def test_a_file_lang_side_input_is_keyed_by_its_file(self):
+        """Review of #537: caption.py --srt FILE:LANG reads FILE; the key hashed the whole token, a
+        path that does not exist, so an edited subtitle file kept its key (literal and {in}-built)."""
+        import batch
+        import time
+        folder = self.d / "lang_key"
+        folder.mkdir()
+        src, built, literal = folder / "a.mp4", folder / "a.mp4.srt", folder / "subs.srt"
+        for f in (src, built, literal):
+            f.write_text("1", encoding="utf-8")
+        per_item = {"steps": [["caption.py", "{in}", "--srt", "{in}.srt:eng", "-o", "{out}"]]}
+        named = {"steps": [["caption.py", "{in}", "--srt", f"{literal}:eng", "-o", "{out}"]]}
+        before = (batch.item_side_inputs_key(per_item, src), batch.side_inputs_key(named))
+        time.sleep(0.01)
+        built.write_text("22", encoding="utf-8")
+        literal.write_text("22", encoding="utf-8")
+        after = (batch.item_side_inputs_key(per_item, src), batch.side_inputs_key(named))
+        self.assertNotEqual(before[0], after[0])
+        self.assertNotEqual(before[1], after[1])
+        self.assertEqual(batch.side_input_file(f"{literal}:eng"), literal)
+        self.assertEqual(batch.side_input_file(str(literal)), literal)
+
+    def test_a_cache_entry_from_before_the_output_check_is_not_served(self):
+        """Review of #537: a row cached for ["metadata.py", "{in}"] before step_writes_without_out
+        existed (written: false) was served, so the recipe never met the refusal. An entry of a recipe
+        with a step that names no {out} is served only when it was stored after that check."""
+        folder = self._folder("old_entry", n=1)
+        recipe = self._recipe(folder, [["check.py", "{in}"]])
+
+        def run():
+            rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe)
+            self.assertEqual(rc, 0, err[-800:])
+            return doc["results"][0]
+        run()
+        self.assertTrue(run().get("cached"))
+        cache = folder / "out" / ".ffskill_cache.json"
+        entries = json.loads(cache.read_text(encoding="utf-8"))
+        self.assertTrue(all(e.get("output_checked") for e in entries.values()))
+        for e in entries.values():
+            e.pop("output_checked")  # as an earlier version stored it
+        cache.write_text(json.dumps(entries), encoding="utf-8")
+        row = run()
+        self.assertFalse(row.get("cached"))
+        self.assertEqual(row["cache_miss"]["reason"], "entry_predates_output_check")
+        self.assertTrue(run().get("cached"), "stored again, with the check")
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM is not delivered to a Python handler on Windows")
+    def test_a_second_signal_to_batch_keeps_the_first_signal_s_report(self):
+        """Review of #537: batch's own handler took a second signal as a new one: the exit code became
+        the SIGTERM's (143 for a Ctrl-C) and the stop ran again inside the first one's report."""
+        import signal
+        import time
+        folder = self.d / "two_signals"
+        (folder / "in").mkdir(parents=True)
+        slow = folder / "in" / "a.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=120", "-c:v", "libx264", "-preset",
+           "ultrafast", "-pix_fmt", "yuv420p", slow)
+        recipe = self._recipe(folder, [["fit.py", "{in}", "--height", "1080", "-o", "{out}"]])
+        p = subprocess.Popen([sys.executable, str(SCRIPTS / "batch.py"), str(folder / "in"), "--recipe", str(recipe), "--json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(3)
+        self.assertIsNone(p.poll(), "the step is still running")
+        p.send_signal(signal.SIGINT)
+        time.sleep(0.05)
+        try:
+            p.send_signal(signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        out, err = p.communicate(timeout=300)
+        doc = json.loads(out)
+        self.assertEqual((p.returncode, doc["error"]["kind"]), (130, "interrupted"), err[-800:])
+        self.assertTrue(doc["results"][0].get("interrupted"))
 
     @unittest.skipIf(os.name == "nt", "SIGTERM is not delivered to a Python handler on Windows")
     def test_a_second_signal_during_the_stop_does_not_leave_the_lock(self):
@@ -3485,13 +3583,28 @@ class Issue429DecidedTests(unittest.TestCase):
         (bfolder / "in").mkdir(parents=True)
         shutil.copy(loud, bfolder / "in" / "a.mp4")
         recipe = self._recipe(bfolder, [["export.py", "{in}", "--preset", "youtube", "--normalize", "-o", "{out}"]])
-        for name, argv, where, final in (("render", [proj], rout.parent, rout),
-                                         ("batch", [bfolder / "in", "--recipe", recipe], bfolder / "out", bfolder / "out" / "a_out.mp4")):
+        # review of #537: a project recipe's item is a render that writes the final path itself
+        pfolder = self.d / "pstop"
+        (pfolder / "in").mkdir(parents=True)
+        shutil.copy(loud, pfolder / "in" / "a.mp4")
+        pproj = pfolder / "proj.json"
+        pproj.write_text(json.dumps({"clips": [{"src": "x.mp4"}], "export": {"preset": "youtube", "normalize": True}}), encoding="utf-8")
+        precipe = pfolder / "r.json"
+        precipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(pfolder / "out"), "project": str(pproj)}), encoding="utf-8")
+        for name, tool, argv, where, final in (
+                ("render", "render", [proj], rout.parent, rout),
+                ("batch", "batch", [bfolder / "in", "--recipe", recipe], bfolder / "out", bfolder / "out" / "a_out.mp4"),
+                ("batch project", "batch", [pfolder / "in", "--recipe", precipe], pfolder / "out", pfolder / "out" / "a_out.mp4")):
             with self.subTest(tool=name):
-                p = subprocess.Popen([sys.executable, str(SCRIPTS / f"{name}.py"), *map(str, argv), "--json"], stdout=subprocess.PIPE,
+                p = subprocess.Popen([sys.executable, str(SCRIPTS / f"{tool}.py"), *map(str, argv), "--json"], stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, start_new_session=True)
                 import time
+                deadline = time.monotonic() + 600  # a busy machine is slow, not stuck; a stuck run fails here
                 while p.poll() is None and not (where.is_dir() and any("normalize" in n.name for n in where.iterdir())):
+                    if time.monotonic() > deadline:
+                        os.killpg(p.pid, signal.SIGKILL)
+                        p.communicate()
+                        self.fail(f"{name}: the loudness pass did not start within 600 s")
                     time.sleep(0.02)
                 if p.poll() is not None:
                     self.fail(f"{name} finished before its loudness pass could be interrupted: {p.stderr.read()[-800:]}")
@@ -3503,7 +3616,7 @@ class Issue429DecidedTests(unittest.TestCase):
                 self.assertTrue(final.is_file())
                 self.assertIn(str(final), doc["error"]["message"])
                 self.assertIn("kept", doc["error"]["message"])
-                if name == "render":
+                if tool == "render":
                     self.assertEqual(doc.get("output"), str(final))
                 else:
                     self.assertEqual(doc["results"][0].get("kept"), str(final))
