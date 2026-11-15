@@ -26,7 +26,7 @@ LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
 from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
-from _common.decision import LOSSLESS_AUDIO_EXT
+from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, late_sound_lead
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, refuse_unwritten_output, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -131,6 +131,12 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     # so sound that starts late keeps its end (`end=` is a timestamp, and cut it). atrim follows
     # loudnorm directly: an aresample between them fails channel-layout negotiation on FFmpeg 5.1
     in_audio = audio_length(meta)
+    # A sound-only output of a source whose sound starts after the file's origin (late against its
+    # picture) carries that lead as silence: .wav and .flac have no start time and lost it, .m4a
+    # kept it as an edit a decoder does not pad, so the file played that much early (#539). Beside
+    # a copied picture the container holds the start, and nothing is padded.
+    sound_only = ext in AUDIO_CODECS or not meta.get("video")
+    lead = late_sound_lead(meta) if sound_only else 0.0
 
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
@@ -141,6 +147,8 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
         )
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
+        if lead:
+            af += "," + PAD_SOUND_FROM_ZERO  # after the trim, which counts from the first sample
         cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
             # the rate reaches an audio extension's codec when it was pinned or is AAC's (an
@@ -234,9 +242,10 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     if in_audio and out_audio:
         # a levels pass changes no timing: the sound is as long as the input's, to one AAC frame
         tol = max(1024.0 / float(sr), AUDIO_LENGTH_TOLERANCE)
-        verification.append({"step": "duration", "property": "audio_duration", "ok": abs(out_audio - in_audio) <= tol,
-                             "expected": round(float(in_audio), 3), "measured": round(float(out_audio), 3),
-                             "delta": round(float(out_audio) - float(in_audio), 3), "tolerance": round(tol, 3),
+        want = float(in_audio) + lead  # the padded lead is part of a sound-only output's length
+        verification.append({"step": "duration", "property": "audio_duration", "ok": abs(out_audio - want) <= tol,
+                             "expected": round(want, 3), "measured": round(float(out_audio), 3),
+                             "delta": round(float(out_audio) - want, 3), "tolerance": round(tol, 3),
                              "provenance": "input_premeasurement"})
     else:
         # a length that could not be read is not a length that matched

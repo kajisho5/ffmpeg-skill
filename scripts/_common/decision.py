@@ -417,6 +417,20 @@ def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
     return out[0], out[1]
 
 
+# Pads a sound that starts after the clock's 0 with silence from 0 (#409's rule for a re-encode)
+PAD_SOUND_FROM_ZERO = "aresample=async=1:first_pts=0"
+
+
+def late_sound_lead(meta: Optional[Dict[str, Any]]) -> float:
+    """How long after the file's origin the sound starts, when a sound-only output has to carry
+    that as silence: 0.0 for a lead of half a millisecond or less (sync.py's bound) and for a
+    source whose start is unknown. A WAV or FLAC has no start time, and an .m4a's is an edit a
+    decoder does not pad, so a sound-only output written without the lead plays that much early
+    against the picture it came from (audio.py, loudness.py; cut.py --accurate pads it too, A46)."""
+    lead = stream_starts(meta)[1]
+    return lead if lead > 0.0005 else 0.0
+
+
 # The size of the decoded clip above which a tool that holds every frame (reverse, a boomerang)
 # says `memory_heavy`.
 HELD_FRAMES_WARN_BYTES = 2 * 1024 ** 3

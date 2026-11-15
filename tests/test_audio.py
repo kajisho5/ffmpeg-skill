@@ -98,6 +98,50 @@ class AudioTests(MediaFixtures):
         self.assertNotEqual(frame0.read_bytes(), frame1.read_bytes(), "--audio-stream 0 and 1 rendered identical frames")
 
     # ---------------------------------------------------------------- loudness
+    def test_a_sound_only_output_keeps_a_late_sounds_lead_as_silence(self):
+        """#539: audio.py and loudness.py given an audio extension wrote the sound from its own first
+        sample: a sound that starts 0.5 s after its picture came out 0.5 s early in a .wav or .flac
+        (which have no start time), and in an .m4a only as an edit a decoder does not pad. The lead
+        is now written as silence, as cut.py --accurate pads it, so the file is as long as the
+        source's sound placed on its clock and the sound starts where it did; beside a copied
+        picture nothing is padded (the container holds the start)."""
+        d = OUT / "late_lead"
+        d.mkdir(parents=True, exist_ok=True)
+        src = d / "late.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=3",
+           "-f", "lavfi", "-i", "sine=f=440:d=2.5", "-filter_complex", "[1:a]asetpts=PTS+0.5/TB[a]", "-map", "0:v", "-map", "[a]",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        meta = probe(str(src))
+        late = meta["audio"]["start_time"] - meta["video"]["start_time"]
+        self.assertGreater(late, 0.4, "fixture: the sound starts after the picture")
+        end = late + meta["audio"]["duration"]
+
+        def onset(path):
+            proc = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af",
+                                   "silencedetect=noise=-50dB:d=0.05", "-f", "null", "-"], capture_output=True, text=True)
+            found = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", proc.stderr)]
+            return found[0] if found else 0.0
+        for tool, args in (("audio.py", ["--gain", "1"]), ("audio.py", ["--fade-out", "0.2"]), ("loudness.py", [])):
+            for ext in (".wav", ".flac", ".m4a"):
+                with self.subTest(tool=tool, args=args, ext=ext):
+                    out = d / f"{tool[:-3]}{''.join(args)}{ext}"
+                    doc = json.loads(script(tool, src, *args, "-o", out, "--overwrite", "--json").stdout)
+                    self.assertTrue(doc["verified"], doc.get("verification"))
+                    self.assertAlmostEqual(onset(out), late, delta=0.03, msg="the sound starts where it did in the source")
+                    written = probe(str(out))
+                    self.assertAlmostEqual(written["audio"].get("start_time") or 0.0, 0.0, delta=0.001)
+                    self.assertAlmostEqual(written["duration"], end, delta=0.05)
+        # beside its picture the sound keeps its place in the container, unpadded
+        for tool, args in (("audio.py", ["--gain", "1"]), ("loudness.py", [])):
+            with self.subTest(tool=tool, kept_video=True):
+                out = d / f"{tool[:-3]}_video.mp4"
+                script(tool, src, *args, "-o", out, "--overwrite")
+                written = probe(str(out))
+                self.assertAlmostEqual(written["audio"]["start_time"] - written["video"]["start_time"], late, delta=0.03)
+        # a sound that starts with its picture is not touched
+        plan = json.loads(script("audio.py", self.src, "--gain", "1", "-o", d / "plain.wav", "--dry-run", "--overwrite", "--json").stdout)
+        self.assertNotIn("first_pts", str(plan["commands"][-1]))
+
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"
         script("loudness.py", self.src, "-I", "-16", "--tp", "-1.5", "-o", out)

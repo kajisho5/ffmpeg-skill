@@ -105,6 +105,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.9.1 — a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#538)](#after-391--a-variable-frame-rate-cut-lays-its-grid-from-its-start-a-hold-or-pad-at-the-start-keeps-its-last-frame-538)
 - [After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)](#after-392--audio-only-output-extensions-and-a-still-given-to-export-or-join-517-531)
 - [After 3.9.3 — the timeline of several clips takes its size from fit (#526)](#after-393--the-timeline-of-several-clips-takes-its-size-from-fit-526)
+- [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
 <!-- contents:end -->
 
 ## Time limits
@@ -526,7 +527,7 @@ exists. When a decision changes, edit the entry in the same PR.
   or audio in place (`fit`, `color`, `crop`, `stabilize`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
   `deinterlace`, `denoise`, `redact`, `sphere`, `straighten`, `freeze` holding the last frame) try
   `run_keeping_subtitles()` first, a text track converted to the container's own format as
-  `export` converts it (since #520), and report `false` unless the container refused the track or a data stream mapped beside it (the retry drops both). `export` does the same with its own
+  `export` converts it (since #520), and report `false` unless the container refused a stream (since #539 a refused data stream is retried away alone and does not cost the track beside it: "After 3.10.0"). `export` does the same with its own
   ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
   .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
   timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
@@ -5806,3 +5807,105 @@ with their own cause.
   Tests: `test_a_sequence_of_several_clips_takes_the_fit_objects_frame`,
   `test_a_multi_clip_render_delivers_the_sequence_size`,
   `test_a_one_clip_sequence_takes_the_fit_objects_frame`.
+
+## After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)
+
+The leftovers of #515, #517 and #520, each reproduced on FFmpeg 6.1.1 (Linux) with lavfi fixtures
+before it was changed. Five classes are changed, two are left for a decision.
+
+- **A data stream the container refuses is retried away alone; the subtitles beside it stay**
+  (item 5). `run_keeping_subtitles()` retried without every subtitle and data stream when any of
+  them failed the first attempt, so an MP4 with a mov_text track and a start timecode (tmcd) lost
+  the track in every tool that uses the helper: written to Matroska, which takes no data stream,
+  and on FFmpeg 6.1.1 to MP4 too (a copied tmcd track is refused there). The helper has
+  `export.py`'s rungs now (subtitles and data, the subtitles alone, neither), and a rung is tried
+  only when the source holds what it drops, so a source with one kind of stream is still encoded
+  twice at most. Each retry is a `non_av_streams_dropped` fallback with `dropped`, the stream
+  types it leaves out, as `export.py` records it. `dropped_non_av_streams` is read back after the
+  data-only rung: false when the written file holds as many data streams as the source (the
+  MOV/MP4 muxer writes a timecode track of its own from the picture's timecode tag), true into
+  Matroska. Not changed: a source with a data stream and no subtitle still reports `true` after
+  its retry, whatever the muxer wrote, as before. Not changed either: `color.py --retag`'s
+  re-encode, which has its own two-step copy of the same streams (`-c:s copy`, no conversion,
+  both dropped together). Routing it through the helper kept a mov_text track into `.mkv` and
+  then reported `dropped_non_av_streams: false` beside a second audio track the re-encode leaves
+  out, which `test_color_retag_fallback_keeps_extra_audio_and_subtitles_when_it_can` pins as
+  `true`; what that field should say there is a decision. Seen in the sweep and not changed: a tool whose picture goes through
+  `-filter_complex` (`graphics`, `overlay`, `pad`, `redact`) writes no timecode tag, so its MP4
+  holds no timecode track; `source_carry` lists the timecode as dropped. Code:
+  `runner.run_keeping_subtitles()`, `runner._non_av_kinds()`. Test:
+  `test_a_refused_data_stream_does_not_cost_the_subtitles_beside_it`; unchanged and still passing:
+  `test_run_keeping_subtitles_records_the_first_attempts_error`.
+- **`metadata.py` refuses, before ffmpeg runs, a stream the output's container does not take as a
+  copy** (item 6). It copies every stream (`-map 0 -c copy`), so nothing can be converted, and a
+  SubRip MKV written to `.mp4` failed in the muxer (`kind: ffmpeg`) after a dry run that said
+  completed. The same happened for a mov_text MP4 to `.mkv`, a timecode track to Matroska or
+  WebM and an attachment outside Matroska. Each is `kind: input` now, a dry run included, naming
+  the stream, with a hint: keep the source's container, or change it first with
+  `export.py --preset copy`, which converts a text track. Only what MPEG-4, Matroska and WebM
+  are known to refuse is judged (each case run against ffmpeg's own copy on 6.1.1); another
+  container is left to its muxer. The sweep found the same failure in the source's own container:
+  FFmpeg 6.1.1's MP4 muxer refuses a copied tmcd track ("Could not find tag for codec none"), so
+  `metadata.py` failed for every MP4 with a start timecode. The copy is tried as it is, and when
+  it is refused the track alone is left out and the muxer writes it again from the picture's
+  timecode tag (a `non_av_streams_dropped` fallback; the label read back is the source's). An
+  FFmpeg that takes the copy is not affected; none was run. Not changed: `color.py --retag`'s
+  stream copy of such an MP4 still fails and re-encodes (`reencoded: true`, with a note). Code:
+  `metadata.refuse_uncopyable_streams()`, `metadata.non_av_streams()`, `metadata.main()`. Test:
+  `test_metadata_refuses_a_stream_the_output_container_does_not_take_as_a_copy`.
+- **A picture is not written into an audio-only extension** (item 3). The tools that always write
+  a picture took `-o x.m4a` and completed, verified, with H.264 in a file named for sound, and
+  failed in the muxer for `-o x.wav` (`kind: ffmpeg`) after a dry run that said completed;
+  "After 3.9.2" left this as a class of its own. One check in `run()`, beside the WebM rule,
+  refuses it for every ffmpeg command (`kind: input`, reason `output_extension_audio_only`), dry
+  runs included: an output extension in `AUDIO_MEDIA_EXT`, a video encoder named for it (`-c:v`
+  other than `copy`), no `-vn`, and an input that can give a picture. The sweep (every
+  media-writing tool of `tests/sweep.py` with `.m4a` and `.wav`, a run and a dry run each, and
+  `join`, `insert`, `background` by hand): every picture tool is refused, and `audio`, `cut`,
+  `loudness` and `silence` still write the sound. `metadata.py` copies, so it has the same
+  refusal by its own rule when the source has a picture (a cover picture beside its sound is
+  still copied). `waveform.py` keeps its older refusal. Not changed, because a stream copy is not
+  judged from the command: `sync.py --replace-audio -o x.m4a` copies the picture into the `.m4a`
+  (`-o x.wav` is refused in a run, where the copy fails and the re-encode is checked, but planned
+  in a dry run), and `join.py --copy` was not run. Code:
+  `runner._check_picture_into_audio_extension()`, `metadata.main()`. Test:
+  `test_a_picture_written_into_an_audio_only_extension_is_refused_before_ffmpeg_runs`.
+- **A sound-only output of `audio.py` or `loudness.py` holds a late sound's lead as silence**
+  (item 1). A source whose sound starts 0.476 s after its picture came out with the sound at 0
+  in `.wav` and `.flac` (no start time) and in `.m4a` only as an edit a decoder does not pad, so
+  the extraction was that much early and that much shorter. Both tools re-encode, so #409's
+  rule applies ("a late sound padded with silence", as `cut.py --accurate` and `silence.py`
+  already do; the copy `cut.py` keeps its `audio_lead_dropped` warning, a decision of "After
+  3.8.22"). `audio.py` pads first in the main track's chain, so every later stage and `--tempo`
+  work on the file's clock from 0 (`--replace` reads the replacement's own lead);
+  `loudness.py` pads after the trim that counts from the first sample, and its `duration` step
+  expects the sound's length plus the lead. A lead of half a millisecond or less is not padded
+  (`sync.py`'s bound), a source without a picture has none, and beside a copied picture the
+  container holds the start and nothing changes. Seen and not changed, with a plain source too:
+  `loudness.py -o x.mp3` reports `verified: false` (the MP3 is 38 ms longer than the one AAC
+  frame the step allows) and `-o x.opus` of a 44.1 kHz source fails in libopus (`kind: ffmpeg`).
+  Not run: an audio `join.py` and `render.py`'s audio-only delivery of such a source. Code:
+  `decision.late_sound_lead()`, `decision.PAD_SOUND_FROM_ZERO`, `audio.main()`,
+  `loudness._normalize()`. Test: `test_a_sound_only_output_keeps_a_late_sounds_lead_as_silence`.
+- **`graphics.py`'s fades and the lower third's slide fit a window shorter than they are**
+  (item 2). The 0.3 s fade in and out (drawtext's alpha, and `\fad(300,300)` on the ASS route;
+  250 ms for the sticker there) was fixed: a window under 0.3 s never reached its fade-out, so
+  the text vanished part way up, and one between 0.3 and 0.6 s jumped down in brightness where
+  the fade-out took over (measured per frame on both routes). Each fade is `min(0.3, window / 2)`
+  now, the cap the emoji overlay already had. The lower third had the same shape in position
+  (0.4 s in, 0.3 s out: in a shorter window the bar jumped back where the slide-out took over,
+  measured on drawtext; the ASS route's three timed lines were reasoned about, not measured); the
+  two share a short window 4:3. A window of 0.6 s (0.7 s for the lower third) or
+  more writes the expressions it always did. Not changed: the sticker's 0.25 s rise, which a
+  window shorter than it only cuts short. Code: `graphics.main()` (`fade_s`, `in_s`, `out_s`).
+  Test: `test_graphics_fades_and_slides_fit_a_window_shorter_than_they_are`.
+- **Left for a decision: `caption.py`'s burn and `waveform.py` drop the source's subtitle track**
+  (item 4). Reproduced; nothing changed. The timeline is kept, so the rule above would keep the
+  track, but a burn may be of the very cues the track holds, and then keeping it shows them twice.
+- **Left for a decision: `cut.py -o x.mka`** (item 7). Reproduced every time, not once: `.mka` is
+  not an audio extension to the skill, so the cut is planned as a video cut, but FFmpeg's default
+  stream selection for the Matroska audio muxer takes no picture. The stream copy holds sound
+  only, the check sees `stream_lost`, and the re-encode, which maps its streams, writes H.264 and
+  AAC into the `.mka` (`reencoded: true`, verified). What `.mka` should mean is open: an audio
+  extension (the sound is extracted, the read and write sets and the contract grow), a refusal, or
+  a video container (the copy maps its picture and the needless re-encode goes).

@@ -2529,6 +2529,46 @@ class ProbedStreamTests(unittest.TestCase):
                                 "-of", "csv=p=0", out).stdout.split()
                     self.assertEqual(codecs, [codec])
 
+    def test_a_refused_data_stream_does_not_cost_the_subtitles_beside_it(self):
+        """#539: run_keeping_subtitles() retried without every subtitle and data stream when any of
+        them failed the first attempt, so a source with a text track and a data stream the
+        container refuses lost the track too: an MP4 with a mov_text track and a start timecode
+        (tmcd) written to Matroska, which takes no data stream, and on FFmpeg 6.1.1 to MP4 as well
+        (a copied tmcd track is refused there). The helper now drops the data stream alone first,
+        as export.py's ladder does, in every tool that uses it (crop, color, denoise and loudness
+        here)."""
+        srt = DIR / "sub_tc.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:01,500\nkept cue\n", encoding="utf-8")
+        src = DIR / "sub_tc.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text",
+           "-timecode", "01:00:00:00", src)
+        kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", src).stdout.split()
+        self.assertEqual((kinds.count("subtitle"), kinds.count("data")), (1, 1), "fixture: one text track, one tmcd track")
+        tools = [("crop", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]), ("color", ["--correct"]),
+                 ("denoise", []), ("loudness", [])]
+        for name, args in tools:
+            for ext, codec in ((".mp4", "mov_text"), (".mkv", "subrip")):
+                with self.subTest(tool=name, ext=ext):
+                    out = DIR / f"sub_tc_{name}{ext}"
+                    fast = [] if name == "loudness" else ["--fast"]
+                    doc = json.loads(script(f"{name}.py", src, *args, *fast, "-o", out, "--overwrite", "--json").stdout)
+                    codecs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                                "-of", "csv=p=0", out).stdout.split()
+                    self.assertEqual(codecs, [codec], doc.get("diagnostics"))
+                    text = sh("ffmpeg", "-v", "error", "-i", out, "-map", "0:s:0", "-f", "srt", "-").stdout
+                    self.assertIn("kept cue", text)
+                    self.assertNotIn("subtitles", (doc.get("source_carry") or {}).get("dropped") or [])
+                    written = sh("ffprobe", "-v", "error", "-select_streams", "d", "-show_entries", "stream=index",
+                                 "-of", "csv=p=0", out).stdout.split()
+                    # what the result says is what the file holds: the timecode track is not in a
+                    # Matroska file, and an MP4 muxer writes its own from the picture's timecode tag
+                    self.assertEqual(doc["dropped_non_av_streams"], not written, doc.get("diagnostics"))
+                    for fb in [f for f in (doc.get("diagnostics") or {}).get("fallbacks") or []
+                               if f["code"] == "non_av_streams_dropped"]:
+                        self.assertEqual(fb["dropped"], ["data"], "only the data stream is retried away")
+
     def test_crop_and_stabilize_write_the_picture_they_measured(self):
         out = DIR / "multi_crop.mp4"
         script("crop.py", self.multi, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out, "--overwrite")
