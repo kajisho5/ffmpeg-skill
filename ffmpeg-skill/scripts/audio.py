@@ -376,7 +376,7 @@ def main() -> int:
     ap.add_argument("--audio-stream", type=int, default=0, help="which audio stream of the input to process, 0-based in file order (probe lists them under audio_streams)")
     ap.add_argument("--bitrate", default=None,
                     help="audio bitrate: AAC's beside a picture (default 192k), and the codec's of a lossy audio output "
-                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac")
+                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf")
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
                          "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")

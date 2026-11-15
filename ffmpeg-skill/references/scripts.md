@@ -907,6 +907,8 @@ join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadebla
 join.py CLIP1 CLIP2 [...] --copy --transition none [-o OUT]
 join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
+A still picture among the clips is refused (`kind: input`), with any `--transition` and `--copy`:
+it has no length to place, and `insert.py` makes a clip of it.
 `--copy --transition none` (2.24) joins by stream copy (the concat demuxer, `-c copy`), no
 re-encode, for clips that already match: the first video and first audio stream of every clip must
 have the same codec, profile, size, pixel format, frame rate, time base, sample aspect, colour
@@ -2307,7 +2309,7 @@ The typed dynamics flags speak dB where the filter takes a linear value: a knee
 (2.82843); the defaults `--help` gives are ffmpeg's own, in the flag's unit (A135).
 `--bitrate` is the AAC rate beside a picture (192k) and the rate of a lossy audio output's
 codec (`.m4a`/`.aac` 256k, `.mp3` `-q:a 0`, `.ogg` `-q:a 6`, `.opus` 128k when it is not given);
-`.wav` and `.flac` refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
+`.wav`, `.flac`, `.aif`/`.aiff` and `.caf` (16-bit PCM) refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
 not `--music-loop`ed) ends where the bed ends (A142).
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
@@ -2353,7 +2355,7 @@ requested lufs / tp / lra.
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). Video and any subtitle/data track are
 stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in
-video containers or the codec matching the extension (.wav → PCM, .flac, .mp3).
+video containers or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac, .mp3).
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
 +3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
@@ -2361,7 +2363,7 @@ did not pass `--audio-bitrate` (an `.m4a`/`.aac` output starts at its 256k, so o
 left), then with the loudnorm ceiling lowered by the overshoot -- until the file itself meets
 `--tp`. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
 container's AAC (through 3.8.8 an `.m4a` was 256k whatever was asked, and its retries too);
-`.wav`/`.flac` refuse it. `result` reports
+`.wav`/`.flac`/`.aif`/`.aiff`/`.caf` refuse it. `result` reports
 `tp_ceiling_used`, `audio_bitrate_used`, `encodes`, and a `note` when the
 integrated loudness ended more than 1 LU from the target because of it.
 
@@ -2372,6 +2374,8 @@ export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
+A still picture is refused (`kind: input`) by every preset: a delivery has a length, and
+`insert.py` makes a clip of it.
 Editing masters (`prores`, `dnxhr-lb/sq/hq/hqx/444`, and the alpha presets) keep the source's size,
 rate and colour tags and read the written codec and profile back (`codec` verification step).
 The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)

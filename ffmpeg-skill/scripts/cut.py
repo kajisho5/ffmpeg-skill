@@ -66,6 +66,8 @@ from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
+from _common.decision import UNWRITTEN_AUDIO_EXT
+from _common import refuse_unwritten_output
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -189,7 +191,7 @@ def stream_maps(meta: dict, dst: str, copy: bool) -> List[str]:
     return maps
 
 
-LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}
+LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}  # pcm_s16be: .aif/.aiff/.caf (#517)
 
 
 def precision_of(meta: dict, dst: str, reencoded: bool) -> str:
@@ -953,6 +955,18 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         reasons.append("pcm_container")
     edit_list = False
     notes: List[str] = []
+    if reencode and os.path.splitext(dst)[1].lower() in UNWRITTEN_AUDIO_EXT:
+        # a .wma is written only as a stream copy of WMA sound: a copy this run judged and is about
+        # to re-encode (its length, a lost stream, a failed copy) is refused, not encoded into ASF,
+        # and the copy it wrote is removed, so a failed run leaves no file under the name (#517).
+        # A copy that failed wrote nothing there (run() replaces an existing path only on success),
+        # so the file is the caller's earlier one under --overwrite and is left
+        if _reasons and _reasons[-1] in ("stream_lost", "tolerance") and not STATE.dry_run and os.path.isfile(dst):
+            os.remove(dst)  # the copy this run just wrote and judged (the recursion's last reason)
+        if "tolerance" in reasons:
+            info(f"the stream copy into {dst} is re-encoded for its length, and a .wma cannot be encoded; "
+                 "--tolerance -1 keeps the copy as it lands")
+        refuse_unwritten_output(dst)
     if reencode:
         if is_audio_output(dst) or not meta.get("video"):
             # -ss before -i seeks, then decoding discards samples up to the exact start
@@ -1063,6 +1077,10 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         # an audio-only copy is judged by its written length too (above): a dry run that wrote
         # nothing says a real run may still re-encode it (#510 review)
         pending = {"length_unjudged": True} if (STATE.dry_run and copy_t is None and tolerance >= 0) else {}
+        if pending and os.path.splitext(dst)[1].lower() in UNWRITTEN_AUDIO_EXT:
+            notes.append(f"a run judges the copy by its written length: one that comes out --tolerance or more off "
+                         f"is refused (output_extension_unsupported), since a .wma cannot be encoded; --tolerance -1 "
+                         "keeps the copy as it lands")
         lead = copied_lead(meta, start, end)
         if lead:
             # a copy cannot add silence: the sound starts at its first packet, `lead` earlier than it

@@ -45,12 +45,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common.runner import read_text_or_die
-from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.timeline import exact_rate
-from _common.emit import input_length
+from _common.emit import input_length, refuse_still
 
 TRANSITIONS = ["fade", "dissolve", "wipeleft", "wiperight", "wipeup", "wipedown", "slideleft", "slideright",
                "circleopen", "circleclose", "fadeblack", "fadewhite", "smoothleft", "smoothright", "radial", "none"]
@@ -247,7 +247,8 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     output = args.output or default_output(args.inputs[0], "joined")
     refuse_list_as_output(args, output)
     if not is_audio_output(output):
-        die(f"audio-only inputs cannot fill a video container: give -o an audio extension (.wav, .flac, .mp3, .m4a, .ogg, .opus), not {output}")
+        refuse_unwritten_output(output)  # .wma is not a video container either (#517)
+        die(f"audio-only inputs cannot fill a video container: give -o an audio extension ({', '.join(AUDIO_CODECS)}), not {output}")
 
     cmd = ffmpeg_base()
     for p in args.inputs:
@@ -734,6 +735,9 @@ def main() -> int:
     metas = [probe(p) for p in args.inputs]
     for p, m in zip(args.inputs, metas):
         input_length(m, p)  # every clip is placed by its length: one that states none is refused, not 0 s (#491)
+        # a still joined as one frame (--transition none, verified), was refused as "too short" for
+        # a transition, or as a stream mismatch by --copy: it has no length to place (#531)
+        refuse_still(m, p, "a join places each clip by its length, and a still has none")
     # A pending input's probe is the dry-run stub, whose (0x0) video stream says nothing about the
     # file an earlier step will write. Its extension stands in: a step names its output for what
     # it holds, so an audio extension (.wav, .m4a, .aiff, ... -- every audio file this skill
