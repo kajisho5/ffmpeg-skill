@@ -22,7 +22,7 @@ from typing import Any, List, Tuple
 
 from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
-from _common.emit import input_length
+from _common.emit import input_length, refuse_still
 
 MAX_SPEED = 20.0
 MIN_SPEED = 0.05
@@ -76,6 +76,7 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    refuse_still(meta, args.input, "--segment ranges are times in a clip, and a still has none")  # not "0..0.000" (#531)
     dur = input_length(meta)
     if abs(segments[0][0] - 0.0) > 0.01:
         die(f"segments must start at 0, first segment starts at {segments[0][0]:g}")

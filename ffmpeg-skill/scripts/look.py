@@ -24,7 +24,7 @@ from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
-from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note  # noqa: E402
+from _common.probe import PROBED_VIDEO, display_size, is_still_input, square_pixels, square_pixels_note  # noqa: E402
 from _common.emit import input_length  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
@@ -75,6 +75,26 @@ def timecode_filter(font_prefix: str, offset: float = 0.0) -> str:
     if offset > 0:
         return f"drawtext=text='%{{pts\\:hms\\:{offset:.6f}}}':{font_prefix}{FONT}"
     return f"drawtext=text='%{{pts\\:hms}}':{font_prefix}{FONT}"
+
+
+def _refuse_past_end(t: str, sec: float, meta: dict, path: str, whose: str = "") -> None:
+    """--at past the end of the picture it is taken from is refused, kind input, before ffmpeg
+    writes nothing (kind output). A still has one picture, at 0: past it, it was not written
+    (#531). `whose` names the --compare clip; the main input's message is the one it always was.
+    --compare checked neither picture's length."""
+    if is_still_input(meta) and sec > 0:
+        die(f"--at {t} is beyond {'the ' + whose if whose else path}, a still picture: it has one picture and no "
+            "length of its own (--at 0 shows it)")
+    dur = meta.get("duration") or 0.0
+    if dur and sec > dur:
+        of = f"the {whose}'s " if whose else "the "
+        die(f"--at {t} is beyond {of}duration ({dur:.2f}s)")
+
+
+def _seek(sec: float, meta: dict) -> List[str]:
+    """The input seek to `sec`, none for a still (its one picture is at 0): image2 given `-ss 0.000`
+    drops a TGA's only frame, which image2 gives a duration, and nothing was written (#531)."""
+    return [] if is_still_input(meta) else ["-ss", f"{sec:.3f}"]
 
 
 def _half_height(half: int, size: "tuple") -> int:
@@ -321,6 +341,8 @@ def main() -> int:
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
         for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
+            _refuse_past_end(t, sec, meta, args.input)
+            _refuse_past_end(t, sec, cmeta, args.compare, "--compare clip")
             if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in IMAGE_EXTS:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
@@ -345,22 +367,21 @@ def main() -> int:
                         f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
             fc = (f"[0:{PROBED_VIDEO}]{lab}{sq}{fit(tm)}[a];[1:{PROBED_VIDEO}]{lab2}{csq}{fit(tm2)}[b];"
                   f"[a][b]hstack=inputs=2[out]")
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-ss", f"{sec:.3f}", *still_input_args(args.compare), "-i", args.compare,
+            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, *_seek(sec, cmeta), *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     elif args.at:
         for t in args.at:
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
-            if dur and sec > dur:
-                die(f"--at {t} is beyond the duration ({dur:.2f}s)")
+            _refuse_past_end(t, sec, meta, args.input)
             if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in IMAGE_EXTS:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + ["-ss", f"{sec:.3f}", *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
+            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:

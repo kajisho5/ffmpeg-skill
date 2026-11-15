@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import struct
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -569,6 +570,140 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
         if want in [tag.strip().lower() for tag in line.split("|")]:
             return True
     return False
+
+
+# FreeType's font formats whose PostScript name libass 0.17 matches (`check_postscript`); for any
+# other outline (TrueType) it matches the full name instead (`matches_full_or_postscript_name`)
+_POSTSCRIPT_FORMATS = ("CFF", "Type 1", "CID Type 1")
+# files per fc-scan call, so a large folder does not exceed the command line's length
+_FC_SCAN_CHUNK = 200
+
+
+def _sfnt_names(path: str, index: int) -> "Optional[Tuple[List[str], List[str], Optional[int]]]":
+    """(families, full names, usWeightClass) of face `index` of an sfnt file (TrueType, OpenType,
+    a collection) as libass 0.17 reads them for a font it loads itself: the Microsoft-platform
+    records of name ID 1 (family) and ID 4 (full name) only -- not ID 16, the typographic family
+    fontconfig also lists, so `Inter` is not a family of Inter-Black.otf to libass. None when the
+    file is not an sfnt this can read (WOFF, Type 1, a damaged table)."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        base = 0
+        if data[:4] == b"ttcf":
+            (base,) = struct.unpack(">I", data[12 + 4 * index:16 + 4 * index])
+        elif index:
+            return None
+        if data[base:base + 4] not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
+            return None
+        (num_tables,) = struct.unpack(">H", data[base + 4:base + 6])
+        tables = {}
+        for i in range(num_tables):
+            tag, _sum, off, length = struct.unpack(">4sIII", data[base + 12 + 16 * i:base + 28 + 16 * i])
+            tables[tag] = (off, length)
+        if b"name" not in tables:
+            return None
+        off, _length = tables[b"name"]
+        _fmt, count, str_off = struct.unpack(">HHH", data[off:off + 6])
+        families, fullnames = [], []
+        for i in range(count):
+            pid, _eid, _lid, nid, length, noff = struct.unpack(">6H", data[off + 6 + 12 * i:off + 18 + 12 * i])
+            if pid != 3 or nid not in (1, 4):
+                continue
+            raw = data[off + str_off + noff:off + str_off + noff + length]
+            name = raw.decode("utf-16-be", errors="replace").strip()
+            if name:
+                (families if nid == 1 else fullnames).append(name)
+        weight = None
+        if b"OS/2" in tables:
+            os2 = tables[b"OS/2"][0]
+            (weight,) = struct.unpack(">H", data[os2 + 4:os2 + 6])
+            weight = weight * 100 if 1 <= weight <= 9 else (weight or None)
+        return families, fullnames, weight
+    except (OSError, struct.error, IndexError, ValueError):
+        return None
+
+
+def fonts_dir_face(fonts_dir: str, family: str, bold: bool = False) -> "Tuple[Optional[str], Optional[bool]]":
+    """(file, found) for `family` in `fonts_dir`, naming a file only where libass's pick is certain
+    (#531). found False: no face of the folder has that name, so libass asks fontconfig as without
+    the folder. found True with a file: the folder holds a face of the asked family in exactly the
+    asked style (weight 400, or 700 with `bold`, which is what libass asks for an ASS Bold of -1;
+    upright), or a face whose full or PostScript name is the one asked: libass scores such a face
+    0, the best there is, in every version, and an installed face that ties is of the same family
+    and style. found True with file None: the folder holds the family only in other styles, and
+    libass chooses among them and the installed faces by its own scoring, which this does not
+    repeat (it differs between libass versions). found None (file None): the folder could not be
+    read (no fc-scan, a failed scan).
+
+    libass loads the folder's own files, not its subfolders and not names starting with a dot, so
+    only those are scanned (`fc-scan`, given the files, opens them with FreeType as libass does; it
+    recurses into a folder it is given). Names are matched case-insensitively as libass 0.17
+    matches them: the family is name ID 1 of the Microsoft platform, read from the file (FreeType's
+    family name, here fontconfig's first, when the file has no such record); the full name counts
+    for a TrueType outline and the PostScript name for a PostScript one (CFF, Type 1), not the other
+    way round. Checked by drawing on libass 0.17.1."""
+    exe = _safe_which("fc-scan")
+    if not exe or not fonts_dir or not os.path.isdir(fonts_dir):
+        return None, None
+    try:
+        files = sorted(os.path.join(fonts_dir, name) for name in os.listdir(fonts_dir)
+                       if not name.startswith(".") and os.path.isfile(os.path.join(fonts_dir, name)))
+    except OSError:
+        return None, None
+    fmt = "%{file}\t%{index}\t%{family}\t%{postscriptname}\t%{fontformat}\t%{weight}\t%{slant}\t%{fullname}\n"
+    lines = []
+    for at in range(0, len(files), _FC_SCAN_CHUNK):
+        try:
+            proc = subprocess.run([exe, "--format", fmt, *files[at:at + _FC_SCAN_CHUNK]],
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                  errors="replace", timeout=10)
+        except (subprocess.TimeoutExpired, OSError):
+            return None, None
+        # fc-scan exits 1 with nothing printed when no file it was given is a face it can open
+        # (a text file named .ttf): libass, which opens them with the same FreeType, finds none
+        if proc.returncode != 0 and proc.stdout.strip():
+            return None, None
+        lines.extend(proc.stdout.splitlines())
+    wanted = (family or "").strip().lower()
+    want_weight = 700 if bold else 400
+    exact, named, other_styles = [], [], False
+    for line in lines:
+        cells = line.split("\t")
+        if len(cells) < 8 or not cells[0]:
+            continue
+        path, index, fc_family, psname, fontformat, fc_weight, slant, fc_full = cells[:8]
+        try:
+            index = int(index or 0)
+        except ValueError:
+            continue
+        if index >> 16:
+            continue  # a named instance of a variable font: libass loads the face itself only
+        read = _sfnt_names(path, index)
+        families, fullnames, weight = read if read is not None else ([], None, None)
+        if not families:
+            # no Microsoft-platform family record (Macintosh records only, Type 1, WOFF): libass
+            # takes FreeType's family name, which is fontconfig's first
+            families = fc_family.split(",")[:1]
+        if fullnames is None:
+            fullnames = fc_full.split(",")
+        if weight is None:
+            try:
+                weight = {80: 400, 200: 700}.get(int(float(fc_weight or 80)))
+            except ValueError:
+                weight = None
+        if wanted and wanted in {n.strip().lower() for n in families}:
+            upright = (slant or "0").strip() in ("", "0")
+            if upright and weight == want_weight:
+                exact.append(path)
+            else:
+                other_styles = True
+            continue
+        names = {psname.strip().lower()} if fontformat in _POSTSCRIPT_FORMATS else {n.strip().lower() for n in fullnames}
+        if wanted and wanted in names:
+            named.append(path)
+    if named or exact:
+        return (named or exact)[0], True
+    return None, (True if other_styles else False)
 
 
 def _is_last_resort(entry: "Tuple[str, str]") -> bool:
