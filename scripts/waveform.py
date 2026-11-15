@@ -38,7 +38,7 @@ import sys
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common.probe import SILENT_PEAK_DBFS, refuse_not_a_still, square_pixels, square_pixels_note
 from _common import still_input_args  # noqa: E402
-from _common import (add_common, apply_common, aac_args, default_output, die, draws_chroma, emit, ffmpeg_base,
+from _common import (add_common, apply_common, aac_args, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, warn
@@ -110,10 +110,12 @@ def main() -> int:
     brand = load_brand(args.brand) if args.brand else None
     if brand:
         bc = brand.get("colors") or {}
+        # read as caption.py, graphics.py and overlay.py read a brand colour (#535): a brand file
+        # writes six hex digits with or without # or 0x
         if args.color == "lime" and bc.get("primary"):
-            args.color = bc["primary"]
+            args.color = color_hex(bc["primary"])
         if args.background == "black" and bc.get("background"):
-            args.background = bc["background"]
+            args.background = color_hex(bc["background"])
     if args.image:
         if "://" in args.image:
             die("--image must be a readable local file; this skill has no network access, so save "

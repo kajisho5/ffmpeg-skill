@@ -10724,6 +10724,66 @@ class SharedCodeAudit465Tests(unittest.TestCase):
         doc = self.doc("pad", self.clip, "--end", "0.5", "--color", "grey", "-o", self.work / "p.mp4", "--dry-run")
         self.assertEqual((doc["status"], doc["error"]["kind"]), ("failed", "input"), doc)
 
+    def test_six_or_eight_hex_digits_pass_whatever_the_first_digit(self):
+        """#535: validate_color() took bare hex only when it started with a letter, so 0B1D2A (the
+        example brand's background) was refused by every colour flag although ffmpeg reads it,
+        and seven digits after 0x or # passed and failed inside ffmpeg. The installed ffmpeg is
+        asked first, so a version that reads these otherwise fails here, not in a user's run."""
+        def ffmpeg_reads(colour):
+            proc = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i",
+                                   f"color=c={colour}:s=16x16:d=0.04", "-frames:v", "1", "-f", "rawvideo",
+                                   "-pix_fmt", "rgb24", "-"], capture_output=True)
+            return proc.stdout[:3] if proc.returncode == 0 and len(proc.stdout) == 16 * 16 * 3 else None
+
+        good, bad = ("0B1D2A", "0B1D2AFF", "0B1D2A@0.5", "0x0B1D2A", "#0B1D2A"), \
+            ("0B1D2", "0B1D2AF", "0x0B1D2AF", "#0B1D2AF", "0B1D2AZ", "123456789")
+        for colour in good:
+            with self.subTest(ffmpeg_reads=colour):
+                rgb = ffmpeg_reads(colour)
+                self.assertIsNotNone(rgb, f"ffmpeg refused {colour}")
+                self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(rgb, (0x0B, 0x1D, 0x2A))), rgb.hex())
+            self.assertEqual(_common.validate_color(colour), colour)
+        for colour in bad + ("0B1D2A,drawtext=text=X", "0B1D2A@2", "0B1D2A:x=1"):
+            if "," not in colour and ":" not in colour and "@" not in colour:
+                with self.subTest(ffmpeg_refuses=colour):
+                    self.assertIsNone(ffmpeg_reads(colour), f"ffmpeg reads {colour}: the refusal is not needed")
+            with self.subTest(refused=colour), self.assertRaises(SystemExit):
+                _common.validate_color(colour, "--color")
+        # every flag validate_color() checks, through its tool: a dry run takes the digit-first
+        # colour, and refuses seven digits before anything is planned
+        flags = {
+            ("background.py", "--color"): lambda c: ["background", "--duration", "0.5", "--width", "64", "--height", "64", "--color", c],
+            ("background.py", "--gradient"): lambda c: ["background", "--duration", "0.5", "--width", "64", "--height", "64",
+                                                         "--gradient", f"{c}:0057FF"],
+            ("broll.py", "--pad-color"): lambda c: ["broll", self.clip, "--insert", self.clip, "--at", "0.5", "--duration", "1",
+                                                    "--pad-color", c],
+            ("export.py", "--pad-color"): lambda c: ["export", self.clip, "--preset", "reels", "--pad-color", c],
+            ("fit.py", "--pad-color"): lambda c: ["fit", self.clip, "--aspect", "1:1", "--fit", "pad", "--pad-color", c],
+            ("grid.py", "--background"): lambda c: ["grid", self.clip, self.clip, "--cols", "2", "--rows", "1", "--background", c],
+            ("grid.py", "--font-color"): lambda c: ["grid", self.clip, self.clip, "--cols", "2", "--rows", "1", "--font-color", c],
+            ("join.py", "--pad-color"): lambda c: ["join", self.clip, self.clip, "--pad-color", c],
+            ("overlay.py", "--chromakey"): lambda c: ["overlay", self.clip, "--video", self.clip, "--chromakey", c],
+            ("overlay.py", "--font-color"): lambda c: ["overlay", self.clip, "--text", "hi", "--font-color", c],
+            ("overlay.py", "--border-color"): lambda c: ["overlay", self.clip, "--text", "hi", "--border-color", c],
+            ("overlay.py", "--box-color"): lambda c: ["overlay", self.clip, "--text", "hi", "--box", "--box-color", c],
+            ("pad.py", "--color"): lambda c: ["pad", self.clip, "--start", "0.5", "--color", c],
+            ("straighten.py", "--fill-color"): lambda c: ["straighten", self.clip, "--degrees", "5", "--fit", "pad", "--fill-color", c],
+            ("waveform.py", "--color"): lambda c: ["waveform", self.clip, "--width", "320", "--height", "180", "--color", c],
+            ("waveform.py", "--background"): lambda c: ["waveform", self.clip, "--width", "320", "--height", "180", "--background", c],
+        }
+        called = {(p.name, m.group(1)) for p in sorted(SCRIPTS.glob("*.py"))
+                  for m in re.finditer(r'validate_color\([^,()]+, "(--[a-z-]+)"\)', p.read_text(encoding="utf-8"))}
+        self.assertEqual(called, set(flags), "every flag validate_color() checks is in this table")
+        for (name, flag), argv in flags.items():
+            for colour, status in (("0B1D2A", "completed"), ("0x0B1D2AF", "failed")):
+                with self.subTest(tool=name, flag=flag, colour=colour):
+                    out = self.work / f"hex_{name[:-3]}.mp4"
+                    doc = self.doc(*argv(colour), "-o", out, "--dry-run", "--overwrite")
+                    self.assertEqual(doc["status"], status, doc.get("error"))
+                    if status == "failed":
+                        self.assertEqual(doc["error"]["kind"], "input")
+                        self.assertIn(flag, doc["error"]["message"])
+
     def test_a_percent_in_a_still_path_never_opens_another_file(self):
         """A7: the emoji overlay PNGs (and grid.py's, broll.py's and join.py's stills) reached
         ffmpeg without `-pattern_type none`, so `%d` in the path made image2 open a different file.
