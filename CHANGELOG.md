@@ -19,9 +19,11 @@
   everything after it about half a window early (1024 samples at 44.1 and 48 kHz): 21 ms at 1x
   and 40 ms at 0.5x in `speedramp.py`, 17-25 ms in `fit.py --method speed`, 10-31 ms in `audio.py
   --tempo` and about 100 ms through a chain of two stages (0.3). Each chain is now led by a
-  window and a half of silence and a window is cut off after it, so the beeps of a test clip land
-  within 5 ms of their place on average and a short sound at the very start keeps its level (a
-  first try with half a window faded a 10 ms tone there by 7 dB, or lost it). A 1x
+  window and a half of silence and a window is cut off after it, so through one stage (0.5x to
+  3x) the beeps of a test clip land within 5 ms of their place on average; through a chain below
+  0.5x, where a short sound is laid down as several grains, each lands within one atempo window
+  (43 ms at 48 kHz) of its place instead of 70-155 ms early. A short sound at the very start
+  keeps its level (a first try with half a window faded a 10 ms tone there by 7 dB, or lost it). A 1x
   `speedramp.py` segment is no longer put through `atempo` at all. The `timing.atempo` stages
   `audio.py` reports are unchanged.
 - **`freeze.py --at` inside a gap of a variable-rate source keeps what follows with its sound

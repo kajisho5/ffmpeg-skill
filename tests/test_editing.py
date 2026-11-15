@@ -1919,46 +1919,62 @@ class EditingTests(MediaFixtures):
                 self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
 
     def test_a_tempo_change_keeps_each_sound_where_it_belongs(self):
-        """#523: atempo leaves out half its window of input at the start (1024 samples at 48 kHz),
-        so every sound after it was early: speedramp.py's beeps 21 ms at 1x and 40 ms at 0.5x,
-        fit.py --method speed's 18-25 ms, audio.py --tempo's 10-31 ms. Each chain is led by
-        those samples. The beeps' onsets (every second from 0.5 s) are compared with where the
-        retiming puts them: atempo places its windows by the content, so a single beep moves by
-        some milliseconds either way (held to half a 30 fps frame, about 30 ms through a chain of
-        stages below 0.5x), and their mean is held to 5 ms (it was 11-40 ms early, 70-105 ms through a chain). A chain is
-        led once, ahead of its first stage: a lead between two stages failed speedramp.py's graph
-        on FFmpeg 6.1.1."""
+        """#523: atempo lays its first window down without retiming it and sets every sound after
+        it about half a window (1024 samples at 48 kHz) early: speedramp.py's beeps 21 ms at 1x
+        and 40 ms at 0.5x, fit.py --method speed's 18-25 ms, audio.py --tempo's 10-31 ms, and
+        70-105 ms through a chain of stages below 0.5x. The chain is led by silence and cut after.
+        Each beep's onset (every second from 0.5 s) is the first one silencedetect reads from
+        0.25 s before where the retiming puts it to a window (2048 samples) after the stretched
+        beep ends:
+        atempo places its windows by the content, and a beep shorter than a window that a chain
+        slows to 0.3x is laid down as several grains (four onsets on macOS's FFmpeg 9.0.2), each
+        read as an onset. A single stage (0.5x-3x) is held to a mean of 5 ms and each beep to
+        half a 30 fps frame. Through a chain the first grain that carries the beep can sit
+        anywhere in a window that holds its start, so each beep is held to a window (43 ms):
+        -34 to +26 ms on FFmpeg 6.1.1 and macOS's 9.0.2, where the systematic shift was 70-155
+        ms early. A chain is led once, ahead of its first stage: a lead between two stages failed
+        speedramp.py's graph on FFmpeg 6.1.1."""
         src = make_flash_beep(OUT / "i523_beeps.mp4")
+        window = 2048 / 48000
+        version = sh("ffmpeg", "-version").stdout.splitlines()[0]
 
         def heard(path):
             proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0",
                       "-af", "silencedetect=n=-30dB:d=0.02", "-f", "null", "-")
             return [float(x) for x in re.findall(r"silence_end: ([\d.]+)", proc.stderr)]
         beeps = (0.5, 1.5, 2.5, 3.5)
+        # (name, argv, extension, where a source time lands, the tempo there, chained stages)
         cases = (
-            ("speedramp 1x", ["speedramp.py", "--segment", "0-4:1"], ".mp4", lambda t: t),
+            ("speedramp 1x", ["speedramp.py", "--segment", "0-4:1"], ".mp4", lambda t: t, lambda t: 1.0, False),
             ("speedramp 0.5x", ["speedramp.py", "--segment", "0-2:1", "--segment", "2-3:0.5", "--segment", "3-4:1"],
-             ".mp4", lambda t: t if t < 2 else 2 + (t - 2) * 2 if t < 3 else t + 1),
+             ".mp4", lambda t: t if t < 2 else 2 + (t - 2) * 2 if t < 3 else t + 1, lambda t: 0.5 if 2 <= t < 3 else 1.0, False),
             ("speedramp 2x", ["speedramp.py", "--segment", "0-1:2", "--segment", "1-4:1"], ".mp4",
-             lambda t: t / 2 if t < 1 else t - 0.5),
-            ("fit speed 1.11x", ["fit.py", "--duration", "3.6", "--method", "speed"], ".mp4", lambda t: t * 0.9),
-            ("fit speed 0.91x", ["fit.py", "--duration", "4.4", "--method", "speed"], ".mp4", lambda t: t * 1.1),
-            ("audio tempo 1.5", ["audio.py", "--tempo", "1.5"], ".wav", lambda t: t / 1.5),
-            ("audio tempo 3", ["audio.py", "--tempo", "3"], ".wav", lambda t: t / 3),
-            # chains of stages (0.5 x 0.5; 0.5 x 0.6)
+             lambda t: t / 2 if t < 1 else t - 0.5, lambda t: 2.0 if t < 1 else 1.0, False),
+            ("fit speed 1.11x", ["fit.py", "--duration", "3.6", "--method", "speed"], ".mp4", lambda t: t * 0.9, lambda t: 1 / 0.9, False),
+            ("fit speed 0.91x", ["fit.py", "--duration", "4.4", "--method", "speed"], ".mp4", lambda t: t * 1.1, lambda t: 1 / 1.1, False),
+            ("audio tempo 1.5", ["audio.py", "--tempo", "1.5"], ".wav", lambda t: t / 1.5, lambda t: 1.5, False),
+            ("audio tempo 3", ["audio.py", "--tempo", "3"], ".wav", lambda t: t / 3, lambda t: 3.0, False),
+            # chains of stages (0.5 x 0.5 for the first segment; 0.5 x 0.6)
             ("speedramp 0.25x", ["speedramp.py", "--segment", "0-2:0.25", "--segment", "2-4:3"], ".mp4",
-             lambda t: t * 4 if t < 2 else 8 + (t - 2) / 3),
-            ("audio tempo 0.3", ["audio.py", "--tempo", "0.3"], ".wav", lambda t: t / 0.3),
+             lambda t: t * 4 if t < 2 else 8 + (t - 2) / 3, lambda t: 0.25 if t < 2 else 3.0, True),
+            ("audio tempo 0.3", ["audio.py", "--tempo", "0.3"], ".wav", lambda t: t / 0.3, lambda t: 0.3, True),
         )
-        for name, argv, ext, moved in cases:
+        for name, argv, ext, moved, tempo, chained in cases:
             with self.subTest(case=name):
                 out = OUT / f"i523_tempo{ext}"
-                script(argv[0], src, *argv[1:], *(["--fast"] if ext == ".mp4" else []), "-o", out, "--overwrite")
+                proc = script(argv[0], src, *argv[1:], *(["--fast"] if ext == ".mp4" else []), "-o", out, "--overwrite")
                 got = heard(out)
-                errors = [min(got, key=lambda h: abs(h - moved(t))) - moved(t) for t in beeps]
-                self.assertLessEqual(abs(sum(errors) / len(errors)), 0.005, f"{name}: beeps off by {errors} s ({got})")
-                spread = 0.030 if name.endswith(("0.25x", "0.3")) else 0.5 / 30
-                self.assertLessEqual(max(abs(e) for e in errors), spread, f"{name}: beeps off by {errors} s ({got})")
+                chain = re.findall(r"(?:adelay|atempo|atrim=start_sample)[^,;'\]]*", proc.stderr)
+                facts = f"{name}: onsets {got}, chain {chain}, {version}"
+                errors = []
+                for t in beeps:
+                    w = moved(t)
+                    near = [h for h in got if w - 0.25 <= h <= w + 0.04 / tempo(t) + window]
+                    self.assertTrue(near, f"no onset near {w:.3f} s, so not measured; {facts}")
+                    errors.append(near[0] - w)
+                mean_bound, each_bound = (window, window) if chained else (0.005, 0.5 / 30)
+                self.assertLessEqual(abs(sum(errors) / len(errors)), mean_bound, f"beeps off by {errors} s; {facts}")
+                self.assertLessEqual(max(abs(e) for e in errors), each_bound, f"beeps off by {errors} s; {facts}")
 
     def test_a_tempo_change_keeps_an_attack_at_its_start(self):
         """#541 review: a lead of half atempo's window put the chain's first window, which atempo

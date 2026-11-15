@@ -5216,10 +5216,18 @@ the slot at 0.519 s, "After 3.8.14").
   window, which atempo fades in, lay over the input's first 21 ms, and a 10 ms tone there came out
   7 dB down at 1x and was gone at 1.5x and 2x (`speedramp.py`, `fit.py --method speed` 2x and
   `audio.py --tempo 1.5`); it now keeps its -1.9 dBFS peak at every factor tried (1, 1.5, 2, 0.5,
-  0.3), a slowed tone spread over the windows its new length takes. The beeps' mean offset is
-  within 5 ms of where the retiming puts them in every case above, a single beep within half a
-  30 fps frame (12.6 ms at 0.91x; atempo places its windows by the content) and within about
-  30 ms through a chain below 0.5x. A 1x `speedramp.py` segment is cut and not retimed, so its
+  0.3), a slowed tone spread over the windows its new length takes. Through a single stage
+  (0.5x to 3x) the beeps' mean onset is within 5 ms of where the retiming puts them in every case
+  above and a single beep within half a 30 fps frame (12.6 ms at 0.91x; atempo places its
+  windows by the content). Through a chain below 0.5x the claim is narrower: a 40 ms beep slowed
+  to 0.3x is laid down as several grains, the first of which can sit anywhere in a window that
+  holds the beep's start, so its onset is within one window (2048 samples, 43 ms at 48 kHz) of
+  its place, no closer: -34 to +26 ms (0.3x on FFmpeg 6.1.1: 0, -24, -34, -14 ms; 0.25x: +26,
+  -27, -8, -7; macOS's 9.0.2 at 0.3x: -1, -23, -34, +7, its third beep read as four onsets),
+  where the systematic shift was 70-155 ms early. The test takes, for each beep, the first onset
+  from 0.25 s before its place to a window after the stretched beep ends, and says "not
+  measured" when there is none; a failure prints the onsets, the chain and `ffmpeg -version`.
+  The other CI versions (7.1, 8.0.1, Windows' 9.0.2) passed the earlier nearest-onset form. A 1x `speedramp.py` segment is cut and not retimed, so its
   sound is the source's to the sample; `fit.py --method speed` within 1e-4 of 1x and `audio.py
   --tempo 1` already added no `atempo`. One lead for the chain, not one per stage: an `adelay`
   between two stages made FFmpeg 6.1.1 fail a graph that joins the result with `concat`
