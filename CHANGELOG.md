@@ -4,7 +4,20 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`waveform.py --brand` reads a brand colour that starts with a digit, `examples/brand.json`'s
+  included (#535).** It copied the brand's colours into `--color` and `--background` as
+  written, and the colour check took bare hex only when it started with a letter, so the example
+  brand's background `0B1D2A` and the default `101418` were refused (`kind: input`), and
+  `render.py`'s audiogram stage with a brand failed with it. waveform.py now reads a brand colour as `caption.py` and
+  `graphics.py` do (six hex digits, with or without `#` or `0x`); a brand colour that is a name
+  or eight digits is refused there, as those tools refuse it.
+- **A colour flag takes six or eight bare hex digits whatever the first one is (#535).** The
+  flags `validate_color()` checks (`--pad-color`, `--background`, `--font-color`, ...) refused
+  `0B1D2A`, `0B1D2AFF` or `0B1D2A@0.5` although FFmpeg reads them; `FF6A00` passed. Seven digits
+  after `0x` or `#` passed the check and failed inside ffmpeg after a dry run that completed;
+  they are now refused, `kind: input`, like any other value that is not a plain colour.
 
 ## 3.8.19
 

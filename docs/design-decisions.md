@@ -96,6 +96,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.16 — shared code and the MCP server (#465)](#after-3816--shared-code-and-the-mcp-server-465)
 - [After 3.8.17 — leftovers of the old grouped issues (#510)](#after-3817--leftovers-of-the-old-grouped-issues-510)
 - [After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)](#after-3818--side-inputs-as-outputs-the-blurred-pads-chroma-and-sequences-frames-522-527-529)
+- [After 3.8.19 — a brand colour that starts with a digit (#535)](#after-3819--a-brand-colour-that-starts-with-a-digit-535)
 <!-- contents:end -->
 
 ## Time limits
@@ -4699,7 +4700,7 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   and an unknown one (`grey`; ffmpeg has `gray` and `lightgrey`) failed inside ffmpeg as kind
   ffmpeg after a dry run that completed. The table is the `ffmpeg -colors` list (the same in 6.1
   through 8), plus `random` and `bikeshed`; a word that is not a name passes only as six or eight
-  bare hex digits, which is how ffmpeg reads it. The test compares the table with the installed
+  bare hex digits, which is how ffmpeg reads it (whatever the first digit is: "After 3.8.19"). The test compares the table with the installed
   ffmpeg's list, so a later FFmpeg that adds a name fails it rather than refusing the name. Code:
   `_common.color.FFMPEG_COLOR_NAMES`. Test: `test_an_unknown_colour_name_is_refused_before_ffmpeg`.
 - **`run()` and `run_analysis()` add `-pattern_type none` to every still input with a `%` in its
@@ -4905,10 +4906,10 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   either; caption.py hands libass the font's folder, so its plan named no font. The sweep (each
   side output named like each side input, brand-named files included, with `--overwrite`) found
   every other guard holding: graphics and overlay `--plan`, cut, metadata, join, silence and sync
-  `--plan`, silence `--edl` and `--timemap`. Seen and not changed here: `waveform.py --brand`
-  fails on every brand file, the default one included, because the brand background `101418` is
-  a bare hex colour starting with a digit, which `validate_color()` refuses although "After
-  3.8.16" says six bare hex digits pass. Test: `test_a_side_file_never_replaces_a_brand_files_font_or_logo`.
+  `--plan`, silence `--edl` and `--timemap`. Seen and not changed here (fixed by #535, "After
+  3.8.19"): `waveform.py --brand` failed on every brand file, the default one included, because
+  the brand background `101418` is a bare hex colour starting with a digit, which
+  `validate_color()` refused although "After 3.8.16" says six bare hex digits pass. Test: `test_a_side_file_never_replaces_a_brand_files_font_or_logo`.
 - **`verify.py` never replaces a cue file without `--overwrite`, and the caption step fails on it
   instead of the run being refused** (#522). Through 3.8.18 the `<stem>_cues.txt` it writes in
   `--out` was replaced unasked. Without `--overwrite` an existing one is left as it is and the
@@ -4959,3 +4960,37 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   burn would be a decision of its own. The colour-name table is compared with the installed
   ffmpeg's `-colors` by `test_an_unknown_colour_name_is_refused_before_ffmpeg` on every CI job, so
   on 6.1, 7.1, 8.x and 9.x (all fifteen test jobs of #530 passed).
+
+## After 3.8.19 — a brand colour that starts with a digit (#535)
+
+- **Six or eight hex digits are a colour whatever the first digit is, bare or after `0x` or `#`,
+  and seven are refused** (#535). `validate_color()` took a bare word only when it started with a
+  letter, so `0B1D2A` (the example brand's background) and `101418` (the default one) were
+  refused by every flag it checks, while `FF6A00` passed. FFmpeg 6.1.1 reads them all:
+  `color=c=0B1D2A`, drawtext `fontcolor=0B1D2A` and `drawbox=c=0B1D2A` draw that colour (to
+  within the YUV round trip's one step), as they do `0B1D2AFF` and `0B1D2A@0.5`, and the same
+  commands with `0B1D2` or with seven digits fail ("Invalid 0xRRGGBB[AA] color string"), with or
+  without `0x` or `#`. The prefixed forms took six
+  to eight digits, so seven passed the check and failed inside ffmpeg as kind `ffmpeg` after a dry
+  run that had completed; they now take six or eight, as the bare form does. The check is still
+  the filter-graph guard: what passes is a name (a word that starts with a letter and is in
+  ffmpeg's table), six or eight hex digits, optionally `@` and an alpha from 0 to 1, and nothing
+  else (`0B1D2A,drawtext=...`, `0B1D2A:x=1`, `0B1D2AZ` are refused, `kind: input`). The refusal
+  says the digits may be bare. The test asks the installed ffmpeg first, so a version that reads
+  these otherwise fails it on that CI job; only 6.1.1 was run here. Code:
+  `_common.color._COLOR_TOKEN_RE`, `validate_color()`. Test:
+  `test_six_or_eight_hex_digits_pass_whatever_the_first_digit`, which also runs a dry run of every
+  flag `validate_color()` checks (the table is compared with the calls in `scripts/`).
+- **`waveform.py` reads a brand colour as the other brand tools do** (#535): through
+  `color_hex()`, as `caption.py` and `graphics.py` read theirs (`overlay.py` reads no brand
+  colour), so `#0B1D2A`, `0x0B1D2A` and `0B1D2A` in a brand file give the same `--color` or
+  `--background`. Before, the brand's value was copied as written, and `waveform.py --brand`
+  failed on `examples/brand.json`, on a brand that leaves its colours to the defaults, and in
+  `render.py`'s audiogram stage with a brand. A brand colour that is a name or eight digits is now
+  refused there, `kind: input`, as `graphics.py` and `caption.py` already refused it; `--color`
+  and `--background` given on the command line still take any colour `validate_color()` takes.
+  The sweep ran every tool that takes `--brand` (waveform, caption, graphics, overlay,
+  `render.py --template` and a `render.py` project with an audiogram) with `examples/brand.json`
+  and with a brand whose every colour starts with a digit, dry run and real run: only waveform
+  and the audiogram project failed before, all complete now, and waveform's picture is the brand
+  background. Test: `test_every_brand_tool_runs_with_the_example_brand`.

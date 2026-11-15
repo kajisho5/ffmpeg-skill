@@ -1358,6 +1358,73 @@ class AnalysisTests(MediaFixtures):
                 self.assertEqual((err["kind"], err["reason"]), ("input", "output_is_input"), err)
                 self.assertEqual(target.read_bytes(), before, f"{label} replaced the brand's {name}")
 
+    def test_every_brand_tool_runs_with_the_example_brand(self):
+        """#535 (class: a brand colour that starts with a digit reaching a colour check). waveform.py
+        copied the brand's colours into --color/--background as written, and validate_color() took
+        bare hex only when it started with a letter, so waveform.py --brand failed on
+        examples/brand.json (background 0B1D2A) and on the default brand (101418), and render.py's
+        audiogram stage with it. Every tool that takes --brand runs with the shipped example and
+        with a brand whose every colour starts with a digit, and waveform draws the brand's
+        background."""
+        work = OUT / "brand_every_tool"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir()
+        clip = tiny_clip(work / "clip.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        wav = work / "a.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=d=1", wav)
+        srt = work / "a.srt"
+        srt.write_text("1\n00:00:00,000 --> 00:00:00,800\nHello\n", encoding="utf-8")
+        example = SCRIPTS.parent / "examples" / "brand.json"
+        digits = json.loads(example.read_text(encoding="utf-8"))
+        digits.update(logo=None, colors={k: "0B1D2A" if k in ("primary", "background") else "1E6F8E"
+                                         for k in digits["colors"]})
+        digit_brand = work / "digit_brand.json"
+        digit_brand.write_text(json.dumps(digits), encoding="utf-8")
+        for brand in (example, digit_brand):
+            project = work / f"audiogram_{brand.stem}.json"
+            project.write_text(json.dumps({"clips": [{"src": str(wav)}], "brand": str(brand), "output": str(work / f"r_{brand.stem}.mp4"),
+                                           "audiogram": {"background": "black", "width": 320, "height": 180}}), encoding="utf-8")
+            cases = [("waveform", ["waveform.py", wav, "--width", "320", "--height", "180"]),
+                     ("caption", ["caption.py", clip, "--srt", srt]),
+                     ("graphics", ["graphics.py", clip, "--template", "lower-third", "--name", "A", "--title", "B"]),
+                     ("overlay", ["overlay.py", clip, "--text", "hi"]),
+                     ("render --template", ["render.py", "--template", "x", clip, "--srt", srt])]
+            for label, argv in cases:
+                for dry in (["--dry-run"], []):
+                    with self.subTest(tool=label, brand=brand.name, dry_run=bool(dry)):
+                        out = work / f"{label.split()[0]}_{brand.stem}.mp4"
+                        doc = json.loads(script(*argv, "--brand", brand, "-o", out, *dry, "--overwrite", "--json").stdout)
+                        self.assertEqual(doc["status"], "completed", doc.get("error"))
+            for dry in (["--dry-run"], []):
+                with self.subTest(tool="render audiogram project", brand=brand.name, dry_run=bool(dry)):
+                    doc = json.loads(script("render.py", project, *dry, "--overwrite", "--json").stdout)
+                    self.assertEqual(doc["status"], "completed", doc.get("error"))
+            for picture in (work / f"waveform_{brand.stem}.mp4", work / f"r_{brand.stem}.mp4"):
+                with self.subTest(background=picture.name):
+                    rgb = subprocess.run(["ffmpeg", "-v", "error", "-i", str(picture), "-frames:v", "1", "-f", "rawvideo",
+                                          "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout[:3]
+                    self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(rgb, (0x0B, 0x1D, 0x2A))), rgb.hex())
+        font_only = work / "font_only_brand.json"  # its colours are the defaults: background 101418
+        font_only.write_text(json.dumps({"font": "DejaVu Sans"}), encoding="utf-8")
+        for dry in (["--dry-run"], []):
+            with self.subTest(tool="waveform", brand=font_only.name, dry_run=bool(dry)):
+                doc = json.loads(script("waveform.py", wav, "--width", "320", "--height", "180", "--brand", font_only,
+                                        "-o", work / "waveform_defaults.mp4", *dry, "--overwrite", "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+        # waveform reads a brand colour as graphics.py does (color_hex()): a colour name or eight
+        # digits in the brand is refused by both, not taken by one and refused by the other
+        for key, value in (("primary", "lime"), ("background", "0B1D2AFF")):
+            odd = work / f"odd_{key}_brand.json"
+            odd.write_text(json.dumps({"colors": {key: value}}), encoding="utf-8")
+            for argv in (["waveform.py", wav, "--width", "320", "--height", "180"],
+                         ["graphics.py", clip, "--template", "lower-third", "--name", "A", "--title", "B"]):
+                with self.subTest(tool=argv[0], brand_colour=value):
+                    proc = script(*argv, "--brand", odd, "-o", work / "odd.mp4", "--dry-run", "--overwrite", "--json",
+                                  expect_fail=True)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual(err["kind"], "input", err)
+                    self.assertIn(value, err["message"])
+
     def test_an_output_named_like_a_file_the_run_reads_is_refused(self):
         """#522 (class: an output named like a file the run reads but does not hand to the writing
         ffmpeg command as -i, so run()'s guard never saw it). sync.py --trim-second's command takes
