@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.22
+
+_Automated release: version and notes generated from pull requests merged since 3.8.21._
+
 ### Fixed
 
 - **`reverse.py` keeps a variable-rate picture with its sound (#523).** `reverse` gives the
@@ -36,6 +42,7 @@
 - Not changed: in a `render.py` project of several clips, `--export-timeline` still sizes the
   sequence from `frame` while the render reframes the join with `fit` (#526); which of the two
   wins is a decision for a minor release, with the options in `docs/design-decisions.md`.
+- fix: variable-frame-rate sources in reverse and freeze, and atempo's early sound in speedramp, fit and audio (#541)
 
 ## 3.8.21
 
