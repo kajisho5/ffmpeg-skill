@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.9.0
+
+_Automated release: version and notes generated from pull requests merged since 3.8.23._
+
 ### Added
 
 - **`fit.py` says where the picture sits in the frame it wrote (#519).** After a reframe
@@ -44,6 +50,7 @@
   folder holding the family in other styles only gets `file: null` and a note, since libass then
   chooses among those and the installed faces. `font_used` names one face: libass draws a glyph
   it lacks from another face, not recorded.
+- feat: fit reports where the picture sits; a still where a clip is expected is refused, stabilize takes RGB input (#543)
 
 ## 3.8.23
 
