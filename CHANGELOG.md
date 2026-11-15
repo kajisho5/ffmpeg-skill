@@ -4,7 +4,34 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`.aif`, `.aiff` and `.caf` outputs are written; a `.wma` output the run would encode into is refused (#517).** The audio
+  extensions the skill reads were wider than the ones it had a codec for, and the rest were taken
+  for a video container: `cut.py` (except a stream copy of PCM), `audio.py`, `silence.py` and
+  `loudness.py` given `-o x.aiff`
+  (or `.aif`, `.caf`) failed inside ffmpeg (`kind: ffmpeg`) after a dry run had planned it, an
+  audio `join.py` refused it as a video container and `render.py`'s podcast delivery as a copied
+  `.mp4`. They are written as 16-bit PCM (`pcm_s16be`, the AIFF and CAF muxers' own codec; a
+  stream copy keeps a PCM source's), lossless like `.wav`, so a bitrate is refused for them. (`cut.py --accurate` reports `precision: sample` for them, as for `.wav`.) `-o
+  x.wma` completed, verified, with H.264 and AAC in an ASF file; a run that would encode into `.wma`
+  is now refused as `kind: input` (reason `output_extension_unsupported`, a hint naming the
+  extensions the tools write), dry runs included, whether the name came from `-o` or a `.wma`
+  input's default, and before `loudness.py`'s and `silence.py`'s measuring pass. A stream copy of
+  WMA sound into `.wma` (`cut.py` without `--accurate`, `--segments` too, and `metadata.py`) is
+  kept, as it was; a copy that `cut.py`'s length check would re-encode is refused instead, the
+  copy removed (`--tolerance -1` keeps it). A copy that fails leaves the file `--overwrite` named untouched. A `render.py` project is
+  refused where it would write a `.wma`: a single uncut WMA clip no stage touches is delivered as it
+  was, and a `--stop-after` preview is not refused for a delivery it does not write. Checked on FFmpeg 6.1.1 by probing the written files
+  (wmav1 and wmav2 sources).
+- **A still picture given to `export.py` or `join.py` is refused as an input, naming `insert.py`
+  (#531).** `export.py STILL` wrote one frame (0.04 s) with `verified: true` in each preset tried
+  (`youtube`, `reels`, `h265`, `prores`, `copy`, and `prores4444` from an RGBA still; `gif` failed
+  in its muxer), and every preset is now refused; `join.py` joined one frame
+  under `--transition none`, refused a transition as "too short" (and planned it in a dry run), and
+  refused `--copy` as a stream mismatch. Each is now the refusal `cut.py` and the others give a still
+  since 3.9.0, a dry run included; `insert.py STILL --duration T` makes the clip. A `render.py`
+  project with a still clip meets it through its join or export stage.
 
 ## 3.9.2
 

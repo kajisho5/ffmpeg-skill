@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
@@ -102,7 +102,7 @@ TEMPLATE_DIR = HERE.parent / "templates"
 PLACEHOLDERS = ("$INPUT", "$OUTPUT", "$CUES", "$SRT", "$LOGO", "$TITLE", "$BRAND", "$CHAPTERS", "$IMAGE")
 # Intermediates follow the delivery's own media kind: an audio-only project (the podcast
 # template) must not carry its stages through .mp4 containers.
-AUDIO_EXT = frozenset({".wav", ".m4a", ".mp3", ".flac", ".aac", ".ogg", ".opus"})
+AUDIO_EXT = frozenset(AUDIO_CODECS)  # the audio-only outputs the tools write, one list (#517)
 
 TEMPLATE = {
     "output": "final.mp4",
@@ -1759,6 +1759,14 @@ def main() -> int:
     # template) carries its stages through the audio container instead of a video one.
     mid = Path(output).suffix.lower() if Path(output).suffix.lower() in AUDIO_EXT else ".mp4"
     ex_cfg = proj.get("export")
+    # .wma, before the copied-container rule below names .mp4 for it (#517). Only a run that reaches
+    # the delivery: a --stop-after preview writes no file under the name. A single uncut clip is
+    # left to the stages (each refuses its own encode into .wma) and to the copy at the end, which
+    # checks what the source really is -- a WMA source no stage touches is delivered as it was.
+    c_only = clips[0] if len(clips) == 1 and isinstance(clips[0], dict) else None
+    if (not args.stop_after or args.stop_after == "export") and not (
+            c_only is not None and c_only.get("in") is None and c_only.get("out") is None):
+        refuse_unwritten_output(output)
     if (not args.stop_after or args.stop_after == "export") and not (isinstance(ex_cfg, dict) and ex_cfg.get("preset")):
         # A84: with no export stage the delivery is the last stage's file copied as it is, so a
         # .webm/.mkv name was MP4 bytes, completed and verified. Refused before the first stage
@@ -2199,6 +2207,8 @@ def main() -> int:
         sh("export.py", *argv, stage="export")
         stages_done.append("export")
     else:
+        if stages_done != ["clips"]:
+            refuse_unwritten_output(output)  # a stage's file, not the WMA source itself (#517)
         refuse_copied_container(Path(current).suffix.lower(), output)  # what the copy really is (A84)
         if not STATE.dry_run:
             place_output(current, output)

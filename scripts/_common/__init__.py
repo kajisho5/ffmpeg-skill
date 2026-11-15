@@ -58,7 +58,7 @@ from _common.runner import (
     ERROR_CODE, ERROR_RETRYABLE, EVEN_SCALE, _execute, _fail, ffmpeg_base, ffmpeg_encoders, ffmpeg_exe, _FFMPEG_RELEASE, _FFMPEG_VERSION,
     ffmpeg_bsfs, ffmpeg_filters, ffmpeg_list_error, require_filter, filter_missing_hint, ffmpeg_release, ffmpeg_version, flush_drawtext_textfiles, INSTALL_HINTS, install_signal_handlers, _is_ffmpeg, _limit_for,
     _odd_dimension_retry, _on_signal, _OutputLock, _pid_dead, place_output, PROBE_TIMEOUT, _progress_line,
-    read_text_or_die, refuse_output_is_input, _remember_output, require_tool, run, run_analysis, _run_captured,
+    read_text_or_die, refuse_output_is_input, refuse_unwritten_output, _remember_output, require_tool, run, run_analysis, _run_captured,
     run_keeping_subtitles, run_tool, _run_with_progress, shell_quote, sibling_temp, still_input_args, _SIGNALS_INSTALLED, _stage_existing_output,
     STATE, _timed_out, _unwatch, _watch, X264_PRESETS
 )
@@ -208,7 +208,7 @@ __all__ = [
     "load_brand", "measured_level_dbfs", "AUDIO_MEDIA_EXT", "MEDIA_EXT", "MissingFpsError", "needs_shaping", "NO_SPACE_SCRIPTS", "NON_BT709_MATRICES",
     "_odd_dimension_retry", "_on_signal", "_output_failed", "_OutputLock", "pad_filters", "parse_time", "_pid_dead",
     "place_output", "_plan_at_exit", "_plan_inputs", "_PLAN_STRIP", "PLAN_VERSION", "PREFERRED_FAMILIES",
-    "print_json", "probe", "PROBE_TIMEOUT", "_progress_line", "read_text_or_die", "refuse_output_is_input",
+    "print_json", "probe", "PROBE_TIMEOUT", "_progress_line", "read_text_or_die", "refuse_output_is_input", "refuse_unwritten_output",
     "_remember_output", "require_tool", "resolve_emoji_assets", "rms_envelope", "run", "run_analysis",
     "decode_gray_frames", "frame_flow", "label_shot_flow", "MOTION_GRID", "MOTION_SEARCH", "MOTION_STATIC_PX", "MOTION_PAN_SPREAD",
     "_run_captured", "run_keeping_subtitles", "run_tool", "_run_with_progress", "_SCRIPT_FONT_CACHE",

@@ -18,6 +18,7 @@ from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
 from _common.runner import read_json
+from _common.probe import AUDIO_MEDIA_EXT
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
 
@@ -1332,10 +1333,20 @@ AUDIO_CODECS = {
     ".aac": ["-c:a", "aac", "-b:a", "256k"],
     ".ogg": ["-c:a", "libvorbis", "-q:a", "6"],
     ".opus": ["-c:a", "libopus", "-b:a", "128k"],
+    # 16-bit PCM as for .wav, big-endian: the AIFF and CAF muxers' own default codec (#517)
+    ".aif": ["-c:a", "pcm_s16be"],
+    ".aiff": ["-c:a", "pcm_s16be"],
+    ".caf": ["-c:a", "pcm_s16be"],
 }
 
 
-LOSSLESS_AUDIO_EXT = {".wav", ".flac"}  # the AUDIO_CODECS whose codec takes no bitrate
+LOSSLESS_AUDIO_EXT = {".wav", ".flac", ".aif", ".aiff", ".caf"}  # the AUDIO_CODECS whose codec takes no bitrate
+
+# Every audio-only extension this skill reads (AUDIO_MEDIA_EXT) that has no codec above: a run
+# that would encode into an output named so is refused before ffmpeg runs, and only a stream copy
+# of WMA sound is written (runner.refuse_unwritten_output(), #517). That is .wma: FFmpeg's ASF
+# muxer took the tools' H.264 and AAC and wrote them under the name, verified.
+UNWRITTEN_AUDIO_EXT = frozenset(AUDIO_MEDIA_EXT - set(AUDIO_CODECS))
 
 
 def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str]:
@@ -1359,7 +1370,8 @@ def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str
 
 
 def is_audio_output(output_path: str) -> bool:
-    """True when the output extension is an audio-only container (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus).
+    """True when the output extension is an audio-only container this skill writes (AUDIO_CODECS:
+    .wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf).
 
     Such a file cannot hold a video stream and, for .wav, cannot hold compressed audio: scripts use
     this to drop the picture (-vn) and to pick the codec from the extension instead of AAC.

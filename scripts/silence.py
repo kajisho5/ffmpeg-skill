@@ -30,7 +30,7 @@ from _common import asr as _asr
 from _common.emit import warn
 from _common.asr import _dicts
 from _common.runner import parse_json, replace_checked, same_file
-from _common import guard_sidecar, refuse_existing_outputs, refuse_output_is_input, _check_output_path
+from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
 from _common.decision import frame_rate, grid_at_or_after, stream_starts
@@ -683,6 +683,8 @@ def main() -> int:
         # the word timings and the filler list are read here, never as an -i: run()'s guard did not
         # see a cut named like one of them (#522's sweep). Before any decode, so a dry run says it too
         refuse_output_is_input(media_out, *[p for p in (args.words, args.filler_words) if p])
+        # the cut is encoded: a .wma name is refused before the detection pass (#517)
+        refuse_unwritten_output(media_out)
 
     if not math.isfinite(args.margin) or args.margin < 0:
         # nan made inside_margin() drop every silence and re-encode the whole file unchanged

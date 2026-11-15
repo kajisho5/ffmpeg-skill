@@ -99,7 +99,8 @@ def rms_envelope(samples: Sequence[float], step: int, *, full_blocks_only: bool 
 
 
 # the audio members of MEDIA_EXT: every audio file this skill reads, a wider set than the audio
-# outputs it writes (AUDIO_CODECS / is_audio_output() -- no .aif, .aiff, .caf or .wma there)
+# outputs it writes (AUDIO_CODECS / is_audio_output() -- no .wma there: an output named so is
+# refused, decision.UNWRITTEN_AUDIO_EXT)
 AUDIO_MEDIA_EXT = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".aif", ".aiff", ".caf", ".wma"}
 MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m2ts", ".mxf", ".3gp", ".wmv", ".gif",
              ".png", ".jpg", ".jpeg", ".webp"} | AUDIO_MEDIA_EXT

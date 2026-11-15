@@ -5414,6 +5414,39 @@ class StillAsClipTests(unittest.TestCase):
         self.assertEqual(err["kind"], "input", err)
         self.assertRegex(err["message"], r"^--at 2 is beyond the --compare clip's duration \(1\.\d\ds\)$")
 
+    def test_a_still_given_to_export_or_join_is_refused(self):
+        """#531, the two items left: export.py STILL wrote one frame (0.04 s) with verified: true
+        in every preset that encodes (and the copy preset), and --preset gif failed in its muxer;
+        join.py with a still joined one frame under --transition none, verified, refused it as
+        too short for a transition (and planned it in a dry run), and refused it under --copy as
+        a stream mismatch. Each is now the kind input refusal naming the still and insert.py,
+        a dry run included, wherever the still stands in the join."""
+        cases = {}
+        for preset, ext in (("youtube", ".mp4"), ("copy", ".mp4"), ("prores", ".mov"), ("gif", ".gif")):
+            cases[f"export {preset}"] = (lambda still, ext=ext, preset=preset: ("export.py", still, "--preset", preset), ext)
+        for flags in (("--transition", "none"), ("--transition", "fade", "--duration", "0.5"), ("--transition", "none", "--copy")):
+            cases[f"join {' '.join(flags)}"] = (lambda still, flags=flags: ("join.py", self.a, still, *flags), ".mp4")
+        cases["join, the still first"] = (lambda still: ("join.py", still, self.a, "--transition", "none"), ".mp4")
+        for still in self.stills:
+            for name, (argv, ext) in cases.items():
+                for dry in ((), ("--dry-run",)):
+                    with self.subTest(case=name, still=still.name, dry_run=bool(dry)):
+                        out = self.dir / f"refused_{re.sub(r'[^a-z0-9]+', '_', name)}_{still.suffix[1:]}{ext}"
+                        out.unlink(missing_ok=True)
+                        doc = json.loads(script(*argv(still), "-o", out, *dry, "--json", expect_fail=True).stdout)
+                        err = doc["error"]
+                        self.assertEqual(err["kind"], "input", err)
+                        self.assertIn(f"{still} is a still picture", err["message"])
+                        self.assertIn("insert.py", doc.get("hint") or err.get("hint") or "")
+                        self.assertFalse(out.exists())
+        # what insert.py makes of the still is a clip, which both take
+        made = self.dir / "still_made_clip.mp4"
+        script("insert.py", self.stills[0], "--duration", "1", "-o", made, "--json")
+        for argv in (("export.py", made, "--preset", "youtube"), ("join.py", self.a, made, "--transition", "none")):
+            with self.subTest(made=argv[0]):
+                out = self.dir / f"made_{argv[0].split('.')[0]}.mp4"
+                self.assertEqual(json.loads(script(*argv, "-o", out, "--json").stdout)["status"], "completed")
+
 
 class FitPictureTests(unittest.TestCase):
     """#519: fit.py reports where the picture sits in the frame it wrote after a reframe, measured
