@@ -5374,6 +5374,36 @@ class FitPictureTests(unittest.TestCase):
         cols = [c for c in range(W) if max(data[c::W][:H]) >= threshold]
         return cols[0], rows[0], cols[-1] - cols[0] + 1, rows[-1] - rows[0] + 1, W, H
 
+    def test_the_picture_measurement_runs_its_filters_on_one_thread(self):
+        """#543 CI (FFmpeg 8.0.1, once in three runs): the white frame's render differed from the
+        black frame's in rows 128-217 of a 360x640 pad, a slice of the frame above the picture, and
+        `picture` said 293 rows for the 203 the file held. The two renders are compared byte for
+        byte, so they run with one filter thread; the measurement is the same on every run."""
+        sys.path.insert(0, str(SCRIPTS))
+        import fit
+        seen = []
+        real = fit.run_analysis
+
+        def spy(cmd, **kw):
+            seen.append(list(cmd))
+            return real(cmd, **kw)
+        fit.run_analysis = spy
+        try:
+            meta = probe(str(self.white))
+            chain = "scale=360:202,pad=360:640:0:218:color=black"
+            boxes = set()
+            for _ in range(5):
+                white = fit._picture_rows(meta, chain, "white", 640, 360, 360 * 640, "yuv420p")
+                black = fit._picture_rows(meta, chain, "black", 640, 360, 360 * 640, "yuv420p")
+                rows = [r for r in range(640) if white[r * 360:(r + 1) * 360] != black[r * 360:(r + 1) * 360]]
+                boxes.add((rows[0], rows[-1]))
+        finally:
+            fit.run_analysis = real
+        self.assertEqual(boxes, {(218, 419)}, "the same rows on every run")
+        for cmd in seen:
+            self.assertEqual(cmd[cmd.index("-filter_threads") + 1], "1", cmd)
+            self.assertLess(cmd.index("-filter_threads"), cmd.index("-i"), "a global option, ahead of the input")
+
     def test_fit_reports_the_picture_rectangle_it_wrote(self):
         # threshold between the fill and the white picture: black bars and a red pad are below
         # 128, the blurred white background is darkened to about 206

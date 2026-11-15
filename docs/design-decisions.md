@@ -5498,7 +5498,12 @@ the slot at 0.519 s, "After 3.8.14").
   the written file on a white source (black or red bars, the darkened blur, a 4:2:2 ProRes line, an
   RGB source, three crop anchors, a portrait source's rows cut) on 6.1.1 only. Code: `fit.measure_picture()`. Tests:
   `test_fit_reports_the_picture_rectangle_it_wrote`,
-  `test_a_picture_measurement_that_fails_is_reported_as_not_measured`.
+  `test_a_picture_measurement_that_fails_is_reported_as_not_measured`. The two frames are
+  compared byte for byte, so they are rendered with `-filter_threads 1`: on FFmpeg 8.0.1 (CI, once
+  in three runs of the red-pad case) the white frame's render differed from the black frame's in
+  rows 128-217 of the 360x640 frame, one slice of rows above the picture, and `picture` said 293
+  rows for the 203 the file held. The cause was not isolated (it did not recur locally on 6.1.1);
+  one thread removes the slices. Test: `test_the_picture_measurement_runs_its_filters_on_one_thread`.
 - **Seen and not changed** (the RGB sweep, `rgb24.mov` (qtrle, PCM) against the same clip in
   H.264): `audio.py`, `loudness.py` and `metadata.py` to `.mp4` stream-copy the qtrle picture,
   which MP4 cannot hold, and fail inside ffmpeg (`kind: ffmpeg`); to `.mov` they complete. That is

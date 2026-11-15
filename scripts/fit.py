@@ -99,7 +99,11 @@ def _picture_rows(path_meta: dict, chain: str, colour: str, sw: int, sh: int, si
     rows of a 4:2:0 frame), and a chain ending in grey would pad in grey."""
     pix = (path_meta.get("video") or {}).get("pix_fmt")
     src = f"color=c={colour}:s={sw}x{sh}:r=1:d=1" + (f",format={pix}" if pix else "")
-    cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i", src,
+    # one filter thread: with slice threads FFmpeg 8.0.1 once gave a white frame's band of rows
+    # (128-217 of 640, a fifth of the frame down to the picture) a value the black frame's did not
+    # have, and the picture was reported 90 rows taller than the file held it (#543 CI)
+    cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-filter_threads", "1",
+           "-f", "lavfi", "-i", src,
            "-vf", chain + (f",format={out_pix}" if out_pix else "") + ",format=gray", "-frames:v", "1", "-f", "rawvideo", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     return proc.stdout if proc.returncode == 0 and len(proc.stdout or b"") == size else None
