@@ -7012,14 +7012,16 @@ class SilentFallbackTests(unittest.TestCase):
         self.assertEqual(self.codes("warnings"), [], "an unclamped CRF records nothing")
 
     def test_run_keeping_subtitles_records_the_first_attempts_error(self):
-        """A subtitle stream the container cannot hold made the first attempt fail; the retry
-        without it was reported only as dropped_non_av_streams: true, with no reason."""
+        """A stream the container cannot hold made the first attempt fail; the retry without it
+        was reported only as dropped_non_av_streams: true, with no reason. A SubRip track into MP4
+        was the case here until #520 converted it (to mov_text); an MP4 timecode (tmcd) data
+        track into Matroska, which takes no data stream, is one no conversion fits."""
         src = self.media()
-        srt = self.tmp / "a.srt"
-        srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
-        subbed = self.tmp / "subbed.mkv"
-        ffmpeg("-i", src, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt", subbed)
-        doc = json.loads(tool("denoise", subbed, "-o", self.tmp / "subbed_dn.mp4", "--fast", "--json").stdout)
+        timed = self.tmp / "timed.mp4"
+        ffmpeg("-i", src, "-map", "0", "-c", "copy", "-timecode", "01:00:00:00", timed)
+        self.assertIn("data", sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+                                 timed).stdout.split(), "fixture: a tmcd data track")
+        doc = json.loads(tool("denoise", timed, "-o", self.tmp / "timed_dn.mkv", "--fast", "--json").stdout)
         self.assertTrue(doc["dropped_non_av_streams"])
         fb = doc["diagnostics"]["fallbacks"][0]
         self.assertEqual(fb["code"], "non_av_streams_dropped")

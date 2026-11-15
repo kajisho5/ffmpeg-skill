@@ -1409,7 +1409,8 @@ class SourceCarryTests(MediaFixtures):
             return doc, codes
 
         # a tool with no field of its own for the loss: listed, and one warning for the content
-        doc, codes = run("crop.py", rich, "--x", "0", "--y", "0", "--width", "160", "--height", "120", "-o", OUT / "carry_crop.mp4")
+        # (crop.py was this case until #520 made it keep the track and report dropped_non_av_streams)
+        doc, codes = run("reverse.py", rich, "-o", OUT / "carry_reverse.mp4")
         carry = doc["source_carry"]
         self.assertIn("subtitles", carry["dropped"], doc)
         self.assertIn("chapters", carry["kept"], doc)

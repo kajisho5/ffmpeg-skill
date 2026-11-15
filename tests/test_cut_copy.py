@@ -443,6 +443,55 @@ class CutJoinTests(unittest.TestCase):
             self.assertTrue(onset, f"{name}: no leading silence, the sound was moved to 0")
             self.assertAlmostEqual(onset[0], late, delta=0.03, msg=name)
 
+    def test_a_copied_audio_extraction_says_it_left_out_a_late_sounds_lead(self):
+        """#515: a stream copy of the sound (-o .m4a without --accurate) starts at its first packet,
+        so the silence before a late sound was left out and the extraction was early against its
+        picture, with nothing in the result but a length 0.355 s short. A copy cannot add silence;
+        it is kept (within --tolerance, as a start that snaps is) and an audio_lead_dropped warning
+        says how much went, for one range and for the --segments part it happened in, in a dry run
+        as in the run. A range that starts after the sound, and --accurate, which pads it, say none."""
+        meta = probe(str(self.late))
+        lead = meta["audio"]["start_time"] - (meta.get("start_time") or 0.0)
+        self.assertGreater(lead, 0.3, "fixture: the sound starts after the file's origin")
+
+        def leads(doc):
+            return [w for w in (doc.get("diagnostics") or {}).get("warnings") or [] if w["code"] == "audio_lead_dropped"]
+        for args, seconds, segments in ((["--start", "0", "--end", "2"], lead, [1]),
+                                        (["--start", "0.1", "--end", "2"], lead - 0.1, [1]),
+                                        (["--segments", "3-4,0-1"], lead, [2])):
+            for dry in ([], ["--dry-run"]):
+                with self.subTest(args=args, dry=bool(dry)):
+                    out = DIR / "late_lead.m4a"
+                    data = cut_json(self.late, *args, *dry, "-o", out, "--overwrite")
+                    self.assertEqual(data["mode"], "copy", data.get("reencode_reason"))
+                    found = leads(data)
+                    self.assertEqual(len(found), 1, (data.get("diagnostics"), data["notes"]))
+                    w = found[0]
+                    self.assertAlmostEqual(w["seconds"], seconds, delta=0.001)
+                    self.assertEqual([s["index"] for s in w["segments"]], segments)
+                    if not dry:
+                        # what the warning says is what the file holds: the sound from its first sample
+                        got = probe(str(out))["duration"]
+                        self.assertAlmostEqual(got, data["requested_duration"] - seconds, delta=0.05)
+        for args in (["--start", "1", "--end", "2"], ["--start", "0", "--end", "2", "--accurate"]):
+            with self.subTest(args=args):
+                self.assertEqual(leads(cut_json(self.late, *args, "-o", DIR / "late_lead.m4a", "--overwrite")), [])
+        # #542 review: the run judges the written length, which is short by a few ms less than the
+        # lead, so a --tolerance between the two keeps the copy and warns; the dry run left the
+        # warning out for any lead of --tolerance or more. It says it, and that a run may re-encode
+        ref = cut_json(self.late, "--start", "0", "--end", "2", "-o", DIR / "late_lead_ref.m4a", "--overwrite")
+        short = ref["requested_duration"] - ref["output_duration"]
+        self.assertLess(short, lead, "fixture: the copy is short by less than the lead")
+        between = (short + lead) / 2
+        for tol, mode in ((between, "copy"), (short / 2, "hybrid")):
+            real = cut_json(self.late, "--start", "0", "--end", "2", "--tolerance", f"{tol:.6f}", "-o", DIR / "late_lead.m4a", "--overwrite")
+            dry = cut_json(self.late, "--start", "0", "--end", "2", "--tolerance", f"{tol:.6f}", "--dry-run", "-o", DIR / "late_lead.m4a", "--overwrite")
+            with self.subTest(tolerance=tol):
+                self.assertEqual(real["mode"], mode, real.get("reencode_reason"))
+                self.assertEqual(len(leads(real)), 1 if mode == "copy" else 0, real.get("diagnostics"))
+                self.assertEqual(len(leads(dry)), 1, dry.get("diagnostics"))
+                self.assertTrue(any("re-encodes and pads it instead" in n for n in dry["notes"]), dry["notes"])
+
     def test_remove_drops_a_leftover_with_no_picture_and_says_so(self):
         """#462 A51: --remove 1-6 of a file whose sound runs 0.3 s past its 6 s picture left 6.0-6.3,
         sound with no frame, and then refused it as "segment 6.000-6.300s is shorter than one frame",
@@ -2450,6 +2499,35 @@ class ProbedStreamTests(unittest.TestCase):
                 codecs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
                             "-of", "csv=p=0", out).stdout.split()
                 self.assertEqual(codecs, [codec])
+
+    def test_a_picture_edit_that_keeps_the_timeline_keeps_the_subtitle_track(self):
+        """#520: a re-encode of the picture that moves no frame kept or dropped the source's
+        subtitle track depending on the tool. fit.py and color.py kept an MP4's mov_text track;
+        crop.py and stabilize.py left it to the default stream selection, which in FFmpeg 6.1 has
+        no MP4 subtitle encoder, and dropped it (a note said so). Every such tool now keeps it
+        through run_keeping_subtitles(), converted where the container takes text in another
+        format (SubRip in Matroska), and reports dropped_non_av_streams: false."""
+        srt = DIR / "keep_sub.srt"
+        srt.write_text("1\n00:00:00,500 --> 00:00:01,500\nhello\n", encoding="utf-8")
+        src = DIR / "keep_sub.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2",
+           "-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-map", "2",
+           "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", "mov_text", src)
+        self.assertEqual([s.get("codec") for s in probe(str(src))["subtitle_stream_details"]], ["mov_text"], "fixture")
+        tools = [("crop", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]),
+                 ("fit", ["--aspect", "1:1", "--fit", "crop"]), ("color", ["--correct"]), ("denoise", [])]
+        if "vidstabdetect" in sh("ffmpeg", "-hide_banner", "-filters").stdout:
+            tools.append(("stabilize", []))
+        for name, args in tools:
+            for ext, codec in ((".mp4", "mov_text"), (".mkv", "subrip")):
+                with self.subTest(tool=name, ext=ext):
+                    out = DIR / f"keep_sub_{name}{ext}"
+                    doc = json.loads(script(f"{name}.py", src, *args, "--fast", "-o", out, "--overwrite", "--json").stdout)
+                    self.assertIs(doc["dropped_non_av_streams"], False)
+                    self.assertNotIn("subtitles", (doc.get("source_carry") or {}).get("dropped") or [])
+                    codecs = sh("ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name",
+                                "-of", "csv=p=0", out).stdout.split()
+                    self.assertEqual(codecs, [codec])
 
     def test_crop_and_stabilize_write_the_picture_they_measured(self):
         out = DIR / "multi_crop.mp4"

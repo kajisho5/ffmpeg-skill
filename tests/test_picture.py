@@ -2416,6 +2416,37 @@ class PictureTests(MediaFixtures):
         proc = script("overlay.py", self.src, "--image", self.logo, "--fade", "0.5", "--end", "5", "--dry-run")
         self.assertIn("fade=t=out:st=4.500", proc.stderr)
 
+    def test_overlay_fade_out_longer_than_its_window_is_cut_to_it(self):
+        """#517: --fade N with --end E <= N left the image layer's fade-out out entirely: it faded in
+        and vanished at full strength at E. A fade-out longer than the window is cut to the window
+        (audio.py and cut.py cap theirs so), for an image and a text layer alike: each frame's layer
+        brightness peaks inside the window and is at most half that on its last frame (at full strength,
+        the peak itself, before)."""
+        d = OUT / "overlay_fade_cap"
+        d.mkdir(parents=True, exist_ok=True)
+        black, white = d / "black.mp4", d / "white.png"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=25:d=3",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", black)
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=320x180", "-frames:v", "1", white)
+        for layer in (["--image", str(white)], ["--text", "IIII", "--font-size", "120", "--box"]):
+            for window in (["--end", "1"], ["--end", "0.8"], ["--start", "0.5", "--end", "1"]):
+                with self.subTest(layer=layer[0], window=window):
+                    out = d / f"cap{layer[0]}{'_'.join(window)}.mp4"
+                    script("overlay.py", black, *layer, "--position", "center", *window, "--fade", "1",
+                           "--fast", "-o", out, "--overwrite")
+                    start, end = (0.0 if len(window) == 2 else float(window[1])), float(window[-1])
+                    stats = sh("ffmpeg", "-v", "error", "-i", out, "-vf",
+                               "format=gray,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=-",
+                               "-f", "null", "-").stdout
+                    rows = list(zip(map(float, re.findall(r"pts_time:([0-9.]+)", stats)),
+                                    map(float, re.findall(r"YMAX=([0-9.]+)", stats))))
+                    inside = [y for t, y in rows if start <= t < end]
+                    self.assertTrue(inside, stats[:300])
+                    peak = max(inside)
+                    self.assertGreater(peak, 30, "the layer shows inside its window")
+                    self.assertLess(inside[-1] - 16, (peak - 16) * 0.5,
+                                    f"the layer leaves at --end faded out, not at full strength: {inside}")
+
     def test_filter_paths_with_drive_colon_spaces_and_unicode(self):
         """subtitles= / ass= / lut3d=file= / fontfile= take a path with a colon, spaces and non-ASCII.
 

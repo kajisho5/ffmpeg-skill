@@ -495,6 +495,7 @@ DIAGNOSTIC_CODES = {
     "hdr10_metadata_dropped": ("warnings", "a PQ output measured without the source's HDR10 mastering-display and/or content-light metadata (an encoder with no option for it, e.g. prores_ks or libaom on FFmpeg before 7); {dropped, codec}"),
     "source_items_dropped": ("warnings", "the written file lacks a subtitle track, chapters, a cover picture, surround channels, attached files or a second video stream the first input carried (source_carry lists everything kept and dropped, tags included); not repeated for a subtitle track the tool already reports through dropped_non_av_streams; {dropped}"),
     "audio_tracks_dropped": ("warnings", "the source has more audio tracks than the output kept (the tools write one; cut.py also reports dropped_audio_streams). Not compared when two or more inputs have sound (grid --audio-from, a mix): which source the output carries is the tool's choice; {source, kept, dropped}"),
+    "audio_lead_dropped": ("warnings", "cut.py: an audio-only stream copy of a source whose sound starts after --start (by at least one frame of its picture) begins at the sound's first packet, so that much silence is left out and the extraction is early against the picture; kept as a copy within --tolerance, as a start that snaps is (--accurate pads it); a dry run reports it from the source, also where a run may re-encode instead (length_unjudged); {seconds: the total, segments: [{index, seconds}]}"),
     "grid_no_drawtext": ("fallbacks", "grid.py --label auto on a build without the drawtext filter: the cells were not labelled, as with --label none"),
     "scenes_sheet_no_drawtext": ("fallbacks", "scenes.py --sheet on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
     "look_no_drawtext": ("fallbacks", "look.py on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
@@ -616,9 +617,9 @@ FONT_USED_SCHEMA = {
 
 
 # the tools whose --json carries `dropped_non_av_streams` (a test reads the sources)
-NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "cut", "deinterlace", "denoise", "export", "fit", "freeze",
+NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "crop", "cut", "deinterlace", "denoise", "export", "fit", "freeze",
                                  "graphics", "join", "loudness", "overlay", "pad", "proxy", "redact", "speedramp",
-                                 "sphere", "straighten"})
+                                 "sphere", "stabilize", "straighten"})
 
 
 # Top-level keys a tool emits that its own branch in output_schema() does not list (#466 A194: the

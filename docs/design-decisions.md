@@ -99,6 +99,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.19 — a brand colour that starts with a digit (#535)](#after-3819--a-brand-colour-that-starts-with-a-digit-535)
 - [After 3.8.20 — the decided items of #510](#after-3820--the-decided-items-of-510)
 - [After 3.8.21 — variable-frame-rate sources in reverse, speedramp and freeze, and the timeline of several clips (#523, #526)](#after-3821--variable-frame-rate-sources-in-reverse-speedramp-and-freeze-and-the-timeline-of-several-clips-523-526)
+- [After 3.8.22 — streams kept: a late-starting sound, audio-only extensions and subtitle tracks (#515, #517, #520)](#after-3822--streams-kept-a-late-starting-sound-audio-only-extensions-and-subtitle-tracks-515-517-520)
 <!-- contents:end -->
 
 ## Time limits
@@ -517,9 +518,10 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_path_with_a_line_break_never_reaches_a_concat_list`.
 - **Subtitle/data tracks are kept where the picture's timeline is untouched and dropped where
   it is retimed; both cases report `dropped_non_av_streams`.** Tools that re-encode the picture
-  or audio in place (`fit`, `color`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
-  `deinterlace`, `denoise`, `freeze` holding the last frame) try `run_keeping_subtitles()` first and
-  report `false` unless the container refused the track. `export` does the same with its own
+  or audio in place (`fit`, `color`, `crop`, `stabilize`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
+  `deinterlace`, `denoise`, `redact`, `sphere`, `straighten`, `freeze` holding the last frame) try
+  `run_keeping_subtitles()` first, a text track converted to the container's own format as
+  `export` converts it (since #520), and report `false` unless the container refused the track or a data stream mapped beside it (the retry drops both). `export` does the same with its own
   ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
   .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
   timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
@@ -4316,7 +4318,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   an audio output ends in `aresample=async=1:first_pts=0` instead of `asetpts=PTS-STARTPTS`.
   Not covered: a stream copy of the sound (`-o part.m4a` without `--accurate`) still starts at its
   first packet (`make_zero`). A copy cannot add silence, and leaving the timestamp in place
-  (measured without `make_zero`) did not give a decoder a leading gap either. Test:
+  (measured without `make_zero`) did not give a decoder a leading gap either. Since #515 the
+  result says so (the "After 3.8.20" section). Test:
   `test_an_audio_extraction_keeps_a_late_sounds_offset`.
 - **`--remove` does not keep a leftover with no picture (A51).** `--remove 1-6` of a 6 s picture
   with 6.3 s of sound left 6.0-6.3, which was then refused as "segment 6.000-6.300s is shorter than
@@ -5307,3 +5310,64 @@ the slot at 0.519 s, "After 3.8.14").
   issue names (the rendered file's size against the exported sequence's) over one and several
   clips and the three render gaps under "The sequence is the project's frame" closed with it. No
   code changes here.
+
+## After 3.8.22 — streams kept: a late-starting sound, audio-only extensions and subtitle tracks (#515, #517, #520)
+
+- **A copied audio extraction that leaves out a late sound's lead is kept as a copy and says so**
+  (#515). `cut.py --start 0 --end 2 -o x.m4a` of a source whose sound starts 0.254 s after the
+  file's origin wrote 1.765 s that start with the sound: a stream copy begins at the first packet
+  and cannot add silence, so the extraction is that much early against the picture. The result
+  said only that it was 0.235 s short (`duration_delta_seconds`), which reads as an end that
+  landed on a packet. It is not re-encoded: a copy's start that is off by less than `--tolerance`
+  is kept and reported (a keyframe snap is, `start_snapped`), and a copy that comes out
+  `--tolerance` or more short is re-encoded by the length check, which pads the sound from the
+  start (A46). The check judges the written length, not the lead: the copy is short by up to a
+  packet less than the lead (0.351 s for a lead of 0.355 s, 0.235 s for 0.254 s), so a
+  `--tolerance` between the two keeps the copy and its warning (#542 review). What changed is that the run says it: an `audio_lead_dropped` warning
+  (`{seconds, segments: [{index, seconds}]}`, the total and each `--segments` part it happened
+  in) and a `notes` line naming `--accurate`, which keeps the lead. A dry run reports it too, from
+  the source's stream starts, whatever `--tolerance` is: it cannot know the written length, so
+  for a lead of `--tolerance` or more its note says a run re-encodes and pads instead when the
+  copy comes out `--tolerance` or more short (`length_unjudged`). It left the warning out
+  there, where a run with `--tolerance 0.353` kept the copy and gave it. It is reported from one frame of the source's picture (an offset
+  under a frame cannot be seen against it), and for the part a re-cut replaced not at all. Not
+  changed, and not decided here: whether the copy should instead re-encode whenever it would drop
+  a lead (a lossy re-encode of AAC that `--accurate` already offers). Code: `cut.copied_lead()`,
+  `cut.cut_one()`, `cut.main()`. Test: `test_a_copied_audio_extraction_says_it_left_out_a_late_sounds_lead`.
+- **A picture edit that keeps the timeline keeps the subtitle track, converted where the container
+  needs it** (#520). `crop.py` and `stabilize.py` left subtitles to FFmpeg's default stream
+  selection, which in FFmpeg 6.1 picks no subtitle stream for an MP4 output (it has no default MP4
+  subtitle encoder), so an MP4's mov_text track was dropped where `fit.py` and `color.py` kept it.
+  Both now map the picture and sound `probe()` describes and run through
+  `run_keeping_subtitles()`, as the entry "Subtitle/data tracks are kept where the picture's
+  timeline is untouched and dropped where it is retimed" says. That helper copied every track,
+  so a container change (mov_text into `.mkv`, SubRip into `.mp4`) failed the copy and the retry
+  dropped the track; it now converts a text track to the container's own format
+  (`subtitle_codec_for()`, export.py's rule and the one a crop of several tracks already used), so
+  a track that crosses a container keeps its cues in every tool that uses the helper, unless
+  another stream fails the same attempt (below). Crop's
+  default selection had written a Matroska output's track as ASS (from mov_text or SubRip); it is
+  SubRip now, as in `fit` and `export`, and a SubRip track into MP4, which it dropped, is mov_text. A track no conversion fits (a bitmap track in MPEG-4) or a data
+  stream the container refuses (a tmcd track into Matroska, and on FFmpeg 6.1.1 a copied tmcd track
+  into MP4 as well: "Could not find tag for codec none") still fails the first attempt, and the
+  retry drops every subtitle and data stream, with `non_av_streams_dropped` saying why; so an MP4
+  with a start timecode and a mov_text track still loses the track in `crop` as in `color`;
+  `export.py`'s own ladder keeps the subtitles past a refused data stream, the helper does not.
+  The sweep (`tests/sweep.py` with an MP4 holding one mov_text track against a plain clip) left,
+  after the fix, `caption` (a burn), `waveform`, the copy `cut`, `loop`, `reverse` and `silence`
+  dropping the track with the `source_items_dropped` warning, and `cut --accurate`, `fit
+  --duration`, `freeze` inside the clip and `speedramp` with `dropped_non_av_streams: true`. The
+  last four and the copy cut, `loop`, `reverse` and `silence` move the timeline (decided). A burn
+  and a waveform keep it, so they fall under the rule too; they are left for a decision of their
+  own (#520): a burn may be of the very cues the track holds. Code: `crop.main()`,
+  `stabilize.main()`, `runner.run_keeping_subtitles()`, `runner.subtitle_codec_args()`. Tests:
+  `test_a_picture_edit_that_keeps_the_timeline_keeps_the_subtitle_track`,
+  `test_run_keeping_subtitles_records_the_first_attempts_error`.
+- **An overlay's fade-out is cut to the layer's window** (#517). `overlay.py --fade N` with
+  `--end E` where `E <= N` left the image layer's fade-out out (it was written only when `E > N`),
+  so the layer faded in and vanished at full strength; with a window shorter than `N` the fade-out
+  started before the layer was shown. The fade-out is now `min(N, E - start)` and starts that long
+  before `E`, for an image and a text layer alike, as `audio.py` caps its fade-outs and `cut.py`
+  its declick fades. The fade-in keeps its asked length; where the two overlap, the layer peaks
+  below full strength, as before for text. Code: `overlay.fade_out_length()`, `overlay.alpha_expr()`.
+  Test: `test_overlay_fade_out_longer_than_its_window_is_cut_to_it`.
