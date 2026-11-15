@@ -1348,6 +1348,30 @@ def check_brand_keys(data: Dict[str, Any], path: str) -> None:
              'export.py\'s preset, or a render project\'s "loudness")')
 
 
+BRAND_FILE_KEYS = ("logo", "font_file")  # the brand keys that name a file a tool reads
+
+
+def brand_asset_files(path: str) -> List[Tuple[str, str]]:
+    """(key, path) of each file a brand file names (logo, font_file), resolved as load_brand()
+    resolves them: against the brand file's own directory. What a cache key must hash beside the
+    brand file's own bytes, since a logo or a font replaced under its name changes the output
+    (render.py --cache; batch.py's side inputs, #510 review). A brand file that cannot be read
+    names nothing here; the tool refuses it when it runs."""
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    base = Path(path).resolve().parent
+    out: List[Tuple[str, str]] = []
+    for key in BRAND_FILE_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            out.append((key, value if os.path.isabs(value) else str(base / value)))
+    return out
+
+
 def load_brand(path: Optional[str]) -> Dict[str, Any]:
     """Load brand.json (fonts, colours, logo, safe margins, caption defaults); missing keys fall back to defaults."""
     import copy

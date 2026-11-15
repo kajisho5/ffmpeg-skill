@@ -4,7 +4,72 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **The decided items of #510.**
+  - A real `render.py` run is refused before its first stage when its `--dry-run` finds that a
+    stage needs a filter or an encoder this ffmpeg build lacks, with the document the dry run gives
+    (kind, message, `reason: filter_missing` or `encoder_missing`, `details`, hint, `stage`). It cut and fit the
+    footage first and failed at the stage that needed the filter (`--template reels --title T` on a
+    build without drawtext ran `fit.py` before `graphics.py` was refused). A real run now runs its
+    own dry run first, about a second for a template render. `waveform.py` with `--title`,
+    `--srt` or `--text` does the same: it encoded the visualisation before its title stage was
+    refused.
+  - `cut.py --dry-run` says that a planned stream copy may still be re-encoded: the new
+    `possible_reencode_reason` lists the `reencode_reason` values a real run may add to a plan of
+    `mode: copy` (`tolerance` where the copy is judged by its written length, since the dry run
+    does not know where a single copy lands; `copy_failed`, `stream_lost`, and `concat_fallback`
+    for a `--segments` copy join) or `smart` (`smart_fallback`), and a `notes` line says the same.
+    It is `[]` in a real run. The dry run still reads no packets for a single segment.
+    `batch.py --dry-run`'s summary line says its stream copies are planned, not that they stayed
+    lossless.
+  - `look.py` on an HDR source in a build without zscale stays a refusal (`filter_missing`, dry and
+    real); a test now pins it.
+- **The four #429 items of #510, as decided.**
+  - `batch.py`: a step that names no `{out}` (and no `-o` of its own) but writes its default output
+    is refused (`kind: input`, `reason: step_writes_without_out`, naming the file) and the batch
+    stops at that item; the later rows are `skipped: "recipe_refused"`. `metadata.py {in}` as a first
+    step wrote `<stem>_meta.mp4` beside the source, the next step read the untagged source, the run
+    completed verified, and the next run took the new file for an item. A dry run says so with
+    nothing written; a real run has written that one file and says where. A step that only reads
+    (its `output` is null: `check.py`, `probe.py`) is unchanged.
+  - `render.py` delivers the SRT its captions stage generates from a `captions.text` cue file as
+    `<output>.srt` (`caption_srt`), guarded with the output before the first stage; it was removed
+    with the work directory. It is not delivered, with a `caption_srt_not_delivered` skip, when the
+    stage came from `--cache` or the export trimmed the delivery (its cue times would be wrong).
+    `batch.py` names a side file a step before the last wrote beside its intermediate (a
+    `batch_side_file_not_delivered` skip) instead of losing it without a word.
+  - `batch.py`'s cache keys a side input a step builds from the first step's `{in}`
+    (`--image {in}.png`) by its content, per item: an edited file was served its old output. One
+    built from a later step's `{in}` (an intermediate) cannot be keyed, so that item always runs
+    (`cache_miss.reason: side_input_unresolved`). `render.py --cache` also keys the logo and font file
+    a stage's `--brand` file names: a font replaced under the same name was served from the cache.
+  - An interrupted render says what it kept: Ctrl-C during the export's `--normalize` loudness pass
+    reported "nothing was written" with the export's file at the output path; the file is now named
+    as kept, unverified (`output`), while a file that was there before and that the stage did not
+    change is not claimed. The work directory's files are no longer listed as "still on disk" when
+    the directory is removed at exit. A `batch.py` row stopped in its last step names such a file
+    as `kept`.
+  - A second signal during the stop (Ctrl-C reaches the whole process group, and the parent then
+    sends SIGTERM) is ignored instead of raising from inside the cleanup the first one started; it
+    left the output lock and its `.takeover` file beside the output.
+  - From the review of #537: the up-front check of a render (and `waveform.py`) ran when the input
+    came after `--` (its `--dry-run --json` were appended after it and refused, and the check was
+    skipped); `batch.py` steps, an executed plan and the MCP server's raw `argv` put the flags they
+    add before a `--` too, where a batch step with `--` was refused. `--srt FILE:LANG` in a batch step
+    is keyed by FILE (the whole token was hashed as a path that does not exist). A batch cache entry
+    stored before the `{out}` check, for a recipe with a step that names no `{out}`, is not served
+    once (`cache_miss.reason: entry_predates_output_check`), so such a recipe meets the refusal. A
+    stopped `project` recipe item names a delivery its render kept (`kept`). A second signal to
+    `batch.py` keeps the first one's exit code and report. A render whose `--work` holds the output
+    watches the export too. `cut.py --dry-run` names `tolerance` for an audio-only copy as well.
+  - From the second review of #537: a batch step's `--brand` file (literal or built from `{in}`) is
+    keyed with the logo and font file it names, as a render stage's and a project recipe's are. An
+    item whose source or a side input changed while it ran is not cached
+    (`batch_cache_inputs_changed`): it was stored under the key made before, and restoring the old
+    file served an output made from the changed one. A stop after a render delivered its SRT reports
+    the video as `output` (the SRT is still named as kept). `batch.py --dry-run` rows carry
+    `cut_possible_reencode_reason`, which the summary line points at.
 
 ## 3.8.20
 

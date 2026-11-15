@@ -42,6 +42,7 @@ from _common import (add_common, apply_common, aac_args, color_hex, default_outp
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, warn
+from _common.runner import refuse_missing_components_first
 from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
 
@@ -261,6 +262,10 @@ def main() -> int:
         drawn_track = audio_streams[args.audio_stream] if audio_streams else meta["audio"]
         cmd += ["-t", length_output_t(float(meta["duration"]), drawn_track.get("sample_rate"))]
     cmd += ["-shortest", render]
+    if args.title or args.srt or args.text:
+        # #510: the title and captions are later stages; one that needs a filter this build lacks
+        # (drawtext, subtitles) is refused before the visualisation is encoded, as the dry run is
+        refuse_missing_components_first(os.path.abspath(__file__), "stage's filters and encoders")
     titled_tmp = sibling_temp(output, "titled")
     intermediates = [p for p in (render, titled_tmp) if p != output]
     try:

@@ -7076,6 +7076,26 @@ class BuildComponentPreflightTests(unittest.TestCase):
                     self.assertIn("doctor", err["hint"])
                     self.assertFalse(out.exists(), "a refused run writes nothing")
 
+    def test_an_hdr_contact_sheet_without_zscale_is_refused(self):
+        """#510, decided: look.py has no HDR path without zscale (the other PQ/HLG-capable filters
+        a build may have are GPU ones: libplacebo, tonemap_opencl, tonemap_vaapi), so an HDR sheet
+        on such a build is refused, dry and real, with filter_missing, and nothing is written."""
+        if not self.x265:
+            self.skipTest("this build has no libx265 to make the HDR input with")
+        if "zscale" not in self.filters:
+            self.skipTest("this build has no zscale to hide")
+        for dry in (["--dry-run"], []):
+            with self.subTest(dry_run=bool(dry)):
+                self.runner._FILTERS = self.filters - {"zscale"}
+                self.runner._ENCODERS = self.encoders
+                out = OUT / f"pre_look_hdr_{'dry' if dry else 'real'}.png"
+                out.unlink(missing_ok=True)
+                code, doc = self._run("look", [self.hdr, "-o", out, "--json"] + dry)
+                self.assertEqual((code, doc["status"]), (1, "failed"), doc)
+                err = doc["error"]
+                self.assertEqual((err["kind"], err["reason"], err["details"]), ("ffmpeg", "filter_missing", {"name": "zscale"}), err)
+                self.assertFalse(out.exists(), "a refused run writes nothing")
+
     def test_an_encoder_for_a_stream_the_output_does_not_have_is_not_required(self):
         """ffmpeg opens an encoder per output stream, after stream selection: cut.py --accurate names
         -c:a aac for a video-only source too, and a build without AAC encodes that source; with sound

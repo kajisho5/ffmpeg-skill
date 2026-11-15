@@ -1526,6 +1526,11 @@ class SmartCutTests(unittest.TestCase):
         params = probe_mod.run([probe_mod.require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
                                 "stream=profile,has_b_frames,pix_fmt", "-of", "csv=p=0", str(out)], quiet=True).stdout.strip()
         self.assertEqual(sorted(params.split(",")), ["2", "High", "yuv420p"])
+        # #510: its plan checks nothing (smart.checks null), so it names the fallback a real run may take
+        plan = json.loads(script("cut.py", self.bsrc, "--start", "1.3", "--end", "4.6", "--smart", "-o", out,
+                                 "--json", "--dry-run").stdout)
+        self.assertEqual((plan["mode"], plan["possible_reencode_reason"]), ("smart", ["smart_fallback"]))
+        self.assertEqual(data["possible_reencode_reason"], [])
 
     def test_smart_cut_to_the_end_copies_the_last_gop(self):
         """#462 A44: a cut that runs to the end of the video stopped its copy at the last keyframe and
@@ -2543,6 +2548,55 @@ class DryRunOutputTests(unittest.TestCase):
                 self.assertIsNone(d["duration_delta_seconds"])
                 self.assertEqual(d["expected_duration"], 2.0)
                 self.assertEqual(out.read_bytes() if existing else None, before, "a dry run writes nothing")
+
+    def test_a_planned_copy_says_a_real_run_may_re_encode_it(self):
+        """#510: the dry run planned `mode: copy` for a cut the real run re-encodes because its copy
+        lands past --tolerance; the dry run reads no packets for one segment, so it cannot place the
+        copy. The plan now names what a real run may still re-encode it for, and a real run's
+        reason is one of those; a plan that already re-encodes names nothing."""
+        src = DIR / "dry_gop_src.mp4"
+        if not src.exists():  # one keyframe every 10 s: a copy from 4 s starts at 0
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s={W}x{H}:r={FPS}:d=12", "-f", "lavfi", "-i",
+               "sine=f=440:d=12", "-c:v", "libx264", "-g", "300", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        out = DIR / "dry_gop.mkv"
+        cases = (  # extra flags, the plan's mode, what it may still become, tolerance named
+            ([], "copy", True),
+            (["--tolerance", "-1"], "copy", False),
+            (["--accurate"], "accurate", False),
+        )
+        for extra, mode, tolerance in cases:
+            with self.subTest(flags=extra):
+                out.unlink(missing_ok=True)
+                plan = json.loads(script("cut.py", src, "--start", "4", "--end", "8", "-o", out, *extra, "--dry-run", "--json").stdout)
+                self.assertEqual(plan["mode"], mode)
+                possible = plan["possible_reencode_reason"]
+                self.assertEqual("tolerance" in possible, tolerance, possible)
+                self.assertEqual(bool(possible), mode == "copy", possible)
+                said = [n for n in plan["notes"] if n.startswith("planned as a stream copy")]
+                self.assertEqual(len(said), int(mode == "copy"), plan["notes"])
+                if tolerance:
+                    self.assertIn("--tolerance", said[0])
+                real = json.loads(script("cut.py", src, "--start", "4", "--end", "8", "-o", out, *extra, "--json").stdout)
+                self.assertEqual(real["possible_reencode_reason"], [])
+                if mode == "copy":
+                    # what the real run did is either the planned copy or one of the named reasons
+                    self.assertTrue(set(real["reencode_reason"]) <= set(possible), (real["reencode_reason"], possible))
+                if tolerance:
+                    self.assertEqual((real["mode"], real["reencode_reason"]), ("hybrid", ["tolerance"]))
+        out.unlink(missing_ok=True)
+        # review of #537: an audio-only copy is judged by its written length too, and its plan left
+        # tolerance out (it returned before the dry run's note of what is still unjudged)
+        m4a = DIR / "dry_gop.m4a"
+        for dry in (True, False):
+            m4a.unlink(missing_ok=True)
+            doc = json.loads(script("cut.py", src, "--start", "4", "--end", "8", "--tolerance", "0", "-o", m4a, "--json",
+                                    *(["--dry-run"] if dry else [])).stdout)
+            if dry:
+                self.assertEqual(doc["mode"], "copy")
+                self.assertIn("tolerance", doc["possible_reencode_reason"])
+            else:
+                self.assertEqual((doc["mode"], doc["reencode_reason"]), ("hybrid", ["tolerance"]))
+        m4a.unlink(missing_ok=True)
 
     def test_probe_of_an_output_under_dry_run_is_the_stub_whether_or_not_a_file_is_there(self):
         import _common
