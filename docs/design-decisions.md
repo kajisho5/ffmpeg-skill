@@ -101,6 +101,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.21 — variable-frame-rate sources in reverse, speedramp and freeze, and the timeline of several clips (#523, #526)](#after-3821--variable-frame-rate-sources-in-reverse-speedramp-and-freeze-and-the-timeline-of-several-clips-523-526)
 - [After 3.8.22 — streams kept: a late-starting sound, audio-only extensions and subtitle tracks (#515, #517, #520)](#after-3822--streams-kept-a-late-starting-sound-audio-only-extensions-and-subtitle-tracks-515-517-520)
 - [After 3.8.23 — a still where a clip is expected, RGB input to stabilize, and where fit puts the picture (#531, #519)](#after-3823--a-still-where-a-clip-is-expected-rgb-input-to-stabilize-and-where-fit-puts-the-picture-531-519)
+- [After 3.9.0 — caches read in a dry run and stored after the inputs changed (#540)](#after-390--caches-read-in-a-dry-run-and-stored-after-the-inputs-changed-540)
 <!-- contents:end -->
 
 ## Time limits
@@ -5524,3 +5525,42 @@ the slot at 0.519 s, "After 3.8.14").
   every tool (name the BT.2020 matrix in the conversion and tag `bt2020nc` for an RGB picture),
   with `fold_bt709_matrix()` and the alpha line's #496 rule to change with it; not done in a
   stabilize change, where a matrix of its own would be a second convention.
+## After 3.9.0 — caches read in a dry run and stored after the inputs changed (#540)
+
+- **A batch dry run serves a cache hit as the real run does, and its summary says those cuts apart.**
+  A dry run without `--force` served an entry a real run had stored: its row (`cached: true`)
+  carries that run's measured `cut_reencoded` and no `cut_possible_reencode_reason`, and the
+  summary line counted those calls as planned re-encodes and pointed at the field the row lacks.
+  Planning the item instead was tried and not kept: its last step meets the output the earlier run
+  delivered and is refused `output_exists` without `--overwrite`. Which earlier deliveries a run may
+  replace is known per process, so a real `--force` run is refused the same way. The real run serves
+  the entry and never meets that refusal, so a planned row would show a failure the real run does
+  not have. The dry run therefore reports what the real run does. The line counts the planned calls
+  (`cut_possible_reencode_reason` on those rows) apart from the calls of rows a real run serves from
+  the cache, as the run that stored them measured them. `cut_stream_copy` counts both, as a real
+  run's does. Such a row's `verified` is the stored run's, not false: the contract's "false under
+  --dry-run" now names that exception, and the contract's dry-run line for batch says that a served
+  item runs no step. `render.py --dry-run` with `--cache` already did the same: a stage it would
+  serve is listed in `cache.would_hit` and is not run, and `cache_lookup()` returns before it
+  replays the stored result, so nothing a real run measured is shown as planned. Code:
+  `batch.main()` (the summary). Test: `test_a_batch_dry_run_says_a_cached_row_s_cuts_apart_from_its_plans`.
+- **A render stage is stored only under the key its inputs still have.** `sh()` made the stage's key
+  before the child ran and stored the artifact under it after. A `--brand` logo or font, or any
+  input file, changed in between was drawn and stored under the old file's key, and putting the old
+  file back (a copy that keeps its mtime) served the new one. The key is now made again when the
+  stage ends, from the same arguments, hashing the same files it hashed before the stage, so a file
+  the stage itself writes beside its output does not count. When it differs, nothing is stored and a
+  `cache_inputs_changed` skip names the stage; the next run makes it again. The check is the key
+  at the stage's two ends: an input changed and put back before the stage ends, with the same
+  fingerprint, is not seen (the child may have read the changed file). This is the rule
+  `batch.py`'s `store()` follows since #537. Code: `render.sh()`, `cache_key(files=)`. Test:
+  `test_a_render_stage_whose_brand_logo_changed_while_it_ran_is_not_cached` (a hook in
+  `run_tool()` rewrites the logo before the real `overlay.py` child starts).
+- **The sweep.** The caches that persist between runs are `batch.py`'s item cache and
+  `render.py --cache`; both are now read in a dry run as the real run reads them, and both store
+  under a key made after the work. Seen and not changed: `verify.py` and `proxy.py` keep no cache.
+  The ASR model files under `~/.cache` are downloads, not stored results. The rest are memos that
+  live for one process and store no artifact: `cut.py`'s keyframe landings and packet reads (keyed
+  by path), the ffprobe banner, the owned-files snapshot, and the font and emoji lookups. A file
+  replaced while one process runs is outside what they claim.
+

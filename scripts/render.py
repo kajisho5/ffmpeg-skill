@@ -778,7 +778,8 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         # The destination is where this stage's answer goes, not part of the question: hashing it
         # would make a second run with the first run's output already on disk miss every time.
         key_args = ["<out>" if a == dest else a for a in full]
-        key = cache_key(stage, script, key_args, inputs, dest)
+        key_files = {a for a in key_args if os.path.exists(a)}  # the files the key hashes, again at the store
+        key = cache_key(stage, script, key_args, inputs, dest, key_files)
         if cache_lookup(stage, key, dest, Path(script).stem):
             CACHE["hits"].append(stage)
             info(f"→ {script} {stage}: served from --cache")
@@ -853,8 +854,15 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         _record_own_stage_file(dest)
     if outside:
         unwatch_destination(dest)
-    if key:
-        cache_store(stage, key, out_path or (dest or ""), time.time() - started, doc)
+    if key and not STATE.dry_run:
+        # the key was made before the child ran: an input, a --brand file's logo or font edited
+        # while it ran made an artifact the key does not describe, and putting the old file back
+        # (a copy that keeps its mtime) would have served it (#540, as batch's store() does since #537)
+        if cache_key(stage, script, key_args, inputs, dest, key_files) != key:
+            record_skip(f"cache: the {stage} stage's inputs changed while it ran, so its artifact is not stored "
+                        "(the next run makes it again)", "cache_inputs_changed", stage=stage)
+        else:
+            cache_store(stage, key, out_path or (dest or ""), time.time() - started, doc)
     return out_path
 
 
@@ -1006,7 +1014,7 @@ def ffmpeg_banner() -> str:
 
 
 def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[str]",
-              dest: "Optional[str]" = None) -> str:
+              dest: "Optional[str]" = None, files: "Optional[set]" = None) -> str:
     """sha1 of a canonical description of exactly what this stage is about to do.
 
     The ffmpeg build banner and the skill version are IN the key, deliberately: a different build
@@ -1022,10 +1030,15 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
     The output's extension is in the key as well (#15): the artifact is stored as `<key><ext>`
     while the sidecar is `<key>.json`, so two runs differing only in container would otherwise
     share one sidecar and invalidate each other on every run.
+
+    `files`: the arguments hashed as files (default: those that exist now). sh() passes the set it
+    keyed before the stage ran when it makes the key again after, so a file the stage itself wrote
+    beside its output does not change the key (#540).
     """
     payload = {
         "stage": stage, "tool": script,
-        "args": [_content_hash(str(a)) if os.path.exists(str(a)) else str(a) for a in argv],
+        "args": [_content_hash(str(a)) if (str(a) in files if files is not None else os.path.exists(str(a))) else str(a)
+                 for a in argv],
         "inputs": [{"hash": _content_hash(p)} for p in inputs],
         "child": [a for a in child_args() if a != "--dry-run"],
         "codec": STATE.codec, "ext": Path(dest).suffix if dest else None,

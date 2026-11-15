@@ -1370,10 +1370,22 @@ def main() -> int:
         why = (" (reencode_reason: " + ", ".join(f"{k} x{v}" for k, v in reasons.items()) + ")") if reasons else ""
         if STATE.dry_run:
             # a dry run's counts are cut.py's plans: a planned copy may still re-encode in a real run,
-            # which measures where it lands (cut.py's possible_reencode_reason, #510)
-            info(f"cut.py: {copied}/{len(all_cuts)} call(s) planned as a lossless stream copy "
-                 f"({cut_summary['stream_copy_rate']:.0%}), which a real run may still re-encode (each row's "
-                 f"cut_possible_reencode_reason); {len(all_cuts) - copied} planned to re-encode a range or its --segments join{why}")
+            # which measures where it lands (cut.py's possible_reencode_reason, #510). A row a real
+            # run serves from the cache is served here too (cached: true, as that run reports it),
+            # and its calls are what the run that stored it measured, not plans: said apart (#540)
+            planned = [r for res in results if not res.get("cached") for r in (res.get("cut_reencoded") or [])]
+            stored = [r for res in results if res.get("cached") for r in (res.get("cut_reencoded") or [])]
+            parts = []
+            if planned:
+                p_copied = sum(1 for r in planned if not r)
+                parts.append(f"{p_copied}/{len(planned)} call(s) planned as a lossless stream copy "
+                             f"({p_copied / len(planned):.0%}), which a real run may still re-encode (each planned row's "
+                             f"cut_possible_reencode_reason); {len(planned) - p_copied} planned to re-encode a range or its --segments join")
+            if stored:
+                s_copied = sum(1 for r in stored if not r)
+                parts.append(f"{len(stored)} call(s) in rows a real run serves from the cache (cached: true), as the run that "
+                             f"stored them measured: {s_copied} stayed lossless stream-copy, {len(stored) - s_copied} re-encoded")
+            info("cut.py: " + "; ".join(parts) + why)
         else:
             info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
                  f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")

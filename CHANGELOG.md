@@ -4,7 +4,21 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **Caches read in a dry run and stored after the inputs changed (#540).**
+  - `batch.py --dry-run` serves an item a real run would serve from the cache, as before
+    (`cached: true`), but its summary line no longer counts that row's `cut.py` calls as planned:
+    they are what the run that stored them measured, and the row has no
+    `cut_possible_reencode_reason`. The line now says the planned calls and the cached ones apart.
+    `cut_stream_copy` counts both, as a real run's does. A cached row's `verified` under
+    `--dry-run` is the stored run's, which the contract now says.
+  - `render.py --cache` makes a stage's key again when the stage ends and stores the artifact only
+    when it is unchanged. A `--brand` logo or font (or any input) changed while the stage ran was
+    drawn, stored under the old file's key, and served once the old file was put back. A stage
+    whose key, made again when it ends, is not the key it started with now stores nothing and
+    records a `cache_inputs_changed` skip; `batch.py` has done the same since #537. A change that
+    is undone before the stage ends, the file's fingerprint restored, is not seen.
 
 ## 3.9.0
 
