@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.23
+
+_Automated release: version and notes generated from pull requests merged since 3.8.22._
+
 ### Fixed
 
 - **`cut.py` says when a copied audio extraction leaves out a late sound's lead (#515).** A
@@ -26,6 +32,7 @@
 - **`overlay.py --fade` fades the layer out when `--end` comes before the fade would finish
   (#517).** With `--end` at or before `--fade` an image layer faded in and vanished at full
   strength; the fade-out is now cut to the layer's window, for image and text layers alike.
+- fix: a late-starting sound in a copied extraction is reported, subtitle tracks kept by crop and stabilize, an overlay's fade-out cut to its window (#542)
 
 ## 3.8.22
 
