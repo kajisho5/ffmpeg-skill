@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.10.1
+
+_Automated release: version and notes generated from pull requests merged since 3.10.0._
+
 ### Fixed
 
 - **A data stream the container refuses no longer costs the subtitle track beside it (#539).** The
@@ -45,6 +51,7 @@
 Checked on FFmpeg 6.1.1 (Linux) only. Left open in #539 for a decision: `caption.py`'s burn and
 `waveform.py` drop the source's subtitle track, and `cut.py -o x.mka` re-encodes a picture into the
 `.mka`.
+- fix: a refused stream costs only itself, and an output is what its name says (#554)
 
 ## 3.10.0
 
