@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.9.2
+
+_Automated release: version and notes generated from pull requests merged since 3.9.1._
+
 ### Fixed
 
 - **A variable-frame-rate cut lays its frame grid from its start (#538).** `cut.py --start`
@@ -24,6 +30,7 @@
   with the sound delayed by the same frames (`--start 0.5` pads 14 frames, 0.519 s, as a
   constant-rate source pads whole frames of its own rate). Constant-rate sources are unchanged.
   Measured on FFmpeg 6.1.1; CI runs 7.1, 8 and 9.
+- fix: a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#549)
 
 ## 3.9.1
 
