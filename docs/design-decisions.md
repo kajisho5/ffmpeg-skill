@@ -98,6 +98,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)](#after-3818--side-inputs-as-outputs-the-blurred-pads-chroma-and-sequences-frames-522-527-529)
 - [After 3.8.19 — a brand colour that starts with a digit (#535)](#after-3819--a-brand-colour-that-starts-with-a-digit-535)
 - [After 3.8.20 — the decided items of #510](#after-3820--the-decided-items-of-510)
+- [After 3.8.21 — variable-frame-rate sources in reverse, speedramp and freeze, and the timeline of several clips (#523, #526)](#after-3821--variable-frame-rate-sources-in-reverse-speedramp-and-freeze-and-the-timeline-of-several-clips-523-526)
 <!-- contents:end -->
 
 ## Time limits
@@ -4608,7 +4609,7 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   A234). Conforming before the `reverse` filter puts it within half a frame but can drop the
   source's last frame before the reversal (one that falls past the delivered grid's last slot),
   which `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame` pins; that is left for a
-  decision (#512). Code: `decision.cfr_filter()`, `with_cfr()`, `cfr_at_input()`,
+  decision (#512). After 3.8.20 all three are changed (#523, in that section). Code: `decision.cfr_filter()`, `with_cfr()`, `cfr_at_input()`,
   `graph_with_cfr()`, `chain_with_rate()`, `speedramp.main()`. Tests:
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
   `test_a_speed_change_puts_each_picture_within_half_a_frame`,
@@ -4619,7 +4620,9 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **A VFR hold is counted at the rate its frames are cloned at.** `freeze.py` counted `--hold` in
   frames of the average rate and `tpad` cloned them at the nominal one, so 1 s held 27 frames
   spaced 1/30 s (0.9 s) while the sound was padded by 1 s. The count, and the sound's pad, are now
-  in frames of the nominal rate. Code: `freeze.main()`. Test: the `freeze` case of
+  in frames of the nominal rate. After 3.8.20 a hold inside the clip clones frames of the
+  delivered rate, the picture being conformed as it is decoded, and is counted in those (#523).
+  Code: `freeze.main()`. Test: the `freeze` case of
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`.
 - **An `overlay.py` layer lands at its position in luma; the chroma sample on an odd edge is
   shared.** `overlay` places a layer on a 4:2:0 picture on the chroma grid, so an odd x or y was
@@ -5170,3 +5173,137 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
     says the dry run does not write or measure the output cut; a `--segments` dry run does read the
     source's packets.
 
+
+## After 3.8.21 — variable-frame-rate sources in reverse, speedramp and freeze, and the timeline of several clips (#523, #526)
+
+Measured on `make_vfr_flash_beep()`'s clip (30 fps with two runs of six frames dropped, from 0.1 s
+and from 2.1 s, so 27 fps on average; a two-frame flash and a 40 ms beep every second from
+0.5 s) and on `make_flash_beep()`'s constant 30 fps one, FFmpeg 6.1.1 only. The 18-19 ms by which
+every flash of the VFR clip follows its beep is the 27 fps grid's own (the flash at 0.5 s lands on
+the slot at 0.519 s, "After 3.8.14").
+
+- **A VFR picture is conformed before `reverse`, each slot taking the last frame that starts
+  before the slot ends** (#523). `reverse` hands its frames the forward timestamps in order, so a
+  reversed VFR picture kept its gaps where they were in forward time: every flash came 0.19 s
+  after the reversed beep, and 0.23 s late with `--no-audio` (whose picture ran 4.074 s). With
+  `fps=R:round=down` ahead of the reversal the reversed picture is the conformed forward one
+  mirrored, and the flashes land on the 27 fps slot at or after where they belong (a flash that
+  ends at s + 2/30 starts at 4 - s - 2/30 reversed: 0.444 s for 0.433), 14-16 ms before the
+  reversed beep (which starts 0.04 s before the end of the source's, so the fixture itself puts
+  them 27 ms apart), in a 4.000 s picture, with and without sound. The nearest frame to each slot,
+  the forward conform's rule, is not used: the last slot's nearest frame can be the one before a
+  real last frame that starts after the slot's middle (1.983 s on a 1/60 grid against a slot at
+  1.951 s), and the reversal then opened on it, which
+  `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame` pins (the reason this was left
+  open in "After 3.8.14"). A `settb=AVTB` follows the conform: its output's time base is one frame,
+  and the trim after it rescales its half-frame bound to that base (see freeze.py below). The
+  constant-rate path is unchanged. Code: `reverse.main()`. Tests:
+  `test_a_reversed_variable_rate_picture_keeps_its_sound`,
+  `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame`.
+- **Every `atempo` chain is led by a window and a half of silence and cut by a window after;
+  a 1x `speedramp.py` segment is not retimed** (#523, #541 review). `atempo` lays its first
+  window down without retiming it and sets everything after it about half a window early, the
+  window being the power of two at or above sample_rate / 24 (1024 samples at 44.1 and 48 kHz,
+  256 at 8 kHz, 2048 at 96 kHz; measured at each): `speedramp.py`'s beeps came 21.3 ms early at
+  1x and 40 ms at 0.5x on a constant-rate clip, `fit.py --method speed`'s 17-25 ms (1.11x,
+  0.91x), `audio.py --tempo`'s 10-31 ms (1.5, 0.8, 3) and 89-123 ms at 0.3 (two stages), and a
+  1x track ended 21 ms short. That is the cause the 3.8.16 entry gave as "atempo" and left.
+  `atempo_chain_with_lead()` puts half a window of silence per stage ahead of the first one
+  (each stage's half window of its own input is the earlier stages' tempo product times that
+  many of the chain's input) and a whole window more, then cuts that window off the output at
+  the chain's tempo and moves its timestamps back by it, so a track that starts after 0 keeps its
+  start. The extra window is the review's finding: with the half window alone the chain's first
+  window, which atempo fades in, lay over the input's first 21 ms, and a 10 ms tone there came out
+  7 dB down at 1x and was gone at 1.5x and 2x (`speedramp.py`, `fit.py --method speed` 2x and
+  `audio.py --tempo 1.5`); it now keeps its -1.9 dBFS peak at every factor tried (1, 1.5, 2, 0.5,
+  0.3), a slowed tone spread over the windows its new length takes. Through a single stage
+  (0.5x to 3x) the beeps' mean onset is within 5 ms of where the retiming puts them in every case
+  above and a single beep within half a 30 fps frame (12.6 ms at 0.91x; atempo places its
+  windows by the content). Through a chain below 0.5x the claim is narrower: a 40 ms beep slowed
+  to 0.3x is laid down as several grains, the first of which can sit anywhere in a window that
+  holds the beep's start, so its onset is within one window (2048 samples, 43 ms at 48 kHz) of
+  its place, no closer: -34 to +26 ms (0.3x on FFmpeg 6.1.1: 0, -24, -34, -14 ms; 0.25x: +26,
+  -27, -8, -7; macOS's 9.0.2 at 0.3x: -1, -23, -34, +7, its third beep read as four onsets),
+  where the systematic shift was 70-155 ms early. The test takes, for each beep, the first onset
+  from 0.25 s before its place to a window after the stretched beep ends, and says "not
+  measured" when there is none; a failure prints the onsets, the chain and `ffmpeg -version`.
+  The other CI versions (7.1, 8.0.1, Windows' 9.0.2) passed the earlier nearest-onset form. Each
+  beep is held to the bound of the segment it is in: the two 3x beeps after `speedramp.py`'s
+  0.25x segment are held to half a frame (7 and 8 ms early on 6.1.1), not to the chain's window,
+  and the 5 ms mean is read only where all four beeps go through one stage. A 1x `speedramp.py` segment is cut and not retimed, so its
+  sound is the source's to the sample; `fit.py --method speed` within 1e-4 of 1x and `audio.py
+  --tempo 1` already added no `atempo`. One lead for the chain, not one per stage: an `adelay`
+  between two stages made FFmpeg 6.1.1 fail a graph that joins the result with `concat`
+  ("Invalid data found when processing input", `speedramp.py --segment 0-2:0.25 --segment
+  2-4:3`). `speedramp.py` measures its sound on the VFR clip within half a frame now (its row in
+  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame` checks the sound too),
+  and `test_speedramp_segments_hold_the_frames_between_their_retimed_ends` holds the picture to
+  its slot and the sound to its place (within 4 ms) separately: their difference adds the grid's
+  18.5 ms to any sound offset. `fit.py --method speed` still ends a retimed track on the
+  millisecond `-t` ("After 3.8.11"): 3 s to 1.23425 s still writes 59392 AAC samples. A rate that
+  is not known (a dry run's pending input) leaves the chain as it was. The window rule is
+  af_atempo's own; it was measured on 6.1.1 only, and the CI jobs on 7.1, 8 and 9 run the tests.
+  Code: `decision.atempo_lead()`, `atempo_chain_with_lead()`, `fit.atempo_chain()`,
+  `speedramp.main()`, `audio.main()`. Tests: `test_a_tempo_change_keeps_each_sound_where_it_belongs`,
+  `test_a_tempo_change_keeps_an_attack_at_its_start`.
+- **`freeze.py` conforms a VFR picture as it is decoded when it holds a frame inside the clip,
+  and works on the delivered grid** (#523). On the source's own frames the head segment ended at
+  its last frame's nominal duration, so with `--at` inside a gap the hold, and everything after
+  it, started the rest of the gap early against the sound, which is cut at `--at`: 56 ms at
+  `--at 0.15`, 93 ms at `--at 2.2`, with the picture 4.926 and 4.889 s long for 5. With
+  `cfr_at_input()` every frame time (the cut, the hold's frame, the hold's count) is on the 27 fps
+  grid, the flashes after the hold land within half a frame of their beeps, and the picture holds
+  every slot (135 frames). The conformed picture's time base is one frame (1/27 s) and `trim`
+  rescales its bound to it, so a half-frame bound written to the microsecond (3.907407 for --at
+  3.9) became frame 105 itself: that frame was cut from the head and held in place of frame 106,
+  two frames short. A `settb=AVTB` after the conform keeps the bounds between the frames. The
+  grid is laid from the picture's start (`setpts` to 0 ahead of the `fps` filter, the picture's
+  trims counted from there): the filter lays it from the clock's 0, and every time above is
+  counted from the start, so a picture that starts 50 ms after its sound came out a frame early
+  after the hold (flash minus beep 68 ms before it, 31 ms after; on 3.8.20 `--at 2.2` moved it
+  73 ms). The joined picture's timestamps are then rebuilt from its frame count (`setpts=N*...`
+  ahead of the closing `fps`, as `speedramp.py` does): FFmpeg 6.1.1's video `concat` gives a
+  one-frame segment no length, so a hold of one frame (`--hold 0.04` at 30 fps, `--hold 0.05` on
+  the 27 fps clip, on constant-rate sources too and on 3.8.20) lost its frame and the rest of the
+  picture ran a frame before its sound (33 ms on the 30 fps clip; #541 review). The picture is not
+  moved back after the conform: a `setpts` there left its frames no
+  duration and no rate from FFmpeg 7.0, and the hold's `tpad` after it cloned nothing (109 frames
+  for 135 on 7.1, in CI; 6.1.1, 8.0.1 and 9.0.2 wrote 135). A hold at the start or
+  the end of the clip already ran through `with_cfr()` and is unchanged. Code: `freeze.main()`,
+  `decision.cfr_at_input()` (its `origin`). Tests: the `freeze-gap` rows of
+  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
+  `test_a_variable_rate_freeze_keeps_every_frame_of_its_grid`.
+- **Swept for the class "a tool that moves time on a VFR source puts its picture more than half a
+  frame from its sound"**, and for "a sound retimed by atempo is early". `python3 tests/sweep.py
+  VFR --baseline CFR` (the two fixtures above) printed no row that differs, before and after the
+  change: the defects are in the output, not in what a tool says, so each tool that moves time
+  was also run and measured on both clips (flash against beep, and the picture's length). Within
+  half a 27 fps frame and not changed: `join.py` (`--transition none` and `fade`), `broll.py`,
+  `silence.py`, `loop.py --times` and `--crossfade`, `pad.py`, `fit.py --method trim`, `cut.py
+  --segments` across a gap, and `freeze.py` at the start or the end. Left, each with its own
+  cause: `cut.py --start` on a VFR source puts its picture up to a frame after its sound (24 ms at
+  `--start 0.45`, 33 ms at 0.2, plain or `--accurate`): the conform's grid is the source clock's,
+  and the output-side seek then lands between two of its slots, which the encoder line's rate
+  rounds again. `freeze.py --at 0` on the VFR clip writes 134 frames for 135 (the picture ends 37 ms
+  before its sound; the same on 3.8.20, cause not looked into). `loop.py --boomerang` retimes
+  its frames by index and has no sound (decided, its docstring). `insert.py` takes a still. The
+  atempo class reaches `speedramp.py`, `fit.py --method speed` (and `render.py`'s speed stage,
+  which runs it) and `audio.py --tempo`; all three are changed.
+- **Which of `frame` and `fit` sizes a sequence of several clips is not decided here** (#526).
+  It reproduces as the issue says, and the render itself is not one rule either: over two 160x120
+  clips joined without a transition, frame 16:9 with `fit` 1:1 renders 120x120 and exports a 160x90 sequence; frame
+  `{aspect 16:9, width 320}` with `fit {aspect 4:5, fit crop}` renders 192x240 and exports
+  320x180, where one clip renders and exports 320x400; frame 1:1 with `fit {width 200}` renders
+  200x200 and exports 120x120; frame `{width 320, height 180}` with `fit` 1:1 renders 180x180
+  and exports 320x180. The two defensible rules: (a) the `fit` object wins, as it
+  does for one clip: the sequence is the `fit` object's frame with the frame's values where it
+  has none, and the render sizes the join so (join.py would size it from that frame, or fit.py
+  get the frame's sides by `setdefault` as the one-clip stage does), which changes the size of
+  every such multi-clip render; (b) the frame wins: the sequence stays the frame's, and the
+  render would have to stop fitting the `fit` object's aspect inside the joined picture, which
+  makes a `fit` object over several clips mean nothing it can be seen to do. The project does not
+  decide between them: both are a reading of the same two objects. Recommended: (a), one rule for
+  any number of clips, in a minor release because it changes rendered sizes, with the test the
+  issue names (the rendered file's size against the exported sequence's) over one and several
+  clips and the three render gaps under "The sequence is the project's frame" closed with it. No
+  code changes here.
