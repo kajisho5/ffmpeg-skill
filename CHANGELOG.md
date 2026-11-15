@@ -19,7 +19,11 @@
   sides given are kept, as for one clip); frame 16:9 at 25 fps with `fit {fps 24}` exported a
   25 fps sequence (now 24, as rendered). A frame of one side now gives join.py the other side
   rounded as fit.py rounds it: `{width 100}` over 4:3 clips rendered 100x74 against a 100x76
-  sequence (now 100x76). A multi-clip export now refuses a `fit.aspect` or `fit.fit` that fit.py
+  sequence (now 100x76). Where the `fit` object gives that side itself the join is sized from it
+  (`{width 100}` with `fit {width 200}`: 200x150 both), and a key the `fit` object gives as `null` counts
+  as not given, in the render as in the export. The clips are joined at the rate the render delivers, the
+  `fit` object's where it gives one: joined at the frame's 25 fps and conformed to `fit {fps 24}`, two
+  0.7 s clips rendered 35 frames against a 34-frame sequence. A multi-clip export now refuses a `fit.aspect` or `fit.fit` that fit.py
   refuses, as a one-clip export already did. One-clip projects render and export as before.
   Which multi-clip projects change is listed in `docs/design-decisions.md` ("After 3.9.3").
 

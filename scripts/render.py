@@ -1978,6 +1978,15 @@ def main() -> int:
         current = str(work / f"joined{mid}")
         argv = list(parts) + ["-o", current, "--transition", trans.get("type", "fade"), "--duration", str(trans.get("duration", 0.5))]
         jw, jh = frame.get("width"), frame.get("height")
+        if bool(jw) != bool(jh):
+            # the fit object's own value for that side wins (#526), so the join is sized from it:
+            # frame {width 100} with fit {width 200} joined at 100x76 and was then fitted to
+            # 200x152 (from the rounded canvas) against a 200x150 sequence (from the clip)
+            own = (proj.get("fit") or {}) if isinstance(proj.get("fit"), dict) else {}
+            if jw and own.get("width") is not None and own.get("height") is None:
+                jw = own["width"]
+            elif jh and own.get("height") is not None and own.get("width") is None:
+                jh = own["height"]
         side = jw or jh
         if bool(jw) != bool(jh) and str(side).isdigit():
             # one side: the other follows the first clip's displayed aspect, rounded to even as
@@ -1991,8 +2000,14 @@ def main() -> int:
             argv += option_args("--width", jw)
         if jh:
             argv += option_args("--height", jh)
-        if frame.get("fps"):
-            argv += option_args("--fps", frame["fps"])
+        # the rate the render delivers: the fit object's where it gives one (#526). Joined at the
+        # frame's and conformed again by fit.py, each clip was rounded twice: two 0.7 s clips
+        # under frame 25 fps with fit 24 fps rendered 35 frames against a 34-frame sequence,
+        # which rounds each clip once, at the delivered rate
+        own_fit = proj.get("fit") if isinstance(proj.get("fit"), dict) else {}
+        join_fps = own_fit.get("fps") or frame.get("fps")
+        if join_fps:
+            argv += option_args("--fps", join_fps)
         sh("join.py", *argv, stage="join")
         stages_done.append("join")
     if args.stop_after == "join":
@@ -2016,7 +2031,9 @@ def main() -> int:
         return 0
 
     # ---- fit (duration and/or frame)
-    fit = dict(proj.get("fit") or {})
+    # a key the fit object gives as null is a key it does not give, as --export-timeline reads it:
+    # frame 320x180 with fit {aspect 1:1, width null} rendered 180x180 against a 320x180 sequence
+    fit = {k: v for k, v in (proj.get("fit") or {}).items() if v is not None}
     if frame.get("aspect"):
         fit.setdefault("aspect", frame["aspect"])
     if frame.get("fit"):

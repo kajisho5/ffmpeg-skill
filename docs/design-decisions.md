@@ -5766,6 +5766,19 @@ with their own cause.
   that is not a whole number goes to join.py as written, which refuses it as before. With this
   and the entry above, the gaps (1) and (3) of "The sequence is the project's frame" are closed;
   (2), join.py's padding before a crop, is not (the picture, not the size).
+- **Two combinations the first version left apart (review of #553).** A frame of one side whose
+  side the `fit` object gives too: the join is sized from the object's value (the object giving no
+  other side), since fit.py derives the other side from the joined canvas and the export from the
+  clip (`{width 100}` with `fit {width 200}` rendered 200x152 against 200x150). A key the `fit` object
+  gives as `null` is dropped before the frame's values are merged in, as the export already read it
+  (frame 320x180 with `fit {aspect 1:1, width null}` rendered 180x180 against 320x180, for one clip
+  too). Both are rows of `test_a_sequence_of_several_clips_takes_the_fit_objects_frame`.
+  A third: with `frame.fps` and a different `fit.fps` the clips were joined at the frame's rate and
+  conformed again by fit.py, each clip rounded twice, where the sequence rounds each once at the
+  delivered rate (two 0.7 s clips, frame 25 fps, fit 24 fps: 35 frames against 34; two 8-frame clips: 13
+  against 12). join.py now gets the `fit` object's rate where it gives one, the frame's otherwise
+  (`test_several_clips_are_joined_at_the_rate_the_fit_object_delivers`). Measured on FFmpeg 6.1.1.
+  Filed as #552: (2) above.
 - **Which projects render differently.** Only projects of two or more clips (an audiogram
   project joins nothing and is not one). (i) With a fit stage (a `fit` object, `frame.aspect` or
   `frame.fit`) and a frame width or height, fit.py now gets the frame's sides, except where it
