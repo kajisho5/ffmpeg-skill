@@ -211,7 +211,9 @@ When the source cannot be matched, the result is `mode: accurate`, `reencode_rea
 time.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`,
-`smart`, `smart_fallback`);
+`smart`, `smart_fallback`); under `--dry-run`, which writes nothing, `possible_reencode_reason`
+lists the ones a real run may still add to a plan of `mode: copy` or `smart` (`tolerance`: where a
+copy lands is measured only from the written file), and a `notes` line says so;
 `--segments` adds `segment_precision`; `precision` and `least_exact_precision` are the least exact one
 (since 3.0.0; 2.x's `precision` was the whole run's, `packet` only when nothing re-encoded).
 A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
@@ -948,6 +950,18 @@ render.py plan.json [--audit-log FILE]       # execute a plan written by <tool> 
 render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the cut for an editor, nothing rendered
 render.py project.json --intermediate-preset medium   # the stages' own encoder preset instead of superfast
 ```
+A real render first runs its own dry run; when that is refused because a stage needs a filter or an
+encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
+run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
+title or captions does the same).
+A `captions` block with `text` (a cue file) delivers the SRT the captions stage generates as
+`<output>.srt` beside the output (`caption_srt`), guarded with the output before the first stage;
+it is not delivered (a `caption_srt_not_delivered` skip) when the stage came from `--cache` or the
+export trimmed the delivery. A Ctrl-C while a stage that writes the delivery runs (the export)
+names a file it had already written there as kept, unverified; a file that was there before and
+that the stage left alone is not claimed, and the work directory's files are not called kept when
+the directory goes at exit. A stage's `--cache` key also covers the logo and font file its
+`--brand` file names.
 `--intermediate-preset` (2.15; default `superfast` since 2.16, `veryfast` in 2.15): when the project has an export stage that
 re-encodes (any preset but `copy`) and the run goes that far (no `--stop-after` before it), the
 stages before it that encode with x264 or x265 (clips, fit, join, silence, captions, graphics,
@@ -1410,10 +1424,21 @@ platform (`"*.mp4"` finds `GOPR0001.MP4`; the letters inside a `[...]` class kee
 theirs), and a glob that matches nothing is a note. A cache skips files already
 done with the same recipe: an item's key is its source's `file_key()` (name,
 size, mtime in nanoseconds, first and last MiB), the recipe, the GPU setting,
-the files the steps name and, for a project recipe, the project file and every
+the files the steps name (a path built from the first step's `{in}`, such as
+`--image {in}.png`, keyed per item by that file's content; one built from a later step's
+`{in}`, an intermediate, makes the item run every time, `cache_miss.reason:
+side_input_unresolved`) and, for a project recipe, the project file and every
 file it names (music, cues, brand and its logo and font, overlays, chapters,
 the clips other than the one each item replaces), read again on every
-`--watch` pass. Use `--dry-run` to preview the plan. The recipe's
+`--watch` pass. A step that names no `{out}` and no `-o` of its own but reports an output
+file (its default output: `metadata.py {in}` writes `<stem>_meta.mp4` beside the source) is
+refused, `error.reason: step_writes_without_out`, and the batch stops at that item (the
+later rows are `skipped: "recipe_refused"`): its file is not what the next step reads nor
+what is delivered. A dry run says so with nothing written; a real run has written that one
+file and names it. A step before the last that also writes side files beside its
+intermediate (`caption.py --text`'s `.srt`) loses them with the item's work directory: a
+`batch_side_file_not_delivered` skip names them. A Ctrl-C while the last step runs reports
+a file it had already written at the final path as the row's `kept`. Use `--dry-run` to preview the plan. The recipe's
 keys are `glob`, `steps`, `project`, `clip_key`, `output_dir`, `suffix` and `ext`; any
 other key is refused before an item runs, with the nearest valid name when one is close, else
 with the list of valid keys.
@@ -1423,7 +1448,8 @@ A recipe that runs `cut.py` rolls its calls up: each of those `results` rows car
 and the top level `cut_stream_copy` (`{calls, stream_copy, reencoded,
 stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason; `unknown` for a
 re-encoded call cached by an earlier 2.x batch); both are `null`
-when no `cut.py` step ran.
+when no `cut.py` step ran. Under `--dry-run` they count the calls' plans, and a planned stream
+copy may still re-encode in a real run (`cut.py`'s `possible_reencode_reason`).
 
 **`--jobs N` (1.17)** processes N files at once (threads: the work is
 subprocess waiting). Capped at `min(N, cpu_count, 8)` — every item is itself an

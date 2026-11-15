@@ -260,6 +260,38 @@ def _outcome(meta: dict, dst: str, reencoded: bool, reasons: List[str], **copy) 
 EDIT_LIST_EXTS = (".mp4", ".mov", ".m4v")
 
 
+def possible_reencode_reason(mode: str, outcomes: List[dict], segments: int) -> List[str]:
+    """Under --dry-run, the reencode_reason values a real run may still add to a plan of mode copy
+    or smart, which would then report hybrid or accurate (#510): the dry run reads no packets for a
+    single copy, so where its copy lands, and every check a real run makes on the written file,
+    are not known yet. [] for a real run and for a plan that already re-encodes."""
+    if not STATE.dry_run:
+        return []
+    if mode == "smart":
+        return ["smart_fallback"]  # the checks run on the written file (smart.checks is null)
+    if mode != "copy":
+        return []
+    possible = ["copy_failed", "stream_lost"]
+    if any(o.get("length_unjudged") for o in outcomes):
+        possible.append("tolerance")
+    if segments > 1:
+        possible.append("concat_fallback")
+    return possible
+
+
+def possible_reencode_note(mode: str, possible: List[str], tolerance: float) -> str:
+    """The plan's notes line for possible_reencode_reason."""
+    if mode == "smart":
+        return ("planned as a smart cut: a real run checks the written cut against the source and re-encodes "
+                "the whole cut instead (mode accurate, reencode_reason smart_fallback) when a check fails")
+    why = ("planned as a stream copy: a real run may re-encode it instead (mode hybrid, reencode_reason "
+           + ", ".join(possible) + ")")
+    if "tolerance" in possible:
+        why += (f"; where the copy lands is measured only from the written file, and a copy that lands "
+                f"{tolerance:.2f}s (--tolerance) or more from the requested cut is re-encoded")
+    return why
+
+
 def _with_notes(outcome: dict, notes: List[str]) -> dict:
     """An outcome with the notes of the attempt that led to it put first."""
     outcome["notes"] = list(notes) + list(outcome.get("notes") or [])
@@ -1015,8 +1047,10 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     if reencode or audio_only:
         return _outcome(meta, dst, reencode, reasons)
     if STATE.dry_run:
-        # the planned copy: whether it keeps an edit list is known; where it lands is not
-        return _outcome(meta, dst, False, reasons, edit_list=edit_list and edit_list_ok, start_snapped=None)
+        # the planned copy: whether it keeps an edit list is known; where it lands is not, so a
+        # real run that judges the written copy by its length may still re-encode it (#510)
+        return _outcome(meta, dst, False, reasons, edit_list=edit_list and edit_list_ok, start_snapped=None,
+                        length_unjudged=copy_t is None and tolerance >= 0)
     fps = (meta.get("video") or {}).get("fps")
     # a concat part's edit list does not hide its pre-roll in the join, so it presents from the keyframe
     shown = edit_list and edit_list_ok
@@ -1877,6 +1911,9 @@ def main() -> int:
     mode = ("smart" if smart_doc is not None and smart_doc["applied"] else
             "copy" if not reencoded else ("accurate" if args.accurate else "hybrid"))
     notes: List[str] = vfr_notes + join_notes + [n for o in outcomes for n in o.get("notes") or []]
+    possible = possible_reencode_reason(mode, outcomes, len(segments))
+    if possible:
+        notes.append(possible_reencode_note(mode, possible, args.tolerance))
     single = outcomes[0] if len(outcomes) == 1 else {}
     stored = single.get("stored_preroll_seconds")
     if single.get("edit_list") and stored:
@@ -1930,7 +1967,7 @@ def main() -> int:
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in requested] if len(requested) > 1 else None,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None and not STATE.dry_run else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
-         mode=mode, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],
+         mode=mode, possible_reencode_reason=possible, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],
          reencode_reason=reencode_reason, least_exact_precision=report["least_exact_precision"],
          segment_precision=report["segment_precision"],
          edit_list=bool(single.get("edit_list")), stored_preroll_seconds=stored, av_start_skew_seconds=skew,

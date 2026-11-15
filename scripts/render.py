@@ -75,7 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, remember_written
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import rebase_project_paths
 import subprocess
@@ -803,6 +803,12 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         info(f"    {os.path.basename(str(dest))} is an earlier render's own stage file in {_OWN_STAGES['dir']}, unchanged since: replaced")
     cmd = [str(HERE / script)] + [str(a) for a in argv] + (extra or []) + own + child_args() + ["--json"]
     info("→ " + " ".join(os.path.basename(c) if i < 1 else c for i, c in enumerate(cmd[:-1])))
+    # a stage that writes outside the work directory (the export writes the delivery itself): what
+    # is there now, so a stop while it runs reports a file the stage wrote as kept, not "nothing
+    # was written", and never claims the caller's own file (#510)
+    outside = bool(dest) and not _in_work(dest)
+    if outside:
+        watch_destination(dest)
     proc = run_tool(cmd)
     for is_command, line in stderr_records(proc.stderr):
         if is_command:
@@ -843,9 +849,57 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         # otherwise refuse as an existing file without --overwrite (#415).
         remember_written(out_path, dest)
         _record_own_stage_file(dest)
+    if outside:
+        unwatch_destination(dest)
     if key:
         cache_store(stage, key, out_path or (dest or ""), time.time() - started, doc)
     return out_path
+
+
+WORK_DIR: Dict[str, Optional[str]] = {"path": None}
+
+
+def _in_work(path: str) -> bool:
+    """Whether `path` is inside this render's work directory."""
+    work = WORK_DIR["path"]
+    if not work:
+        return False
+    return os.path.realpath(path).startswith(os.path.realpath(work) + os.sep)
+
+
+SRT_TRIM_TOLERANCE = 0.25  # seconds the delivery may be shorter than the captioned stage before its SRT is called off-timeline
+
+
+def deliver_caption_srt(target: Optional[str], made: Optional[Dict[str, Any]], output: str) -> Optional[str]:
+    """Put the captions stage's generated SRT at `target` (<output>.srt, guarded before the first
+    stage) and return the path, or None with a skip record when it is not delivered: the stage was
+    served from the cache (the cache keeps the video only), or a later stage changed the timeline
+    (the export trimmed the delivery to a platform's maximum), where the SRT's times are no longer
+    the delivery's (#510). Under --dry-run the planned path."""
+    if not target or not made:
+        return None
+    if STATE.dry_run:
+        info(f"[dry-run] would deliver the captions' SRT as {target}")
+        return target
+    if made.get("cached") or not os.path.isfile(made["srt"]):
+        record_skip(f"the captions stage's SRT is not delivered: the stage was served from --cache, which keeps its video only",
+                    "caption_srt_not_delivered", reason="cached", path=target)
+        return None
+    trimmed = _LAST_DOC.get("trimmed") if _LAST_DOC.get("trimmed") else None
+    if not trimmed:
+        before = (probe(made["video"], role="output").get("duration") if os.path.isfile(made["video"]) else None) or 0.0
+        after = probe(output, role="output").get("duration") or 0.0
+        if before and after and before - after > SRT_TRIM_TOLERANCE:
+            trimmed = {"from": round(before, 3), "to": round(after, 3)}
+    if trimmed:
+        record_skip(f"the captions stage's SRT is not delivered: a later stage changed the timeline (the delivery was trimmed: "
+                    f"{trimmed}), so its cue times are not the delivery's", "caption_srt_not_delivered",
+                    reason="timeline_changed", path=target, trimmed=trimmed)
+        return None
+    place_output(made["srt"], target)
+    mark_delivered(target)
+    info(f"delivered the captions' SRT as {target}")
+    return target
 
 
 def _stage_failure_hw(doc: Any) -> Dict[str, Any]:
@@ -974,7 +1028,32 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
+    named = _brand_files_key(argv)
+    if named:
+        payload["brand_files"] = named  # only with --brand: every other stage's key is unchanged
     return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode(), usedforsecurity=False).hexdigest()
+
+
+def _brand_files_key(argv: "Sequence[Any]") -> List[Any]:
+    """The files a stage's --brand file names (its logo and font_file, resolved as load_brand()
+    resolves them): the key hashes the brand file's own bytes, so a font or a logo replaced under
+    the same name was served from the cache with the old one drawn (#510's sweep)."""
+    out: List[Any] = []
+    args = [str(a) for a in argv]
+    for i, a in enumerate(args[:-1]):
+        if a != "--brand" or not os.path.isfile(args[i + 1]):
+            continue
+        try:
+            data = read_json(args[i + 1])
+        except (OSError, ValueError):
+            continue
+        base = Path(args[i + 1]).resolve().parent
+        for key in ("logo", "font_file"):
+            value = data.get(key) if isinstance(data, dict) else None
+            if isinstance(value, str) and value:
+                path = value if os.path.isabs(value) else str(base / value)
+                out.append([key, _content_hash(path) if os.path.isfile(path) else None])
+    return out
 
 
 def _cache_miss(stage: str, reason: str, **facts: Any) -> bool:
@@ -1545,6 +1624,7 @@ def main() -> int:
     args = ap.parse_args()
     apply_common(args)
     PROJECT_SOURCE.update(src=None, timecode=[])
+    WORK_DIR["path"] = None
     STATE.audit_log = os.path.abspath(args.audit_log) if args.audit_log else None
 
     if args.list_templates:
@@ -1675,6 +1755,9 @@ def main() -> int:
         passthrough = c0 is not None and c0.get("in") is None and c0.get("out") is None
         if not passthrough:
             refuse_copied_container(mid, output)
+    # #510: a filter or an encoder this build lacks is found by the stage that needs it; the dry run
+    # finds it before anything is encoded, so a real render runs its own dry run first
+    refuse_missing_components_first(str(HERE / "render.py"), "stage's filters and encoders")
     # A77: the default work directory is new for every run (mkdtemp), not named by the PID alone and
     # reused with exist_ok -- a later run that got the same PID deleted an earlier run's kept preview.
     # An explicit --work is the caller's: created when missing, never emptied.
@@ -1703,6 +1786,18 @@ def main() -> int:
         # a --work directory it created too, --keep or not (A99: a plan leaves nothing behind)
         import atexit
         atexit.register(lambda: shutil.rmtree(work, ignore_errors=True))
+        STATE.temp_dirs.append(str(work))  # removed at exit: a stop does not call its files kept (#510)
+    WORK_DIR["path"] = str(work)
+    # #510: the captions stage's generated SRT is delivered beside the output, so its guards are
+    # the output's, once the output's folder exists (created above, as for the output) and
+    # before the first stage: an existing one, an input, the output itself
+    caption_srt = None
+    cap_cfg = proj.get("captions")
+    if (isinstance(cap_cfg, dict) and cap_cfg.get("text") and _reaches("captions", args.stop_after)
+            and (not args.stop_after or args.stop_after == "export")):
+        caption_srt = os.path.splitext(output)[0] + ".srt"
+        guard_sidecar(caption_srt, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel),
+                      siblings=(output,))
     frame = dict(proj.get("frame") or {})
     trans = proj.get("transition") or {}
     frame_from_preset(frame, proj.get("export") or {})
@@ -1720,6 +1815,7 @@ def main() -> int:
             and args.stop_after in (None, "export") and args.intermediate_preset != "medium" and not STATE.fast):
         INTERMEDIATE["preset"] = args.intermediate_preset
     stages_done: List[str] = []
+    captioned_srt: Optional[Dict[str, Any]] = None
     # what the caption stage reported (wrapped/split counts and the fit-size keys), so a caller
     # reading render.py's JSON can see whether the type was shrunk to fit or a cue was split.
     caption_report: Optional[Dict[str, Any]] = None
@@ -1948,6 +2044,9 @@ def main() -> int:
             if cap.get(k):
                 argv.append(flag)
         sh("caption.py", *(argv + brand_args + platform_args), stage="captions")
+        # the SRT caption.py generated from the cue file, beside its intermediate (#510); a cache hit
+        # places the video only, so there is none then
+        captioned_srt = {"srt": os.path.splitext(nxt)[0] + ".srt", "video": nxt, "cached": bool(_LAST_DOC.get("cached"))}
         if isinstance(_LAST_DOC.get("caption"), dict):
             caption_report = dict(_LAST_DOC["caption"])
         current = nxt
@@ -2093,13 +2192,14 @@ def main() -> int:
     current = output
     if not STATE.dry_run:
         mark_delivered(output)  # the chapters and check stages run on it: a stop from here keeps it, and says so (#415)
+    caption_srt = deliver_caption_srt(caption_srt, captioned_srt, output)
     if args.stop_after == "export":
         # A87: the chapters and check stages ran after "--stop-after export", and a "check" this
         # run never reads (validate_project() skips it) was then read with .get(): a traceback
         if not args.keep and not args.work:
             shutil.rmtree(work, ignore_errors=True)
         emit(output, stages=stages_done, check=None, cache=cache_report(args.cache),
-             intermediate_preset=_intermediate_used())
+             intermediate_preset=_intermediate_used(), caption_srt=caption_srt)
         return 0
 
     # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
@@ -2191,7 +2291,7 @@ def main() -> int:
         snap_report = dict(snap_reports[0])
         snap_report["clips"] = snap_reports
     emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report(args.cache),
-         caption=caption_report, intermediate_preset=_intermediate_used(),
+         caption=caption_report, intermediate_preset=_intermediate_used(), caption_srt=caption_srt,
          verification=[{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [])
     return 0
 

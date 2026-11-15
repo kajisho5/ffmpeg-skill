@@ -97,6 +97,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.17 — leftovers of the old grouped issues (#510)](#after-3817--leftovers-of-the-old-grouped-issues-510)
 - [After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)](#after-3818--side-inputs-as-outputs-the-blurred-pads-chroma-and-sequences-frames-522-527-529)
 - [After 3.8.19 — a brand colour that starts with a digit (#535)](#after-3819--a-brand-colour-that-starts-with-a-digit-535)
+- [After 3.8.20 — the decided items of #510](#after-3820--the-decided-items-of-510)
 <!-- contents:end -->
 
 ## Time limits
@@ -4868,13 +4869,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   with `reason: not_measured: ...` and no `lufs` since 3.6.7. No real input reaches it (a silent
   or too-short input is refused before the encode), so the test replaces only the output's
   measurement, in a child process. Test: `SilentOutputLoudnessTests`.
-- **Left for a product decision, not changed:** `render.py` still finds a filter the build lacks
-  at the stage that needs it (its `--dry-run` finds it first); `look.py` still has no HDR path
-  without zscale (this build's only other PQ/HLG-capable filters are GPU ones: libplacebo,
-  `tonemap_opencl`, `tonemap_vaapi`; `colorspace` has no PQ or HLG transfer); `cut.py --dry-run`
-  still plans `mode: copy` for a copy the real run re-encodes past `--tolerance`; and the four
-  #429 items (a batch step that writes without `{out}`, an intermediate's caption sidecars,
-  placeholder side inputs in the cache key, Ctrl-C during a render stage).
+- **Left for a product decision then:** the render filter check, look.py's HDR path, the cut
+  dry run and the four #429 items. All seven were decided after 3.8.20 (below).
 
 ## After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)
 
@@ -4994,3 +4990,127 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   and with a brand whose every colour starts with a digit, dry run and real run: only waveform
   and the audiogram project failed before, all complete now, and waveform's picture is the brand
   background. Test: `test_every_brand_tool_runs_with_the_example_brand`.
+## After 3.8.20 — the decided items of #510
+
+- **A real `render.py` run checks every stage's filters and encoders before the first stage, by
+  running its own dry run.** A stage finds a filter or an encoder the build lacks when it runs
+  (`_check_build_components()` reads the command that stage builds), so a real render cut and fit
+  the footage and then failed at the graphics stage of a build without drawtext, while its
+  `--dry-run`, which runs every stage's own dry run, was refused before anything encoded. The
+  project is known before the first stage, but what each stage needs is decided inside the stage
+  (graphics' text route, an HDR source's tone map, a preset's encoder), so the check is not a
+  second list of filters per stage kept in render.py: the real run runs the same command line with
+  `--dry-run`, and when that is refused with `filter_missing` or `encoder_missing`, the real run is
+  refused with the same kind, message, `reason`, `details`, hint and `stage`, its `commands`
+  empty. Any other outcome of the dry run (a refusal for another reason, a timeout) is left to the
+  real run, which decides on the files as they then are: a dry run plans on stubs for pending
+  intermediates and is refused in cases a real run completes (the `.ogg` batch join under "Dry run"
+  above). The cost is one dry run, measured at about 1 s for a template render of a 60 s clip on
+  FFmpeg 6.1.1, against 59-78 s for the render; a project whose dry run measures (a silence stage,
+  a `--snap beats` clip) measures twice. A filter a stage chooses on a measurement of an
+  intermediate the dry run does not have yet (it is pending) is still found at that stage. A pack
+  (`--template all`) is a render per destination, and each checks itself; the pack renders the
+  other destinations as before. `waveform.py` with `--title`, `--srt` or `--text` is the same
+  shape (it encoded the visualisation, then its title stage was refused) and does the same. Code:
+  `runner.refuse_missing_components_first()`, `render.main()`, `waveform.main()`. Test:
+  `MissingComponentFirstTests`. Siblings seen and not changed: a `batch.py` recipe of steps runs
+  every item's earlier steps before the step that needs the filter, item after item (a `project`
+  recipe is a render and checks itself); a batch dry run per item, or of the whole folder, before
+  the first real step is a cost per item, and whether one item's missing filter refuses the batch
+  or only that item is a decision of its own. `export.py --normalize` runs `loudness.py` after the
+  encode, but loudnorm is part of every build. `report.py` records a contact sheet that could not
+  be drawn and goes on ("`report.py` accounts for every section" above).
+- **`look.py` on an HDR source without zscale is refused, dry and real (`filter_missing`).** Its
+  tone map is `hdr_to_sdr_chain()`, the one `color.py --to-sdr` uses, and on a build without
+  zscale the only other filters that read PQ or HLG are GPU ones (libplacebo, `tonemap_opencl`,
+  `tonemap_vaapi`), which need a device this skill does not set up and cannot count on;
+  `colorspace` has no PQ or HLG transfer. A sheet drawn from the HDR frames as they are would show
+  colours the source does not have, so the refusal stands, and `report.py` records it for its
+  contact sheet. Code: `look.py` (the tone-map chain), `_common/color.py`. Test:
+  `test_an_hdr_contact_sheet_without_zscale_is_refused`.
+- **`cut.py --dry-run` does not read packets for a single segment, and says what a real run may
+  still change.** Where a single stream copy lands is measured from the written file
+  (`cut_one()` judges its length against `--tolerance`); reading the packets in the dry run would
+  make every plan as slow as a cut's own measurement, and the plan would still not know a copy that
+  fails or loses a stream. So a plan of `mode: copy` names in `possible_reencode_reason` the
+  `reencode_reason` values a real run may add, which turn it into `hybrid`: `tolerance` when a
+  copied video part is judged by its written length (not under `--tolerance -1`, and not for a
+  `--segments` part whose end is snapped to a keyframe: the `--segments` dry run reads the packets
+  and judges those parts as a real run does), `copy_failed` and `stream_lost` on every copy, and
+  `concat_fallback` on a `--segments` copy join; a plan of `mode: smart` names `smart_fallback`,
+  since its checks run on the written cut (`smart.checks` is null). A `notes` line says the same in
+  words. It is `[]` in a real run and for a plan that already re-encodes. `batch.py --dry-run`
+  counts the plans in `cut_stream_copy` and its summary line says they are planned stream copies a
+  real run may still re-encode, not that they stayed lossless. Code: `cut.possible_reencode_reason()`,
+  `cut.possible_reencode_note()`, `batch.main()`. Tests:
+  `test_a_planned_copy_says_a_real_run_may_re_encode_it`,
+  `test_smart_cut_copies_the_whole_gops_and_reencodes_only_the_ends`,
+  `test_batch_reports_cuts_stream_copy_vs_hybrid_rate_across_the_folder`. Sibling seen and not
+  changed: `color.py --retag --dry-run` reports `reencoded: false`, and a real run re-encodes when
+  the copy fails or ffprobe still reads the old tags on the written file; its plan names no such
+  possibility.
+- **A batch step that writes without naming `{out}` stops the batch (#429 item 1).** Every step
+  runs with `--json`, and its document's `output` is the file it wrote (or, under `--dry-run`,
+  would write): null for a step that only reads (`check.py`, `probe.py`, `cropdetect.py`,
+  `scenes.py`, `verify.py`), a path for every writing tool with no `-o` (its default output beside
+  its input). A step that names neither `{out}` nor an `-o` of its own and reports one is refused
+  (`kind: input`, `reason: step_writes_without_out`, `details.file`) and no later item starts
+  (`skipped: "recipe_refused"`): its file is not what the next step reads (that is still this step's
+  input) nor what is delivered, and the next pass took `<stem>_meta.mp4` beside the source for a new
+  item. The tool's own document is the rule, not a list of which tools write under which flags
+  (`loudness.py --measure-only` writes nothing; `loudness.py` does). A dry run finds it with nothing
+  written; a real run has written that one file (items in flight under `--jobs` one each) and the
+  refusal names it; it is left where the tool put it. A step that names `-o` itself
+  (`look.py {in} -o {in}.png`, a contact sheet beside each source) placed its file on purpose and is
+  not refused. Code: `batch.wrote_without_out()`, `names_output()`, `process()`, `main()`. Test:
+  `test_a_batch_step_that_writes_without_out_stops_the_batch`.
+- **`render.py` delivers its captions stage's SRT; `batch.py` names a side file it loses (#429
+  item 2).** A `captions.text` cue file is turned into an SRT by `caption.py`, beside the stage's
+  intermediate in the work directory, and was removed with it. It is now `<output>.srt`
+  (`caption_srt`), guarded as a side file of the output before the first stage (an existing one
+  refused without `--overwrite`, never an input or the output) and placed under the output's lock
+  (`place_output()`). Nothing after the captions stage re-times the picture except the export's
+  trim to a platform's maximum, so the SRT is not delivered (`caption_srt_not_delivered`, reason
+  `timeline_changed`) when the export reports `trimmed` or the delivery is more than 0.25 s shorter
+  than the captioned stage; nor when the stage came from `--cache`, which keeps the video only
+  (reason `cached`). Captions from `srt` or `ass` are the caller's own files and are not copied. In a
+  batch a later step may re-time anything, so a side file a step before the last writes beside its
+  intermediate is not delivered: a `batch_side_file_not_delivered` skip names it, and only the last
+  step's side files land beside the output, as before. Code: `render.deliver_caption_srt()`,
+  `batch.work_files()`. Tests: `test_a_render_delivers_its_captions_srt_beside_the_output`,
+  `test_a_batch_records_a_side_file_lost_with_an_intermediate`.
+- **A side input built from `{in}` is keyed per item (#429 item 3).** `side_inputs_key()` keys the
+  literal paths a recipe names; a path built from a placeholder was skipped, so an edited
+  `{in}.png` served the old output. The first step's `{in}` is the item's source, so its derived
+  path is resolved and keyed by content per item (`item_side_inputs_key()`; a recipe with none keeps
+  its old key, so existing caches still hit). A later step's `{in}` is an intermediate that does not
+  exist before the item runs and cannot be keyed: such an item is never served from the cache nor
+  stored (`cache_miss: {reason: side_input_unresolved, step, argument}`). A rerun after the edit
+  re-encodes and, as for an edited source, replaces the earlier output only with `--overwrite`
+  ("left by an earlier run, is refused as before", above). The sweep found the same class in
+  `render.py --cache`: a stage's key hashed the `--brand` file's bytes, not the logo and font file
+  it names, so a font replaced under its name was served; those are keyed now
+  (`render._brand_files_key()`, only for a stage with `--brand`). Test:
+  `test_a_side_input_built_from_in_is_in_the_batch_cache_key`.
+- **An interrupted render or batch says what it kept (#429 item 4).** A render stage that writes
+  outside the work directory (the export writes the delivery itself) has its destination's
+  identity (size, mtime_ns, inode) recorded before it starts (`runner.watch_destination()`); after a
+  stop, a file there that is not that file is this run's and is reported kept, unverified, by the
+  #415 rule ("kept, without the step that was stopped", `output`), while the caller's own file,
+  untouched or restored by the stage's cleanup, is not claimed. Recording the destination as written
+  up front would have claimed that file. Ctrl-C during export's `--normalize` loudness pass said
+  "nothing was written" with the export's encode at the output. The work directory, removed at exit
+  unless `--keep`/`--work`, is in `STATE.temp_dirs`, and its stage files are no longer listed as
+  "still on disk". A batch row stopped in its last step carries `kept` for such a file at the
+  final path. The output lock and its `.takeover` file left beside a stopped child came from a
+  second signal: a Ctrl-C reaches every process of the group and the parent then sends SIGTERM, and
+  the handler raised again from inside the lock's `__exit__`; a second signal during the stop is now
+  ignored (`runner._on_signal()`), and the parent's SIGKILL after `STOP_GRACE` still ends a cleanup
+  that hangs. A process killed outright (SIGKILL, a power cut) still leaves its lock; the next run
+  takes it over as stale (its pid is dead). Code: `runner.watch_destination()`,
+  `kept_deliverables()`, `written_on_disk()`, `_on_signal()`, `render.sh()`, `batch.process()`.
+  Tests: `test_an_interrupted_stage_reports_the_file_it_wrote_and_not_the_work_directory`,
+  `test_a_second_signal_during_the_stop_does_not_leave_the_lock`,
+  `test_ctrl_c_during_the_export_s_loudness_pass_reports_the_kept_delivery`. Seen and not changed:
+  `verify.py` runs its steps for real into its own `--out` directory (its stop was not tried here);
+  `multicam.py` and `sequence.py` run one ffmpeg command, whose partial output run() removes.

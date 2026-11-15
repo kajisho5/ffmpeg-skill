@@ -363,7 +363,7 @@ class Context:
     __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
-                 "source_timecode", "smpte_hint", "delivered", "expected_timecode")
+                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs")
 
     def __init__(self) -> None:
         self.reset()
@@ -377,6 +377,8 @@ class Context:
         self.expected_timecode = None  # the start timecode a tool that moved the picture's start wrote (timeline.output_timecode_args; "" for none): source_carry compares it
         self.smpte_hint = None    # what die() says when an hh:mm:ss:ff flag read past the end looks like a source timecode (#411)
         self.delivered: List[str] = []  # deliverables written before a later step (export --normalize, render's chapters/check): a stop then keeps them (#415)
+        self.watched: Dict[str, Any] = {}  # a path a running child writes (render's export stage): its owned_identity() before the child started (watch_destination)
+        self.temp_dirs: List[str] = []  # directories this run removes when it exits (render's work directory): nothing in them is kept
         self.audio_inputs = set()  # real paths of the inputs probed that have sound: with two or more, whose tracks an output should keep is the tool's choice (grid --audio-from, a mix)
         self.json_brief = False   # --json-brief: the same document trimmed to the fields a caller acts on
         self.progress = False     # run() streams percent / ETA to stderr for ffmpeg
@@ -647,9 +649,34 @@ def child_exit_code(doc: Any, returncode: Optional[int]) -> int:
     return 128 - code if code < 0 else code
 
 
+def watch_destination(path: Optional[str]) -> None:
+    """Record what is at `path` before a child tool writes it (render.py's export stage writes the
+    delivery itself): if this run is stopped while the child runs, kept_deliverables() compares
+    the file then with this record. A file the child changed is this run's and is reported kept;
+    one it did not change (the caller's own, restored by the child's cleanup, or never touched)
+    is not claimed (#510)."""
+    if path and not STATE.dry_run:
+        STATE.watched[path] = owned_identity(path)
+
+
+def unwatch_destination(path: Optional[str]) -> None:
+    STATE.watched.pop(path or "", None)
+
+
 def kept_deliverables() -> List[str]:
-    """The deliverables mark_delivered() named that are on disk."""
-    return [p for p in STATE.delivered if os.path.isfile(p)]
+    """The deliverables mark_delivered() named that are on disk, and any watched destination that
+    is on disk and is not the file that was there when its child started (size, mtime, inode)."""
+    kept = [p for p in STATE.delivered if os.path.isfile(p)]
+    for path, before in STATE.watched.items():
+        now = owned_identity(path)
+        if now is not None and now != before and path not in kept:
+            kept.append(path)
+    return kept
+
+
+def _in_temp_dir(path: str) -> bool:
+    real = os.path.realpath(path)
+    return any(real.startswith(os.path.realpath(d) + os.sep) for d in STATE.temp_dirs)
 
 
 def written_on_disk() -> List[str]:
@@ -657,7 +684,8 @@ def written_on_disk() -> List[str]:
     deliverables mark_delivered() named excepted. A stopped command's partial output is removed
     before a stop is reported, so it is not among them."""
     delivered = {os.path.realpath(p) for p in STATE.delivered}
-    return sorted(p for p in STATE.written if p not in delivered and os.path.isfile(p))
+    # a file in a directory removed at exit (render's work directory) is not on disk after the stop
+    return sorted(p for p in STATE.written if p not in delivered and os.path.isfile(p) and not _in_temp_dir(p))
 
 
 def kept_clause() -> str:
@@ -681,8 +709,19 @@ def _kept_fields() -> Dict[str, Any]:
     return {"output": kept[-1]} if kept else {}
 
 
+_STOPPING = {"signal": None}
+
+
 def _on_signal(signum: int, frame: Any) -> None:
     import signal as _signal
+    if _STOPPING["signal"] is not None:
+        # a second signal while the first one's stop runs: a Ctrl-C reaches every process of the
+        # group, and the parent then sends its SIGTERM too. Raising again here exited from the
+        # middle of the cleanup the first one started (an output lock's __exit__), and left the
+        # lock and its takeover file beside the output (#510). The parent's SIGKILL after
+        # STOP_GRACE still ends a cleanup that hangs.
+        return
+    _STOPPING["signal"] = signum
     name = {getattr(_signal, "SIGINT", None): "SIGINT", getattr(_signal, "SIGTERM", None): "SIGTERM"}.get(signum, str(signum))
     stop_children()
     die(f"interrupted by {name}: the running command was stopped and its partial output removed; {kept_clause()}",
@@ -3186,6 +3225,43 @@ def require_filter(name: str, why: str) -> None:
     die(f"this ffmpeg build has no {name} filter, which {why} needs", code=1, kind="ffmpeg",
         error_extra={"reason": "filter_missing", "details": {"name": name}},
         hint=filter_missing_hint(name))
+
+
+BUILD_COMPONENT_REASONS = ("filter_missing", "encoder_missing")
+
+
+def refuse_missing_components_first(script: str, why: str) -> None:
+    """A tool that runs its work as several stages (render.py, waveform.py with a title or
+    captions) finds a filter or an encoder the build lacks at the stage that needs it, after the
+    stages before it have encoded (#510). Its --dry-run runs every stage's own dry run, which
+    refuses such a stage before anything is written, so a real run runs that dry run first (this
+    same command line with --dry-run) and, when it is refused for a component this build lacks,
+    is refused with the same document: kind, message, reason, details, hint and stage. Any other
+    outcome of the dry run, a refusal for another reason or a timeout included, is left to the
+    real run, which decides on the files as they then are. Nothing to do under --dry-run itself."""
+    if STATE.dry_run:
+        return
+    info(f"checking every {why} against this ffmpeg build first (a dry run of this command)")
+    proc = run_tool([script] + sys.argv[1:] + ["--dry-run", "--json"])
+    try:
+        doc = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        doc = None
+    err = doc.get("error") if isinstance(doc, dict) else None
+    if proc.returncode == 0:
+        return
+    if not isinstance(err, dict) or err.get("reason") not in BUILD_COMPONENT_REASONS:
+        # not a component this build lacks: the real run meets the same thing, or not, itself
+        info("the dry run did not complete (" + (str(err.get("message"))[:200] if isinstance(err, dict) else
+                                                f"exit {proc.returncode}, no document")
+             + "); its stages are checked as they run")
+        return
+    extra: Dict[str, Any] = {"hint": err["hint"]} if err.get("hint") else {}
+    for key in ("stage", "encoder"):
+        if doc.get(key):
+            extra[key] = doc[key]
+    die(str(err.get("message") or err["reason"]), code=int(doc.get("exit_code") or 1), kind=str(err.get("kind") or "ffmpeg"),
+        error_extra={k: err[k] for k in ("reason", "details") if err.get(k) is not None}, **extra)
 
 
 def filter_missing_hint(name: str) -> str:

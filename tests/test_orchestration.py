@@ -4,6 +4,8 @@
     python3 tests/test_orchestration.py       # this group alone
     python3 tests/test_all.py            # every group
 """
+import contextlib
+import io
 import json
 import os
 import platform
@@ -12,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1823,6 +1826,12 @@ class OrchestrationTests(MediaFixtures):
             self.assertEqual(r["cut_reencoded"], [True, False])
         summary = data["cut_stream_copy"]
         self.assertEqual(summary, {"calls": 4, "stream_copy": 2, "reencoded": 2, "stream_copy_rate": 0.5})
+        # #510: a dry run counts the calls' plans, and its summary line does not call a planned copy
+        # one that stayed lossless (the real run above re-encoded the first step's)
+        proc = script("batch.py", folder, "--recipe", recipe, "--fast", "--json", "--dry-run", "--force")
+        self.assertEqual(json.loads(proc.stdout)["cut_stream_copy"]["stream_copy"], 4)
+        self.assertNotIn("stayed fully lossless", proc.stderr)
+        self.assertIn("which a real run may still re-encode", proc.stderr)
 
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"
@@ -3168,6 +3177,337 @@ class Issue458Tests(MediaFixtures):
             proj = json.loads(filled.read_text(encoding="utf-8"))
             self.assertEqual(proj["brand"], os.path.abspath(brand))
             self.assertIn("Episode 12", json.dumps(proj.get("graphics")))
+
+
+
+@unittest.skipIf(platform.system() == "Windows", "the lean build is a #!/bin/sh ffmpeg/ffprobe on a PATH shim")
+class MissingComponentFirstTests(unittest.TestCase):
+    """#510: a real render ran its earlier stages (cut, fit) and then failed at the stage that needs
+    a filter the build lacks, where its --dry-run was refused before anything encoded; waveform.py
+    encoded the visualisation before its title stage failed. A real run now runs its own dry run
+    first and is refused with the same document. The lean build is a PATH shim whose -filters
+    list leaves drawtext out; every other call runs the real binary."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = OUT / "missing_first"
+        shutil.rmtree(cls.d, ignore_errors=True)
+        (cls.d / "bin").mkdir(parents=True)
+        for name in ("ffmpeg", "ffprobe"):
+            real = shutil.which(name)
+            if not real:
+                raise unittest.SkipTest(f"{name} not on PATH")
+            if "drawtext" not in subprocess.run([real, "-hide_banner", "-filters"], stdout=subprocess.PIPE,
+                                                stderr=subprocess.DEVNULL, text=True).stdout:
+                raise unittest.SkipTest("this build has no drawtext to hide")
+            shim = cls.d / "bin" / name
+            shim.write_text("#!/bin/sh\n"
+                            'for a in "$@"; do if [ "$a" = "-filters" ]; then '
+                            f'"{real}" "$@" | grep -v " drawtext "; exit 0; fi; done\n'
+                            f'exec "{real}" "$@"\n', encoding="utf-8")
+            shim.chmod(0o755)
+        cls.env = dict(os.environ, PATH=str(cls.d / "bin") + os.pathsep + os.environ.get("PATH", ""))
+        cls.clip = tiny_clip(cls.d / "clip.mp4", "testsrc2=size=320x180:rate=30", seconds=2, audio=True)
+        cls.wav = cls.d / "tone.wav"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=2", cls.wav)
+
+    def _run(self, name, *args):
+        proc = subprocess.run([sys.executable, str(SCRIPTS / name), *map(str, args), "--json"], env=self.env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        return proc.returncode, json.loads(proc.stdout), proc.stderr
+
+    def test_a_real_run_is_refused_before_its_first_stage_as_its_dry_run_is(self):
+        cases = (("render.py", [self.clip, "--template", "reels", "--title", "T"], "→ fit.py"),
+                 ("waveform.py", [self.wav, "--title", "Hi", "--width", "320", "--height", "180"], None))
+        for name, args, first_stage in cases:
+            with self.subTest(tool=name):
+                out = self.d / f"{Path(name).stem}.mp4"
+                out.unlink(missing_ok=True)
+                rc_dry, dry, _ = self._run(name, *args, "-o", out, "--dry-run")
+                rc, real, stderr = self._run(name, *args, "-o", out)
+                self.assertEqual((rc_dry, rc), (1, 1), (dry, real))
+                keys = ("kind", "message", "reason", "details", "hint")
+                self.assertEqual({k: real["error"].get(k) for k in keys}, {k: dry["error"].get(k) for k in keys})
+                self.assertEqual((real["error"]["reason"], real["error"]["details"], real.get("stage")),
+                                 ("filter_missing", {"name": "drawtext"}, "graphics.py"), real)
+                self.assertEqual(real["commands"], [], "no stage encoded before the refusal")
+                if first_stage:
+                    self.assertNotIn(first_stage, stderr)
+                self.assertFalse(out.exists())
+        # with every filter there, the same render completes: the dry run first refuses nothing else
+        out = self.d / "render_ok.mp4"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("render.py", self.clip, "--template", "reels", "--title", "T", "-o", out, "--fast", "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+
+
+
+class Issue429DecidedTests(unittest.TestCase):
+    """#510, the four #429 items as decided: a batch step that writes without naming {out}, a
+    side file lost with an intermediate, a side input built from {in} in the batch cache key, and
+    what an interrupted render or batch says it kept."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.d = OUT / "i429"
+        shutil.rmtree(cls.d, ignore_errors=True)
+        cls.d.mkdir(parents=True)
+        cls.clip = tiny_clip(cls.d / "clip.mp4", "testsrc2=size=160x90:rate=30", seconds=2, audio=True)
+        cls.cues = cls.d / "cues.txt"
+        cls.cues.write_text("00:00:00.300 --> 00:00:01.200 hello there\n", encoding="utf-8")
+
+    def _run(self, name, *args, env=None):
+        proc = subprocess.run([sys.executable, str(SCRIPTS / name), *map(str, args), "--json"], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+        try:
+            return proc.returncode, json.loads(proc.stdout), proc.stderr
+        except ValueError:
+            raise AssertionError(proc.stderr[-1500:])
+
+    def _folder(self, name, n=2):
+        folder = self.d / name
+        (folder / "in").mkdir(parents=True)
+        for i in range(n):
+            shutil.copy(self.clip, folder / "in" / f"{'ab'[i]}.mp4")
+        return folder
+
+    def _recipe(self, folder, steps, name="r.json"):
+        recipe = folder / name
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(folder / "out"), "steps": steps}), encoding="utf-8")
+        return recipe
+
+    def test_a_batch_step_that_writes_without_out_stops_the_batch(self):
+        folder = self._folder("no_out")
+        recipe = self._recipe(folder, [["metadata.py", "{in}", "--title", "T"], ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+        stray = folder / "in" / "a_meta.mp4"
+        for dry in (True, False):
+            with self.subTest(dry_run=dry):
+                rc, doc, _ = self._run("batch.py", folder / "in", "--recipe", recipe, *(["--dry-run"] if dry else []))
+                self.assertEqual((rc, doc["error"]["kind"], doc["error"]["reason"]), (1, "input", "step_writes_without_out"), doc["error"])
+                det = doc["error"]["details"]
+                self.assertEqual((det["step"], det["tool"], det["file"], det["written"]), (0, "metadata.py", str(stray), not dry))
+                self.assertEqual(stray.exists(), not dry)
+                self.assertIn("nothing was written" if dry else "left it there", doc["error"]["message"])
+                self.assertEqual([r.get("skipped") for r in doc["results"]], [None, "recipe_refused"], "the batch stops at the first item")
+                self.assertFalse(list((folder / "out").glob("*.mp4")))
+        # a step that only reads (output null) is untouched, as is one that names its own -o
+        recipe = self._recipe(folder, [["check.py", "{in}"], ["look.py", "{in}", "-o", "{in}.png"],
+                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]], "r2.json")
+        shutil.rmtree(folder / "in")
+        (folder / "in").mkdir()
+        shutil.copy(self.clip, folder / "in" / "a.mp4")
+        rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe)
+        self.assertEqual((rc, doc["status"]), (0, "completed"), err[-800:])
+
+    def test_a_render_delivers_its_captions_srt_beside_the_output(self):
+        out = self.d / "cap.mp4"
+        proj = self.d / "cap.json"
+        proj.write_text(json.dumps({"output": str(out), "clips": [{"src": str(self.clip)}], "captions": {"text": str(self.cues)}}),
+                        encoding="utf-8")
+        srt = self.d / "cap.srt"
+        rc, plan, _ = self._run("render.py", proj, "--dry-run")
+        self.assertEqual((rc, plan["caption_srt"], srt.exists()), (0, str(srt), False))
+        rc, doc, err = self._run("render.py", proj, "--fast")
+        self.assertEqual((rc, doc["caption_srt"]), (0, str(srt)), err[-800:])
+        self.assertIn("hello there", srt.read_text(encoding="utf-8"))
+        # its guard is the output's, before the first stage: an existing SRT is refused without --overwrite
+        out.unlink()
+        rc, doc, _ = self._run("render.py", proj, "--fast")
+        self.assertEqual((rc, doc["error"]["reason"], doc["commands"]), (1, "output_exists", []))
+        self.assertFalse(out.exists())
+        # a later stage that changed the timeline (the export trimmed the delivery): not delivered, said so
+        import render
+        from _common import STATE
+        STATE.reset()
+        try:
+            render._LAST_DOC.clear()
+            render._LAST_DOC["trimmed"] = {"from": 95.0, "to": 90.0}
+            made = {"srt": str(srt), "video": str(self.clip), "cached": False}
+            with unittest.mock.patch.object(render, "place_output") as placed, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertIsNone(render.deliver_caption_srt(str(self.d / "trimmed.srt"), made, str(self.clip)))
+            placed.assert_not_called()
+            self.assertEqual([(s["code"], s["reason"]) for s in STATE.skipped], [("caption_srt_not_delivered", "timeline_changed")])
+        finally:
+            render._LAST_DOC.clear()
+            STATE.reset()
+
+    def test_a_batch_records_a_side_file_lost_with_an_intermediate(self):
+        folder = self._folder("side", n=1)
+        recipe = self._recipe(folder, [["caption.py", "{in}", "--text", str(self.cues), "-o", "{out}"],
+                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+        rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe)
+        self.assertEqual(rc, 0, err[-800:])
+        lost = [s for s in doc["diagnostics"]["skipped"] if s["code"] == "batch_side_file_not_delivered"]
+        self.assertEqual([(s["step"], s["tool"], s["files"]) for s in lost], [(0, "caption.py", ["step0.srt"])])
+
+    def test_a_side_input_built_from_in_is_in_the_batch_cache_key(self):
+        folder = self._folder("side_key", n=1)
+        logo = folder / "in" / "a.mp4.png"
+
+        def plate(colour):
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c={colour}:s=32x32", "-frames:v", "1", logo)
+        plate("red")
+        recipe = self._recipe(folder, [["overlay.py", "{in}", "--image", "{in}.png", "-o", "{out}"]])
+        out = folder / "out" / "a_out.mp4"
+
+        def run():
+            rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--overwrite")
+            self.assertEqual(rc, 0, err[-800:])
+            return doc["results"][0], out.read_bytes()
+        first, red = run()
+        again, _ = run()
+        self.assertTrue(again.get("cached"))
+        plate("blue")  # edited, not removed
+        edited, blue = run()
+        self.assertFalse(edited.get("cached"), "an edited side input is a change the cache must see")
+        self.assertNotEqual(red, blue)
+        # a side input built from a later step's {in} (an intermediate) cannot be keyed: never served
+        recipe = self._recipe(folder, [["fit.py", "{in}", "--duration", "1", "-o", "{out}"],
+                                       ["check.py", "{in}", "--compare", "{in}.ref.mp4"]], "r2.json")
+        rc, doc, _ = self._run("batch.py", folder / "in", "--recipe", recipe, "--overwrite")
+        self.assertEqual(doc["results"][0]["cache_miss"], {"reason": "side_input_unresolved", "step": 1, "argument": "{in}.ref.mp4"})
+
+    def test_render_cache_keys_the_files_a_brand_file_names(self):
+        """The sweep of the cache-key item: a stage's key hashed the --brand file's own bytes, so a
+        font file replaced under the same name was served from the cache with the old font drawn."""
+        fonts = [f for f in (font_for_script("Latin"), "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") if f and os.path.isfile(str(f))]
+        fonts = sorted({os.path.realpath(str(f)) for f in fonts})
+        if len(fonts) < 2:
+            self.skipTest("two font files are needed")
+        font = self.d / "brand_font.ttf"
+        shutil.copy(fonts[0], font)
+        brand = self.d / "brand_cache.json"
+        brand.write_text(json.dumps({"font_file": str(font)}), encoding="utf-8")
+        proj = self.d / "brand_cache_project.json"
+        proj.write_text(json.dumps({"output": str(self.d / "brand_cache.mp4"), "brand": str(brand), "clips": [{"src": str(self.clip)}],
+                                    "graphics": [{"template": "title", "title": "Hello", "start": 0, "end": 1}]}), encoding="utf-8")
+
+        def hits():
+            rc, doc, err = self._run("render.py", proj, "--cache", self.d / "brand_cache", "--overwrite")
+            self.assertEqual(rc, 0, err[-800:])
+            return doc["cache"]["hits"]
+        hits()
+        self.assertEqual(hits(), ["graphics"])
+        shutil.copy(fonts[1], font)  # replaced under its name: the brand file is unchanged
+        self.assertEqual(hits(), [], "the replaced font is a change the cache key sees")
+
+    def test_an_interrupted_stage_reports_the_file_it_wrote_and_not_the_work_directory(self):
+        """In this process: render's sh() with a stand-in child that writes the destination, then
+        the interrupt handler, as Ctrl-C reaches both. A file the stage wrote is kept and named; a
+        file that was there and the stage left alone is not claimed; a stage file in a work
+        directory removed at exit is not called "still on disk"."""
+        import signal
+        import render
+        from _common import STATE, runner
+        dest = self.d / "stop_dest.mp4"
+        work = self.d / "stop_work"
+        work.mkdir(exist_ok=True)
+        stage_file = work / "fit.mp4"
+        cases = (("written by the stage", False, True), ("the caller's file, untouched", True, False))
+        for label, preexisting, writes in cases:
+            with self.subTest(case=label):
+                dest.unlink(missing_ok=True)
+                if preexisting:
+                    shutil.copy(self.clip, dest)
+                STATE.reset()
+                STATE.json = True
+                render.WORK_DIR["path"] = str(work)
+                STATE.temp_dirs.append(str(work))
+                shutil.copy(self.clip, stage_file)
+                STATE.written.add(str(stage_file))
+
+                def child(cmd, **kw):
+                    if writes:
+                        dest.write_bytes(b"stage output")
+                    runner._on_signal(signal.SIGINT, None)
+                out = io.StringIO()
+                try:
+                    with unittest.mock.patch.object(render, "run_tool", side_effect=child), contextlib.redirect_stdout(out), \
+                            contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                        render.sh("export.py", str(self.clip), "--preset", "youtube", "-o", str(dest))
+                finally:
+                    runner._STOPPING["signal"] = None
+                    render.WORK_DIR["path"] = None
+                    STATE.reset()
+                doc = json.loads(out.getvalue())
+                msg = doc["error"]["message"]
+                self.assertNotIn(str(stage_file), msg, "the work directory goes at exit")
+                if writes:
+                    self.assertEqual(doc.get("output"), str(dest))
+                    self.assertIn("is kept", msg)
+                else:
+                    self.assertNotIn("output", doc)
+                    self.assertTrue(msg.endswith("nothing was written"), msg)
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM is not delivered to a Python handler on Windows")
+    def test_a_second_signal_during_the_stop_does_not_leave_the_lock(self):
+        """Ctrl-C reaches the whole process group, and the parent then sends its SIGTERM: the second
+        signal raised again from inside the cleanup the first started (the output lock's __exit__)
+        and left the lock and its takeover file beside the output."""
+        out = self.d / "locked.mp4"
+        child = self.d / "lock_child.py"
+        child.write_text(
+            "import os, signal, sys\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "from _common import runner\n"
+            "runner.install_signal_handlers()\n"
+            "real = runner._TakeoverSection.acquire\n"
+            "def acquire(self, *a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM)  # the parent's SIGTERM, inside the cleanup\n"
+            "    return real(self, *a, **k)\n"
+            "with runner._OutputLock(sys.argv[1]):\n"
+            "    runner._TakeoverSection.acquire = acquire\n"
+            "    os.kill(os.getpid(), signal.SIGINT)\n", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(child), str(out)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 130, proc.stderr[-800:])
+        left = sorted(p.name for p in self.d.glob(".locked.mp4*"))
+        self.assertEqual(left, [], "the lock and its takeover file are removed")
+
+    @unittest.skipIf(os.name == "nt", "a process-group SIGINT is POSIX")
+    def test_ctrl_c_during_the_export_s_loudness_pass_reports_the_kept_delivery(self):
+        """End to end, render and batch: Ctrl-C to the process group while export.py --normalize
+        runs its loudness pass, after it wrote the delivery. Render said "nothing was written" with
+        the file on disk; batch's row said only that the step was stopped."""
+        import signal
+        loud = self.d / "loud.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=64x36:r=10:d=150", "-f", "lavfi", "-i",
+           "sine=f=440:d=150", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", loud)
+        proj = self.d / "stop.json"
+        rout = self.d / "stopped" / "x.mp4"
+        rout.parent.mkdir()
+        proj.write_text(json.dumps({"output": str(rout), "clips": [{"src": str(loud)}],
+                                    "export": {"preset": "youtube", "normalize": True}}), encoding="utf-8")
+        bfolder = self.d / "bstop"
+        (bfolder / "in").mkdir(parents=True)
+        shutil.copy(loud, bfolder / "in" / "a.mp4")
+        recipe = self._recipe(bfolder, [["export.py", "{in}", "--preset", "youtube", "--normalize", "-o", "{out}"]])
+        for name, argv, where, final in (("render", [proj], rout.parent, rout),
+                                         ("batch", [bfolder / "in", "--recipe", recipe], bfolder / "out", bfolder / "out" / "a_out.mp4")):
+            with self.subTest(tool=name):
+                p = subprocess.Popen([sys.executable, str(SCRIPTS / f"{name}.py"), *map(str, argv), "--json"], stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+                import time
+                while p.poll() is None and not (where.is_dir() and any("normalize" in n.name for n in where.iterdir())):
+                    time.sleep(0.02)
+                if p.poll() is not None:
+                    self.fail(f"{name} finished before its loudness pass could be interrupted: {p.stderr.read()[-800:]}")
+                time.sleep(0.3)
+                os.killpg(p.pid, signal.SIGINT)
+                o, e = p.communicate(timeout=300)
+                doc = json.loads(o)
+                self.assertEqual((p.returncode, doc["error"]["kind"]), (130, "interrupted"), e[-800:])
+                self.assertTrue(final.is_file())
+                self.assertIn(str(final), doc["error"]["message"])
+                self.assertIn("kept", doc["error"]["message"])
+                if name == "render":
+                    self.assertEqual(doc.get("output"), str(final))
+                else:
+                    self.assertEqual(doc["results"][0].get("kept"), str(final))
+                self.assertEqual(sorted(n.name for n in where.iterdir() if "ffskill-lock" in n.name), [])
 
 
 if __name__ == "__main__":

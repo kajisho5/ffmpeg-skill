@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
 from _common.runner import (HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
-from _common.emit import absorb_stage_hw, audit, note, shown, steps_encoder_report, warn
+from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, rebase_project_paths
 from _common.runner import parse_json
 
@@ -92,6 +92,38 @@ def side_inputs_key(recipe: Dict[str, Any]) -> str:
                 pass
             h.update(f"{value}\0-\0".encode())  # absent now: different from when it existed
     return h.hexdigest()[:8]
+
+
+def item_side_inputs_key(recipe: Dict[str, Any], src: Path) -> "tuple[str, Optional[Dict[str, Any]]]":
+    """The side inputs a step names through a placeholder, for one item (#510): `--image {in}.png`
+    in the first step is a file beside this item's source, and editing it is a change the cache
+    must see as side_inputs_key() sees a literal path's. Returns (key part, None), "" when the
+    recipe names none, or ("", why) when one cannot be resolved before the item runs: a later
+    step's {in} is an intermediate that does not exist yet, so its file cannot be keyed, and the
+    item is not served from the cache at all."""
+    h = hashlib.sha1(usedforsecurity=False)
+    named = False
+    for i, step in enumerate(recipe.get("steps") or []):
+        for arg in step[1:] if isinstance(step, list) else []:
+            if not isinstance(arg, str) or "{in}" not in arg or "{out}" in arg:
+                continue  # literal paths are side_inputs_key()'s; {out} names an output, not an input
+            value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
+            if value == "{in}" or "{in}" not in value:
+                continue  # the step's own input
+            if i > 0:
+                return "", {"reason": "side_input_unresolved", "step": i, "argument": arg,
+                            "message": f"step {i} names {arg!r}, a file derived from an intermediate that does not "
+                                       "exist before the item runs, so the cache cannot key it; the item always runs"}
+            path = Path(value.replace("{in}", str(src)))
+            named = True
+            try:
+                if path.is_file():
+                    h.update(f"{path}\0{file_key(path)}\0".encode())
+                    continue
+            except OSError:
+                pass
+            h.update(f"{path}\0-\0".encode())
+    return (h.hexdigest()[:8] if named else ""), None
 
 
 def caseless_glob(pattern: str) -> str:
@@ -201,6 +233,8 @@ _LOG = threading.local()
 # left, or one another item delivered (two items naming one side file) is still refused.
 _OWN_OUTPUTS: Dict[str, Dict[str, Dict[str, int]]] = {}
 _OWN_LOCK = threading.Lock()
+# source -> (final path, its owned_identity() before the last step started), while that step runs
+_WATCHED: Dict[str, Any] = {}
 # set by batch.py's signal handler: a --jobs worker between two steps must not start the next one
 _STOP = threading.Event()
 
@@ -352,6 +386,41 @@ def check_recipe_types(recipe: Dict[str, Any]) -> None:
         if not isinstance(st, list) or not st:
             die(f'recipe step {i} must be a list ["script.py", args...], got {type(st).__name__} {st!r:.60}',
                 kind="input")
+
+
+STEP_WRITES_WITHOUT_OUT = "step_writes_without_out"
+
+
+def names_output(step: Any) -> bool:
+    """Whether a step names where it writes itself (-o/--output with a path that is not {out}): a
+    side product the caller placed on purpose (look.py {in} -o {in}.png), not an implicit output."""
+    for tok in (step[1:] if isinstance(step, list) else []):
+        tok = str(tok)
+        if tok in ("-o", "--output") or tok.startswith("--output=") or (tok.startswith("-o") and not tok.startswith("--") and len(tok) > 2):
+            return True
+    return False
+
+
+def work_files(work: Path) -> "set":
+    """The names of the files directly in an item's work directory, batch's own excepted (the
+    owned*.json snapshots, the owned-report directory, hidden temporaries)."""
+    try:
+        return {p.name for p in work.iterdir()
+                if p.is_file() and not p.name.startswith(".") and not (p.name.startswith("owned") and p.suffix == ".json")}
+    except OSError:
+        return set()
+
+
+def wrote_without_out(i: int, tool: str, path: str, src: Path) -> Dict[str, Any]:
+    """The error of a step that reports an output file while naming no {out}: the batch stops."""
+    written = not STATE.dry_run and os.path.isfile(path)
+    where = (f"this run wrote {path} for {src.name} before stopping and left it there; no later item ran"
+             if written else "nothing was written" + (" (dry run)" if STATE.dry_run else ""))
+    return {"step": i, "tool": tool, "kind": "input", "reason": STEP_WRITES_WITHOUT_OUT,
+            "message": (f"step {i} ({tool}) names no {{out}} but writes {path}, its own default output: the next "
+                        f"step does not read it and the batch does not deliver it; {where}"),
+            "hint": f"give step {i} \"-o\", \"{{out}}\" so its file is the one the next step reads and the batch delivers",
+            "details": {"step": i, "tool": tool, "file": path, "written": written}}
 
 
 def step_writes(step: Any) -> bool:
@@ -546,7 +615,17 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             argv = [str(a).replace("{in}", cur).replace("{out}", out) for a in step]
             if last and writes and track and is_own_output(src, final):
                 log(f"  {final.name} is this run's own earlier output, unchanged since: it may be replaced")
-            step_ok, doc = run_step(argv, budget(), owned=owned(i))
+            owned_cfg = owned(i)
+            before = set() if last else work_files(work)
+            if last and writes and not STATE.dry_run:
+                # what is at the final path before the step that writes it: a stop while it runs
+                # reports a file the step left there as kept, not as nothing (#510)
+                with _OWN_LOCK:
+                    _WATCHED[str(src)] = (str(final), owned_identity(str(final)))
+            step_ok, doc = run_step(argv, budget(), owned=owned_cfg)
+            if step_ok:
+                with _OWN_LOCK:
+                    _WATCHED.pop(str(src), None)  # a stopped step's stays for interrupted_row()
             step_docs.append((Path(str(argv[0])).stem if argv else "step", doc))
             # only cut.py's own doc carries `reencoded` -- true if ANY range this call cut (or its
             # --segments join) re-encoded, for the reasons in its `reencode_reason` (distinct per
@@ -559,6 +638,20 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
                 ok = False
                 failure = step_error(i, str(argv[0]) if argv else None, doc)
                 break
+            reported = doc.get("output") if isinstance(doc, dict) else None
+            if not writes and isinstance(reported, str) and reported and not names_output(step):
+                # #510: the step wrote (or under --dry-run would write) its own default output, which
+                # the next step does not read and the batch does not deliver: refused, and the batch stops
+                raise ItemError(wrote_without_out(i, str(argv[0]), os.path.abspath(reported), src))
+            if writes and not last:
+                lost = sorted(set(work_files(work)) - before - {os.path.basename(out)})
+                if lost:
+                    # a side file the step wrote beside its intermediate (caption.py's .srt, an .ass):
+                    # the item's work directory goes when the item ends, and it with it (#510)
+                    record_skip(f"{src.name}: step {i} ({argv[0]}) also wrote {', '.join(lost)} beside its intermediate; "
+                                "it is removed with the item's work directory, not delivered (only the last step's "
+                                "side files land beside the output)",
+                                "batch_side_file_not_delivered", file=str(src), step=i, tool=str(argv[0]), files=lost)
             if writes:
                 cur = out
         if ok and cur != str(final) and not writes_nothing(recipe):
@@ -654,6 +747,7 @@ def main() -> int:
     started = time.time()
     with _OWN_LOCK:
         _OWN_OUTPUTS.clear()
+        _WATCHED.clear()
     folder = Path(args.folder).resolve()  # relative 'bdir' used to become bdir/bdir/out once joined with the default outdir
     if not folder.is_dir():
         die(f"not a folder: {folder}")
@@ -759,6 +853,7 @@ def main() -> int:
     cache_lock = threading.Lock()
     timed_out = {"hit": False}
     interrupted: Dict[str, Any] = {"hit": False, "signal": None}
+    refused: Dict[str, Any] = {"hit": False}  # a step wrote without naming {out}: no later item runs (#510)
     _STOP.clear()
     # Ctrl-C (and SIGTERM where it is delivered) stops the running steps and reports the table:
     # the shared handler would exit with "nothing was written" and no rows, and inside an item it
@@ -862,8 +957,8 @@ def main() -> int:
             finally:
                 shutil.rmtree(iw, ignore_errors=True)
 
-        def store(key: str, r: Dict[str, Any]) -> None:
-            if not (r["ok"] and not STATE.dry_run):
+        def store(key: "Optional[str]", r: Dict[str, Any]) -> None:
+            if not key or not (r["ok"] and not STATE.dry_run):
                 return
             # The read-modify-write of the in-memory dict needs the lock even though the file
             # write is already atomic: two finishers could otherwise serialise from two different
@@ -903,6 +998,15 @@ def main() -> int:
                             "seconds": 0.0, "skipped": "settling"}
                 continue
             key = f"{file_key(src)}:{pass_key}"
+            per_item, unkeyed = item_side_inputs_key(recipe, src)
+            if unkeyed:
+                # nothing can say the cached output still matches its side input: run it, unstored
+                cache_miss[i] = unkeyed
+                info(f"{src.name}: {unkeyed['message']}")
+                pending.append((i, src, None))
+                continue
+            if per_item:
+                key += ":" + per_item
             hit = cache.get(key)
             if isinstance(hit, dict) and not args.force:
                 why = cached_output_changed(hit)
@@ -950,11 +1054,25 @@ def main() -> int:
             row.update(ok=False, verified=False)
             if started:
                 row["interrupted"] = True
+                with _OWN_LOCK:
+                    watched = _WATCHED.pop(str(src), None)
+                if watched and owned_identity(watched[0]) not in (None, watched[1]):
+                    # the stopped step had written the final file (export.py's --normalize pass keeps
+                    # its encode): it is there, unverified, without the step that was stopped (#510)
+                    row["kept"] = watched[0]
                 row.setdefault("error", {"step": None, "tool": None, "kind": "interrupted",
                                          "message": "interrupted while this item was running; its running step was stopped"})
             else:
                 row["skipped"] = "interrupted"
             return row
+
+        def refused_row(src: Path) -> "Dict[str, Any]":
+            """An item not started because an earlier one's step wrote a file without naming {out}."""
+            return {"file": str(src), **row_output(src, recipe, outdir), "ok": False, "verified": False,
+                    "seconds": 0.0, "skipped": "recipe_refused"}
+
+        def is_refusal(r: "Optional[Dict[str, Any]]") -> bool:
+            return bool(r) and ((r or {}).get("error") or {}).get("reason") == STEP_WRITES_WITHOUT_OUT
 
         def with_miss(i: int, r: Dict[str, Any]) -> Dict[str, Any]:
             if i in cache_miss:
@@ -980,6 +1098,11 @@ def main() -> int:
                     if isinstance(exc, SystemExit) and not exc.code:
                         raise
                     slots[i] = with_miss(i, failed_row(src, exc))
+                    if is_refusal(slots[i]):
+                        refused["hit"] = True
+                        for j, later, _k in pending[n + 1:]:
+                            slots[j] = refused_row(later)
+                        break
                     continue
                 slots[i] = with_miss(i, r)
                 store(key, r)
@@ -1011,7 +1134,7 @@ def main() -> int:
                 # list up front would put every item past the deadline check before the first one
                 # had finished, and the shared budget could then never stop anything.
                 while queue or in_flight:
-                    while queue and len(in_flight) < jobs:
+                    while queue and len(in_flight) < jobs and not refused["hit"]:
                         if deadline is not None and time.monotonic() >= deadline:
                             break
                         i, src, key = queue.pop(0)
@@ -1030,8 +1153,10 @@ def main() -> int:
                         except BaseException as exc:    # noqa: BLE001 - reported, never swallowed
                             slots[i] = failed_row(src, exc)
                             lines[i] = [f"=== {src.name}", f"    failed: {exc}"]
+                        if is_refusal(slots[i]):
+                            refused["hit"] = True  # the items in flight finish; none is started after
                 for i, src, key in queue:
-                    slots[i] = timed_out_row(src)
+                    slots[i] = refused_row(src) if refused["hit"] else timed_out_row(src)
             except KeyboardInterrupt:
                 # Spec 4.1: cancel what has not started, stop the running steps (the handler
                 # already did), and REPORT every item -- exit 130 with the table, never a
@@ -1062,7 +1187,7 @@ def main() -> int:
         return [r for r in slots if r is not None]
 
     results = one_pass()
-    if args.watch:
+    if args.watch and not refused["hit"]:
         info(f"watching {folder} every {args.watch:g}s (Ctrl-C to stop)")
         # the shared SIGINT handler (install_signal_handlers) exits 130 with "nothing was written",
         # which is wrong for a watch that already processed files: while idle between passes,
@@ -1076,7 +1201,7 @@ def main() -> int:
                 finally:
                     signal.signal(signal.SIGINT, previous)
                 results = one_pass()
-                if interrupted["hit"]:
+                if interrupted["hit"] or refused["hit"]:
                     break  # the pass reported its rows; a watch interrupted mid-pass stops here
         except KeyboardInterrupt:
             info("watch stopped")
@@ -1095,11 +1220,27 @@ def main() -> int:
         # finished, interrupted while running, or not started.
         stopped = sum(1 for r in results if r.get("interrupted"))
         not_started = sum(1 for r in results if r.get("skipped") == "interrupted")
+        kept = [r["kept"] for r in results if r.get("kept")]
         die(f"interrupted after {done} of {len(results)} item(s): {stopped} stopped while running and "
-            f"{not_started} not started; the finished outputs are kept",
+            f"{not_started} not started; the finished outputs are kept"
+            + ((f", and {', '.join(kept)} " + ("was written by a step that was stopped and is" if len(kept) == 1 else
+                                              "were written by steps that were stopped and are") + " kept, unverified")
+               if kept else ""),
             code=128 + int(interrupted["signal"] or 2), kind="interrupted", output=None, dry_run=STATE.dry_run, results=results,
             processed=done, total=len(results), jobs=jobs, jobs_requested=requested,
             timed_out=timed_out["hit"])
+    if refused["hit"]:
+        rows = [r for r in results if ((r.get("error") or {}).get("reason")) == STEP_WRITES_WITHOUT_OUT]
+        first = rows[0]["error"]
+        files = [r["error"]["details"]["file"] for r in rows]
+        written = [f for r, f in zip(rows, files) if r["error"]["details"].get("written")]
+        not_run = sum(1 for r in results if r.get("skipped") == "recipe_refused")
+        die(first["message"] + (f" ({len(rows)} items in flight wrote one each: {', '.join(written)})" if len(written) > 1 else "")
+            + (f"; {not_run} item(s) not started" if not_run else ""),
+            kind="input", hint=first.get("hint"), output=None, dry_run=STATE.dry_run, results=results,
+            processed=done, total=len(results),
+            error_extra={"reason": STEP_WRITES_WITHOUT_OUT,
+                         "details": dict(first["details"], files=files, written_files=written, not_started=not_run)})
     if timed_out["hit"]:
         skipped = [r["file"] for r in results if r.get("skipped") == "timeout"]
         die(f"the batch's {STATE.timeout:g} s budget ran out with {len(skipped)} item(s) not "
@@ -1140,8 +1281,15 @@ def main() -> int:
             for r in res.get("cut_reencode_reasons") or []:
                 reasons[r] = reasons.get(r, 0) + 1
         why = (" (reencode_reason: " + ", ".join(f"{k} x{v}" for k, v in reasons.items()) + ")") if reasons else ""
-        info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
-             f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")
+        if STATE.dry_run:
+            # a dry run's counts are cut.py's plans: a planned copy may still re-encode in a real run,
+            # which measures where it lands (cut.py's possible_reencode_reason, #510)
+            info(f"cut.py: {copied}/{len(all_cuts)} call(s) planned as a lossless stream copy "
+                 f"({cut_summary['stream_copy_rate']:.0%}), which a real run may still re-encode (each call's "
+                 f"possible_reencode_reason); {len(all_cuts) - copied} planned to re-encode a range or its --segments join{why}")
+        else:
+            info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
+                 f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")
     unverified = [shown(os.path.basename(r["file"])) for r in results if r.get("ok") and not r.get("verified")]
     if unverified and not STATE.dry_run:
         note(f"{len(unverified)} item(s) completed but did not verify everything they wrote (see each row's unverified): "
