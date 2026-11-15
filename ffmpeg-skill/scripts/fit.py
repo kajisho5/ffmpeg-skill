@@ -233,6 +233,7 @@ def main() -> int:
     factor = 1.0
     tc_first = None  # seconds from the source's first frame to the output's, when a trim moves it
     regridded = False  # a speed change already put the picture on the delivered grid
+    out_seek = 0.0  # the output-side -ss a --method trim drops its seek margin with
 
     # ---- rotate / flip
     if args.rotate == 90:
@@ -320,6 +321,7 @@ def main() -> int:
                 keep = (picture_output_t(target, meta) if not rate and not args.fps and not args.from_center
                         else length_output_t(target, rate, runs_on=True))
                 post += (["-ss", f"{m:.3f}"] if m > 0 else []) + ["-t", keep]
+                out_seek = round(m, 3) if m > 0 else 0.0
                 # the output starts on the first frame at or after the seek (a seek before a
                 # picture that starts after the file's origin: on its first frame): its start
                 # timecode is that frame's, not the source's first frame's
@@ -340,8 +342,9 @@ def main() -> int:
         info("source looks variable-frame-rate; conforming to constant fps automatically")
         if not regridded:
             # the conform is the fps filter, as --fps is: -fps_mode cfr alone let a frame run up to
-            # two frames late against the sound (#512)
-            vf.append(cfr_filter(meta))
+            # two frames late against the sound (#512), its grid laid from the output-side seek
+            # (#538: --from-center put the picture of a 27 fps average clip 24-37 ms late)
+            vf.append(cfr_filter(meta, seek=out_seek))
 
     # ---- aspect / size
     geometry = None  # (the frame's filters with every fill drawn black, scale, cropped) for the picture measurement

@@ -17,8 +17,8 @@ import argparse
 import sys
 
 from _common.emit import note, record_fallback
-from _common.decision import silence_filter, tpad_length
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
+from _common.decision import cfr_filter, delivered_rate, silence_filter, tpad_length
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
 def main() -> int:
@@ -49,14 +49,25 @@ def main() -> int:
     output = args.output or default_output(args.input, "pad")
 
     tpad = f"tpad=start_duration={args.start:.3f}:stop_duration={args.end:.3f}:color="
+    lead = tpad_length(args.start, meta)
+    # A VFR source is conformed first, by the fps filter ahead of the drawing (after a drawn
+    # chain's maskedmerge it lost the last frame, #512), and the padding ahead of the clip is whole
+    # frames of the delivered rate, which the sound waits as long as (#538). After tpad the filter
+    # ended a slot early: tpad's start pad passes its input's end on without the pad, so the
+    # filter ended the picture at its last frame's start (134 frames of 135 for --start 1 on a
+    # 27 fps average clip). Ahead of a pad counted by time the padding was rounded to the grid on
+    # top of the frames' own rounding (37 ms late, #512); counted in its frames and the sound
+    # delayed by them, it moves the conformed picture and its sound alike.
+    conform = cfr_filter(meta)
+    if conform:
+        rate = delivered_rate(meta)
+        frames = round(args.start * rate)
+        tpad, lead = f"tpad=start={frames}:stop_duration={args.end:.3f}:color=", frames / rate
     # a --color with chroma lands in the BT.709 the output is tagged with (tpad's own YUV is BT.601
     # before FFmpeg 7.1, and for an untagged picture after it); black is the same under every matrix
-    # the conform of a VFR source is the fps filter right after tpad, which pads by time: before
-    # it, the padding was rounded to the delivered grid on top of the frames' own rounding (37 ms
-    # late), and after a drawn chain's maskedmerge the last frame was lost (#512)
-    conform = with_cfr("", meta)
-    vf = drawn_chain(tpad + args.color + ("," + conform if conform else ""), meta, [args.color],
-                     tpad + "black" + ("," + conform if conform else ""))
+    vf = drawn_chain(tpad + args.color, meta, [args.color], tpad + "black")
+    if conform:
+        vf = f"{conform},{vf}"
     cmd = ffmpeg_base() + ["-i", args.input]
     if has_audio:
         # One -filter_complex, not a -vf and an -af: the ffmpeg scheduler of Ubuntu 26.04's 8.0.1 and
@@ -75,7 +86,6 @@ def main() -> int:
         # sound 5.75 ms ahead of its picture (tpad_length). The silence after the clip moves
         # nothing and is --end as asked. Either is counted in samples when it is not a whole
         # millisecond (silence_filter).
-        lead = tpad_length(args.start, meta)
         if abs(lead - args.start) > 1e-9:
             note(f"--start {args.start:g}: the picture can only be padded by whole frames, {lead:.6f} s here; "
                  f"the sound is delayed by the same {lead:.6f} s so the clip keeps its sync")
