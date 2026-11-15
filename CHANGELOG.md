@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.20
+
+_Automated release: version and notes generated from pull requests merged since 3.8.19._
+
 ### Fixed
 
 - **`waveform.py --brand` reads a brand colour that starts with a digit, `examples/brand.json`'s
@@ -18,6 +24,7 @@
   `0B1D2A`, `0B1D2AFF` or `0B1D2A@0.5` although FFmpeg reads them; `FF6A00` passed. Seven digits
   after `0x` or `#` passed the check and failed inside ffmpeg after a dry run that completed;
   they are now refused, `kind: input`, like any other value that is not a plain colour.
+- fix: a brand colour that starts with a digit is read by waveform.py and by the colour check (#536)
 
 ## 3.8.19
 
