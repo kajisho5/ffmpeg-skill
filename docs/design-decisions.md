@@ -5550,7 +5550,9 @@ the slot at 0.519 s, "After 3.8.14").
   file back (a copy that keeps its mtime) served the new one. The key is now made again when the
   stage ends, from the same arguments, hashing the same files it hashed before the stage, so a file
   the stage itself writes beside its output does not count. When it differs, nothing is stored and a
-  `cache_inputs_changed` skip names the stage; the next run makes it again. This is the rule
+  `cache_inputs_changed` skip names the stage; the next run makes it again. The check is the key
+  at the stage's two ends: an input changed and put back before the stage ends, with the same
+  fingerprint, is not seen (the child may have read the changed file). This is the rule
   `batch.py`'s `store()` follows since #537. Code: `render.sh()`, `cache_key(files=)`. Test:
   `test_a_render_stage_whose_brand_logo_changed_while_it_ran_is_not_cached` (a hook in
   `run_tool()` rewrites the logo before the real `overlay.py` child starts).

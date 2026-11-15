@@ -15,9 +15,10 @@
     `--dry-run` is the stored run's, which the contract now says.
   - `render.py --cache` makes a stage's key again when the stage ends and stores the artifact only
     when it is unchanged. A `--brand` logo or font (or any input) changed while the stage ran was
-    drawn, stored under the old file's key, and served once the old file was put back. Such a stage
-    now stores nothing and records a `cache_inputs_changed` skip; `batch.py` has done the same
-    since #537.
+    drawn, stored under the old file's key, and served once the old file was put back. A stage
+    whose key, made again when it ends, is not the key it started with now stores nothing and
+    records a `cache_inputs_changed` skip; `batch.py` has done the same since #537. A change that
+    is undone before the stage ends, the file's fingerprint restored, is not seen.
 
 ## 3.9.0
 

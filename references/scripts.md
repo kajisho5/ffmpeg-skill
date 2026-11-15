@@ -1135,7 +1135,8 @@ the stage's `verified`, `verification`, `notes` and `diagnostics`, and a hit rep
 them, so a cached stage counts toward the render's `verified` as a live one does. A
 store that fails is a `cache_store_failed` warning (the run is unaffected). The key is made
 again when the stage ends: a stage whose inputs (a `--brand` file's logo or font included)
-changed while it ran stores nothing, a `cache_inputs_changed` skip (#540).
+changed while it ran stores nothing, a `cache_inputs_changed` skip (#540); a change undone
+before the stage ends is not seen.
 
 A stage whose flags changed misses the cache, so editing the captions block (for
 example to `"fit_size": "off"`) re-runs captions and everything after it and
