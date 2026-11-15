@@ -211,7 +211,7 @@ When the source cannot be matched, the result is `mode: accurate`, `reencode_rea
 time.
 `reencode_reason` lists every cause of a re-encode (`requested`, `codec`, `vfr`,
 `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost`, `tolerance`, `concat_fallback`,
-`smart`, `smart_fallback`); under `--dry-run`, which writes nothing, `possible_reencode_reason`
+`smart`, `smart_fallback`); under `--dry-run`, which does not write or measure the output cut (a `--segments` dry run reads the source's packets), `possible_reencode_reason`
 lists the ones a real run may still add to a plan of `mode: copy` or `smart` (`tolerance`: where a
 copy lands is measured only from the written file), and a `notes` line says so;
 `--segments` adds `segment_precision`; `precision` and `least_exact_precision` are the least exact one
@@ -1449,7 +1449,8 @@ and the top level `cut_stream_copy` (`{calls, stream_copy, reencoded,
 stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason; `unknown` for a
 re-encoded call cached by an earlier 2.x batch); both are `null`
 when no `cut.py` step ran. Under `--dry-run` they count the calls' plans, and a planned stream
-copy may still re-encode in a real run (`cut.py`'s `possible_reencode_reason`).
+copy may still re-encode in a real run: each row then carries `cut_possible_reencode_reason`, every
+`cut.py` call's `possible_reencode_reason`.
 
 **`--jobs N` (1.17)** processes N files at once (threads: the work is
 subprocess waiting). Capped at `min(N, cpu_count, 8)` — every item is itself an

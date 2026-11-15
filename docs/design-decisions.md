@@ -5149,3 +5149,24 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   - *An audio-only copy names `tolerance` in its plan.* It is judged by its written length like a
     video copy but returned before the dry run recorded that (`cut.cut_one()`); a `--segments`
     audio join's parts go the same way. Test: `test_a_planned_copy_says_a_real_run_may_re_encode_it`.
+- **The second review of #537.**
+  - *A batch step's brand assets are keyed.* A step's `--brand` file, literal or built from `{in}`,
+    was keyed by its own bytes; its `logo` and `font_file` (resolved against the brand file's folder,
+    as `load_brand()` does) are keyed now too, through `decision.brand_asset_files()`, which
+    `render.py`'s stage key also uses. A project recipe's key already had them
+    (`project_input_files()`), and a `--plan` fingerprints them. Test: `test_brand_assets_are_in_the_batch_key`.
+  - *The key is made again before an item is stored.* It was made when the pass looked the item up;
+    a side input edited while the item waited or ran was stored under that key, and putting the old
+    file back (a copy that keeps its mtime) served an output made from the edited one. `store()`
+    makes the key again from the files as they are and stores nothing when it differs
+    (`batch_cache_inputs_changed`); the next run makes the item again. Test:
+    `test_an_item_whose_side_input_changed_while_it_ran_is_not_cached`.
+  - *A side delivery is never the stopped run's `output`.* `render.py` marks the SRT it delivers as
+    a side delivery (`mark_delivered(side=True)`), so a stop in the chapters or check stage reports
+    the video as `output`; the message still names both. Test:
+    `test_a_stop_after_the_srt_is_delivered_names_the_video_as_the_output`.
+  - *The rows carry what the summary names.* `batch.py --dry-run` rows carry
+    `cut_possible_reencode_reason`, per `cut.py` call. The contract's `possible_reencode_reason`
+    says the dry run does not write or measure the output cut; a `--segments` dry run does read the
+    source's packets.
+

@@ -363,7 +363,7 @@ class Context:
     __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
-                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs")
+                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries")
 
     def __init__(self) -> None:
         self.reset()
@@ -379,6 +379,7 @@ class Context:
         self.delivered: List[str] = []  # deliverables written before a later step (export --normalize, render's chapters/check): a stop then keeps them (#415)
         self.watched: Dict[str, Any] = {}  # a path a running child writes (render's export stage): its owned_identity() before the child started (watch_destination)
         self.temp_dirs: List[str] = []  # directories this run removes when it exits (render's work directory): nothing in them is kept
+        self.side_deliveries: set = set()  # delivered files that are not the run's output (render's <output>.srt): never `output` after a stop
         self.audio_inputs = set()  # real paths of the inputs probed that have sound: with two or more, whose tracks an output should keep is the tool's choice (grid --audio-from, a mix)
         self.json_brief = False   # --json-brief: the same document trimmed to the fields a caller acts on
         self.progress = False     # run() streams percent / ETA to stderr for ffmpeg
@@ -629,12 +630,14 @@ def stop_children() -> None:
     _CHILDREN.clear()
 
 
-def mark_delivered(path: str) -> None:
+def mark_delivered(path: str, side: bool = False) -> None:
     """Record that this run has written its deliverable and still has a step to run on it (export's
     --normalize, render's chapters and check stages): a timeout or an interrupt from then on says the
     file is there and kept, instead of "nothing was written" (#415)."""
     if path and path not in STATE.delivered:
         STATE.delivered.append(path)
+    if path and side:
+        STATE.side_deliveries.add(path)  # `side`: a file beside the output (an SRT), kept but not the output (#510 review)
 
 
 def child_exit_code(doc: Any, returncode: Optional[int]) -> int:
@@ -704,9 +707,17 @@ def kept_clause() -> str:
             "without the step that was stopped (pass --overwrite to make it again)")
 
 
-def _kept_fields() -> Dict[str, Any]:
+def kept_output() -> Optional[str]:
+    """The kept file that is this run's output: the last kept one that is not a side delivery (the
+    video, not the <output>.srt delivered after it), else the last kept one."""
     kept = kept_deliverables()
-    return {"output": kept[-1]} if kept else {}
+    main = [p for p in kept if p not in STATE.side_deliveries]
+    return (main or kept or [None])[-1]
+
+
+def _kept_fields() -> Dict[str, Any]:
+    out = kept_output()
+    return {"output": out} if out else {}
 
 
 _STOPPING = {"signal": None}

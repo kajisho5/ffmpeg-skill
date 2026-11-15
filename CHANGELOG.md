@@ -63,6 +63,13 @@
     stopped `project` recipe item names a delivery its render kept (`kept`). A second signal to
     `batch.py` keeps the first one's exit code and report. A render whose `--work` holds the output
     watches the export too. `cut.py --dry-run` names `tolerance` for an audio-only copy as well.
+  - From the second review of #537: a batch step's `--brand` file (literal or built from `{in}`) is
+    keyed with the logo and font file it names, as a render stage's and a project recipe's are. An
+    item whose source or a side input changed while it ran is not cached
+    (`batch_cache_inputs_changed`): it was stored under the key made before, and restoring the old
+    file served an output made from the changed one. A stop after a render delivered its SRT reports
+    the video as `output` (the SRT is still named as kept). `batch.py --dry-run` rows carry
+    `cut_possible_reencode_reason`, which the summary line points at.
 
 ## 3.8.20
 

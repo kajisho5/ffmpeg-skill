@@ -37,7 +37,7 @@ from _common import STATE, add_common, apply_common, child_args, die, emit, info
 from _common.runner import (with_flags, HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
-from _common.decision import NO_DEFAULT_ENCODE_EXT, rebase_project_paths
+from _common.decision import NO_DEFAULT_ENCODE_EXT, brand_asset_files, rebase_project_paths
 from _common.runner import parse_json
 
 HERE = Path(__file__).resolve().parent
@@ -85,6 +85,25 @@ def side_input_file(value: str) -> Path:
         return path
 
 
+def is_brand_value(step: List[Any], j: int) -> bool:
+    """Whether step[j] is the value of --brand (`--brand X` or `--brand=X`)."""
+    arg = str(step[j])
+    return arg.startswith("--brand=") or (j > 0 and str(step[j - 1]) == "--brand")
+
+
+def key_brand_assets(h: Any, path: Path) -> None:
+    """Hash the logo and font file a brand file names into `h`: the brand file's own bytes do not
+    change when one of them is replaced under its name (#510 review; render.py's stage key and a
+    project recipe's key already cover them)."""
+    for key, asset in brand_asset_files(str(path)):
+        a = Path(asset)
+        try:
+            ident = file_key(a) if a.is_file() else "-"
+        except OSError:
+            ident = "-"
+        h.update(f"brand:{key}\0{asset}\0{ident}\0".encode())
+
+
 def side_inputs_key(recipe: Dict[str, Any]) -> str:
     """The files a recipe's steps name besides {in}/{out} (check.py --compare REF, a LUT, a logo),
     keyed by their own content: editing or removing one is a change the cache must see, or a QC
@@ -92,8 +111,8 @@ def side_inputs_key(recipe: Dict[str, Any]) -> str:
     Read on every pass, so a --watch loop sees the edit too."""
     h = hashlib.sha1(usedforsecurity=False)
     for step in recipe.get("steps") or []:
-        for arg in step[1:] if isinstance(step, list) else []:
-            if not isinstance(arg, str) or "{" in arg:
+        for j, arg in enumerate(step) if isinstance(step, list) else []:
+            if j == 0 or not isinstance(arg, str) or "{" in arg:
                 continue
             value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
             if value.startswith("-") or not value:
@@ -102,6 +121,8 @@ def side_inputs_key(recipe: Dict[str, Any]) -> str:
             try:
                 if path.is_file():
                     h.update(f"{value}\0{file_key(path)}\0".encode())
+                    if is_brand_value(step, j):
+                        key_brand_assets(h, path)
                     continue
             except OSError:
                 pass
@@ -119,8 +140,8 @@ def item_side_inputs_key(recipe: Dict[str, Any], src: Path) -> "tuple[str, Optio
     h = hashlib.sha1(usedforsecurity=False)
     named = False
     for i, step in enumerate(recipe.get("steps") or []):
-        for arg in step[1:] if isinstance(step, list) else []:
-            if not isinstance(arg, str) or "{in}" not in arg or "{out}" in arg:
+        for j, arg in enumerate(step) if isinstance(step, list) else []:
+            if j == 0 or not isinstance(arg, str) or "{in}" not in arg or "{out}" in arg:
                 continue  # literal paths are side_inputs_key()'s; {out} names an output, not an input
             value = arg.split("=", 1)[1] if arg.startswith("-") and "=" in arg else arg
             if value == "{in}" or "{in}" not in value:
@@ -134,6 +155,8 @@ def item_side_inputs_key(recipe: Dict[str, Any], src: Path) -> "tuple[str, Optio
             try:
                 if path.is_file():
                     h.update(f"{path}\0{file_key(path)}\0".encode())
+                    if is_brand_value(step, j):
+                        key_brand_assets(h, path)
                     continue
             except OSError:
                 pass
@@ -619,6 +642,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         failure = None if ok else step_error(0, "render.py", _doc)
         cut_reencoded: List[bool] = []
         cut_reasons: List[str] = []
+        cut_possible: List[List[str]] = []
     else:
         steps = recipe.get("steps") or []
         if not steps:
@@ -630,6 +654,7 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
         cut_reencoded = []
         step_docs = []
         cut_reasons = []
+        cut_possible = []
         for i, step in enumerate(steps):
             last = i == len(steps) - 1
             # the item's directory is its own, so the name needs no stem (a long one overflowed it)
@@ -659,6 +684,8 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
             if step_ok and argv and argv[0] == "cut.py" and isinstance(doc, dict) and "reencoded" in doc:
                 cut_reencoded.append(bool(doc["reencoded"]))
                 cut_reasons.extend(r for r in (doc.get("reencode_reason") or []) if isinstance(r, str))
+                # a dry run's planned copy may still re-encode: what each call's plan says (#510 review)
+                cut_possible.append([r for r in (doc.get("possible_reencode_reason") or []) if isinstance(r, str)])
             if not step_ok:
                 ok = False
                 failure = step_error(i, str(argv[0]) if argv else None, doc)
@@ -716,6 +743,8 @@ def process(src: Path, recipe: Dict[str, Any], outdir: Path, work: Path,
     if cut_reencoded:
         result["cut_reencoded"] = cut_reencoded
         result["cut_reencode_reasons"] = cut_reasons
+        if STATE.dry_run:
+            result["cut_possible_reencode_reason"] = cut_possible
     # the encoder each item really ran and its GPU facts (--hw / FFMPEG_SKILL_HW: on VideoToolbox,
     # fell back and why): this process encodes nothing itself, so its top-level hw.used is null
     result.update(steps_encoder_report(step_docs))
@@ -996,6 +1025,17 @@ def main() -> int:
         def store(key: "Optional[str]", r: Dict[str, Any]) -> None:
             if not key or not (r["ok"] and not STATE.dry_run):
                 return
+            # the key was made before the item ran: a source or side input edited while it waited
+            # or ran made an output the key does not describe, and a later restore of the old file
+            # would have served it (#510 review). Made again here; not stored when it changed
+            try:
+                now = item_key(Path(r["file"]))
+            except OSError:
+                now = None
+            if now != key:
+                record_skip(f"{Path(r['file']).name}: its source or a side input changed while it was processed, so its "
+                            "output is not cached (the next run makes it again)", "batch_cache_inputs_changed", file=r["file"])
+                return
             # The read-modify-write of the in-memory dict needs the lock even though the file
             # write is already atomic: two finishers could otherwise serialise from two different
             # snapshots and lose an entry.
@@ -1027,6 +1067,16 @@ def main() -> int:
         # read on every pass: a --watch loop serves nothing from an edited project.json, cue file or
         # music bed (computed once before the loop, it did: A81)
         pass_key = recipe_key(recipe) + gpu_key() + side_inputs_key(recipe)
+
+        def item_key(src: Path) -> "Optional[str]":
+            """The cache key of one item as its files are now: file_key(src), the recipe, the GPU
+            setting and the side inputs (literal and per item); None when one cannot be keyed.
+            Recomputed by store(), so the side inputs are read again then (pass_key's included)."""
+            per, why = item_side_inputs_key(recipe, src)
+            if why:
+                return None
+            base = recipe_key(recipe) + gpu_key() + side_inputs_key(recipe)
+            return f"{file_key(src)}:{base}" + (":" + per if per else "")
         polled = settle_poll(files)
         for i, src in enumerate(files):
             if str(src) in polled:
@@ -1322,8 +1372,8 @@ def main() -> int:
             # a dry run's counts are cut.py's plans: a planned copy may still re-encode in a real run,
             # which measures where it lands (cut.py's possible_reencode_reason, #510)
             info(f"cut.py: {copied}/{len(all_cuts)} call(s) planned as a lossless stream copy "
-                 f"({cut_summary['stream_copy_rate']:.0%}), which a real run may still re-encode (each call's "
-                 f"possible_reencode_reason); {len(all_cuts) - copied} planned to re-encode a range or its --segments join{why}")
+                 f"({cut_summary['stream_copy_rate']:.0%}), which a real run may still re-encode (each row's "
+                 f"cut_possible_reencode_reason); {len(all_cuts) - copied} planned to re-encode a range or its --segments join{why}")
         else:
             info(f"cut.py: {copied}/{len(all_cuts)} call(s) stayed fully lossless stream-copy "
                  f"({cut_summary['stream_copy_rate']:.0%}), {len(all_cuts) - copied} re-encoded a range or its --segments join{why}")

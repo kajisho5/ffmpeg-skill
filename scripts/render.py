@@ -75,9 +75,9 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, unwatch_destination, watch_destination
+from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
-from _common.decision import rebase_project_paths
+from _common.decision import brand_asset_files, rebase_project_paths
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -833,7 +833,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
             # a stage after the delivery (chapters, check): the stage's own "nothing was written"
             # is about its own file, while the delivery is on disk (#415)
             why = why.replace("; nothing was written", "") + f" ({kept_clause()})"
-            extra_fields.setdefault("output", kept_deliverables()[-1])
+            extra_fields.setdefault("output", kept_output())
         elif err.get("kind") in ("timeout", "interrupted") and doc.get("output") and os.path.isfile(str(doc["output"])):
             # the stage was stopped after writing its own deliverable and kept it (export.py's
             # --normalize pass): its message says so, and the file is this run's output too
@@ -904,7 +904,7 @@ def deliver_caption_srt(target: Optional[str], made: Optional[Dict[str, Any]], o
                     reason="timeline_changed", path=target, trimmed=trimmed)
         return None
     place_output(made["srt"], target)
-    mark_delivered(target)
+    mark_delivered(target, side=True)  # kept after a stop, but not the run's `output` (#510 review)
     info(f"delivered the captions' SRT as {target}")
     return target
 
@@ -1050,16 +1050,8 @@ def _brand_files_key(argv: "Sequence[Any]") -> List[Any]:
     for i, a in enumerate(args[:-1]):
         if a != "--brand" or not os.path.isfile(args[i + 1]):
             continue
-        try:
-            data = read_json(args[i + 1])
-        except (OSError, ValueError):
-            continue
-        base = Path(args[i + 1]).resolve().parent
-        for key in ("logo", "font_file"):
-            value = data.get(key) if isinstance(data, dict) else None
-            if isinstance(value, str) and value:
-                path = value if os.path.isabs(value) else str(base / value)
-                out.append([key, _content_hash(path) if os.path.isfile(path) else None])
+        for key, path in brand_asset_files(args[i + 1]):
+            out.append([key, _content_hash(path) if os.path.isfile(path) else None])
     return out
 
 

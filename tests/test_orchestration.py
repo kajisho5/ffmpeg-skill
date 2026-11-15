@@ -1832,6 +1832,10 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(json.loads(proc.stdout)["cut_stream_copy"]["stream_copy"], 4)
         self.assertNotIn("stayed fully lossless", proc.stderr)
         self.assertIn("which a real run may still re-encode", proc.stderr)
+        # second review of #537: the line points at a per-call field the rows carry
+        for row in json.loads(proc.stdout)["results"]:
+            self.assertEqual(len(row["cut_possible_reencode_reason"]), 2, row)
+            self.assertIn("tolerance", row["cut_possible_reencode_reason"][0])
 
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"
@@ -3467,6 +3471,78 @@ class Issue429DecidedTests(unittest.TestCase):
         recipe = self._recipe(folder, [["fit.py", "--duration", "1", "-o", "{out}", "--", "{in}"]])
         rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--dry-run")
         self.assertEqual((rc, doc["status"]), (0, "completed"), err[-800:])
+
+    def test_a_stop_after_the_srt_is_delivered_names_the_video_as_the_output(self):
+        """Second review of #537: the SRT delivered beside the output was the last kept file, so a
+        stop in the chapters or check stage reported it as `output`; the message names both."""
+        import signal
+        import render
+        from _common import STATE, runner
+        video = self.d / "srt_stop.mp4"
+        shutil.copy(self.clip, video)
+        made_srt = self.d / "srt_stop_made.srt"
+        made_srt.write_text("1\n00:00:00,300 --> 00:00:01,200\nhello\n", encoding="utf-8")
+        target = self.d / "srt_stop.srt"
+        target.unlink(missing_ok=True)
+        STATE.reset()
+        STATE.json = True
+        out = io.StringIO()
+        try:
+            render._LAST_DOC.clear()
+            runner.mark_delivered(str(video))
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(render.deliver_caption_srt(str(target), {"srt": str(made_srt), "video": str(video), "cached": False},
+                                                            str(video)), str(target))
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner._on_signal(signal.SIGINT, None)
+        finally:
+            runner._STOPPING["signal"] = None
+            STATE.reset()
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc.get("output"), str(video))
+        self.assertIn(str(video), doc["error"]["message"])
+        self.assertIn(str(target), doc["error"]["message"])
+
+    def test_brand_assets_are_in_the_batch_key(self):
+        """Second review of #537: a step's --brand file (literal or {in}-built) was keyed by its own
+        bytes only; its logo and font file, replaced under their names, kept the key."""
+        import batch
+        import time
+        folder = self.d / "brand_key"
+        folder.mkdir()
+        src = folder / "a.mp4"
+        src.write_bytes(b"x")
+        for name in ("logo.png", "font.ttf"):
+            (folder / name).write_bytes(b"1")
+        for brand in (folder / "brand.json", folder / "a.mp4.json"):
+            brand.write_text(json.dumps({"logo": "logo.png", "font_file": "font.ttf"}), encoding="utf-8")
+        literal = {"steps": [["overlay.py", "{in}", "--brand", str(folder / "brand.json"), "-o", "{out}"]]}
+        per_item = {"steps": [["overlay.py", "{in}", "--brand={in}.json", "-o", "{out}"]]}
+        for asset in ("logo.png", "font.ttf"):
+            with self.subTest(asset=asset):
+                before = (batch.side_inputs_key(literal), batch.item_side_inputs_key(literal, src),
+                          batch.item_side_inputs_key(per_item, src))
+                time.sleep(0.01)
+                (folder / asset).write_bytes(os.urandom(8))
+                after = (batch.side_inputs_key(literal), batch.item_side_inputs_key(literal, src),
+                         batch.item_side_inputs_key(per_item, src))
+                self.assertNotEqual(before[0], after[0], "the literal brand's asset")
+                self.assertNotEqual(before[2], after[2], "the {in}-built brand's asset")
+
+    def test_an_item_whose_side_input_changed_while_it_ran_is_not_cached(self):
+        """Second review of #537: the key was made before the item ran; a side input edited while it
+        ran was stored under the old key, and a later restore of the old file served an output made
+        from the edited one. Here the recipe's own second step rewrites the first step's logo."""
+        folder = self._folder("changed_while", n=1)
+        logo = folder / "logo.png"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", logo)
+        recipe = self._recipe(folder, [["overlay.py", "{in}", "--image", str(logo), "-o", "{out}"],
+                                       ["look.py", "{in}", "-o", str(logo)]])
+        rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--overwrite")
+        self.assertEqual(rc, 0, err[-800:])
+        self.assertIn("batch_cache_inputs_changed", [s["code"] for s in doc["diagnostics"]["skipped"]])
+        cache = folder / "out" / ".ffskill_cache.json"
+        self.assertEqual(json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}, {})
 
     def test_a_file_lang_side_input_is_keyed_by_its_file(self):
         """Review of #537: caption.py --srt FILE:LANG reads FILE; the key hashed the whole token, a
