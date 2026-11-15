@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.21
+
+_Automated release: version and notes generated from pull requests merged since 3.8.20._
+
 ### Fixed
 
 - **The decided items of #510.**
@@ -70,6 +76,7 @@
     file served an output made from the changed one. A stop after a render delivered its SRT reports
     the video as `output` (the SRT is still named as kept). `batch.py --dry-run` rows carry
     `cut_possible_reencode_reason`, which the summary line points at.
+- fix: the decided items of #510 (render's up-front filter check, cut --dry-run's copy note, batch and render leftovers of #429) (#537)
 
 ## 3.8.20
 
