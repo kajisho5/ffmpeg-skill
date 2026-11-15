@@ -5412,6 +5412,30 @@ class FitPictureTests(unittest.TestCase):
                 pic = doc["picture"]
                 self.assertEqual((pic["x"], pic["y"], pic["width"], pic["height"], pic["frame_share"]), (0, 0, 202, 360, 1.0))
                 self.assertEqual(pic["cropped"], dict(cut, top=0, bottom=0))
+        # the rows cut are in source rows, at the vertical scale: a 360x640 source to 360x202 is
+        # scaled to 360x642 (the margin is a multiple of 4), so the 220 rows cut on each side of the
+        # scaled frame are 219 of the source's, not 220 at the width's scale. The written file says
+        # so: with T black rows at the top and bottom of a white source, the first and last rows
+        # written are white for T = 219 and grey for T = 220.
+        for band, edge in ((219, "white"), (220, "grey")):
+            with self.subTest(case=f"crop of a portrait source, {band} black rows at each end"):
+                src = self.dir / f"portrait_band{band}.mp4"
+                if not src.exists():
+                    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                       f"color=white:s=360x640:r=25:d=0.2,drawbox=x=0:y=0:w=360:h={band}:color=black:t=fill,"
+                       f"drawbox=x=0:y={640 - band}:w=360:h={band}:color=black:t=fill",
+                       "-c:v", "libx264", "-crf", "0", "-pix_fmt", "yuv420p", src)
+                out = self.dir / f"fit_crop_portrait_{band}.mp4"
+                doc = json.loads(script("fit.py", src, "--width", "360", "--height", "202", "--fit", "crop",
+                                        "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertEqual(doc["picture"]["cropped"], {"left": 0, "right": 0, "top": 219, "bottom": 219})
+                rows = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1", "-f", "rawvideo",
+                                       "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+                self.assertEqual(len(rows), 360 * 202)
+                first, last = rows[180], rows[201 * 360 + 180]
+                for got in (first, last):
+                    self.assertEqual("white" if got > 200 else "grey", edge, (first, last))
         # nothing reframed, nothing measured; a dry run writes and measures nothing
         doc = json.loads(script("fit.py", self.white, "--fps", "30", "-o", self.dir / "fit_fps.mp4", "--json").stdout)
         self.assertNotIn("picture", doc)

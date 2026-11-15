@@ -531,8 +531,9 @@ missing (a plain Homebrew ffmpeg build, for example) rather than failing at
 run time. The frames keep their times, so the source's subtitle track is kept
 as `crop.py` keeps it (`dropped_non_av_streams` says when it could not be).
 vid.stab aborts on an RGB picture, so an RGB source (a PNG, a qtrle or
-PNG-in-MOV clip) is stabilized as a YUV 4:4:4 copy (converted to BT.709 as every RGB
-re-encode is; FFmpeg's own conversion on a `--codec prores` line), with a note; the
+PNG-in-MOV clip) is stabilized as a YUV 4:4:4 copy (converted to BT.709 as every SDR RGB
+re-encode is; FFmpeg's own conversion on a `--codec prores` line and for an HDR or
+BT.2020 RGB source, as every tool's), with a note; the
 output's pixel format is the encoder line's (`probe.video.pix_fmt`).
 
 ### sequence.py — numbered/globbed image sequence to video
@@ -2000,7 +2001,7 @@ explicit font is always kept, with an info line when it does not cover the text;
 `--fonts-dir` is searched first and checked with `fc-scan`, and a directory that
 does not cover the script gets one line and a font resolved by script anyway. A directory
 with no face named `--font` leaves libass to fontconfig, and `font_used` reports what
-fontconfig resolves, a substitution included. `doctor --json` `fonts.scripts` lists what this machine can render. See
+fontconfig resolves (`substituted: true` only when that is another family). `doctor --json` `fonts.scripts` lists what this machine can render. See
 `references/gotchas.md#fonts-by-script` (RTL: use captions, not drawtext).
 
 `--karaoke` uses real per-word timings when the transcript has them (a whisper

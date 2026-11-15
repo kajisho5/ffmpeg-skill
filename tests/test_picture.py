@@ -7636,8 +7636,10 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
                     self.assertTrue(any("the source is RGB" in n for n in doc.get("notes") or []), doc.get("notes"))
                     if not codec_flags:
                         # the BT.709 conversion every other RGB re-encode makes: C03028 comes back C03028
-                        for got, want in zip(frame_rgb(out, 0, 80, 60), (0xC0, 0x30, 0x28)):
-                            self.assertLessEqual(abs(got - want), 4)
+                        got = frame_rgb(out, 0, 80, 60)
+                        self.assertEqual(len(got), 3, "a pixel was read")  # zip() of an empty read passes
+                        for channel, want in zip(got, (0xC0, 0x30, 0x28)):
+                            self.assertLessEqual(abs(channel - want), 4)
 
     def test_a_fonts_dir_without_the_asked_face_reports_the_substitution(self):
         """caption.py --fonts-dir DIR --font NAME reported font_used.substituted false whatever DIR
@@ -7684,6 +7686,117 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
         doc, _ = burn(with_face, "DejaVu Sans", "in_dir")
         used = doc["font_used"]
         self.assertEqual((used["how"], used["substituted"], used["file"]), ("fonts_dir", False, str(with_face / os.path.basename(face))))
+        # an installed family missing from the folder resolves to its own file: no substitution
+        doc, _ = burn(empty, "DejaVu Sans", "installed_not_in_dir")
+        used = doc["font_used"]
+        self.assertEqual((used["how"], used["substituted"], used["fonts_dir"]), ("resolved", False, str(empty)), used)
+
+    def test_a_fonts_dir_face_is_matched_as_libass_matches_it(self):
+        """The face reported from --fonts-dir is the one libass draws: with fontconfig given no fonts,
+        a face libass does not match in the folder draws nothing, so each report is checked by
+        drawing. Reported before and not drawn: a face in a subfolder (fc-scan recursed), a
+        TrueType face by its PostScript name, a CFF face by its full name, a typographic family
+        (name ID 16), and DejaVuSans-Bold.ttf for a regular burn of a folder holding both."""
+        if _no_fontconfig() or not shutil.which("fc-scan") or platform.system() == "Windows":
+            self.skipTest("needs fontconfig's fc-scan and fc-match")
+        from _common.fonts import _sfnt_names, fonts_dir_face
+
+        def fc_file(pattern):
+            got = subprocess.run(["fc-match", "--format", "%{file}", pattern], capture_output=True, text=True).stdout
+            return got if os.path.isfile(got) else None
+
+        regular, bold = fc_file("DejaVu Sans"), fc_file("DejaVu Sans:bold")
+        serif, mono_bold = fc_file("DejaVu Serif"), fc_file("Liberation Mono:bold")
+        if not (regular and bold and serif and mono_bold) or "Bold" not in os.path.basename(bold) \
+                or "LiberationMono-Bold" not in os.path.basename(mono_bold):
+            self.skipTest("DejaVu Sans (regular and bold), DejaVu Serif and Liberation Mono Bold are needed")
+        base = self.dir / "match"
+        shutil.rmtree(base, ignore_errors=True)
+        conf_dir = base / "fontconfig"
+        conf_dir.mkdir(parents=True)
+        conf = conf_dir / "fonts.conf"
+        conf.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+                        f'<cachedir>{conf_dir / "cache"}</cachedir></fontconfig>\n', encoding="utf-8")
+
+        def folder(name, *files, nested=()):
+            d = base / name
+            (d / "nested").mkdir(parents=True)
+            for f in files:
+                shutil.copy(f, d / os.path.basename(f))
+            for f in nested:
+                shutil.copy(f, d / "nested" / os.path.basename(f))
+            return d
+
+        def drawn(fonts_dir, family, is_bold=False):
+            ass = base / "probe.ass"
+            ass.write_text("[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 120\n\n[V4+ Styles]\n"
+                           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+                           "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
+                           "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+                           f"Style: Default,{family},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{-1 if is_bold else 0},"
+                           "0,0,0,100,100,0,0,1,0,0,5,10,10,10,1\n\n[Events]\n"
+                           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                           "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,Hello Wg\n", encoding="utf-8")
+            vf = f"ass={escape_filter_path(str(ass))}:fontsdir={escape_filter_path(str(fonts_dir))}"
+            return subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:320x120:d=0.04", "-vf", vf,
+                                   "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                                  env=dict(os.environ, FONTCONFIG_FILE=str(conf)), capture_output=True, check=True).stdout
+
+        cases = [  # (folder, asked, the file reported, or None for no face)
+            (folder("nested", nested=[serif]), "DejaVu Serif", None),
+            (folder("truetype", mono_bold), "Liberation Mono", os.path.basename(mono_bold)),
+            (folder("truetype_full", mono_bold), "Liberation Mono Bold", os.path.basename(mono_bold)),
+            (folder("truetype_ps", mono_bold), "LiberationMono-Bold", None),
+        ]
+        # a CFF face whose full name is neither its PostScript name nor a family, and a face with a
+        # typographic family (ID 16) that is not its family (ID 1), where this machine has them
+        listed = subprocess.run(["fc-list", "--format", "%{file}\t%{index}\t%{family}\t%{postscriptname}\t%{fontformat}\n"],
+                                capture_output=True, text=True).stdout.splitlines()
+        cff = typographic = None
+        for line in sorted(listed):
+            cells = line.split("\t")
+            if len(cells) < 5 or cells[1] != "0" or not cells[0].endswith((".otf", ".ttf")):
+                continue
+            names = _sfnt_names(cells[0], 0)
+            if not names or not names[0] or not names[1]:
+                continue
+            families = {n.lower() for n in names[0]}
+            if not cff and cells[4] == "CFF" and names[1][0].lower() not in families | {cells[3].lower()}:
+                cff = (cells[0], names[1][0], cells[3])
+            extra = [f for f in cells[2].split(",") if f.strip() and f.strip().lower() not in families]
+            if not typographic and extra:
+                typographic = (cells[0], extra[0].strip())
+        if cff:
+            cases += [(folder("cff_full", cff[0]), cff[1], None),
+                      (folder("cff_ps", cff[0]), cff[2], os.path.basename(cff[0]))]
+        if typographic:
+            cases.append((folder("typographic", typographic[0]), typographic[1], None))
+        for fonts_dir, asked, want in cases:
+            with self.subTest(fonts_dir=fonts_dir.name, font=asked):
+                file, found = fonts_dir_face(str(fonts_dir), asked)
+                self.assertEqual((os.path.basename(file) if file else None, found), (want, want is not None))
+                self.assertEqual(max(drawn(fonts_dir, asked)) > 64, want is not None, "libass drew what is reported")
+
+        # of a family's faces, the one nearest the asked weight, for both values of --bold
+        both = folder("both", bold, regular)
+        only = {False: folder("only_regular", regular), True: folder("only_bold", bold)}
+        for is_bold, want in ((False, regular), (True, bold)):
+            with self.subTest(bold=is_bold):
+                file, found = fonts_dir_face(str(both), "DejaVu Sans", bold=is_bold)
+                self.assertEqual(file, str(both / os.path.basename(want)))
+                self.assertEqual(drawn(both, "DejaVu Sans", is_bold), drawn(only[is_bold], "DejaVu Sans", is_bold))
+                self.assertNotEqual(drawn(both, "DejaVu Sans", is_bold), drawn(only[not is_bold], "DejaVu Sans", is_bold))
+        # and the result of the burn says so
+        src = self.dir / "black.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=25:d=1", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", src)
+        cues = base / "cues.txt"
+        cues.write_text("0-1 Hello there\n", encoding="utf-8")
+        doc = json.loads(script("caption.py", src, "--text", cues, "--fonts-dir", both, "--font", "DejaVu Sans",
+                                "-o", base / "regular.mp4", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        self.assertEqual((doc["font_used"]["how"], doc["font_used"]["file"]), ("fonts_dir", str(both / os.path.basename(regular))))
 
 
 if __name__ == "__main__":

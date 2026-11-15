@@ -364,10 +364,11 @@ def main() -> int:
                          f"(4:2:0 chroma), on a {m}px margin")
             vf.append(f"scale={out_w + mx}:{out_h + my}")
             vf.append(f"crop={out_w}:{out_h}:{ox}:{oy}")
-            # the source pixels the crop leaves out on each side, at the scale it was cut at
-            k = sw / (out_w + mx)
-            geometry = (vf[-2:], (out_w + mx) / sw, {"left": round(ox * k), "right": round((mx - ox) * k),
-                                                     "top": round(oy * k), "bottom": round((my - oy) * k)})
+            # the source pixels the crop leaves out on each side, at the scale it was cut at: each
+            # axis by its own, since the margin widened to a multiple of 4 scales the two apart
+            kx, ky = sw / (out_w + mx), sh / (out_h + my)
+            geometry = (vf[-2:], (out_w + mx) / sw, {"left": round(ox * kx), "right": round((mx - ox) * kx),
+                                                     "top": round(oy * ky), "bottom": round((my - oy) * ky)})
         elif args.fit == "crop":  # a dry run's pending input has no size: the expressions, planned only
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")

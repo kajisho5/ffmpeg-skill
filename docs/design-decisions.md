@@ -5421,26 +5421,39 @@ the slot at 0.519 s, "After 3.8.14").
   failed in pass 1 (`kind: ffmpeg`), while a JPEG still (YUV) ran. Both passes now see YUV 4:4:4:
   the BT.709 conversion every other re-encode of an RGB source makes (`bt709_matrix_filter()`; pass
   2 already had it, folded in by run(), pass 1 had none), or FFmpeg's own conversion to yuv444p
-  on a line that keeps the source's tags and converts no matrix (`--codec prores`). Converting is
+  on a line that keeps the source's tags and converts no matrix (`--codec prores`), and for an
+  RGB source that probes HDR or BT.2020, which no line converts (below). Converting is
   what the other tools do with RGB input, so it is not refused. A note says the source was RGB;
   the output's pixel format is the encoder line's (yuv420p for H.264, yuv422p10le for ProRes),
   read back in `probe.video.pix_fmt`. Not verified on another libvidstab: one that took RGB would
   still get the YUV copy. Code: `stabilize.main()`. Test: `test_stabilize_takes_an_rgb_source`.
 - **`caption.py --fonts-dir DIR --font NAME` reports the face libass drew with** (#531). libass
-  looks NAME up among the faces in DIR (by family, full or PostScript name, case-insensitively)
-  and, with none of that name, asks fontconfig as it does without a fonts dir; the result said
-  `how: fonts_dir`, `substituted: false` whatever DIR held, an empty folder or a text file named
-  `.ttf` included. DIR is now read with `fc-scan`: a face of that name is reported with its file;
-  without one, the font is reported as a run without `--fonts-dir` reports it (fontconfig's
-  answer, a `font_substituted` fallback when it is another family, `fonts_dir` still named), and a
-  note says the folder had no such face. It is reported, not refused: an installed family found
+  looks NAME up among the faces in DIR and, with none of that name, asks fontconfig as it does
+  without a fonts dir; the result said `how: fonts_dir`, `substituted: false` whatever DIR held,
+  an empty folder or a text file named `.ttf` included. DIR's own files are now read with
+  `fc-scan` and their name tables: a face of that name is reported with its file; without one,
+  the font is reported as a run without `--fonts-dir` reports it (fontconfig's answer,
+  `substituted: true` and a `font_substituted` fallback only when it is another family; an
+  installed family is its own file, and on Windows the family is given to libass by name, both
+  `substituted: false`; `fonts_dir` still named), and a note says the folder had no such face.
+  "That name" is libass 0.17's match, each part checked by drawing on 0.17.1 with fontconfig given
+  no fonts, so a face not matched drew nothing: the family is name ID 1 only (`Inter` is not a
+  family of `Inter-Black.otf`, whose ID 1 is `Inter Black`; fontconfig also lists ID 16); the full
+  name matches a TrueType outline and the PostScript name a CFF or Type 1 one, not the other way
+  (`LiberationMono-Bold` and `Inter Display SemiBold Italic` drew nothing); only the folder's own
+  files, not a subfolder and not a dot-file (fc-scan given the folder recurses, so it is given the
+  files); and of a family's faces the one nearest the asked weight, 700 with `--bold` else 400
+  (with DejaVuSans.ttf and DejaVuSans-Bold.ttf, the regular burn equals the regular-only folder's).
+  Faces of equal score are reported by file name, where libass takes the first it loaded. It is reported, not refused: an installed family found
   by fontconfig is drawn as asked, and `--font NAME` without `--fonts-dir` is not refused either.
   This differs from the font *file* check of 3.8.18 ("After 3.8.17"), which refuses a file the
   caller names that is not a font: here the caller named a family, and only the folder lacked it.
   Checked by drawing: the burn with the missing family and the burn naming the family reported
   are the same picture. When fc-scan cannot read the folder (no fontconfig), the family is
   reported as asked with a note that it was not checked. Code: `fonts.fonts_dir_face()`,
-  `caption.main()`. Test: `test_a_fonts_dir_without_the_asked_face_reports_the_substitution`.
+  `fonts._sfnt_names()`, `caption.main()`. Tests:
+  `test_a_fonts_dir_without_the_asked_face_reports_the_substitution`,
+  `test_a_fonts_dir_face_is_matched_as_libass_matches_it`.
 - **`fit.py` reports where the picture sits in the frame it wrote, measured** (#519). After
   `--aspect`, `--width` or `--height` the result has `picture`: `{measured, x, y, width, height,
   frame_width, frame_height, frame_share, scale, cropped}`. The issue proposed computing it from
@@ -5454,14 +5467,19 @@ the slot at 0.519 s, "After 3.8.14").
   format, and the picture is the rectangle where the two differ. No frame of the source is
   decoded, and the frame size is the written file's. The narrowest reading of the issue: `scale`
   is the picture's width over the source's displayed width (for a crop, the width scaled to
-  before the crop); `cropped` is in source pixels, rounded; the note is given when `scale` is below
-  1 and no size was asked. A measurement that gives no frame of the written size is
-  `{measured: false, reason}` and a note, never a rectangle. Not done here, the issue's sweep:
-  `crop.py` and `pad.py` (the caller gives the rectangle or the pad, so it is known),
-  `render.py`'s frame stage (it runs fit.py, whose result it does not pass on) and `export.py`'s
-  presets that pad (`--fit pad`, `--pad-fill`) report no `picture`. Tested against the written
-  file on a white source (black or red bars, the darkened blur, a 4:2:2 ProRes line, an RGB source,
-  three crop anchors) on 6.1.1 only. Code: `fit.measure_picture()`. Tests:
+  before the crop); `cropped` is in source pixels, rounded, each axis at its own scale (the
+  scaled frame's margin is widened to a multiple of 4, so a 360x640 source cut to 360x202 is
+  scaled to 360x642 and its 220 cut rows a side are 219 source rows); the note is given when
+  `scale` is below 1 and no size was asked. A measurement that gives no frame of the written size
+  is `{measured: false, reason}` and a note, never a rectangle. Only `fit.py` reports `picture`.
+  The issue's sweep, not done here: `crop.py` (the caller gives the rectangle, so where the
+  picture sits is known) and `pad.py` (it pads in time, before and after the clip; the picture
+  fills its frame) have nothing to measure; `render.py`'s frame stage runs fit.py and does not
+  pass its result on, and `export.py`'s presets that reframe (`--fit pad` with any `--pad-fill`,
+  `--fit crop`) build the same `pad_filters()` frame but are not measured: both report no
+  `picture`, left for a change of their own rather than a guess at the rectangle. Tested against
+  the written file on a white source (black or red bars, the darkened blur, a 4:2:2 ProRes line, an
+  RGB source, three crop anchors, a portrait source's rows cut) on 6.1.1 only. Code: `fit.measure_picture()`. Tests:
   `test_fit_reports_the_picture_rectangle_it_wrote`,
   `test_a_picture_measurement_that_fails_is_reported_as_not_measured`.
 - **Seen and not changed** (the RGB sweep, `rgb24.mov` (qtrle, PCM) against the same clip in
@@ -5469,3 +5487,18 @@ the slot at 0.519 s, "After 3.8.14").
   which MP4 cannot hold, and fail inside ffmpeg (`kind: ffmpeg`); to `.mov` they complete. That is
   a stream copy into a container that cannot hold the codec, not RGB (a gbrp H.264 `.mov` gave no
   differing row), and is a class of its own.
+- **Seen and not changed: an RGB source that probes HDR or BT.2020 is written with BT.601 YUV
+  under BT.2020 tags, or not at all** (found from a review of `stabilize.py`'s RGB path; the class
+  is the HDR encoder line, not stabilize). `bt709_matrix_filter()` converts no HDR/BT.2020 source
+  and the HDR line tags the source's own matrix, so FFmpeg's default RGB-to-YUV conversion
+  (BT.601) makes the YUV. "One that probes HDR or BT.2020 is not converted to BT.709: FFmpeg's own
+  conversion makes its YUV, as before" (#496, above) holds for not converting to BT.709, but says
+  nothing of the matrix that conversion uses, which is not the one tagged. Measured on 6.1.1 with
+  a gbrp10le FFV1 source of C03028 tagged bt2020/smpte2084 and no matrix: `stabilize.py`, `fit.py
+  --fps 30`, `denoise.py` and `crop.py` alike write HEVC tagged bt2020nc that decodes, by its tag,
+  as 196/52/35, and as 192/47/39 (the source) with BT.601. The same source tagged `gbr` (FFmpeg's
+  own tag for RGB) fails every re-encoding tool of `tests/sweep.py` (`kind: ffmpeg`: the line
+  passes `-colorspace gbr`, which no encoder option parses). The fix belongs to the HDR line of
+  every tool (name the BT.2020 matrix in the conversion and tag `bt2020nc` for an RGB picture),
+  with `fold_bt709_matrix()` and the alpha line's #496 rule to change with it; not done in a
+  stabilize change, where a matrix of its own would be a second convention.

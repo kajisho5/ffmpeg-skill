@@ -30,12 +30,16 @@
   still (which image2 gives a length of one frame) wrote nothing and now shows it.
 - **`stabilize.py` takes an RGB source (#531).** vid.stab aborts on RGB (a PNG still, a qtrle
   or RGB `.mov`: `kind: ffmpeg`); both passes now stabilize a YUV 4:4:4 copy, converted to BT.709
-  as every RGB re-encode is, and a note says so. The output's pixel format is the encoder line's,
+  as every SDR RGB re-encode is (an HDR or BT.2020 one by FFmpeg's own conversion, as on every
+  other line), and a note says so. The output's pixel format is the encoder line's,
   as before (`probe.video.pix_fmt`).
 - **`caption.py --fonts-dir DIR --font NAME` reports the font libass drew with (#531).** With no
   face named NAME in DIR, libass asks fontconfig, and the result said
   `font_used.substituted: false` whatever it got. DIR is now read for the face (`fc-scan`); without
-  one, the font is reported as fontconfig resolves it, a `font_substituted` fallback included.
+  one, the font is reported as a run without `--fonts-dir` reports it: `substituted: true`, with a
+  `font_substituted` fallback, only when fontconfig gives another family. A face counts as found
+  only as libass 0.17 matches one: the folder's own files (not subfolders), by family name, or by
+  full name for TrueType and PostScript name for CFF, the face nearest the asked weight.
 
 ## 3.8.23
 

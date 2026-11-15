@@ -89,6 +89,10 @@ def main() -> int:
         # 4:4:4: the BT.709 conversion the encoder line folds into pass 2 for an RGB source
         # (bt709_matrix_filter), or, on a line that keeps the source's tags and converts no
         # matrix (--codec prores), FFmpeg's own conversion to yuv444p, as that line's encoder has.
+        # An RGB source that probes HDR or BT.2020 gets FFmpeg's own conversion too (BT.601
+        # coefficients under the source's BT.2020 tags), as on every other re-encoding line:
+        # bt709_matrix_filter converts none of those, and a stabilize-only matrix would be a
+        # second convention ("After 3.8.23", seen and not changed).
         to_yuv, to_yuv_pass2 = "", ""
         if is_rgb(meta):
             conv = None if keeps_source_tags() else bt709_matrix_filter(meta)
