@@ -3698,6 +3698,81 @@ class Issue429DecidedTests(unittest.TestCase):
                     self.assertEqual(doc["results"][0].get("kept"), str(final))
                 self.assertEqual(sorted(n.name for n in where.iterdir() if "ffskill-lock" in n.name), [])
 
+    def test_a_batch_dry_run_says_a_cached_row_s_cuts_apart_from_its_plans(self):
+        """#540: a dry run serves a cache hit as the real run would (cached: true), and that row's
+        cut_reencoded is what the run that stored it measured. The summary line counted those calls
+        as planned re-encodes and pointed at cut_possible_reencode_reason, which the row lacks."""
+        folder = self.d / "dry_cached"
+        (folder / "in").mkdir(parents=True)
+        # keyframes 2 s apart: a cut from 0.37 is planned as a copy, which lands on the keyframe at 0
+        # and is re-encoded for the tolerance
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30", "-t", "3", "-c:v", "libx264",
+           "-g", "60", "-pix_fmt", "yuv420p", folder / "in" / "a.mp4")
+        recipe = self._recipe(folder, [["cut.py", "{in}", "--start", "0.37", "--end", "1.53", "--tolerance", "0.02", "-o", "{out}"]])
+        rc, real, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--fast")
+        self.assertEqual((rc, real["results"][0]["cut_reencoded"]), (0, [True]), err[-800:])  # the fixture: a measured re-encode
+        shutil.copy(folder / "in" / "a.mp4", folder / "in" / "b.mp4")  # an item with no entry: planned
+        rc, plan, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--fast", "--dry-run")
+        self.assertEqual(rc, 0, err[-800:])
+        served, planned = plan["results"]
+        self.assertEqual((served.get("cached"), served["cut_reencoded"]), (True, [True]), "served as a real run serves it")
+        self.assertNotIn("cut_possible_reencode_reason", served)
+        self.assertEqual((planned.get("cached"), planned["cut_reencoded"]), (None, [False]), planned)
+        self.assertIn("tolerance", planned["cut_possible_reencode_reason"][0])
+        line = next(ln for ln in err.splitlines() if "cut.py:" in ln)
+        self.assertIn("1/1 call(s) planned as a lossless stream copy", line)
+        self.assertIn("0 planned to re-encode", line)
+        self.assertIn("1 call(s) in rows a real run serves from the cache (cached: true), as the run that stored them "
+                      "measured: 0 stayed lossless stream-copy, 1 re-encoded", line)
+        self.assertEqual(plan["cut_stream_copy"], {"calls": 2, "stream_copy": 1, "reencoded": 1, "stream_copy_rate": 0.5})
+        (folder / "in" / "b.mp4").unlink()
+        rc, plan, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--fast", "--dry-run")
+        line = next(ln for ln in err.splitlines() if "cut.py:" in ln)
+        self.assertNotIn("planned", line.split("(cached: true)")[0], "no call was planned")
+
+    def test_a_render_stage_whose_brand_logo_changed_while_it_ran_is_not_cached(self):
+        """#540: render's stage key was made before the stage's child ran and stored after it; a
+        --brand logo rewritten in between was drawn but stored under the old logo's key, so putting
+        the old logo back (mtime kept) served the new one. The child here is the real overlay.py,
+        run after a hook in render's run_tool() rewrites the logo."""
+        logo, red = self.d / "brand540_logo.png", self.d / "brand540_red.png"
+        blue = self.d / "brand540_blue.png"
+        for path, colour in ((logo, "red"), (blue, "blue")):
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c={colour}:s=32x32", "-frames:v", "1", path)
+        shutil.copy2(logo, red)
+        brand = self.d / "brand540.json"
+        brand.write_text(json.dumps({"logo": str(logo)}), encoding="utf-8")
+        proj = self.d / "brand540_project.json"
+        proj.write_text(json.dumps({"output": str(self.d / "brand540.mp4"), "brand": str(brand), "clips": [{"src": str(self.clip)}],
+                                    "overlays": [{"logo": True}]}), encoding="utf-8")
+        cdir = self.d / "brand540_cache"
+        args = [str(proj), "--cache", str(cdir), "--overwrite", "--fast", "--json"]
+        hook = ("import shutil, sys\n"
+                f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "import render\n"
+                "real = render.run_tool\n"
+                "def hooked(cmd, *a, **k):\n"
+                "    if str(cmd[0]).endswith('overlay.py'):\n"
+                f"        shutil.copy({str(blue)!r}, {str(logo)!r})\n"
+                "    return real(cmd, *a, **k)\n"
+                "render.run_tool = hooked\n"
+                f"sys.argv = ['render.py'] + {args!r}\n"
+                "sys.exit(render.main())\n")
+        proc = subprocess.run([sys.executable, "-c", hook], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              encoding="utf-8", errors="replace")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-800:])
+        doc = json.loads(proc.stdout)
+        self.assertIn({"code": "cache_inputs_changed", "stage": "overlays"},
+                      [{k: s.get(k) for k in ("code", "stage")} for s in (doc.get("diagnostics") or {}).get("skipped") or []])
+        self.assertEqual(doc["cache"]["entries"], 0, doc["cache"])
+        shutil.copy2(red, logo)  # the old logo back, its mtime kept
+        rc, doc, err = self._run("render.py", *args[:-1])
+        self.assertEqual(rc, 0, err[-800:])
+        self.assertEqual(doc["cache"]["hits"], [], "the blue logo's overlay is not served for the red one")
+        self.assertNotIn("cache_inputs_changed", [s["code"] for s in (doc.get("diagnostics") or {}).get("skipped") or []])
+        rc, doc, err = self._run("render.py", *args[:-1])
+        self.assertEqual(doc["cache"]["hits"], ["overlays"], "a stage whose inputs held still is stored as before")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
