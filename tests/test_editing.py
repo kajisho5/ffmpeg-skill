@@ -1557,6 +1557,40 @@ class EditingTests(MediaFixtures):
         gap = json.loads(proc.stdout)["diagnostics"]["warnings"][0]
         self.assertEqual((gap["code"], gap["missing"], gap["frames_left_out"]), ("sequence_gap", "frame_0002.png", 2))
 
+    def test_sequence_refuses_a_frame_that_does_not_decode(self):
+        """#529: only the first frame was probed, and a later file named as an image that is not one
+        (a text file called frame_0001.png, a truncated PNG) was left out by the decoder while the
+        fps filter showed the frame before it in its place: the run completed, 3 frames' length,
+        with one picture missing. Every frame is decoded once before the encode and the run is
+        refused (still_unreadable) naming them, a dry run too; nothing is written."""
+        frames_dir = OUT / "seqframes_bad"
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        frames_dir.mkdir()
+        for i, color in enumerate(("red", "green", "blue", "white")):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={color}:s=64x48",
+               "-frames:v", "1", frames_dir / f"frame_{i:04d}.png")
+        (frames_dir / "frame_0001.png").write_text("not an image\n", encoding="utf-8")
+        whole = (frames_dir / "frame_0003.png").read_bytes()
+        (frames_dir / "frame_0003.png").write_bytes(whole[:len(whole) // 2])
+        out = OUT / "seq_bad.mp4"
+        if out.exists():
+            out.unlink()
+        for pattern in ("frame_%04d.png", "*.png"):
+            for extra in ((), ("--dry-run",)):
+                with self.subTest(pattern=pattern, extra=extra):
+                    proc = script("sequence.py", "--dir", frames_dir, "--pattern", pattern, "--fps", "5", "-o", out,
+                                  "--json", *extra, expect_fail=True)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "still_unreadable"), err)
+                    self.assertEqual([Path(p).name for p in err["details"]["frames"]], ["frame_0001.png", "frame_0003.png"], err)
+                    self.assertEqual((err["details"]["frames_unreadable"], err["details"]["frames_total"]), (2, 4))
+                    self.assertFalse(out.exists())
+        # the check reads every frame where the encode does: a sequence that decodes is unchanged
+        (frames_dir / "frame_0001.png").unlink()
+        (frames_dir / "frame_0003.png").unlink()
+        script("sequence.py", "--dir", frames_dir, "--pattern", "*.png", "--fps", "5", "-o", out)
+        self.assertAlmostEqual(probe(str(out))["duration"], 0.4, delta=0.01)
+
     def test_sequence_frame_durations_add_up_to_the_frame_grid(self):
         """#474: every frame was written `duration 0.033333` at 30 fps, 3.3e-7 s short, and the
         concat demuxer adds them up: half a frame behind after about 50,000 frames. The written
@@ -2673,6 +2707,58 @@ class EditingTests(MediaFixtures):
         script("join.py", self.src, self.src, "--transition", "none", "--width", "640", "--fast", "-o", out)
         m = probe(str(out))["video"]
         self.assertEqual((m["width"], m["height"]), (640, 360))
+
+    def test_a_blur_holds_every_plane_on_a_small_or_subsampled_frame(self):
+        """#527 (class: a blur radius chosen for the luma plane reaches a smaller chroma plane).
+        pad_filters() clamped the boxblur radius for luma only and left chroma at the same radius:
+        a 160x120 source to 9:16 (a 68x120 frame, 34x60 chroma) failed inside ffmpeg ("chroma_param
+        radius 20 ... must be <= 17") through fit --fit blur, fit --pad-fill blur and waveform
+        --image-fit blur. redact.py's own chroma bound assumed 4:2:0, and a 4:1:1 or 4:1:0 source
+        failed a 30x30 region. The chroma radius is evaluated on the planes' own size; on a frame
+        large enough it is what it was (the luma radius for a pad, half of it for redact)."""
+        small = tiny_clip(OUT / "blur_small_src.mp4", "testsrc2=s=160x120:r=25", seconds=1)
+        plate = OUT / "blur_small_plate.jpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240",
+           "-frames:v", "1", "-pix_fmt", "yuvj420p", plate)
+        self.assertEqual(probe(str(plate))["video"]["pix_fmt"], "yuvj420p")
+        runs = {
+            "fit --fit blur": ("fit.py", small, "--aspect", "9:16", "--fit", "blur"),
+            "fit --pad-fill blur": ("fit.py", small, "--aspect", "9:16", "--pad-fill", "blur"),
+            "waveform --image-fit blur": ("waveform.py", self.src, "--image", plate, "--image-fit", "blur",
+                                          "--width", "68", "--height", "120"),
+        }
+        for pix_fmt in ("yuv411p", "yuv410p"):
+            src = OUT / f"blur_small_{pix_fmt}.mkv"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25",
+               "-t", "1", "-pix_fmt", pix_fmt, "-c:v", "ffv1", src)
+            self.assertEqual(probe(str(src))["video"]["pix_fmt"], pix_fmt)
+            runs[f"redact on {pix_fmt}"] = ("redact.py", src, "--x", "10", "--y", "10", "--width", "30", "--height", "30")
+        for label, argv in runs.items():
+            with self.subTest(run=label):
+                out = OUT / ("blur_small_" + re.sub(r"\W+", "_", label) + (".mkv" if "redact" in label else ".mp4"))
+                doc = json.loads(script(*argv, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc)
+        # a frame big enough keeps the radius it had: the chroma expression evaluates to the luma one
+        pad = _common.decision.pad_filters(1080, 1920, "blur", "black", 20)
+        self.assertIn("boxblur=20:2:max(0\\,min(20\\,floor((min(cw\\,ch)-1)/2))):2", pad)
+
+    def test_fit_interpolates_slow_motion_at_the_rate_it_delivers(self):
+        """#527: --smooth interpolate made its new frames at the source's rate and the fps filter
+        then put them on --fps: a 2x slow-down of 30 fps to --fps 60 repeated every other frame
+        (117 distinct pictures of 240). The frames are made at --fps; without it at the source's
+        rate, as before. (--smooth blend is not changed: averaging two neighbours makes one picture
+        per gap at any rate.) Also: a VFR source whose speed change conforms the picture says so,
+        as one conformed by the fps filter does; the line was missing there."""
+        src = tiny_clip(OUT / "smooth_rate_src.mp4", "testsrc2=s=160x120:r=30", "-crf", "10", seconds=2)
+        out = OUT / "smooth_rate_60.mp4"
+        script("fit.py", src, "--duration", "4", "--smooth", "interpolate", "--fps", "60", "-o", out, "--overwrite")
+        proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", out, "-vf", "mpdecimate,showinfo", "-f", "null", "-")
+        distinct = len(re.findall(r"\bn:\s*\d+", proc.stderr))
+        self.assertGreater(distinct, 200, f"{distinct} distinct pictures of 240: the slow motion repeats frames")
+        plan = json.loads(script("fit.py", src, "--duration", "4", "--smooth", "interpolate", "--dry-run", "--json").stdout)
+        self.assertIn("minterpolate=fps=30:", " ".join(plan["commands"]), "without --fps the source's rate")
+        proc = script("fit.py", self.vfr, "--duration", "6", "-o", OUT / "smooth_rate_vfr.mp4", "--overwrite", "--fast")
+        self.assertIn("source looks variable-frame-rate", proc.stderr)
 
     def test_fit_blur_keeps_the_whole_picture_on_a_blurred_border(self):
         """--fit blur: the target aspect, nothing cropped, borders that carry a dimmed copy of the

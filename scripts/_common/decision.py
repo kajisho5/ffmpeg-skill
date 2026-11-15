@@ -21,6 +21,16 @@ from _common.runner import read_json
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
 
+def boxblur_chroma_radius(want: int) -> str:
+    """boxblur's chroma radius as an expression boxblur evaluates on the chroma planes' own size
+    (cw x ch, so a 4:1:1 or 4:1:0 frame's quarter-width planes are what is measured, not an assumed
+    4:2:0): `want`, or the largest radius that plane holds, floor((min(cw, ch) - 1) / 2), or 0 on a
+    plane too small for 1. On 4:2:0 that is redact.py's earlier (min(w, h) // 2 - 1) // 2. boxblur
+    refuses a radius above half the plane (6.1); 7.1 also refuses 1 on a 2 px plane, which this
+    bound leaves out (#527)."""
+    return f"max(0\\,min({int(want)}\\,floor((min(cw\\,ch)-1)/2)))"
+
+
 def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken: float = 0.0,
                 meta: Optional[Dict[str, Any]] = None) -> str:
     """The letterbox/pillarbox step shared by fit.py and export.py, as one -vf segment.
@@ -41,9 +51,12 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
         radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
+        # left unset, the chroma radius was the luma one, and a 4:2:0 68x120 frame's 34x60 chroma
+        # planes failed at 20 ("must be <= 17", #527). On a larger frame it is still the luma one
+        chroma = boxblur_chroma_radius(radius)
         return (f"split[__fitfg][__fitbg];"
                 f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
-                f"boxblur={radius}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
+                f"boxblur={radius}:2:{chroma}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
                 f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
                 f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
     pad = f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color="

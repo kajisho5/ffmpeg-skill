@@ -679,6 +679,10 @@ def main() -> int:
         refuse_existing_outputs([args.timemap])
     media_out = None if (args.list or args.filler_list) else (args.output or default_output(args.input, "tight"))
     guard_sidecar(args.edl, args.input, args.words, args.filler_words, siblings=(media_out,))
+    if media_out:
+        # the word timings and the filler list are read here, never as an -i: run()'s guard did not
+        # see a cut named like one of them (#522's sweep). Before any decode, so a dry run says it too
+        refuse_output_is_input(media_out, *[p for p in (args.words, args.filler_words) if p])
 
     if not math.isfinite(args.margin) or args.margin < 0:
         # nan made inside_margin() drop every silence and re-encode the whole file unchanged

@@ -261,6 +261,7 @@ DRY_RUN_ANALYSIS = {
 }
 DRY_RUN_NOTES = {
     "verify": "not supported: the flag is accepted but the steps run and outputs are written",
+    "sequence": "no ffmpeg runs; ffprobe decodes every frame of the sequence once, so a frame that does not decode as an image is refused (still_unreadable) as in a real run; the video is not written",
 }
 
 # Whether a tool re-encodes each stream *when that stream is present in the input* -- not whether
@@ -436,7 +437,7 @@ ERROR_REASONS = {
     "output_is_directory": "the output path is a directory; details: {output}",
     "media_path_is_playlist": "an input is a playlist that ffmpeg would follow to the files or URLs it names: HLS .m3u8/.m3u or an ffconcat list (by name or by its first bytes), a DASH manifest or an IMF composition playlist (by name or by the content ffmpeg's own probe looks for, whatever the file is called); the skill takes media files only; details: {path}",
     "media_path_has_line_break": "a path written into a concat list (loop.py, join.py --copy, sequence.py, multi-part cuts) contains a line break, which the concat format cannot hold: each line is a directive, so the name would add entries to the list; details: {path}",
-    "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}",
+    "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}. sequence.py: a frame of the sequence that does not decode (every frame is decoded once before the encode); details: {path (the first), frames, frames_unreadable, frames_total}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart; details: {clips: [{index?, path, differs}]}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",

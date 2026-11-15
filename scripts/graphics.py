@@ -36,7 +36,7 @@ from typing import List, Optional, Tuple
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
 from _common.drawtext import shaping_refusal
-from _common import (guard_sidecar, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, cfr_at_input, with_cfr,
+from _common import (guard_sidecar, refuse_output_is_input, require_filter, aac_args, add_common, brand_caption_style, script_font_for_text, apply_common, cfr_args, cfr_at_input, with_cfr,
                      color_hex, default_output, die, draws_chroma, drawn_chain, emit, escape_drawtext, escape_filter_path,
                      ffmpeg_base, info, layer_base_chain, load_brand, overlay_format, probe, rgb_chain_to_bt709, run_keeping_subtitles, video_args,
                      drawtext_boxborderw, drawtext_center_align, X264_PRESETS, time_arg, fmt_secs, STATE, drawtext_text_opts,
@@ -673,6 +673,9 @@ def main(force_route: Optional[str] = None) -> int:
              "through libass, or upgrade FFmpeg", "drawtext_newline_glyph", text_render="drawtext")
 
     output = args.output or default_output(args.input, "gfx", default_ext(alpha_codec) if alpha_codec else None)
+    # the brand file and the font file are read here and by drawtext's fontfile=, never as an -i, so
+    # run()'s guard did not see them (#522's sweep)
+    refuse_output_is_input(output, *[q for q in (args.brand, args.font_file or brand.get("font_file")) if isinstance(q, str) and q])
     ass_path = None
     emoji_result = None
     if route == "ass":

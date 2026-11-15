@@ -1283,6 +1283,104 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual((err["reason"], Path(err["details"]["input"]).name), ("output_is_input", "renamed.mp4"), err)
         self.assertEqual(alias.read_bytes(), before)
 
+    def test_verify_leaves_an_existing_cue_file_and_keeps_its_report_off_its_own_names(self):
+        """#522: verify.py wrote its `<stem>_cues.txt` over an existing file in --out without
+        --overwrite, and a --report naming one of the files its steps write (`OUT/clip_cut.mp4`)
+        replaced that step's output with the Markdown once the steps had read it. Without
+        --overwrite the caption step now fails on the cue file, as a step fails on its existing
+        output, and the file stays; with it the file is replaced. The report is refused before
+        anything is written (no --out folder is left)."""
+        clip = tiny_clip(OUT / "verify_cue_clip.mp4", "testsrc2=s=160x90:r=25", seconds=1, audio=True)
+        out = OUT / "verify_cue_out"
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir()
+        mine = out / "verify_cue_clip_cues.txt"
+        mine.write_text("mine\n", encoding="utf-8")
+        doc = json.loads(script("verify.py", clip, "--out", out, "--quick", "--json", expect_fail=True).stdout)
+        steps = {s["step"]: s for s in doc["files"][0]["steps"]}
+        self.assertEqual((steps["caption"]["kind"], steps["caption"]["reason"]), ("input", "output_exists"), steps["caption"])
+        self.assertTrue(all(s["ok"] for n, s in steps.items() if n != "caption"), steps)
+        self.assertEqual(mine.read_text(encoding="utf-8"), "mine\n", "the cue file was replaced without --overwrite")
+        self.assertFalse((out / "verify_cue_clip_cap.mp4").exists())
+        script("verify.py", clip, "--out", out, "--quick", "--overwrite", "--json")
+        self.assertIn("Verification caption", mine.read_text(encoding="utf-8"), "--overwrite replaces it")
+        # a folder at the name is not written through, --overwrite or not (it was a traceback)
+        mine.unlink()
+        mine.mkdir()
+        doc = json.loads(script("verify.py", clip, "--out", out, "--quick", "--overwrite", "--json", expect_fail=True).stdout)
+        self.assertEqual([s["step"] for s in doc["files"][0]["steps"] if not s["ok"]], ["caption"], doc["files"])
+        self.assertTrue(mine.is_dir())
+        for name in ("verify_cue_clip_cut.mp4", "verify_cue_clip_cues.txt", "verify_cue_clip_cap.srt"):
+            with self.subTest(report=name):
+                fresh = OUT / "verify_report_out"
+                shutil.rmtree(fresh, ignore_errors=True)
+                proc = script("verify.py", clip, "--out", fresh, "--quick", "--report", fresh / name, "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_path_taken"), err)
+                self.assertFalse(fresh.exists(), "a refused run leaves no --out folder")
+
+    def test_an_output_named_like_a_file_the_run_reads_is_refused(self):
+        """#522 (class: an output named like a file the run reads but does not hand to the writing
+        ffmpeg command as -i, so run()'s guard never saw it). sync.py --trim-second's command takes
+        only SECOND: REF named SECOND_synced.mp4 (the default name), or -o REF, was replaced with
+        --overwrite. The sweep found the same in cut --snap-source, metadata --chapters, graphics
+        and overlay --brand/--font-file, silence --words/--filler-words and join --list. Each is
+        refused as output_is_input before anything is written, its bytes unchanged, and a dry run
+        says the same."""
+        work = OUT / "side_input_as_output"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir()
+        clip = tiny_clip(work / "clip.mp4", "testsrc2=s=160x90:r=25", seconds=2, audio=True)
+        second = work / "second.wav"
+        shutil.copy(self.mic, second)
+        cues_free = {
+            "chapters": "0:00 Intro\n0:01 Part\n",
+            "brand": json.dumps({"font": "DejaVu Sans", "colors": {"primary": "FF6A00", "text": "FFFFFF"}}),
+            "words": json.dumps({"segments": [{"start": 0, "end": 1, "text": "um there", "words": [
+                {"word": "um", "start": 0.1, "end": 0.4}, {"word": "there", "start": 0.5, "end": 0.9}]}]}),
+            "fillers": "um\nuh\n",
+            "list": f"{clip}\n{clip}\n",
+        }
+        side = {}
+        for key, text in cues_free.items():
+            # named like media, so the output's extension is not what refuses the run
+            side[key] = work / f"{key}_side.mp4"
+            side[key].write_text(text, encoding="utf-8")
+        side["snap"] = work / "snap_side.mp4"
+        shutil.copy(clip, side["snap"])
+        side["ref"] = work / "second_synced.mp4"  # sync's default name for --trim-second's output
+        shutil.copy(self.src, side["ref"])
+        words = work / "words.json"
+        words.write_text(cues_free["words"], encoding="utf-8")
+        cases = [
+            ("sync --trim-second, default name", "ref", ["sync.py", side["ref"], second, "--trim-second"], False),
+            ("sync --trim-second, -o REF", "ref", ["sync.py", side["ref"], second, "--trim-second"], True),
+            ("cut --snap-source", "snap", ["cut.py", clip, "--start", "0.5", "--end", "1.5", "--snap-source", side["snap"]], True),
+            ("metadata --chapters", "chapters", ["metadata.py", clip, "--chapters", side["chapters"]], True),
+            ("graphics --brand", "brand", ["graphics.py", clip, "--template", "title", "--title", "T", "--start", "0",
+                                           "--end", "1", "--brand", side["brand"]], True),
+            ("overlay --brand", "brand", ["overlay.py", clip, "--text", "T", "--brand", side["brand"]], True),
+            ("silence --words", "words", ["silence.py", clip, "--words", side["words"], "--filler"], True),
+            ("silence --filler-words", "fillers", ["silence.py", clip, "--words", words, "--filler", "--filler-words",
+                                                   side["fillers"]], True),
+            ("join --list", "list", ["join.py", "--list", side["list"]], True),
+        ]
+        font = default_font_file("DejaVu Sans")
+        if font:
+            side["font"] = work / "font_side.mp4"
+            shutil.copy(font, side["font"])
+            cases += [("graphics --font-file", "font", ["graphics.py", clip, "--template", "title", "--title", "T", "--start", "0",
+                                                        "--end", "1", "--font-file", side["font"]], True),
+                      ("overlay --font-file", "font", ["overlay.py", clip, "--text", "T", "--font-file", side["font"]], True)]
+        for label, key, argv, named in cases:
+            for extra in ((), ("--dry-run",)):
+                with self.subTest(case=label, extra=extra):
+                    before = side[key].read_bytes()
+                    proc = script(*argv, *(["-o", side[key]] if named else []), "--overwrite", "--json", *extra, expect_fail=True)
+                    err = json.loads(proc.stdout)["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_is_input"), err)
+                    self.assertEqual(side[key].read_bytes(), before, f"{label}: the file it reads was replaced")
+
     def test_verify_full_plan_hdr_surround_broken_file_and_timeout(self):
         """verify.py's non---quick plan (overlay, look sheet, probe --analyze, loudness, silence,
         color --to-sdr + the HDR-preserved check on an HDR file, --downmix on >2ch audio), the

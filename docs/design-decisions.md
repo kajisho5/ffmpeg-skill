@@ -95,6 +95,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.14 — odd positions, the CFR conform and the timeline's aspect (#512, #506)](#after-3814--odd-positions-the-cfr-conform-and-the-timelines-aspect-512-506)
 - [After 3.8.16 — shared code and the MCP server (#465)](#after-3816--shared-code-and-the-mcp-server-465)
 - [After 3.8.17 — leftovers of the old grouped issues (#510)](#after-3817--leftovers-of-the-old-grouped-issues-510)
+- [After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)](#after-3818--side-inputs-as-outputs-the-blurred-pads-chroma-and-sequences-frames-522-527-529)
 <!-- contents:end -->
 
 ## Time limits
@@ -4669,7 +4670,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `probe()` now refuses a still (read by `image2` or an `*_pipe` demuxer) whose stream has no frame
   size, `kind: input`, `reason: still_unreadable`, for every tool that probes the file, which is
   every input of every tool except `sequence.py`'s frames after the first (it probes the first
-  only; a later one that is not an image is left out of the encode, as before). A stream with no size in a video container is not refused there: such a file can
+  only; since 3.8.18's follow-up every frame is decoded once before the encode, and a later one
+  that does not decode is refused there, with the same reason: "After 3.8.18" below). A stream with no size in a video container is not refused there: such a file can
   still carry a readable track, and the tool that reads it decides. Code: `_common.probe.probe()`.
   Test: `test_a_file_named_as_an_image_that_is_not_one_is_refused`.
 - **A sibling script past its outer ceiling is sent SIGTERM and killed only if it has not exited
@@ -4872,3 +4874,72 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   still plans `mode: copy` for a copy the real run re-encodes past `--tolerance`; and the four
   #429 items (a batch step that writes without `{out}`, an intermediate's caption sidecars,
   placeholder side inputs in the cache key, Ctrl-C during a render stage).
+
+## After 3.8.18 — side inputs as outputs, the blurred pad's chroma and sequence's frames (#522, #527, #529)
+
+- **An output named like a file the run reads but does not hand to ffmpeg as `-i` is refused**
+  (#522), `kind: input`, `reason: output_is_input`, before anything is written and in a dry run
+  too. `run()`'s guard compares the output with the command's `-i` inputs only, and
+  `sync.py REF SECOND --trim-second` writes from SECOND alone: REF named `SECOND_synced.mp4` (the
+  default output name) or given as `-o` was replaced with `--overwrite`. The sweep of that class
+  (each side-file flag given again as `-o`, with `--overwrite`) found the same in
+  `cut.py --snap-source`, `metadata.py --chapters`, `graphics.py` and `overlay.py` `--brand` and
+  `--font-file` (a brand file's `font_file` too), `silence.py --words` and `--filler-words`, and
+  `join.py --list`; each tool now compares its output with those files once it is known
+  (`refuse_output_is_input()`, the tool-level twin of the guard). Already refused, and not changed:
+  `caption.py`'s cue, SRT, ASS and brand files, `audio.py --music`, `--effects` and `--replace`,
+  `waveform.py --srt`/`--text`, `render.py --template`'s side files, `sync.py --replace-audio`.
+  A LUT (`color.py --lut`) is not replaced: ffmpeg picks no muxer for a LUT's extension (`.cube`,
+  `.3dl`, `.dat`, `.m3d`, `.csp`) and `lut3d` does not read a LUT named like media, so both fail
+  as `kind: ffmpeg` with the LUT unchanged. Not measured here: another case of the name on a
+  case-insensitive volume when the output does not exist yet (`same_file()` compares resolved
+  names until both files exist). Test: `test_an_output_named_like_a_file_the_run_reads_is_refused`.
+- **`verify.py` never replaces a cue file without `--overwrite`, and the caption step fails on it
+  instead of the run being refused** (#522). Through 3.8.18 the `<stem>_cues.txt` it writes in
+  `--out` was replaced unasked. Without `--overwrite` an existing one is left as it is and the
+  caption step is a failure `kind: input`, `reason: output_exists`, with the other steps run: a
+  rerun into the same `--out` already fails each step on its own existing output ("After 3.8.13"),
+  and the cue file belongs to the caption step. A link or a folder at the name is never written
+  through, `--overwrite` or not (a folder was a traceback). A `--report` that names a file the
+  steps write (`OUT/clip_cut.mp4`, the cue file, a caption sidecar) is refused before any step
+  runs, `reason: output_path_taken`; it replaced that step's output once the steps had read it.
+  Test: `test_verify_leaves_an_existing_cue_file_and_keeps_its_report_off_its_own_names`.
+- **A blur's chroma radius is evaluated by boxblur on the chroma planes' own size** (#527).
+  `pad_filters()` (`fit.py --fit blur`, `--pad-fill blur`, `waveform.py --image-fit blur`;
+  `export.py --pad-fill blur` too, though its presets' frames are 720 px or more and never meet
+  it) clamped the radius to the luma plane and gave chroma the same one: a 160x120 source to 9:16
+  (a 68x120 frame, 34x60 chroma) failed inside ffmpeg. `redact.py` had its own chroma bound,
+  written for 4:2:0, and a 4:1:1 or 4:1:0 source (DV) failed a 30x30 region. Both now hand
+  boxblur an expression on `cw`/`ch`: the radius asked for (the luma one for a pad, half of it, at
+  least 1, for redact), or the largest the plane holds, `floor((min(cw, ch) - 1) / 2)`, or 0. On
+  a frame large enough nothing changes: the pad's chroma radius is still the luma one, and
+  redact's output on 4:2:0 and 4:4:4 is the same pictures (compared frame by frame on odd and even
+  regions). Not verified here: FFmpeg 7.1, which refuses a radius 6.1 took; the bound is the one
+  redact.py's 4:2:0 numbers already passed there. Code: `_common.decision.boxblur_chroma_radius()`.
+  Test: `test_a_blur_holds_every_plane_on_a_small_or_subsampled_frame`.
+- **`fit.py --smooth interpolate` makes its frames at `--fps` when given** (#527): made at the
+  source's rate and then put on `--fps 60` by the fps filter, every other frame of a 2x slow
+  motion was a repeat (117 distinct pictures of 240; 232 now). `--smooth blend` is not changed:
+  blending two neighbours makes one new picture per gap whatever the rate (119 distinct pictures
+  of 240 with the blend at 30 or at 60). A VFR source whose speed change puts the picture on the
+  grid now says "source looks variable-frame-rate" as one conformed by the fps filter does.
+  Test: `test_fit_interpolates_slow_motion_at_the_rate_it_delivers`.
+- **`sequence.py` decodes every frame once before the encode and refuses one that does not
+  decode** (#529), `kind: input`, `reason: still_unreadable`, naming the frames (`frames`,
+  `frames_unreadable`, `frames_total`). Only the first frame was probed, and a later text file
+  named `.png` or a truncated PNG was dropped by the decoder while the fps filter showed the frame
+  before it: the run completed with a picture missing. The check is one ffprobe over the concat
+  list the encode reads, so it costs one more decode of every frame, and it runs under `--dry-run`
+  too (ffprobe, not ffmpeg: the contract's dry-run note says so). When ffprobe fails or reads
+  nothing back, the frames are not called bad: a note says they could not be checked and the
+  encode runs as before. Code: `sequence.undecodable_frames()`. Test:
+  `test_sequence_refuses_a_frame_that_does_not_decode`.
+- **Checked and not changed:** `speedramp.py` with a sound whose sample rate reads 0 skips the
+  per-segment sample count, but no run reaches a written file: a Matroska file patched to rate 0
+  probes as 0 and its sound does not decode (FFmpeg 6.1.1: "Value inf for parameter
+  'time_base'"), so the run fails in ffmpeg. `verify.py`'s caption step stopped at its
+  `--timeout` leaves the `.srt` and `.ass` it had written: they are deliverables, not partial
+  files ("Outputs and files": caption.py leaves its sidecar by design); removing them on a failed
+  burn would be a decision of its own. The colour-name table is compared with the installed
+  ffmpeg's `-colors` by `test_an_unknown_colour_name_is_refused_before_ffmpeg` on every CI job, so
+  on 6.1, 7.1, 8.x and 9.x (all fifteen test jobs of #530 passed).

@@ -30,6 +30,7 @@ import sys
 from _common import add_common, overlay_format, apply_common, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note
 from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.decision import boxblur_chroma_radius
 
 
 def main() -> int:
@@ -118,7 +119,10 @@ def main() -> int:
             # --blur-strength 1, which left colour-only detail readable (review of #521). (FFmpeg
             # 7.1 refuses a chroma radius of 1 on a 2 px chroma plane, a 4 px wide region; 6.1
             # took it.) 0 is only a plane too small to blur: the luma still is
-            chroma = max(0, min(max(1, radius // 2), (min(args.width, args.height) // 2 - 1) // 2))
+            # On the chroma planes' own size, which boxblur measures: a 4:1:1 or 4:1:0 source's
+            # quarter-width planes failed at the 4:2:0 bound (a 30x30 region: "radius 7, must be
+            # <= 3", #527's sweep). On 4:2:0 the radius is the one it was
+            chroma = boxblur_chroma_radius(max(1, radius // 2))
             region = f"{crop},boxblur={radius}:{radius}:{chroma}:{radius}"
         else:
             region = f"{crop},scale={max(1, args.width // args.block_size)}:{max(1, args.height // args.block_size)}:flags=neighbor,scale={args.width}:{args.height}:flags=neighbor"

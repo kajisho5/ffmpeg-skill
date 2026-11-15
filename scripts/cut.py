@@ -1618,7 +1618,8 @@ def main() -> int:
                     + "; give every segment at least one frame", kind="input")
 
     output = args.output or default_output(args.input, "cut")
-    refuse_output_is_input(output, args.input)
+    # --snap-source is read for its beat grid and is never an -i of the cut (#522's sweep)
+    refuse_output_is_input(output, args.input, *([args.snap_source] if args.snap_source else []))
     ext = os.path.splitext(output)[1].lower() or ".mp4"  # an upper-case .MP4 is still faststart
 
     # A segment that runs past the end of the video, with a join after it: whatever joins it (the
