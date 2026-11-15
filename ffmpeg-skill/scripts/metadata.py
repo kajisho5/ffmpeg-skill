@@ -35,7 +35,7 @@ from _common import (guard_sidecar, add_common, apply_common, default_output, de
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
                      STATE, read_text_or_die)
 from _common.emit import input_length
-from _common.runner import carried_stream_maps
+from _common.runner import carried_stream_maps, refuse_output_is_input
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
 TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
@@ -247,6 +247,9 @@ def main() -> int:
     output = args.output or default_output(args.input, "meta", Path(args.input).suffix.lstrip(".") or "mp4")
     if os.path.abspath(output) == os.path.abspath(args.input):
         die("output must differ from the input (metadata.py never rewrites a file in place)")
+    if args.chapters:
+        # the chapter list is read here and handed to ffmpeg as a metadata file of its own (#522's sweep)
+        refuse_output_is_input(output, args.chapters, why="the chapter file would be replaced by the output")
     out_ext = Path(output).suffix.lower()
     if (args.chapters or args.clear_chapters or args.auto_chapters) and out_ext not in CHAPTER_CONTAINERS:
         die(f"{out_ext or 'this'} container cannot hold chapter markers; write to one of "

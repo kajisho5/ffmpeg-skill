@@ -1574,8 +1574,11 @@ def main() -> int:
         refuse_existing_outputs(todo)
         # and the rest of the side-file guards (#408): never an input, the video, a missing
         # directory or an option-shaped name, even under --overwrite
+        # a brand file's font_file and logo are read too (review of #534's sweep: --write-srt or
+        # --write-ass naming the brand's font replaced it)
         side_inputs = [q for q in (args.input, getattr(args, "text", None), getattr(args, "ass", None),
-                                   getattr(args, "brand", None), *(t[0] for t in srt_tracks)) if isinstance(q, str)]
+                                   getattr(args, "brand", None), brand.get("font_file"), brand.get("logo"),
+                                   *(t[0] for t in srt_tracks)) if isinstance(q, str) and q]
         for path in todo:
             guard_sidecar(path, *side_inputs)
 

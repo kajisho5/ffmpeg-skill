@@ -32,7 +32,7 @@ import os
 import sys
 from typing import Dict, List
 
-from _common.runner import fail_if_classified
+from _common.runner import fail_if_classified, refuse_output_is_input
 from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
@@ -365,6 +365,9 @@ def main() -> int:
 
     if args.replace_audio or args.trim_second:
         output = args.output or default_output(args.reference if args.replace_audio else args.second, "synced", "mp4")
+        # --trim-second's command takes only SECOND as -i, so run()'s guard never saw the reference:
+        # REF named SECOND_synced.mp4 (the default name) or `-o REF` was replaced (#522)
+        refuse_output_is_input(output, args.reference, args.second)
         # second started later (offset > 0)  -> delay it by `offset` (pad the head)
         # second started earlier (offset < 0) -> drop its first `-offset` seconds
         delay_ms = int(round(offset * 1000))

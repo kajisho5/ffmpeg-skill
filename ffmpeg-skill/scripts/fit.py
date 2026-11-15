@@ -201,7 +201,10 @@ def main() -> int:
                 vf.append(f"setpts={1/factor:.8f}*PTS")
                 src_fps = meta["video"].get("fps") or 30.0
                 if factor < 1.0 and args.smooth == "interpolate":
-                    vf.append(f"minterpolate=fps={src_fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
+                    # the new frames are made at the rate delivered: made at the source's 30 and
+                    # then put on --fps 60 by the fps filter below, every other frame of the slow
+                    # motion was a repeat (#527). Without --fps it is the source's rate, as before
+                    vf.append(f"minterpolate=fps={args.fps or src_fps:g}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1")
                 elif factor < 1.0 and args.smooth == "blend":
                     vf.append(f"fps={src_fps:g}")
                     vf.append("tblend=all_mode=average")
@@ -259,11 +262,14 @@ def main() -> int:
     # A speed change without --fps has already been put on the delivered grid above
     if args.fps:
         vf.append(f"fps={args.fps:g}")
-    elif meta["video"].get("variable_frame_rate_suspected") and not regridded:
+    elif meta["video"].get("variable_frame_rate_suspected"):
+        # said whichever filter conforms it: a speed change's regrid above is that conform, and the
+        # line was missing there (#527)
         info("source looks variable-frame-rate; conforming to constant fps automatically")
-        # the conform is the fps filter, as --fps is: -fps_mode cfr alone let a frame run up to
-        # two frames late against the sound (#512)
-        vf.append(cfr_filter(meta))
+        if not regridded:
+            # the conform is the fps filter, as --fps is: -fps_mode cfr alone let a frame run up to
+            # two frames late against the sound (#512)
+            vf.append(cfr_filter(meta))
 
     # ---- aspect / size
     if args.aspect or args.width or args.height:
