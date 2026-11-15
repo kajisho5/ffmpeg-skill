@@ -18,9 +18,9 @@ Examples:
 import argparse
 import sys
 from fractions import Fraction
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
-from _common.decision import av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length
 
@@ -28,18 +28,20 @@ MAX_SPEED = 20.0
 MIN_SPEED = 0.05
 
 
-def atempo_chain(factor: float) -> str:
-    """atempo accepts 0.5..100 per instance; chain for factors outside that range."""
+def atempo_chain(factor: float, sample_rate: Any = 0) -> str:
+    """atempo accepts 0.5..100 per instance; chain for factors outside that range. The chain is
+    led by the samples atempo leaves out (atempo_chain_with_lead, at the track's `sample_rate`):
+    without them every segment's sound came out 21 ms early at 1x and 40 ms at 0.5x (#523)."""
     parts: List[str] = []
     remaining = factor
     while remaining < 0.5:
-        parts.append("atempo=0.5")
+        parts.append("0.5")
         remaining /= 0.5
     while remaining > 100.0:
-        parts.append("atempo=100.0")
+        parts.append("100.0")
         remaining /= 100.0
-    parts.append(f"atempo={remaining:.6f}")
-    return ",".join(parts)
+    parts.append(f"{remaining:.6f}")
+    return atempo_chain_with_lead(parts, sample_rate)
 
 
 def parse_segment(raw: str) -> Tuple[float, float, float]:
@@ -118,7 +120,8 @@ def main() -> int:
         # leaves at the unscaled 1/rate, so every 2x segment pushed the rest of the picture two
         # frames late against the sound (and added those frames)
         vchain = f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, out_rate)}"
-        achain = f"[0:a]{atrim},{atempo_chain(factor)}"
+        # a 1x segment is not retimed: atempo would place its sound by windows for nothing (#541)
+        achain = f"[0:a]{atrim}" if factor == 1.0 else f"[0:a]{atrim},{atempo_chain(factor, srate)}"
         if out_rate:
             # Each segment holds the frames (and samples) between its retimed ends on the whole
             # output's grid, not its own length rounded: eight 0.5 s segments at 27 fps rounded

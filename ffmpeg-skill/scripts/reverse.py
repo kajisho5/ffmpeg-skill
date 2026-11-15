@@ -15,7 +15,7 @@ import argparse
 import math
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, aac_args, cfr_args, cfr_filter, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 from _common.decision import (HELD_FRAMES_WARN_BYTES, av_clip_length, av_trim, delivered_rate, frame_durations, frame_rate,
                               held_frames_bytes, stream_starts)
@@ -49,6 +49,17 @@ def main() -> int:
              f"({vdur:.0f}s of {v['width']}x{v['height']}) -- cut the part to reverse first (cut.py) if RAM is tight",
              "memory_heavy", duration=meta.get("duration"), bytes=held)
     cmd = ffmpeg_base() + ["-i", args.input]
+    # A VFR source is put on the delivered grid before the reversal (#523). `reverse` hands its
+    # frames the forward timestamps in order, so a reversed VFR picture kept its gaps where they
+    # were in forward time: every flash of the 27 fps average clip came 0.19 s late against the
+    # reversed sound (0.23 s without sound). On a constant grid the reversed picture is the forward
+    # one mirrored. Each slot takes the last frame that starts before the slot ends (round=down),
+    # which is the frame the reversed slot opens on: the nearest frame to its start (the forward
+    # conform's choice) dropped a last frame that starts after the last slot's middle, and the
+    # reversal then opened on the frame before it. The conformed picture's time base is one frame,
+    # and a trim rescales its bound to it (a half-frame bound can round onto a frame and cut it:
+    # freeze.py), so a microsecond base follows.
+    reversed_conform = f"{cfr_filter(meta)}:round=down,settb=AVTB" if cfr_filter(meta) else ""
     if has_audio:
         # Both streams are reversed about one end (#409); each reversed about its own end put a sound
         # 0.6 s longer than its picture 0.396 s off. As in a join, both start at the first frame (the
@@ -73,13 +84,14 @@ def main() -> int:
         vlen = meta["video"].get("duration") or length
         end = math.ceil(length * rate - 1e-6) / rate
         vtrim, atrim = av_trim(stream_starts(meta)[0], None)
+        conform = f"{reversed_conform}," if reversed_conform else ""
         cmd += ["-filter_complex",
                 f"[0:v:0]tpad=stop_mode=clone:stop_duration={max(0.0, end - vlen) + 2 / rate:.6f},{vtrim},"
-                f"trim=end={end - 0.5 / max(rate, frame_rate(meta) or rate):.6f},reverse,{frame_durations(meta, rate)}[v];"
+                f"{conform}trim=end={end - 0.5 / max(rate, frame_rate(meta) or rate):.6f},reverse,{frame_durations(meta, rate)}[v];"
                 f"[0:a:0]{atrim},apad=whole_dur={end:.6f},atrim=end={end:.6f},areverse,asetpts=N/SR/TB[a]",
                 "-map", "[v]", "-map", "[a]"]
     else:
-        cmd += ["-vf", "reverse"]
+        cmd += ["-vf", f"{reversed_conform},reverse" if reversed_conform else "reverse"]
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta)
     if has_audio:

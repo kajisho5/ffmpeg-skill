@@ -30,7 +30,7 @@ from typing import Any, Dict, List
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import file_origin, stream_end, warn
-from _common.decision import LOSSLESS_AUDIO_EXT, conform_filter, conform_to_length
+from _common.decision import LOSSLESS_AUDIO_EXT, atempo_chain_with_lead, conform_filter, conform_to_length
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -559,7 +559,9 @@ def main() -> int:
         fx.append(f"extrastereo=m={1 + 2 * args.stereo_widen:g}")
     tempo_steps = atempo_steps(args.tempo) if args.tempo is not None and args.tempo != 1.0 else []
     if tempo_steps:
-        fx.append(",".join(f"atempo={f:.10g}" for f in tempo_steps))
+        # led by the samples atempo leaves out, at the rate the track has there (the source's:
+        # --sample-rate resamples after the chain), or it opened 21 ms in (#523)
+        fx.append(atempo_chain_with_lead([f"{f:.10g}" for f in tempo_steps], main_track_rate(args, meta)))
     # the main track's length in the output: the source's, or the source's / --tempo on an audio
     # output of the input's own sound (beside a picture, or for --replace, it is the picture's)
     main_dur = dur / args.tempo if dur and tempo_steps and not (keep_video or args.replace) else dur
