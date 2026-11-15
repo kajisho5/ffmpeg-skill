@@ -7598,5 +7598,93 @@ class EmojiClaimTests(unittest.TestCase):
         self.assertNotIn("drawn by the text font", msg)
 
 
+
+class RgbStabilizeAndFontsDirTests(unittest.TestCase):
+    """#531: stabilize.py on an RGB source, and caption.py --fonts-dir without the asked face."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "rgb_stab_fonts_dir"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+
+    def test_stabilize_takes_an_rgb_source(self):
+        """vid.stab aborts on an RGB picture (libvidstab 1.1: the assertion `fi->planes==1`), so
+        pass 1 failed as kind ffmpeg for a PNG still, an RGB .mov and a gbrp file. Both passes now
+        see YUV 4:4:4; the output is the encoder line's format and the colour is kept."""
+        if "vidstabdetect" not in subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout:
+            self.skipTest("this ffmpeg build has no vid.stab")
+        red = "color=c=0xC03028:s=160x120:r=25:d=1"
+        sources = {
+            "rgb24 qtrle .mov": (self.dir / "red_rgb24.mov", [red + ",format=rgb24"], ["-c:v", "qtrle"]),
+            "gbrp ffv1 .mkv": (self.dir / "red_gbrp.mkv", [red + ",format=gbrp"], ["-c:v", "ffv1"]),
+            "rgb24 .png still": (self.dir / "red.png", [red + ",format=rgb24"], ["-frames:v", "1"]),
+        }
+        for name, (path, graph, codec) in sources.items():
+            if not path.exists():
+                sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", graph[0], *codec, path)
+            self.assertRegex(probe(str(path))["video"]["pix_fmt"], r"^(rgb|bgr|gbr)", "fixture: the source is RGB")
+            for codec_flags, ext, pix in (([], ".mp4", "yuv420p"), (["--codec", "prores"], ".mov", "yuv422p10le")):
+                with self.subTest(source=name, line=ext):
+                    out = self.dir / f"stab_{path.stem}_{path.suffix[1:]}{ext}"
+                    doc = json.loads(script("stabilize.py", path, *codec_flags, "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed", doc.get("error"))
+                    self.assertEqual(doc["probe"]["video"]["pix_fmt"], pix, "the output's format is stated")
+                    self.assertTrue(any("the source is RGB" in n for n in doc.get("notes") or []), doc.get("notes"))
+                    if not codec_flags:
+                        # the BT.709 conversion every other RGB re-encode makes: C03028 comes back C03028
+                        for got, want in zip(frame_rgb(out, 0, 80, 60), (0xC0, 0x30, 0x28)):
+                            self.assertLessEqual(abs(got - want), 4)
+
+    def test_a_fonts_dir_without_the_asked_face_reports_the_substitution(self):
+        """caption.py --fonts-dir DIR --font NAME reported font_used.substituted false whatever DIR
+        held: libass looks NAME up in DIR and, with no face of that name there, asks fontconfig as
+        without --fonts-dir. The folder is now read for the face (fc-scan), and without it the font
+        is reported as fontconfig resolves it, a substitution included."""
+        if _no_fontconfig() or not shutil.which("fc-scan") or platform.system() == "Windows":
+            self.skipTest("needs fontconfig's fc-scan and fc-match")
+        face = default_font_file("DejaVu Sans")
+        if not face or "dejavu" not in os.path.basename(face).lower():
+            self.skipTest("DejaVu Sans is not installed")
+        with_face, empty = self.dir / "with_face", self.dir / "empty"
+        for d in (with_face, empty):
+            d.mkdir(exist_ok=True)
+        shutil.copy(face, with_face / os.path.basename(face))
+        (empty / "brand.ttf").write_text("not a font\n", encoding="utf-8")
+        src = self.dir / "black.mp4"
+        if not src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=25:d=1", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", src)
+        cues = self.dir / "cues.txt"
+        cues.write_text("0-1 Hello there\n", encoding="utf-8")
+
+        def burn(fonts_dir, font, name):
+            out = self.dir / f"{name}.mp4"
+            doc = json.loads(script("caption.py", src, "--text", cues, "--fonts-dir", fonts_dir, "--font", font,
+                                    "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(out), "-frames:v", "1", "-f", "md5", "-"],
+                                   capture_output=True, text=True, check=True).stdout
+            return doc, frame
+
+        for fonts_dir in (with_face, empty):
+            with self.subTest(fonts_dir=fonts_dir.name):
+                doc, frame = burn(fonts_dir, "No Such Family 531", f"missing_{fonts_dir.name}")
+                used = doc["font_used"]
+                self.assertTrue(used["substituted"], used)
+                self.assertEqual(used["fonts_dir"], str(fonts_dir))
+                self.assertIn("font_substituted", [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks", [])])
+                # what was drawn is the family reported: the same burn asking for it by name
+                _doc, named = burn(fonts_dir, used["family"], f"named_{fonts_dir.name}")
+                self.assertEqual(frame, named, f"libass drew {used['family']}")
+        # the face that is in the folder is the one reported, by its file
+        doc, _ = burn(with_face, "DejaVu Sans", "in_dir")
+        used = doc["font_used"]
+        self.assertEqual((used["how"], used["substituted"], used["file"]), ("fonts_dir", False, str(with_face / os.path.basename(face))))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

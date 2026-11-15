@@ -609,8 +609,9 @@ FONT_USED_SCHEMA = {
     "description": "the font the text was drawn with: {asked, file, family, how, substituted, via?, fonts_dir?}. how: font_file (the "
                    "caller's file), script (picked to cover the text's script), resolved (the asked family resolved to a file by "
                    "fc-match or the Windows Fonts folder; for libass, the file fontconfig picks for the family), by_name (no file "
-                   "resolved: ffmpeg/libass look the family up themselves, file null), fonts_dir (caption.py: the family looked up "
-                   "in --fonts-dir first), ass_styles (caption.py --ass: the file's own styles name the fonts). substituted: the "
+                   "resolved: ffmpeg/libass look the family up themselves, file null), fonts_dir (caption.py: a face of the asked "
+                   "family found in --fonts-dir by fc-scan, file names it; file null when the folder could not be read, with a "
+                   "note; a folder without such a face is reported as without --fonts-dir, fonts_dir still named), ass_styles (caption.py --ass: the file's own styles name the fonts). substituted: the "
                    "file is not the asked family (also a diagnostics.fallbacks entry, font_substituted). overlay.py: with --text; "
                    "grid.py: with --label auto",
 }
@@ -627,6 +628,8 @@ NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "crop", "cut", "dein
 # test_every_emitted_top_level_key_is_in_the_output_schema runs each tool and fails on a key that
 # is in neither.
 EMITTED_KEYS: Dict[str, Dict[str, Any]] = {
+    "fit": {
+        "picture": {"type": "object", "description": "after a real run that sized the frame (--aspect, --width or --height): where the picture sits in the frame written, measured, not judged (#519): {measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format; the picture is the rectangle where the two differ (no frame of the source is decoded), and frame_width/frame_height are the written file's. frame_share: picture area over frame area (1.0 for --fit crop). scale: the picture's width over the source's displayed width (for --fit crop, the width it was scaled to before the crop); a note says so when it is below 1 and no --width or --height was given. cropped: source pixels --fit crop cut on each side (all 0 otherwise). {measured: false, reason} (and a note) when the measurement gave no frame of the written size. Absent under --dry-run. Whether the subject is in the rectangle is still a look: subject_framing stays in unverified"}},
     "cropdetect": {
         "file": {"type": "string", "description": "the input path, as given"},
         "source_width": {"type": "integer", "description": "the displayed frame's width (a 90/270 degree rotation swaps the stored size; a non-square-pixel source is squared at its display aspect): the frame crop and motion_centre are in"},

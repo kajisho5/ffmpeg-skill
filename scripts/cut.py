@@ -65,6 +65,7 @@ from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, seve
 from _common.runner import subtitle_codec_for, subtitle_container_holds
 from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
+from _common.emit import refuse_still
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -1590,6 +1591,8 @@ def main() -> int:
     KEEP_HEVC = not args.no_keep_hevc
 
     meta = probe(args.input)
+    # read as a one-frame clip, a still wrote 0.04 s with --start 0 and nothing (kind output) past it (#531)
+    refuse_still(meta, args.input, "cut.py keeps a stretch of a clip's time, and a still has none")
     total = meta.get("duration") or 0.0
     # why every segment re-encodes, if one of these forces it; `requested` is read before the
     # guards below overwrite args.accurate, so a forced re-encode is never reported as asked for

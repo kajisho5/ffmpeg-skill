@@ -703,6 +703,24 @@ def input_length(meta: Optional[Dict[str, Any]], path: Optional[str] = None) -> 
     return float(length or 0.0)
 
 
+STILL_AS_CLIP_HINT = ("make a clip of the still first (insert.py STILL --duration SECONDS), "
+                      "then run this on that clip")
+
+
+def refuse_still(meta: Optional[Dict[str, Any]], path: Optional[str], why: str) -> None:
+    """Refuse a still picture given where a clip with a length is needed (#531), kind input, naming
+    the input and insert.py. input_length() lets a still through as 0 s (grid.py and broll.py show
+    one for as long as the clip beside it), and a tool that then computed with that 0 refused with
+    a length of 0.000 or a speed of 0.00x, or wrote nothing and failed as kind output. `why` says
+    what the tool needed the length for. A dry run's pending input is not a still."""
+    meta = meta or {}
+    fmt = str(meta.get("format") or "")
+    if meta.get("dry_run") or not (fmt == "image2" or fmt.endswith("_pipe")):  # probe._is_still()'s rule
+        return
+    die(f"{path or meta.get('file') or 'the input'} is a still picture (one image, no length of its own): {why}",
+        kind="input", hint=STILL_AS_CLIP_HINT)
+
+
 def stream_end(meta: Dict[str, Any], kind: str) -> Optional[float]:
     """Where one stream ends on the file's timeline (own_end())."""
     return own_end(meta.get(kind))

@@ -571,6 +571,40 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     return False
 
 
+def fonts_dir_face(fonts_dir: str, family: str, bold: bool = False) -> "Tuple[Optional[str], Optional[bool]]":
+    """(file, found): a face under `fonts_dir` that libass would take for `family`, read with
+    `fc-scan` (the files themselves, no cache). libass matches the fonts of its fontsdir by a family
+    name, a full name or a PostScript name, case-insensitively, so those are compared whole. With
+    `bold`, a face whose style names Bold is preferred. found is None (and file None) when the
+    folder cannot be read that way (no fc-scan, a failed scan): nothing is known then (#531)."""
+    exe = _safe_which("fc-scan")
+    if not exe or not fonts_dir or not os.path.isdir(fonts_dir):
+        return None, None
+    try:
+        proc = subprocess.run([exe, "--format", "%{file}\t%{family}\t%{fullname}\t%{postscriptname}\t%{style}\n", fonts_dir],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return None, None
+    if proc.returncode != 0 and proc.stdout.strip():
+        return None, None
+    # fc-scan exits 1 with nothing printed when the folder holds no face it can open (an empty
+    # folder, a text file named .ttf): libass, which opens them with the same FreeType, finds none
+    wanted = (family or "").strip().lower()
+    matches = []
+    for line in proc.stdout.splitlines():
+        cells = line.split("\t")
+        if len(cells) < 5 or not cells[0]:
+            continue
+        names = {n.strip().lower() for cell in cells[1:4] for n in cell.split(",") if n.strip()}
+        if wanted and wanted in names:
+            matches.append((cells[0], "bold" in cells[4].lower()))
+    if not matches:
+        return None, False
+    if bold:
+        matches.sort(key=lambda m: not m[1])
+    return matches[0][0], True
+
+
 def _is_last_resort(entry: "Tuple[str, str]") -> bool:
     """Unifont, fontconfig's code-point-box face: it covers every script and renders none."""
     return "unifont" in " ".join(str(x) for x in entry).lower()

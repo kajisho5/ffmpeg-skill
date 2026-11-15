@@ -150,6 +150,7 @@ by default since 3.0.0 (`--keep-hevc`; `--no-keep-hevc` uses x264 as 2.x did);
 `--codec` overrides all of them). `--accurate` always re-encodes; `--tolerance -1` never does for a keyframe snap
 (a `--segments` join of open-GOP video, one whose later B-frame `.mp4`/`.mov` segment starts
 between keyframes, or one that fails its check, still re-cuts).
+A still picture is refused (`kind: input`): it has no length to cut, and `insert.py` makes a clip of it.
 Multiple segments are concatenated in the order given. `--remove A-B,...` (2.24) is the inverse: the ranges are dropped (overlaps merged, clamped to the file) and what is left is cut as `--segments` would cut it; a leftover shorter than one frame is not kept, nor (to a video output) one that holds less than one frame of picture, such as sound that runs past the last frame (a note names it), and a removal that leaves nothing is refused. It does not combine with `--segments`, `--start` (even `--start 0`), `--end`, `--duration` or `--snap beats` (a snapped edge could move into a dropped range). Since 2.17.2 every join the re-encode makes fades the sound for `--declick-ms` (20 ms) on each side, so butted cuts do not click; `--no-declick` butts them as before, and a stream-copy join (sound copied) is not faded. The result reports `declick_ms` (null when there was no re-encoded join). stderr reports whether
 the result was "lossless stream copy" or "re-encoded"; when the snap forced a
 re-encode, the result's `lossless_alternative` names the nearest keyframe
@@ -335,6 +336,13 @@ A delivery template asks for it as `"frame": {"aspect": "9:16", "fit": "blur"}`,
 `render.py --template tiktok clip.mp4 --fit blur`. The dimming is applied to SDR sources only:
 an `eq` on PQ/HLG code values is not the −15 % perceptual dim it is on SDR, so an HDR source
 keeps a blurred but undimmed background (and is never silently tone-mapped); `info` says so.
+After a reframe (`--aspect`, `--width`, `--height`) the result's `picture` says where the
+picture sits in the frame written: `{x, y, width, height}`, `frame_share` (its share of the
+frame's area), `scale` (its width over the source's) and, for `--fit crop`, the source
+pixels `cropped` on each side. It is measured by running the frame's own filters on a
+uniform frame (no decode of the source), so a 202x360 frame holding a 202x114 picture is told
+apart from a full-frame crop without a contact sheet; `subject_framing` stays unverified.
+`--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 
 ### crop.py — crop to an exact pixel rectangle
 ```
@@ -522,6 +530,10 @@ default, keeps the original framing and lets the edges show: vidstab's own
 missing (a plain Homebrew ffmpeg build, for example) rather than failing at
 run time. The frames keep their times, so the source's subtitle track is kept
 as `crop.py` keeps it (`dropped_non_av_streams` says when it could not be).
+vid.stab aborts on an RGB picture, so an RGB source (a PNG, a qtrle or
+PNG-in-MOV clip) is stabilized as a YUV 4:4:4 copy (converted to BT.709 as every RGB
+re-encode is; FFmpeg's own conversion on a `--codec prores` line), with a note; the
+output's pixel format is the encoder line's (`probe.video.pix_fmt`).
 
 ### sequence.py — numbered/globbed image sequence to video
 ```
@@ -1739,6 +1751,8 @@ reaches a delivery): `action` 93 % and `title` 90 % of the frame (SMPTE ST 2046-
 centre 4:3 window of a wider frame with SD's 90 % action and 80 % title safe inside it (refused on
 a frame that is not wider than 4:3). It combines with `--safe PLATFORM` (the app's own UI zones)
 and works on a contact sheet's tiles as on a single frame; the result's `guides` lists them.
+An `--at` past the end of either picture is refused (`kind: input`); a still picture has one,
+at `--at 0`.
 Outputs PNG. View it with the Read tool (or any image viewer) and judge the
 frame like an editor would. Use `--compare` to show before/after to the user. `--safe NAME` (1.14) shades the zones that
 destination's own UI covers -- TikTok's description block and like column, the Reels/Shorts
@@ -1984,7 +1998,9 @@ No font for the script fails the job (`kind: input`) instead of rendering boxes
 `unknown`, and the job runs with the font as given behind one info line. An
 explicit font is always kept, with an info line when it does not cover the text;
 `--fonts-dir` is searched first and checked with `fc-scan`, and a directory that
-does not cover the script gets one line and a font resolved by script anyway. `doctor --json` `fonts.scripts` lists what this machine can render. See
+does not cover the script gets one line and a font resolved by script anyway. A directory
+with no face named `--font` leaves libass to fontconfig, and `font_used` reports what
+fontconfig resolves, a substitution included. `doctor --json` `fonts.scripts` lists what this machine can render. See
 `references/gotchas.md#fonts-by-script` (RTL: use captions, not drawtext).
 
 `--karaoke` uses real per-word timings when the transcript has them (a whisper

@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 from _common import (guard_sidecar, add_common, apply_common, default_output, description_block, detect_scenes, detect_silences,
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
                      STATE, read_text_or_die)
-from _common.emit import input_length
+from _common.emit import input_length, refuse_still
 from _common.runner import carried_stream_maps, refuse_output_is_input
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
@@ -255,7 +255,10 @@ def main() -> int:
         die(f"{out_ext or 'this'} container cannot hold chapter markers; write to one of "
             f"{', '.join(sorted(CHAPTER_CONTAINERS))} (the streams are copied, so choose the matching family: .mp4/.mov/.m4a for MPEG-4, .mkv/.mka/.webm for Matroska)")
 
-    # the last chapter ends at the file's end and --auto-chapters spaces them over its length (#491)
+    # the last chapter ends at the file's end and --auto-chapters spaces them over its length (#491);
+    # a still's 0 s ended a chapter before it started, inside ffmpeg (kind ffmpeg, #531)
+    if args.chapters or args.auto_chapters:
+        refuse_still(meta, args.input, "chapters are times in a clip, and a still has none")
     duration = input_length(meta) if (args.chapters or args.auto_chapters) else (meta.get("duration") or 0.0)
     chapters: Optional[List[Dict[str, Any]]] = parse_chapters(args.chapters, duration) if args.chapters else None
     auto: Optional[Dict[str, Any]] = None

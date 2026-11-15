@@ -22,7 +22,7 @@ from fractions import Fraction
 
 from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
-from _common.emit import input_length
+from _common.emit import input_length, refuse_still
 
 
 def main() -> int:
@@ -52,6 +52,7 @@ def main() -> int:
     else:
         at = dur
     if at < 0 or at > dur:
+        refuse_still(meta, args.input, f"--at {at:g} is past its one frame, which --at 0 holds")  # not "0..0.000" (#531)
         die(f"--at {at:g} is outside the clip (0..{dur:.3f})")
     if args.mode == "extend" and at < dur - 0.01:
         die(f"--mode extend needs --at at or after the clip's end ({dur:.3f}), got {at:g}")
