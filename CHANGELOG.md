@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.8.19
+
+_Automated release: version and notes generated from pull requests merged since 3.8.18._
+
 ### Fixed
 
 - **An output named like a file the run reads but does not hand to ffmpeg as `-i` is refused
@@ -38,6 +44,7 @@
   `graphics.py --write-ass`, `caption.py --write-srt`/`--write-ass` (and its `--plan`), and
   `render.py --template --write-project` with `--overwrite` replaced the brand's `font_file` or
   `logo` with the text they write; only the brand file itself was guarded.
+- fix: sync --trim-second and other side inputs as outputs, the blurred pad on a small frame and sequence's bad frames (#534)
 
 ## 3.8.18
 
