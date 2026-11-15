@@ -676,7 +676,8 @@ def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek
     the video chain; "" when cfr_args() forces no rate. The encoder line's `-fps_mode cfr -r` alone
     let a frame fall up to about two frames behind its slot before it dropped one, so a VFR clip
     conformed at its average rate showed its picture up to 56 ms after its sound (#512); the
-    filter takes the nearest frame for every slot. The encoder line keeps cfr_args(), which then
+    filter puts each frame on the slot its time rounds to (within half a frame of it; a slot in a
+    gap keeps the frame before it). The encoder line keeps cfr_args(), which then
     moves no frame.
 
     `seek` is an output-side `-ss` that follows the conform (cut.py's and fit.py --method trim's
@@ -684,8 +685,9 @@ def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek
     from the first frame on the clock, its output's time base is one frame, and the output seek
     then landed between two slots, which the encoder line's rate rounded again: on a 27 fps
     average clip `cut.py --start 0.45` put its picture 24 ms after its sound, 33 ms at 0.2. The
-    picture is moved so the seek is its 0, conformed from there (`start_time=0`: the slot at the
-    seek takes the nearest frame, the frames before it are dropped), and moved back on a
+    picture is moved so the seek is its 0, conformed from there (`start_time=0`: a frame takes the
+    slot its time rounds to and stays until the next frame's slot, so the last frame before the
+    seek fills the slots up to the first frame after it), and moved back on a
     microsecond time base, so the seek lands on a slot and the output's frames sit on the grid
     from 0. The setpts after the conform leaves its frames no duration from FFmpeg 7.0; the
     encoder line's `-fps_mode cfr`, which cfr_args() always gives with this filter, sets each to

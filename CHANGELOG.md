@@ -11,8 +11,9 @@
   then drop their seek margin on the output side; the grid was laid from the first decoded frame,
   so the cut landed between two slots and the encoder's rate rounded the picture again. On a
   27 fps average clip `cut.py --start 0.45` showed every flash 24 ms after its beep, `--start 0.2`
-  33 ms, and `fit.py --duration 3.1 --method trim --from-center` 24 ms; each slot now shows the
-  source frame nearest its own time from the cut, and the same runs measure -13, -4 and -13 ms
+  33 ms, and `fit.py --duration 3.1 --method trim --from-center` 24 ms; the grid is now laid
+  from the cut (a frame takes the slot its time rounds to and stays until the next frame's
+  slot, so a slot inside a gap keeps the frame before it), and the same runs measure -13, -4 and -13 ms
   (the 27 fps grid's own rounding). A constant-rate source and `fit.py --fps` are unchanged.
 - **A variable-frame-rate hold or pad at the start keeps its last frame (#538).**
   `freeze.py --at 0` and `pad.py --start` without `--end` conformed after `tpad`'s start pad,

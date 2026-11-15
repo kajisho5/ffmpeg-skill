@@ -1926,8 +1926,9 @@ class EditingTests(MediaFixtures):
         its slots and the encoder line's rate rounded the picture again, so on the 27 fps average
         clip cut.py --start 0.45 showed every flash 24 ms after its beep and --start 0.2 33 ms
         (plain and --accurate), and fit.py --method trim --from-center 24-37 ms. The grid is laid
-        from the cut now: the output's slot k is the source's time start + k/27 and shows the
-        source frame nearest it, the conform's own rule. Each flash is held to the slot that rule
+        from the cut now: the output's slot k is the source's time start + k/27, and a source frame
+        takes the slot its time rounds to and stays until the next frame's slot, the conform's own
+        rule (so across a gap a slot keeps the frame before it, not the nearest). Each flash is held to the slot that rule
         names (to a millisecond: timestamps), each beep to its place (the sound is not touched),
         and the picture to its count of slots."""
         src = make_vfr_flash_beep(OUT / "i538_vfr.mp4")
@@ -1938,7 +1939,11 @@ class EditingTests(MediaFixtures):
         self.assertEqual(len(lit), 8, "two frames per flash")
 
         def slots(start, length):
-            shown = [min(frames, key=lambda f: abs(f - (start + k / rate))) for k in range(math.ceil(length * rate - 1e-9))]
+            # the fps filter's rule: a frame takes the slot its time rounds to and is shown until the
+            # next frame's slot; the nearest frame is not searched for (#549 review: in the gap at
+            # 2.2 the frame of 2.067 fills slots 0-2, though 2.3 is nearer slot 2)
+            at = [(math.floor((f - start) * rate + 0.5), f) for f in frames]
+            shown = [[f for s, f in at if s <= k][-1] for k in range(math.ceil(length * rate - 1e-9))]
             return [k / rate for k, f in enumerate(shown) if f in lit and (k == 0 or shown[k - 1] not in lit)]
         cases = (
             (["cut.py", "--start", "0.45"], 0.45, 3.55),

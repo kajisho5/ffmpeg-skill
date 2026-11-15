@@ -5583,10 +5583,13 @@ with their own cause.
   picture again: every flash of the VFR clip came 24 ms after its beep at `cut.py --start 0.45`,
   33 ms at `--start 0.2`, and 24 ms (37 ms at `--duration 3`) through `fit.py --method trim
   --from-center`, against 18-19 ms for the uncut clip. `cfr_filter(meta, seek=m)` moves the
-  picture so the seek is its 0, conforms it with `start_time=0` (the slot at the seek takes the
-  nearest frame; the frames before it are dropped), and moves it back on a microsecond time base,
-  so the seek lands on a slot and each output slot k shows the source frame nearest start + k/27,
-  the conform's own rule from the cut: -13 ms at `--start 0.45` and `--from-center` 3.1, -4 ms at
+  picture so the seek is its 0, conforms it with `start_time=0` (a frame takes the slot its
+  time rounds to and is shown until the next frame's slot; the last frame before the seek fills
+  the slots up to the first one after it, the earlier ones are dropped), and moves it back on a
+  microsecond time base, so the seek lands on a slot and slot k is the source's time start +
+  k/27. That is the `fps` filter's rounding of timestamps, not a search for the nearest frame:
+  cut at 2.2, inside a gap, slots 0-2 show the frame of 2.067 although 2.3 is nearer slot 2
+  (measured with numbered frames, #549 review). From the cut: -13 ms at `--start 0.45` and `--from-center` 3.1, -4 ms at
   `--start 0.2`; `--start 1.45` and `2.2` (a whole second's margin, and a start inside a gap)
   measured -13 and -4 ms before and after. The frame counts are unchanged (96, 103, 69, 49, 84).
   The setpts after the conform leaves its frames no duration from FFmpeg 7.0; the encoder line's
