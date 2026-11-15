@@ -360,12 +360,16 @@ def color_hex(value: str) -> str:
     return v.upper()
 
 
-_COLOR_TOKEN_RE = re.compile(r"^(0[xX][0-9A-Fa-f]{6,8}|#[0-9A-Fa-f]{6,8}|[A-Za-z][A-Za-z0-9]*)(@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?$")  # alpha is 0..1; "red@2" used to reach ffmpeg
+# Six or eight hex digits, with 0x, with # or bare (#535: bare ones starting with a digit, 0B1D2A,
+# were refused, and seven passed with a prefix and failed inside ffmpeg), or a word that starts
+# with a letter; alpha is 0..1 ("red@2" used to reach ffmpeg). Nothing else reaches the graph.
+_HEX_DIGITS = r"(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6})"
+_COLOR_TOKEN_RE = re.compile(r"^((?:0[xX]|#)?%s|[A-Za-z][A-Za-z0-9]*)(@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?$" % _HEX_DIGITS)
 
 
 def validate_color(value: str, flag: str = "--color") -> str:
-    """Refuse a colour argument that isn't a plain ffmpeg colour token (named colour, 0xRRGGBB[AA],
-    #RRGGBB[AA], optionally with an @alpha suffix). Every caller that string-formats a colour flag
+    """Refuse a colour argument that isn't a plain ffmpeg colour token (named colour, RRGGBB[AA],
+    0xRRGGBB[AA], #RRGGBB[AA], optionally with an @alpha suffix). Every caller that string-formats a colour flag
     straight into a filter graph (color=c=..., tpad=...:color=..., rotate=...:fillcolor=...) must
     validate it first -- ffmpeg filter options are comma/colon-delimited, so an unvalidated value
     containing those characters lets a caller splice in an entirely different filter (a real,
@@ -374,9 +378,10 @@ def validate_color(value: str, flag: str = "--color") -> str:
     invariant every other typed flag in this codebase already holds to."""
     m = _COLOR_TOKEN_RE.match(value)
     if not m:
-        die(f"{flag} must be a plain colour (a name, 0xRRGGBB[AA], or #RRGGBB[AA], optionally @alpha), got '{value}'")
+        die(f"{flag} must be a plain colour (a name, or six or eight hex digits RRGGBB[AA], bare or after 0x or #, "
+            f"optionally @alpha), got '{value}'")
     word = m.group(1)
-    if word[0] not in "#0" and word.lower() not in FFMPEG_COLOR_NAMES and not _BARE_HEX.match(word):
+    if word[0].isalpha() and word.lower() not in FFMPEG_COLOR_NAMES and not _BARE_HEX.match(word):
         # A189 (#465): any word passed, and an unknown name failed inside ffmpeg ("Cannot find
         # color") as kind ffmpeg, after a dry run that had said completed. ffmpeg reads a word as
         # one of its names, or else as bare hex digits.
