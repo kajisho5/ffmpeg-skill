@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.10.0
+
+_Automated release: version and notes generated from pull requests merged since 3.9.3._
+
 ### Changed
 
 - **A `render.py` project of several clips takes its picture size from the `fit` object, as a
@@ -26,6 +32,7 @@
   0.7 s clips rendered 35 frames against a 34-frame sequence. A multi-clip export now refuses a `fit.aspect` or `fit.fit` that fit.py
   refuses, as a one-clip export already did. One-clip projects render and export as before.
   Which multi-clip projects change is listed in `docs/design-decisions.md` ("After 3.9.3").
+- feat: a render of several clips takes its size from fit, and its timeline says so (#553)
 
 ## 3.9.3
 
