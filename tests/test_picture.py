@@ -2487,7 +2487,15 @@ class PictureTests(MediaFixtures):
                     self.assertLess(inside[-1], peak * 0.5, f"the chip leaves faded out, not part way up: {inside}")
                     rise = [b - a for a, b in zip(inside[:at], inside[1:at + 1])]
                     fall = [a - b for a, b in zip(inside[at:], inside[at + 1:])]
-                    self.assertTrue(all(x > -0.02 for x in rise + fall), f"one peak: it rises, then falls: {inside}")
+                    if not all(x > -0.02 for x in rise + fall):
+                        # what the odd frame holds, for a build this cannot be run on locally: the
+                        # brightest and darkest pixel of each frame in the window, and the filter
+                        plan = json.loads(script("graphics.py", black, "--template", "chapter", "--title", "HELLO",
+                                                 "--start", str(start), "--end", str(end), "--text-render", route,
+                                                 "-o", d / "diag.mp4", "--dry-run", "--overwrite", "--json").stdout)
+                        self.fail(f"one peak: it rises, then falls: {inside}; YMAX {levels(out, start, end, 'YMAX')}; "
+                                  f"YMIN {levels(out, start, end, 'YMIN')}; before the window "
+                                  f"{levels(out, start - 0.1, start)}; command {plan['commands'][-1]}")
                     if rise and fall:
                         self.assertLess(max(fall), max(rise) * 1.8 + 0.02, f"no jump where the fade-out takes over: {inside}")
         if "drawtext" in routes:
