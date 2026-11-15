@@ -2001,7 +2001,8 @@ explicit font is always kept, with an info line when it does not cover the text;
 `--fonts-dir` is searched first and checked with `fc-scan`, and a directory that
 does not cover the script gets one line and a font resolved by script anyway. A directory
 with no face named `--font` leaves libass to fontconfig, and `font_used` reports what
-fontconfig resolves (`substituted: true` only when that is another family). `doctor --json` `fonts.scripts` lists what this machine can render. See
+fontconfig resolves (`substituted: true` only when that is another family); one holding the
+family only in other styles than the one asked names no `file`, with a note. `doctor --json` `fonts.scripts` lists what this machine can render. See
 `references/gotchas.md#fonts-by-script` (RTL: use captions, not drawtext).
 
 `--karaoke` uses real per-word timings when the transcript has them (a whisper

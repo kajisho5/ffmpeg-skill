@@ -39,7 +39,11 @@
   one, the font is reported as a run without `--fonts-dir` reports it: `substituted: true`, with a
   `font_substituted` fallback, only when fontconfig gives another family. A face counts as found
   only as libass 0.17 matches one: the folder's own files (not subfolders), by family name, or by
-  full name for TrueType and PostScript name for CFF, the face nearest the asked weight.
+  full name for TrueType and PostScript name for CFF. A file is named only for a face in exactly
+  the asked style (upright, regular or `--bold`) or one asked by its full or PostScript name; a
+  folder holding the family in other styles only gets `file: null` and a note, since libass then
+  chooses among those and the installed faces. `font_used` names one face: libass draws a glyph
+  it lacks from another face, not recorded.
 
 ## 3.8.23
 

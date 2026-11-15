@@ -606,12 +606,18 @@ def alpha_result_schema(name: str) -> Dict[str, Any]:
 # drew with a substitute says so (with a font_substituted fallback)
 FONT_USED_SCHEMA = {
     "type": "object",
-    "description": "the font the text was drawn with: {asked, file, family, how, substituted, via?, fonts_dir?}. how: font_file (the "
+    "description": "the font face the text was drawn with: {asked, file, family, how, substituted, via?, fonts_dir?}. file and family "
+                   "name that one face; drawtext (overlay.py, graphics.py, grid.py) draws every glyph from it (a glyph it lacks "
+                   "is its missing-glyph box), while libass (caption.py) draws a glyph it lacks from another face, which is not "
+                   "recorded. how: font_file (the "
                    "caller's file), script (picked to cover the text's script), resolved (the asked family resolved to a file by "
                    "fc-match or the Windows Fonts folder; for libass, the file fontconfig picks for the family), by_name (no file "
-                   "resolved: ffmpeg/libass look the family up themselves, file null), fonts_dir (caption.py: a face of the asked "
-                   "family found in --fonts-dir by fc-scan, file names it; file null when the folder could not be read, with a "
-                   "note; a folder without such a face is reported as a run without --fonts-dir reports it, how resolved or "
+                   "resolved: ffmpeg/libass look the family up themselves, file null), fonts_dir (caption.py: --fonts-dir holds the asked "
+                   "family, read by fc-scan; file names its face in exactly the asked style (upright, weight 400, or 700 with "
+                   "--bold), or the face whose full or PostScript name was asked, which libass takes first (an installed copy "
+                   "that ties is the same family and style); file null, with a note, when the folder holds the family only in "
+                   "other styles (libass picks among those and the installed faces; not measured) or could not be read; a "
+                   "folder with no face of that name is reported as a run without --fonts-dir reports it, how resolved or "
                    "by_name, substituted only when the file resolved is another family, fonts_dir still named), ass_styles (caption.py --ass: the file's own styles name the fonts). substituted: the "
                    "file is not the asked family (also a diagnostics.fallbacks entry, font_substituted). overlay.py: with --text; "
                    "grid.py: with --label auto",

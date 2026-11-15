@@ -1930,7 +1930,7 @@ def main() -> int:
         # libass looks the family up in the folder first and asks fontconfig when no face there
         # has its name, so a folder without it drew another face and the result said
         # substituted: false (#531). The folder is read for a face of that name; without one, the
-        # family is resolved as it is with no --fonts-dir, which reports a substitution.
+        # family is resolved as it is with no --fonts-dir (a substitution when that is another family).
         asked = ass_font_name(args.font)
         face, found = fonts_dir_face(args.fonts_dir, asked, bold=bool(args.bold))
         if found is False:
@@ -1940,6 +1940,10 @@ def main() -> int:
             if found is None:
                 note(f"font: whether {args.fonts_dir} holds a face named '{asked}' could not be read (no fc-scan); "
                      "font_used reports it as asked")
+            elif face is None:
+                note(f"font: {args.fonts_dir} holds '{asked}' only in other styles than the one asked "
+                     f"({'bold' if args.bold else 'regular'}, upright); libass picks among those and the installed "
+                     "faces of the family, so font_used names no file (not measured)")
             font_used = {"asked": asked, "file": face, "family": asked, "how": "fonts_dir",
                          "fonts_dir": args.fonts_dir, "substituted": False}
     if font_file:
