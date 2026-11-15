@@ -2813,6 +2813,30 @@ def default_selection_maps(meta: Optional[Dict[str, Any]], dst: str) -> List[str
     return maps
 
 
+def subtitle_codec_args(src: Optional[str], output: str) -> List[str]:
+    """`-c:s` for a command that maps every subtitle stream of `src` (`-map 0:s?`) into `output`:
+    copy, and for each text track in a format the container does not take as it is the container's
+    own (subtitle_codec_for: mov_text in MP4/MOV, SubRip in Matroska for mov_text, WebVTT in WebM),
+    as export.py and a crop of several tracks convert it. A plain copy of SubRip into MP4 failed,
+    and the retry dropped the track (#520). Copy alone when the source cannot be read here."""
+    args = ["-c:s", "copy"]
+    if not src or not os.path.isfile(src):
+        return args
+    try:
+        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-select_streams", "s", "-show_entries",
+                              "stream=codec_name", "-of", "csv=p=0", *still_input_args(src), src],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                             errors="replace", timeout=_probe_limit()).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return args
+    ext = os.path.splitext(output)[1]
+    for n, codec in enumerate(ln.strip() for ln in (out or "").splitlines() if ln.strip()):
+        conv = subtitle_codec_for(codec, ext)
+        if conv != "copy":
+            args += [f"-c:s:{n}", conv]
+    return args
+
+
 def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
     """Run an ffmpeg command that already maps its video/audio, trying first to also
     stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
@@ -2821,6 +2845,8 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
     extra maps rather than let a tool that never touched subtitles start hard-failing because of
     them. `cmd` is the full argv *without* the output path. Returns True only when the
     retry-without-subtitles path was actually needed (i.e. subtitle/data streams were dropped).
+    A text track the container takes in another format is converted (subtitle_codec_args), so the
+    retry is left for a track no conversion fits (a bitmap track in MPEG-4) or a refused data stream.
 
     The retry is recorded with the first attempt's error (`diagnostics.fallbacks`,
     `non_av_streams_dropped`): the caller's `dropped_non_av_streams` says that streams went, the
@@ -2833,7 +2859,7 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
     skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
     src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
     first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + carried_stream_maps(src, output)
-                + ["-c:s", "copy", "-c:d", "copy", output], check=False)
+                + subtitle_codec_args(src, output) + ["-c:d", "copy", output], check=False)
     if first.returncode == 0:
         return False
     if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):

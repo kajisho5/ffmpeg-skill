@@ -22,9 +22,8 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
-from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import default_selection_maps
+from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common.probe import display_size, probed_maps, square_pixels, square_pixels_note
 from _common.emit import note
 
 
@@ -70,20 +69,21 @@ def main() -> int:
         vf.insert(0, square_pixels(meta["video"]))
         note(square_pixels_note(meta["video"]))
     # the picture the rectangle was checked against, not the largest one default selection takes
-    cmd = ffmpeg_base() + ["-i", args.input] + default_selection_maps(meta, output) + ["-vf", with_cfr(",".join(vf), meta, args.fps)]
+    cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta) + ["-vf", with_cfr(",".join(vf), meta, args.fps)]
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps)
     if has_audio:
         cmd += aac_args()
     else:
         cmd += ["-an"]
-    cmd.append(output)
-    run(cmd)
+    # the crop keeps the timeline, so the subtitle/data tracks are copied as fit.py and color.py copy
+    # them, and dropped (said) only where the container refuses them (#520)
+    dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")
     v = result["video"]
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']})")
-    emit(output)
+    emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
 

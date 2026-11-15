@@ -27,9 +27,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common.probe import PROBED_VIDEO
-from _common.runner import ffmpeg_failure_extra, default_selection_maps, require_filter
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
+from _common.probe import PROBED_VIDEO, probed_maps
+from _common.runner import ffmpeg_failure_extra, require_filter
+from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run_keeping_subtitles, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
 def main() -> int:
@@ -104,19 +104,20 @@ def main() -> int:
             # Equivalent to relative=0:smoothing=0 -- overrides --smoothing, since averaging a
             # camera path makes no sense once every frame is locked to one fixed reference.
             transform_vf += ":tripod=1"
-        cmd = ffmpeg_base() + ["-i", args.input] + default_selection_maps(meta, output) + ["-vf", with_cfr(transform_vf, meta)]
+        cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta) + ["-vf", with_cfr(transform_vf, meta)]
         cmd += video_args(meta, args.crf, args.preset)
         cmd += cfr_args(meta)
         if has_audio:
             cmd += aac_args()
         else:
             cmd += ["-an"]
-        cmd.append(output)
-        run(cmd)
+        # the frames keep their times, so the subtitle/data tracks are copied as fit.py and color.py
+        # copy them, and dropped (said) only where the container refuses them (#520)
+        dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})")
-    emit(output)
+    emit(output, dropped_non_av_streams=dropped_streams)
     return 0
 
 
