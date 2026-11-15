@@ -605,7 +605,7 @@ def main(force_route: Optional[str] = None) -> int:
         # its 0.25 s while the ASS \fad was cut, so the chip reached half the brightness there
         # (#554 review)
         pop_s = min(0.25, fade_s)
-        pop = f"min(1,(t-{s:.3f})/{pop_s:g})"
+        pop = f"max(0,min(1,(t-{s:.3f})/{pop_s:g}))"  # held in 0..1, as fade_a is, for a frame selected before --start
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
         # every position rises into place, on both routes: a bottom chip started `rise` px above
         # its rest on drawtext and dropped, where the ASS \move below rises (A177)

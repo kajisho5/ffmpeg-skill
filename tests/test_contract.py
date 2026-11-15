@@ -8980,6 +8980,13 @@ class Issue415Tests(unittest.TestCase):
         for ext in (".mp4", ".mov", ".m4v"):
             self.assertEqual(timecode(d / f"kept_timed{ext}"), "01:00:00:00", ext)
 
+        # a planned sound file that is not written yet has no measured picture: its dry run is not
+        # refused for one (#554 review)
+        pending = d / "pending_not_written.m4a"
+        pending.unlink(missing_ok=True)
+        doc = json.loads(tool("metadata", pending, "--title", "x", "--dry-run", "-o", d / "pending_tagged.m4a", "--json",
+                              check=False).stdout)
+        self.assertEqual(doc["status"], "completed", doc)
     def test_a_picture_written_into_an_audio_only_extension_is_refused_before_ffmpeg_runs(self):
         """#539: a tool that always writes a picture took `-o x.m4a` and completed, verified, with
         H.264 in a file named for sound, and failed in the muxer for `-o x.wav` (kind ffmpeg, "WAVE

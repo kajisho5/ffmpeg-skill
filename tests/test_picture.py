@@ -2462,13 +2462,30 @@ class PictureTests(MediaFixtures):
         sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=30:d=2",
            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", black)
 
-        def levels(path, start, end, stat="YAVG"):
+        def stat_levels(path, start, end, stat):
             stats = sh("ffmpeg", "-v", "error", "-i", path, "-vf",
                        f"format=gray,signalstats,metadata=print:key=lavfi.signalstats.{stat}:file=-", "-f", "null", "-").stdout
             rows = list(zip(map(float, re.findall(r"pts_time:([0-9.]+)", stats)),
                             map(float, re.findall(stat + r"=([0-9.]+)", stats))))
             base = min(y for _, y in rows)
             return [y - base for t, y in rows if start - 0.001 <= t < end - 0.001]
+
+        def levels(path, start, end, stat="YAVG"):
+            """Each frame's mean brightness above the darkest frame's, for the frames in [start, end).
+            Counted from the decoded pixels: signalstats' YAVG named a frame 6.94 brighter than its
+            own YMAX allowed on FFmpeg 9.0.2 (#554's CI), so the filter's sum is not what is asserted."""
+            if stat != "YAVG":
+                return stat_levels(path, start, end, stat)
+            times = [float(t) for t in sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                          "frame=pts_time", "-of", "csv=p=0", path).stdout.replace(",", " ").split()]
+            v = probe(str(path))["video"]
+            size = v["width"] * v["height"]
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-vf", "format=gray",
+                                  "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+            self.assertEqual(len(raw), size * len(times), "one decoded frame per frame time")
+            means = [sum(raw[i * size:(i + 1) * size]) / size for i in range(len(times))]
+            base = min(means)
+            return [y - base for t, y in zip(times, means) if start - 0.001 <= t < end - 0.001]
         routes = ["drawtext"] if _no_fontconfig() else ["drawtext", "ass"]
         filters = sh("ffmpeg", "-hide_banner", "-filters").stdout
         routes = [r for r in routes if (r == "drawtext" and " drawtext " in filters) or (r == "ass" and " subtitles " in filters)]
@@ -2493,9 +2510,18 @@ class PictureTests(MediaFixtures):
                         plan = json.loads(script("graphics.py", black, "--template", "chapter", "--title", "HELLO",
                                                  "--start", str(start), "--end", str(end), "--text-render", route,
                                                  "-o", d / "diag.mp4", "--dry-run", "--overwrite", "--json").stdout)
-                        self.fail(f"one peak: it rises, then falls: {inside}; YMAX {levels(out, start, end, 'YMAX')}; "
-                                  f"YMIN {levels(out, start, end, 'YMIN')}; before the window "
-                                  f"{levels(out, start - 0.1, start)}; command {plan['commands'][-1]}")
+                        raw = sh("ffmpeg", "-v", "error", "-i", out, "-vf", "format=gray,signalstats,metadata=print:file=-",
+                                 "-f", "null", "-").stdout
+                        frames = [blk for blk in raw.split("frame:")[1:]
+                                  if start - 0.11 <= float(re.search(r"pts_time:([0-9.]+)", blk).group(1)) <= start + 0.08]
+                        kept = [" ".join(ln.replace("lavfi.signalstats.", "") for ln in blk.splitlines()
+                                         if re.search(r"pts_time|YMIN|YLOW|YAVG|YHIGH|YMAX", ln)) for blk in frames]
+                        types = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                   "frame=pts_time,pict_type", "-of", "csv=p=0", out).stdout.split()
+                        self.fail(f"one peak: it rises, then falls: {inside}; signalstats YAVG "
+                                  f"{stat_levels(out, start, end, 'YAVG')}; YMAX {stat_levels(out, start, end, 'YMAX')}; "
+                                  f"before the window {levels(out, start - 0.1, start)}; raw frames around --start {kept}; "
+                                  f"frame types {types[10:20]}; command {plan['commands'][-1]}")
                     if rise and fall:
                         self.assertLess(max(fall), max(rise) * 1.8 + 0.02, f"no jump where the fade-out takes over: {inside}")
         if "drawtext" in routes:

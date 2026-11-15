@@ -323,7 +323,10 @@ def main() -> int:
     if args.auto_chapters:
         chapters, auto = propose(args, meta, duration, notes)
 
-    if out_ext in AUDIO_MEDIA_EXT and meta.get("video"):
+    # a planned input not yet written (a dry run of a later stage) has a placeholder picture, not a
+    # measured one: its own extension says what it will hold (#554 review)
+    pending_sound = bool(meta.get("dry_run")) and os.path.splitext(args.input)[1].lower() in AUDIO_MEDIA_EXT
+    if out_ext in AUDIO_MEDIA_EXT and meta.get("video") and not pending_sound:
         # the picture is copied with everything else: .m4a took it (H.264 in a file named for
         # sound) and .wav failed in its muxer; the reason the tools that encode a picture give (#539)
         refuse("input", "output_extension_audio_only",
