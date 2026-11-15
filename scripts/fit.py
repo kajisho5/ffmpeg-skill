@@ -36,9 +36,9 @@ Examples:
 import argparse
 import sys
 from fractions import Fraction
-from typing import List
+from typing import Any, List
 
-from _common.decision import SEEK_MARGIN, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length
@@ -53,18 +53,21 @@ def parse_aspect(value: str) -> Fraction:
     return ratio
 
 
-def atempo_chain(factor: float) -> str:
-    """atempo accepts 0.5..100 per instance; chain for extreme factors."""
+def atempo_chain(factor: float, sample_rate: Any = 0) -> str:
+    """atempo accepts 0.5..100 per instance; chain for extreme factors. The chain is led by the
+    samples atempo leaves out (atempo_chain_with_lead, at the track's `sample_rate`), so the
+    retimed sound keeps its timing against the retimed picture (#523: about 21 ms early in input
+    time without them)."""
     parts: List[str] = []
     remaining = factor
     while remaining < 0.5:
-        parts.append("atempo=0.5")
+        parts.append("0.5")
         remaining /= 0.5
     while remaining > 100.0:
-        parts.append("atempo=100.0")
+        parts.append("100.0")
         remaining /= 100.0
-    parts.append(f"atempo={remaining:.6f}")
-    return ",".join(parts)
+    parts.append(f"{remaining:.6f}")
+    return atempo_chain_with_lead(parts, sample_rate)
 
 
 def picture_output_t(target: float, meta: dict) -> str:
@@ -218,7 +221,7 @@ def main() -> int:
                     vf.append(frame_durations(meta, delivered_rate(meta) or frame_rate(meta) or src_fps))
                     regridded = True
                 if has_audio:
-                    af.append(atempo_chain(factor))
+                    af.append(atempo_chain(factor, rate))
             # atempo's sound is not the input's length over the factor (it comes out some
             # milliseconds short or long), and the millisecond -t stays on a retimed track: padding
             # it to the target's samples (apad after atempo in -af) never ended on FFmpeg 8.0.1

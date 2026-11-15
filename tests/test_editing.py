@@ -1770,8 +1770,9 @@ class EditingTests(MediaFixtures):
         (speedramp, closed on the source's 30 fps and resampled to 27, 114 ms), and the picture
         ran 74 ms past it. The conform is the fps filter now, the nearest frame for every slot.
         Measured on the picture (the flashes' times against where they belong) and against the
-        sound where no atempo moves it; the fixture's own timing is checked first. reverse.py is
-        not here: see docs/design-decisions.md, "After 3.8.11"."""
+        sound; the fixture's own timing is checked first. #523 added a freeze inside a gap and the
+        sound of a speed ramp. reverse.py, whose flashes land elsewhere, has its own test
+        (test_a_reversed_variable_rate_picture_keeps_its_sound)."""
         src = make_vfr_flash_beep(OUT / "i512_vfr.mp4")
         meta = probe(str(src))
         self.assertTrue(meta["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
@@ -1792,10 +1793,14 @@ class EditingTests(MediaFixtures):
             ("pad-colour", ["pad.py", "--start", "0.5", "--color", "red"], [1.0, 2.0, 3.0, 4.0], False),
             ("graphics", ["graphics.py", "--template", "chapter", "--title", "C"], same, True),
             ("freeze", ["freeze.py", "--at", "1.2", "--hold", "1"], [0.5, 2.5, 3.5, 4.5], False),
+            # #523: an --at inside a gap (frames at 0.067 and 0.3 s, at 2.067 and 2.3 s): the
+            # picture after the hold came 56 and 93 ms early
+            ("freeze-gap", ["freeze.py", "--at", "0.15", "--hold", "1"], [1.5, 2.5, 3.5, 4.5], False),
+            ("freeze-gap2", ["freeze.py", "--at", "2.2", "--hold", "1"], [0.5, 1.5, 3.5, 4.5], False),
             ("loop", ["loop.py", "--times", "2"], same + [4.5, 5.5, 6.5, 7.5], False),
-            # its sound is moved early by atempo (about 21 ms, at any factor): the picture alone here
+            # #523: atempo's sound was 21-40 ms early here; it is led by the samples atempo leaves out
             ("speedramp", ["speedramp.py", "--segment", "0-2:1", "--segment", "2-3:0.5", "--segment", "3-4:1"],
-             [0.5, 1.5, 3.0, 4.5], None),
+             [0.5, 1.5, 3.0, 4.5], False),
         )
         for name, argv, want, unchanged in cases:
             with self.subTest(tool=name):
@@ -1815,8 +1820,8 @@ class EditingTests(MediaFixtures):
     def test_a_speed_change_puts_each_picture_within_half_a_frame(self):
         """#512's class on a constant rate: fit --method speed retimed the picture with setpts and
         left the encoder line to put it back on the source's 30 fps grid, so a 1.11x speed-up
-        showed every flash 50 ms late (0.5 s for 0.45). Measured on the picture: atempo moves the
-        sound by itself (about 21 ms)."""
+        showed every flash 50 ms late (0.5 s for 0.45). Measured on the picture: the sound has its
+        own test (test_a_tempo_change_keeps_each_sound_where_it_belongs)."""
         src = OUT / "i512_cfr.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
            "color=c=black:s=160x120:r=30:d=4,drawbox=c=white:t=fill:enable='lt(mod(t-0.5\\,1)\\,0.06)*gte(t\\,0.5)'",
@@ -1839,7 +1844,10 @@ class EditingTests(MediaFixtures):
         concat advanced 14/27 s per segment, the picture ran 4.148 s and the last flash (and,
         padded by concat, its beep) landed at 3.630 s for 3.5. Each segment now holds the frames
         between its retimed ends on the whole output's grid, and the two streams are joined by
-        their own concats. Picture against its slot, and against the sound."""
+        their own concats. Picture against its slot, and the sound against its place: every beep
+        here starts on a segment's first sample, where atempo's first window fades in from the
+        silence that leads it (#523), 2.7 ms late on FFmpeg 6.1.1; flash minus beep adds that to
+        the grid's own 18.5 ms (21 ms), so each stream is held to its own place."""
         src = make_vfr_flash_beep(OUT / "i525_vfr.mp4")
         half = 0.5 / 27 + 0.001
         segs = [a for i in range(8) for a in ("--segment", f"{i * 0.5:g}-{(i + 1) * 0.5:g}:1")]
@@ -1849,9 +1857,100 @@ class EditingTests(MediaFixtures):
         self.assertEqual(len(got), 4, got)
         for g, w in zip(got, (0.5, 1.5, 2.5, 3.5)):
             self.assertLessEqual(abs(g - w), half, f"flashes at {got}")
-        for o in av_offsets_ms(out):
-            self.assertLessEqual(abs(o), half * 1000, f"flash minus beep {av_offsets_ms(out)} ms")
+        heard = [f - o / 1000 for f, o in zip(got, av_offsets_ms(out))]
+        for h, w in zip(heard, (0.5, 1.5, 2.5, 3.5)):
+            self.assertLessEqual(abs(h - w), 0.004, f"beeps at {heard}")
         self.assertLessEqual(abs(stream_spans(out)["video"][1] - 4.0), half, stream_spans(out))
+
+    def test_a_reversed_variable_rate_picture_keeps_its_sound(self):
+        """#523: `reverse` hands its frames the forward timestamps in order, so a reversed VFR
+        picture kept its gaps where they were in forward time and every flash of the 27 fps
+        average clip came 0.19 s after the reversed beep (0.23 s late with --no-audio). The
+        picture is put on the delivered grid before the reversal. A flash of two source frames
+        from s ends at s + 2/30, so reversed it starts at 4 - s - 2/30 (a slot of the 27 fps grid
+        within half a frame of it); the beep of 40 ms starts at 4 - s - 0.04."""
+        src = make_vfr_flash_beep(OUT / "i523_vfr.mp4")
+        self.assertTrue(probe(str(src))["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        half = 0.5 / 27 + 0.001
+        flashes = [4 - s - 2 / 30 for s in (3.5, 2.5, 1.5, 0.5)]
+        beeps = [4 - s - 0.04 for s in (3.5, 2.5, 1.5, 0.5)]
+        for extra in ([], ["--no-audio"]):
+            with self.subTest(args=extra):
+                out = OUT / "i523_vfr_rev.mp4"
+                script("reverse.py", src, *extra, "--fast", "-o", out, "--overwrite")
+                got = flash_times(out)
+                self.assertEqual(len(got), 4, got)
+                for g, w in zip(got, flashes):
+                    self.assertLessEqual(abs(g - w), half, f"flashes at {got}, want {flashes}")
+                self.assertLessEqual(abs(stream_spans(out)["video"][1] - 4.0), half, stream_spans(out))
+                if not extra:
+                    heard = [f - o / 1000 for f, o in zip(got, av_offsets_ms(out))]
+                    for h, w in zip(heard, beeps):
+                        self.assertLessEqual(abs(h - w), 0.002, f"beeps at {heard}, want {beeps}")
+
+    def test_a_variable_rate_freeze_keeps_every_frame_of_its_grid(self):
+        """#523: freeze.py conforms a VFR picture as it is decoded, so its graph runs on a time base
+        of one delivered frame (1/27 s), and a trim rescales its bound to that base: the head's
+        half-frame bound 3.907407 (--at 3.9) became frame 105 itself, which was cut from the head
+        and held in place of frame 106, and the picture came out two frames short (120 for 122).
+        The grid is also laid from the picture's start: from the clock's 0, a picture that starts
+        50 ms after its sound came out a frame early after the hold (flash minus beep 68 ms before
+        it, 31 ms after). Every frame of the 27 fps grid is counted, before and after the hold,
+        and every flash keeps one offset from its beep."""
+        src = make_vfr_flash_beep(OUT / "i523_vfr.mp4")
+        late = OUT / "i523_vfr_late.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "0.05", "-i", src, "-i", src,
+           "-map", "0:v", "-map", "1:a", "-c", "copy", late)
+        self.assertEqual(av_offsets_ms(late), [50, 50, 50, 50], "the fixture's picture must start 50 ms late")
+        for source, at, hold in ((src, "3.9", 0.5), (src, "2.2", 1.0), (src, "0.15", 0.5), (late, "1.2", 1.0), (late, "2.2", 1.0)):
+            with self.subTest(source=source.name, at=at):
+                out = OUT / "i523_vfr_freeze.mp4"
+                script("freeze.py", source, "--at", at, "--hold", f"{hold:g}", "--fast", "-o", out, "--overwrite")
+                self.assertEqual(stream_spans(out)["video"][2], 108 + round(hold * 27), stream_spans(out))
+                offsets = av_offsets_ms(out)
+                self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
+
+    def test_a_tempo_change_keeps_each_sound_where_it_belongs(self):
+        """#523: atempo leaves out half its window of input at the start (1024 samples at 48 kHz),
+        so every sound after it was early: speedramp.py's beeps 21 ms at 1x and 40 ms at 0.5x,
+        fit.py --method speed's 18-25 ms, audio.py --tempo's 10-31 ms. Each chain is led by
+        those samples. The beeps' onsets (every second from 0.5 s) are compared with where the
+        retiming puts them: atempo places its windows by the content, so a single beep moves by a
+        few milliseconds either way (up to about 30 ms through a chain of stages below 0.5x), and
+        their mean is held to 5 ms (it was 11-40 ms early, 70-105 ms through a chain). A chain is
+        led once, ahead of its first stage: a lead between two stages failed speedramp.py's graph
+        on FFmpeg 6.1.1."""
+        src = make_flash_beep(OUT / "i523_beeps.mp4")
+
+        def heard(path):
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0",
+                      "-af", "silencedetect=n=-30dB:d=0.02", "-f", "null", "-")
+            return [float(x) for x in re.findall(r"silence_end: ([\d.]+)", proc.stderr)]
+        beeps = (0.5, 1.5, 2.5, 3.5)
+        cases = (
+            ("speedramp 1x", ["speedramp.py", "--segment", "0-4:1"], ".mp4", lambda t: t),
+            ("speedramp 0.5x", ["speedramp.py", "--segment", "0-2:1", "--segment", "2-3:0.5", "--segment", "3-4:1"],
+             ".mp4", lambda t: t if t < 2 else 2 + (t - 2) * 2 if t < 3 else t + 1),
+            ("speedramp 2x", ["speedramp.py", "--segment", "0-1:2", "--segment", "1-4:1"], ".mp4",
+             lambda t: t / 2 if t < 1 else t - 0.5),
+            ("fit speed 1.11x", ["fit.py", "--duration", "3.6", "--method", "speed"], ".mp4", lambda t: t * 0.9),
+            ("fit speed 0.91x", ["fit.py", "--duration", "4.4", "--method", "speed"], ".mp4", lambda t: t * 1.1),
+            ("audio tempo 1.5", ["audio.py", "--tempo", "1.5"], ".wav", lambda t: t / 1.5),
+            ("audio tempo 3", ["audio.py", "--tempo", "3"], ".wav", lambda t: t / 3),
+            # chains of stages (0.5 x 0.5; 0.5 x 0.6)
+            ("speedramp 0.25x", ["speedramp.py", "--segment", "0-2:0.25", "--segment", "2-4:3"], ".mp4",
+             lambda t: t * 4 if t < 2 else 8 + (t - 2) / 3),
+            ("audio tempo 0.3", ["audio.py", "--tempo", "0.3"], ".wav", lambda t: t / 0.3),
+        )
+        for name, argv, ext, moved in cases:
+            with self.subTest(case=name):
+                out = OUT / f"i523_tempo{ext}"
+                script(argv[0], src, *argv[1:], *(["--fast"] if ext == ".mp4" else []), "-o", out, "--overwrite")
+                got = heard(out)
+                errors = [min(got, key=lambda h: abs(h - moved(t))) - moved(t) for t in beeps]
+                self.assertLessEqual(abs(sum(errors) / len(errors)), 0.005, f"{name}: beeps off by {errors} s ({got})")
+                spread = 0.030 if name.endswith(("0.25x", "0.3")) else 0.010
+                self.assertLessEqual(max(abs(e) for e in errors), spread, f"{name}: beeps off by {errors} s ({got})")
 
     def test_a_one_frame_speedramp_segment_keeps_its_length(self):
         """#525 review: a segment whose picture is one frame (0-0.1 at 3x of a 30 fps clip) was
@@ -1859,8 +1958,8 @@ class EditingTests(MediaFixtures):
         frame's timestamp, while the sound's concat advanced by 1/30 s: three of them in a row put
         the rest of the picture a frame early (flash at 0.267 s for 0.3, 113 frames for 114). The
         joined picture's timestamps are rebuilt from its frame count. The picture is measured
-        against where it belongs; the sound, which atempo moves by itself (about 21 ms), against
-        the same offset in every flash."""
+        against where it belongs; the sound, which atempo places by the content, against the same
+        offset in every flash."""
         src = make_flash_beep(OUT / "i525_onef.mp4")
         cases = (
             (["0-0.1:3", "0.1-4:1"], 0.1 / 3 - 0.1),

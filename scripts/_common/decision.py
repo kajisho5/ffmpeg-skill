@@ -711,18 +711,64 @@ def graph_with_cfr(graph: str, label: str, meta: Optional[Dict[str, Any]],
     return f"{graph};[{bare}]{f}[{bare}cfr]", f"[{bare}cfr]"
 
 
-def cfr_at_input(graph: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None, src: str = "[0:v]") -> str:
+def cfr_at_input(graph: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None, src: str = "[0:v]",
+                 origin: Optional[float] = None) -> str:
     """A -filter_complex graph with cfr_filter() on its main picture as it is decoded (`src`, which
     the graph reads once), for a graph that composites onto that picture and moves no frame in
     time. After an overlay the conform comes too late: FFmpeg 6.1's overlay ends its output at its
-    last frame's start, so an fps filter there lost the last frame (3.963 s of a 4 s picture)."""
+    last frame's start, so an fps filter there lost the last frame (3.963 s of a 4 s picture).
+    With `origin` (where the picture starts on the graph's clock, stream_starts()) the grid is
+    laid from it and the conformed frames get a microsecond time base, for a graph that cuts the
+    picture on that grid (freeze.py, #523): the fps filter's grid starts at the clock's 0, so a
+    picture that starts 50 ms in was cut a frame off the times computed from its start, and its
+    output's time base is one frame, to which `trim` rescales its bound (a half-frame bound
+    written to the microsecond, 3.907407 at 27 fps, became the frame at 3.888889 and cut it)."""
     f = cfr_filter(meta, fps)
     if not f:
         return graph
     if graph.count(src) != 1:
         # a graph that read the picture twice, or not at all, would go unconformed or not parse
         raise ValueError(f"cfr_at_input: the graph reads {src} {graph.count(src)} times, not once")
+    if origin is not None:
+        f = (f"setpts=PTS-{origin:.6f}/TB,{f},settb=AVTB,setpts=PTS+{origin:.6f}/TB" if origin
+             else f"{f},settb=AVTB")
     return f"{src}{f}[cfrin];" + graph.replace(src, "[cfrin]")
+
+
+def atempo_lead(sample_rate: Any) -> int:
+    """How many samples of its input `atempo` leaves out at the start: half its window, which is
+    the power of two at or above sample_rate / 24 (2048 at 44.1 and 48 kHz, so 1024 samples, 21 ms
+    at 48 kHz). Its output opens on the sample half a window in (measured at 8, 22.05, 32, 44.1,
+    48 and 96 kHz on FFmpeg 6.1.1), so every sound after it is that much early: speedramp.py's beeps
+    came 21 ms early at 1x and 40 ms at 0.5x, and fit.py --method speed's the same (#523). 0 when
+    the rate is not known (a dry run's pending input)."""
+    try:
+        rate = int(sample_rate or 0)
+    except (TypeError, ValueError):
+        return 0
+    window = rate // 24
+    if window < 1:
+        return 0
+    pot = 1 << (window.bit_length() - 1)
+    return (pot * 2 if pot < window else pot) // 2
+
+
+def atempo_chain_with_lead(stages: List[str], sample_rate: Any) -> str:
+    """`atempo` stages (each value as written) led by the samples they leave out, as silence, so
+    the output opens on the input's first sample and keeps its timing: a beep at 0.5 s of a 1x
+    stage came out at 0.479 s, and at 0.5 s with the lead (FFmpeg 6.1.1). Each stage leaves out
+    atempo_lead() samples of its own input, which are the earlier stages' tempo product times
+    that many of the chain's input, so one lead of their sum goes in front of the first stage:
+    an `adelay` between two stages made FFmpeg 6.1.1 fail a graph that joins the result with
+    `concat` ("Invalid data found when processing input", speedramp.py with a 0.25x segment).
+    The bare stages when the rate is not known (a dry run's pending input)."""
+    lead = atempo_lead(sample_rate)
+    total, product = 0.0, 1.0
+    for value in stages:
+        total += lead * product
+        product *= float(value)
+    chain = ",".join(f"atempo={value}" for value in stages)
+    return f"adelay={round(total)}S:all=1,{chain}" if lead else chain
 
 
 def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Optional[float]:

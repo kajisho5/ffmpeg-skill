@@ -19,7 +19,7 @@ Examples:
 import argparse
 import sys
 
-from _common.decision import av_trim, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
+from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length
 
@@ -63,6 +63,15 @@ def main() -> int:
     # starts 0.1 s late 0.1 s early (147 frames for 150).
     v0 = stream_starts(meta)[0]
     rate = frame_rate(meta) or fps
+    if cfr_filter(meta):
+        # A VFR source is put on the delivered grid as it is decoded (the graph's cfr_at_input
+        # below), and every frame time is on that grid (#523): on the source's own frames the
+        # head ended at its last frame's nominal duration, so with --at inside a gap the hold, and
+        # everything after it, started the rest of the gap early against the sound, which is cut
+        # at --at (56 ms at --at 0.15, 93 ms at --at 2.2 on a 27 fps average clip with gaps from
+        # 0.1 and 2.1 s). A hold is then counted in frames of that rate, the rate its frames are
+        # cloned at.
+        rate = delivered_rate(meta) or rate
     cut_at = grid_at_or_after(at, v0, rate)
     # no frame at or after --at (no --at holds at the clip's end): the insert tail would be empty
     # and the hold lost, so hold the last frame as --mode extend does (#416 review)
@@ -119,6 +128,11 @@ def main() -> int:
         vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
               f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
               f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, delivered_rate(meta) or rate)}[outv]")
+        # the grid is laid from the picture's start, on a microsecond time base: laid from the
+        # clock's 0, a picture that starts 50 ms in came out a frame early after the hold, and on
+        # the fps filter's base of one frame the trim's half-frame bound 3.907407 (--at 3.9)
+        # became frame 105 itself, which was cut from the head and held in place of frame 106
+        vf = cfr_at_input(vf, meta, origin=v0)
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:
             af = (f"[0:a]asplit[aa][ab];[aa]{head_a}[ahead];"
