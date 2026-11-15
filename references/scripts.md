@@ -348,7 +348,8 @@ lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
 rounded, if they aren't; an odd `--x`/`--y` is taken as given. The source's
 subtitle track is kept (converted to mov_text in MP4/MOV, SubRip in Matroska);
-`dropped_non_av_streams: true` says the container refused it.
+`dropped_non_av_streams: true` says it was dropped: the container refused it, or
+refused a data stream beside it (a timecode track), and the retry drops both.
 
 ### cropdetect.py — measure black bars, report the crop rectangle
 ```

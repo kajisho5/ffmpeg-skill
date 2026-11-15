@@ -521,7 +521,7 @@ exists. When a decision changes, edit the entry in the same PR.
   or audio in place (`fit`, `color`, `crop`, `stabilize`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`,
   `deinterlace`, `denoise`, `redact`, `sphere`, `straighten`, `freeze` holding the last frame) try
   `run_keeping_subtitles()` first, a text track converted to the container's own format as
-  `export` converts it (since #520), and report `false` unless the container refused the track. `export` does the same with its own
+  `export` converts it (since #520), and report `false` unless the container refused the track or a data stream mapped beside it (the retry drops both). `export` does the same with its own
   ladder (`_run_keeping_non_av()`): a text track is converted to the container's own (mov_text in
   .mp4/.mov, SubRip in .mkv) rather than refused, a data stream the container refuses (a camera's
   timecode in .mp4) is retried away alone so the subtitles survive it, a platform trim cuts the
@@ -5319,12 +5319,17 @@ the slot at 0.519 s, "After 3.8.14").
   and cannot add silence, so the extraction is that much early against the picture. The result
   said only that it was 0.235 s short (`duration_delta_seconds`), which reads as an end that
   landed on a packet. It is not re-encoded: a copy's start that is off by less than `--tolerance`
-  is kept and reported (a keyframe snap is, `start_snapped`), a lead of `--tolerance` or more
-  already makes the length check re-encode the range, and that re-encode pads the sound from the
-  start (A46). What changed is that the run says it: an `audio_lead_dropped` warning
+  is kept and reported (a keyframe snap is, `start_snapped`), and a copy that comes out more
+  than `--tolerance` short is re-encoded by the length check, which pads the sound from the
+  start (A46). The check judges the written length, not the lead: the copy is short by up to a
+  packet less than the lead (0.351 s for a lead of 0.355 s, 0.235 s for 0.254 s), so a
+  `--tolerance` between the two keeps the copy and its warning (#542 review). What changed is that the run says it: an `audio_lead_dropped` warning
   (`{seconds, segments: [{index, seconds}]}`, the total and each `--segments` part it happened
   in) and a `notes` line naming `--accurate`, which keeps the lead. A dry run reports it too, from
-  the source's stream starts. It is reported from one frame of the source's picture (an offset
+  the source's stream starts, whatever `--tolerance` is: it cannot know the written length, so
+  for a lead of `--tolerance` or more its note says a run re-encodes and pads instead when the
+  copy comes out more than `--tolerance` short (`length_unjudged`). It left the warning out
+  there, where a run with `--tolerance 0.353` kept the copy and gave it. It is reported from one frame of the source's picture (an offset
   under a frame cannot be seen against it), and for the part a re-cut replaced not at all. Not
   changed, and not decided here: whether the copy should instead re-encode whenever it would drop
   a lead (a lossy re-encode of AAC that `--accurate` already offers). Code: `cut.copied_lead()`,
@@ -5339,7 +5344,8 @@ the slot at 0.519 s, "After 3.8.14").
   so a container change (mov_text into `.mkv`, SubRip into `.mp4`) failed the copy and the retry
   dropped the track; it now converts a text track to the container's own format
   (`subtitle_codec_for()`, export.py's rule and the one a crop of several tracks already used), so
-  a track that crosses a container keeps its cues in every tool that uses the helper. Crop's
+  a track that crosses a container keeps its cues in every tool that uses the helper, unless
+  another stream fails the same attempt (below). Crop's
   default selection had written a Matroska output's track as ASS (from mov_text or SubRip); it is
   SubRip now, as in `fit` and `export`, and a SubRip track into MP4, which it dropped, is mov_text. A track no conversion fits (a bitmap track in MPEG-4) or a data
   stream the container refuses (a tmcd track into Matroska, and on FFmpeg 6.1.1 a copied tmcd track

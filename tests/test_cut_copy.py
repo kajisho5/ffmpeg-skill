@@ -476,6 +476,21 @@ class CutJoinTests(unittest.TestCase):
         for args in (["--start", "1", "--end", "2"], ["--start", "0", "--end", "2", "--accurate"]):
             with self.subTest(args=args):
                 self.assertEqual(leads(cut_json(self.late, *args, "-o", DIR / "late_lead.m4a", "--overwrite")), [])
+        # #542 review: the run judges the written length, which is short by a few ms less than the
+        # lead, so a --tolerance between the two keeps the copy and warns; the dry run left the
+        # warning out for any lead of --tolerance or more. It says it, and that a run may re-encode
+        ref = cut_json(self.late, "--start", "0", "--end", "2", "-o", DIR / "late_lead_ref.m4a", "--overwrite")
+        short = ref["requested_duration"] - ref["output_duration"]
+        self.assertLess(short, lead, "fixture: the copy is short by less than the lead")
+        between = (short + lead) / 2
+        for tol, mode in ((between, "copy"), (short / 2, "hybrid")):
+            real = cut_json(self.late, "--start", "0", "--end", "2", "--tolerance", f"{tol:.6f}", "-o", DIR / "late_lead.m4a", "--overwrite")
+            dry = cut_json(self.late, "--start", "0", "--end", "2", "--tolerance", f"{tol:.6f}", "--dry-run", "-o", DIR / "late_lead.m4a", "--overwrite")
+            with self.subTest(tolerance=tol):
+                self.assertEqual(real["mode"], mode, real.get("reencode_reason"))
+                self.assertEqual(len(leads(real)), 1 if mode == "copy" else 0, real.get("diagnostics"))
+                self.assertEqual(len(leads(dry)), 1, dry.get("diagnostics"))
+                self.assertTrue(any("re-encodes and pads it instead" in n for n in dry["notes"]), dry["notes"])
 
     def test_remove_drops_a_leftover_with_no_picture_and_says_so(self):
         """#462 A51: --remove 1-6 of a file whose sound runs 0.3 s past its 6 s picture left 6.0-6.3,

@@ -1062,15 +1062,17 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
         # nothing says a real run may still re-encode it (#510 review)
         pending = {"length_unjudged": True} if (STATE.dry_run and copy_t is None and tolerance >= 0) else {}
         lead = copied_lead(meta, start, end)
-        if lead and STATE.dry_run and 0 <= tolerance <= lead:
-            # the run's length check re-encodes such a copy, and the re-encode pads the lead (A46)
-            lead = None
         if lead:
             # a copy cannot add silence: the sound starts at its first packet, `lead` earlier than it
-            # sat after `start` (#515). Kept within --tolerance, as a start that snapped is, and said
+            # sat after `start` (#515). Kept within --tolerance, as a start that snapped is, and said.
+            # A dry run says it for a lead of --tolerance or more too: the run judges the written
+            # length, which is short by up to a packet less than the lead (0.351 s for a lead of
+            # 0.355), so it may keep that copy; it re-encodes and pads it otherwise (#542 review)
+            unsure = STATE.dry_run and 0 <= tolerance <= lead
             notes.append(f"the sound starts {lead:.3f}s after {start:.3f}s in the source; a stream copy cannot "
                          f"add silence, so the extraction starts with the sound, {lead:.3f}s early against the "
-                         "picture (--accurate pads it from the start)")
+                         "picture (--accurate pads it from the start"
+                         + ("; a run re-encodes and pads it instead when the copy comes out more than --tolerance short)" if unsure else ")"))
         return _outcome(meta, dst, False, reasons, notes=notes, audio_lead_dropped_seconds=lead or None, **pending)
     if reencode:
         return _outcome(meta, dst, reencode, reasons)
