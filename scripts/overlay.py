@@ -45,7 +45,7 @@ from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder
 from _common.probe import display_size, refuse_not_a_still, square_pixels, square_pixels_note
 from _common.drawtext import shaping_refusal
 from _common.wrap import wrap_text
-from _common import text_width_em
+from _common import text_width_em, refuse_output_is_input
 from _common.fonts import font_choice, record_font_choice, require_font_file
 from _common import drawtext_fontfile  # noqa: E402
 
@@ -494,6 +494,9 @@ def main() -> int:
             "from --start to --end without a fade", hint="drop --fade for the video layer")
 
     output = args.output or default_output(args.input, "overlay", default_ext(alpha_codec) if alpha_codec else None)
+    # the brand file and a text layer's font file are read here and by drawtext's fontfile=, never
+    # as an -i, so run()'s guard did not see them (#522's sweep)
+    refuse_output_is_input(output, *[q for q in (args.brand, args.font_file if args.text else None) if isinstance(q, str) and q])
     enable = enable_expr(start, end, meta)
     cmd = ffmpeg_base() + ["-i", args.input]
 

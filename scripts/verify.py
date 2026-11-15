@@ -18,6 +18,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -318,6 +319,7 @@ def main() -> int:
     # the run will write -- step outputs, caption's sidecars, the cue file -- against every input,
     # through a link or another case of the name included, before the first is written.
     every_input = [str(f) for f in files]
+    every_written: List[str] = []
     for f, _entry, plan, cues in jobs:
         written = [("cue file", str(cues))] if cues else []
         for name, argv in plan:
@@ -328,15 +330,33 @@ def main() -> int:
                     written += [(name, str(Path(out).with_suffix(ext))) for ext in (".srt", ".ass")]
         for name, out in written:
             refuse_output_is_input(out, *every_input, why=f"it is where verify writes the {name!r} step's output for {str(f)!r}")
+        every_written += [out for _name, out in written]
+    if args.report:
+        # the report is written last, over whatever is at its path: one of the names the steps write
+        # (`--report OUT/clip_cut.mp4`) was replaced by the Markdown after the steps had read it (#522)
+        guard_sidecar(args.report, siblings=every_written)
 
     results = []
     started["step"] = True
     for f, entry, plan, cues in jobs:
         info(f"=== {f}")
-        if cues:
+        # the cue file is verify's own write: an existing one is replaced only with --overwrite, as
+        # every step's output is. Without it the caption step fails on it, as a step fails on its
+        # existing output, and the file is left as it was (#522; it was replaced unasked)
+        # A link or a folder at its name is never written through, --overwrite or not.
+        odd = bool(cues and os.path.lexists(cues) and (os.path.islink(cues) or not os.path.isfile(cues)))
+        cues_taken = odd or bool(cues and os.path.lexists(cues) and not FORWARD["overwrite"])
+        if cues and not cues_taken:
             cues.write_text("0:00-0:02 Verification caption\n0:02-0:04 Second | line\n", encoding="utf-8")
         for name, argv in plan:
-            r = step(name, argv, args.timeout)
+            if cues_taken and argv[0] == "caption.py":
+                msg = (f"refusing to write the cue file the caption step reads through {str(cues)!r}: it is a link "
+                       "or not a regular file" if odd else
+                       f"refusing to overwrite the existing cue file {str(cues)!r} the caption step reads: pass --overwrite to replace it")
+                r = {"step": name, "ok": False, "seconds": 0.0, "error": _cell(msg), "kind": "input",
+                     "reason": "output_exists", "message": msg}
+            else:
+                r = step(name, argv, args.timeout)
             entry["steps"].append(r)
             info(f"  {'PASS' if r['ok'] else 'FAIL'}  {name:16s} {r['seconds']:6.1f}s  {r['error']}")
         results.append(entry)

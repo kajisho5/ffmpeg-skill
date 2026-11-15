@@ -21,8 +21,8 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
-from _common.emit import note, warn
+from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
+from _common.emit import note, refuse, warn
 from _common.probe import display_size, square_pixels_note
 from _common.timeline import TimelineError, exact_rate
 
@@ -58,6 +58,31 @@ def concat_list(frames: list, rate: Fraction) -> str:
     lines.append(_concat_list_line(frames[-1]))  # concat demuxer: last entry's duration is ignored, so repeat it
     lines.append(framerate)
     return "\n".join(lines)
+
+
+def undecodable_frames(list_path: Path, frames: list, rate: Fraction) -> "list | None":
+    """The frames of the list that do not decode to a picture, in order; None when the check could
+    not be made (ffprobe failed). ffprobe decodes the same concat list the encode reads, so a frame
+    is what the encode would get: frame i is decoded at the i-th start the list gives it. Only the
+    first frame was probed, and a later one that was not an image (a text file named .png, a
+    truncated PNG) was left out by the decoder while the fps filter repeated its neighbour: the run
+    completed with that frame missing (#529)."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-f", "concat", "-safe", "0", "-i", str(list_path),
+                "-select_streams", "v:0", "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0"],
+               quiet=True, check=False)
+    if proc.returncode != 0:
+        return None
+    decoded = set()
+    for line in proc.stdout.splitlines():
+        try:
+            decoded.add(round(float(line.strip().rstrip(",")) * rate))
+        except ValueError:
+            continue
+    if not decoded:
+        # the first frame was probed as an image, so it decodes: nothing read back is a check that
+        # did not happen, not every frame missing
+        return None
+    return [f for i, f in enumerate(frames) if i not in decoded]
 
 
 def natural_key(name: str) -> list:
@@ -164,6 +189,18 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ffmpeg-skill-sequence-") as tmp:
         list_path = Path(tmp) / "frames.txt"
         list_path.write_text(concat_list([f.resolve() for f in frames], rate), encoding="utf-8")
+        # every frame decodes, or the run is refused before the encode (a dry run too: ffprobe runs
+        # under --dry-run, as every probe does), naming the frames that do not
+        bad = undecodable_frames(list_path, frames, rate)
+        if bad is None:
+            note("the frames could not be checked before the encode (ffprobe failed on the frame list); "
+                 "a frame that does not decode would be left out of the video")
+        elif bad:
+            names = ", ".join(f.name for f in bad[:5]) + (f" and {len(bad) - 5} more" if len(bad) > 5 else "")
+            refuse("input", "still_unreadable",
+                   f"{len(bad)} of {len(frames)} frames do not decode as an image ({names}); they would be "
+                   "missing from the video. Replace or remove them",
+                   path=str(bad[0]), frames=[str(f) for f in bad], frames_unreadable=len(bad), frames_total=len(frames))
 
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", str(list_path)]
         vf = [f"scale={out_w}:{out_h}", "setsar=1", f"fps={rate.numerator}/{rate.denominator}"]

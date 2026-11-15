@@ -4,7 +4,40 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **An output named like a file the run reads but does not hand to ffmpeg as `-i` is refused
+  (#522).** `sync.py REF SECOND --trim-second --overwrite` replaced REF when REF was named
+  `SECOND_synced.mp4` (the default output name) or given as `-o`: the command reads SECOND alone,
+  so the output-is-input guard never saw REF. The same held for `cut.py --snap-source`,
+  `metadata.py --chapters`, `graphics.py` and `overlay.py --brand`/`--font-file`, `silence.py
+  --words`/`--filler-words` and `join.py --list`. Each is now refused, `kind: input`,
+  `reason: output_is_input`, before anything is written and in a dry run.
+- **`verify.py` no longer replaces an existing `<stem>_cues.txt` in `--out` without
+  `--overwrite` (#522).** The caption step fails on it (`reason: output_exists`) and the file is
+  left as it was; a link or a folder at that name is never written through. A `--report` that
+  names a file the steps write is refused before any step runs (`reason: output_path_taken`); it
+  replaced that file with the Markdown.
+- **A blurred pad on a small frame no longer fails inside ffmpeg (#527).** `fit.py --fit blur`,
+  `--pad-fill blur` and `waveform.py --image-fit blur` gave the chroma planes the luma's blur
+  radius, which a 4:2:0 frame's half-size planes cannot hold (a 160x120 source to 9:16: "radius 20
+  ... must be <= 17"). `redact.py`'s blur assumed 4:2:0 and failed on a 4:1:1 or 4:1:0 source.
+  The chroma radius is now measured on the planes' own size; on a frame large enough the output
+  is unchanged.
+- **`fit.py --smooth interpolate --fps N` makes its in-between frames at N (#527).** They were
+  made at the source's rate and then repeated to reach N: a 2x slow motion to 60 fps from 30 had
+  every other frame a copy. A VFR source whose speed change conforms the picture now says so on
+  stderr, as one conformed by the fps filter does.
+- **`sequence.py` refuses a frame that does not decode (#529).** Only the first frame was probed;
+  a later file named as an image that is not one (a text file called `.png`, a truncated PNG) was
+  left out while the frame before it was shown in its place, and the run reported success. Every
+  frame is decoded once before the encode (ffprobe, so a dry run checks too) and the run is
+  refused, `kind: input`, `reason: still_unreadable`, naming the frames. When ffprobe cannot read
+  the frame list back, a note says the frames were not checked and the encode runs.
+- **A side file named like a brand file's font or logo is refused (review of #534).**
+  `graphics.py --write-ass`, `caption.py --write-srt`/`--write-ass` (and its `--plan`), and
+  `render.py --template --write-project` with `--overwrite` replaced the brand's `font_file` or
+  `logo` with the text they write; only the brand file itself was guarded.
 
 ## 3.8.18
 

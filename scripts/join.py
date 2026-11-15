@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common.runner import read_text_or_die
-from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_MEDIA_EXT, concat_list_line, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -245,6 +245,7 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
     if len(set(chans)) > 1:
         info(f"channel counts differ ({', '.join(str(c) for c in chans)}); every clip becomes {layout}")
     output = args.output or default_output(args.inputs[0], "joined")
+    refuse_list_as_output(args, output)
     if not is_audio_output(output):
         die(f"audio-only inputs cannot fill a video container: give -o an audio extension (.wav, .flac, .mp3, .m4a, .ogg, .opus), not {output}")
 
@@ -281,6 +282,13 @@ def join_audio(args: argparse.Namespace, metas: List[dict]) -> int:
 # ffmpeg concat-demuxer directives other than `file`: they change what a `file` line plays
 CONCAT_DIRECTIVES = frozenset({"inpoint", "outpoint", "duration", "stream", "exact_stream_id", "file_packet_metadata",
                                "file_packet_meta", "option", "stream_meta", "stream_codec", "stream_extradata", "chapter"})
+
+
+def refuse_list_as_output(args: argparse.Namespace, output: str) -> None:
+    """The --list file is read here and is never an -i of the join, so run()'s guard did not see
+    an output named like it (#522's sweep): refused once the output is known, before any write."""
+    if args.list:
+        refuse_output_is_input(output, args.list, why="the clip list would be replaced by the join")
 
 
 def read_list(path: str) -> List[str]:
@@ -494,6 +502,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
         die(f"--copy keeps every clip's own encoding: {', '.join(encoder)} choose(s) an encode, so drop --copy")
     output = args.output or default_output(args.inputs[0], "joined", os.path.splitext(args.inputs[0])[1].lstrip(".") or "mp4")
     guard_sidecar(output, *args.inputs)
+    refuse_list_as_output(args, output)
     ext = os.path.splitext(output)[1].lower()
     n = len(args.inputs)
     pending = any(m.get("dry_run") for m in metas)
@@ -929,6 +938,7 @@ def main() -> int:
         STATE_NOTES.append("the planned trim lengths count each pending input as 0 s long: a real run trims "
                            "or holds it to its measured length")
     output = args.output or default_output(args.inputs[0], "joined", "mp4")
+    refuse_list_as_output(args, output)
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
     # the fps filter already made the picture constant-rate, and the per-clip trims (then xfade or
     # concat) place every frame: FFmpeg 5.1's default cfr output mode still duplicated the last one
