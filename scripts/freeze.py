@@ -18,6 +18,7 @@ Examples:
 """
 import argparse
 import sys
+from fractions import Fraction
 
 from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
@@ -107,8 +108,11 @@ def main() -> int:
         # the video actually holds for, a permanent A/V drift from this point on. Pad audio by
         # the same, frame-rounded duration the video actually gets.
         actual_hold = n / rate
-        head_v, head_a = av_trim(v0, cut_at, rate)
-        tail_v, tail_a = av_trim(cut_at, None, rate)
+        # a conformed VFR picture starts at 0 on the graph's clock (cfr_at_input's origin), so its
+        # trims are counted from its own start; the sound's stay on the input's clock
+        vo = v0 if cfr_filter(meta) else 0.0
+        head_v, head_a = av_trim(v0 - vo, cut_at - vo, rate)[0], av_trim(v0, cut_at, rate)[1]
+        tail_v, tail_a = av_trim(cut_at - vo, None, rate)[0], av_trim(cut_at, None, rate)[1]
         # The hold is its own segment: the frame at cut_at, cut on the input's clock and cloned to
         # n frames there (tpad's stop clone), then shifted like the tail. From FFmpeg 7.0 setpts
         # leaves its output's frame rate unknown and its frames' durations 0, so the earlier tpad
@@ -123,15 +127,26 @@ def main() -> int:
         half = 0.5 / rate
         # the graph closes on the rate the encoder line delivers (a VFR source is conformed to its
         # average): closed on r_frame_rate, -r then resampled it and the picture ran late (#512)
-        hold_v = (f"trim=start={cut_at - half:.6f},trim=end_frame=1,"
+        hold_v = (f"trim=start={cut_at - vo - half:.6f},trim=end_frame=1,"
                   f"tpad=stop_mode=clone:stop={n - 1},setpts=PTS-STARTPTS")
+        # Every segment is a whole count of frames on one grid, so the joined picture's timestamps
+        # are rebuilt from its running frame count before the closing fps: FFmpeg 6.1.1's video
+        # concat gives a one-frame segment no length (it ends a segment at its last frame's
+        # timestamp), so a hold of one frame (--hold 0.04 at 30 fps) was dropped and the rest of
+        # the picture ran a frame before its sound, as speedramp.py's one-frame segments did
+        grid = frame_durations(meta, delivered_rate(meta) or rate)
+        q = Fraction(grid[len("fps="):]) if "/" in grid else Fraction(delivered_rate(meta) or rate).limit_denominator(1001)
         vf = (f"[0:v]split=3[a][b][c];[a]{head_v}[head];"
               f"[b]{hold_v}[hold];[c]{tail_v}[tail];"
-              f"[head][hold][tail]concat=n=3:v=1:a=0,{frame_durations(meta, delivered_rate(meta) or rate)}[outv]")
-        # the grid is laid from the picture's start, on a microsecond time base: laid from the
-        # clock's 0, a picture that starts 50 ms in came out a frame early after the hold, and on
-        # the fps filter's base of one frame the trim's half-frame bound 3.907407 (--at 3.9)
-        # became frame 105 itself, which was cut from the head and held in place of frame 106
+              f"[head][hold][tail]concat=n=3:v=1:a=0,setpts=N*{q.denominator}/({q.numerator}*TB),{grid}[outv]")
+        # the grid is laid from the picture's start (the picture moved to 0 ahead of the fps
+        # filter, and the trims above counted from there), on a microsecond time base: laid from
+        # the clock's 0, a picture that starts 50 ms in came out a frame early after the hold, and
+        # on the fps filter's base of one frame the trim's half-frame bound 3.907407 (--at 3.9)
+        # became frame 105 itself, which was cut from the head and held in place of frame 106.
+        # It is not moved back after the conform: from FFmpeg 7.0 a setpts leaves its frames no
+        # duration and no rate, and the hold's tpad after it cloned nothing (109 frames for 135
+        # on 7.1)
         vf = cfr_at_input(vf, meta, origin=v0)
         cmd = ffmpeg_base() + ["-i", args.input, "-filter_complex", vf, "-map", "[outv]"]
         if has_audio:

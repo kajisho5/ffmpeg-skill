@@ -1896,17 +1896,25 @@ class EditingTests(MediaFixtures):
         The grid is also laid from the picture's start: from the clock's 0, a picture that starts
         50 ms after its sound came out a frame early after the hold (flash minus beep 68 ms before
         it, 31 ms after). Every frame of the 27 fps grid is counted, before and after the hold,
-        and every flash keeps one offset from its beep."""
+        and every flash keeps one offset from its beep. #541 review: a hold of one frame (--hold
+        0.05 at 27 fps, 0.04 at 30) was a one-frame segment, which FFmpeg 6.1.1's concat gives
+        no length: the frame was lost and the rest of the picture ran a frame early (flash minus
+        beep 0 ms, then -33 ms on the constant 30 fps clip); the joined picture's timestamps are
+        rebuilt from its frame count. On FFmpeg 7.1 a setpts after the conform left the hold's
+        tpad nothing to clone (109 frames for 135, CI)."""
         src = make_vfr_flash_beep(OUT / "i523_vfr.mp4")
         late = OUT / "i523_vfr_late.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "0.05", "-i", src, "-i", src,
            "-map", "0:v", "-map", "1:a", "-c", "copy", late)
         self.assertEqual(av_offsets_ms(late), [50, 50, 50, 50], "the fixture's picture must start 50 ms late")
-        for source, at, hold in ((src, "3.9", 0.5), (src, "2.2", 1.0), (src, "0.15", 0.5), (late, "1.2", 1.0), (late, "2.2", 1.0)):
-            with self.subTest(source=source.name, at=at):
+        cfr = make_flash_beep(OUT / "i541_cfr.mp4")
+        for source, at, hold, frames in ((src, "3.9", 0.5, 108 + 14), (src, "2.2", 1.0, 108 + 27), (src, "0.15", 0.5, 108 + 14),
+                                         (late, "1.2", 1.0, 108 + 27), (late, "2.2", 1.0, 108 + 27),
+                                         (src, "1.2", 0.05, 108 + 1), (late, "1.2", 0.05, 108 + 1), (cfr, "1.2", 0.04, 120 + 1)):
+            with self.subTest(source=source.name, at=at, hold=hold):
                 out = OUT / "i523_vfr_freeze.mp4"
                 script("freeze.py", source, "--at", at, "--hold", f"{hold:g}", "--fast", "-o", out, "--overwrite")
-                self.assertEqual(stream_spans(out)["video"][2], 108 + round(hold * 27), stream_spans(out))
+                self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
                 offsets = av_offsets_ms(out)
                 self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
 
@@ -1915,9 +1923,9 @@ class EditingTests(MediaFixtures):
         so every sound after it was early: speedramp.py's beeps 21 ms at 1x and 40 ms at 0.5x,
         fit.py --method speed's 18-25 ms, audio.py --tempo's 10-31 ms. Each chain is led by
         those samples. The beeps' onsets (every second from 0.5 s) are compared with where the
-        retiming puts them: atempo places its windows by the content, so a single beep moves by a
-        few milliseconds either way (up to about 30 ms through a chain of stages below 0.5x), and
-        their mean is held to 5 ms (it was 11-40 ms early, 70-105 ms through a chain). A chain is
+        retiming puts them: atempo places its windows by the content, so a single beep moves by
+        some milliseconds either way (held to half a 30 fps frame, about 30 ms through a chain of
+        stages below 0.5x), and their mean is held to 5 ms (it was 11-40 ms early, 70-105 ms through a chain). A chain is
         led once, ahead of its first stage: a lead between two stages failed speedramp.py's graph
         on FFmpeg 6.1.1."""
         src = make_flash_beep(OUT / "i523_beeps.mp4")
@@ -1949,8 +1957,40 @@ class EditingTests(MediaFixtures):
                 got = heard(out)
                 errors = [min(got, key=lambda h: abs(h - moved(t))) - moved(t) for t in beeps]
                 self.assertLessEqual(abs(sum(errors) / len(errors)), 0.005, f"{name}: beeps off by {errors} s ({got})")
-                spread = 0.030 if name.endswith(("0.25x", "0.3")) else 0.010
+                spread = 0.030 if name.endswith(("0.25x", "0.3")) else 0.5 / 30
                 self.assertLessEqual(max(abs(e) for e in errors), spread, f"{name}: beeps off by {errors} s ({got})")
+
+    def test_a_tempo_change_keeps_an_attack_at_its_start(self):
+        """#541 review: a lead of half atempo's window put the chain's first window, which atempo
+        fades in, over the input's first 21 ms: a 10 ms tone at the start of a speedramp.py
+        segment came out 7 dB down at 1x and was gone at 2x and 1.5x. A whole window more of
+        silence leads the chain and is cut off after it, and a 1x segment is not retimed at all.
+        The tone's peak (-1.9 dBFS in the source) is read where the retiming puts it, at the
+        start of a segment and at the start of a track."""
+        src = OUT / "i541_attack.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x120:r=30:d=4",
+           "-f", "lavfi", "-i", "aevalsrc='if(between(t\\,0\\,0.01)+between(t\\,1\\,1.01)\\,0.8*sin(2*PI*1000*t)\\,0)':s=48000:d=4",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", "-f", "mov", src)
+
+        def peak(path, start, tempo=1.0):
+            # over the tone's retimed span: a slowed tone is laid down in several windows
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0", "-af",
+                      f"atrim=start={start}:end={start + 0.03 / min(tempo, 1.0)},astats=measure_perchannel=none:measure_overall=Peak_level",
+                      "-f", "null", "-")
+            found = re.findall(r"Peak level dB: (-?[\d.]+|-inf)", proc.stderr)
+            return float(found[-1]) if found else float("-inf")
+        self.assertGreater(peak(src, 1.0), -3, "the fixture's tone at 1 s")
+        cases = [(f"speedramp 1-4:{f}", ["speedramp.py", "--segment", "0-1:1", "--segment", f"1-4:{f}"], ".mp4", 1.0, float(f))
+                 for f in ("1", "2", "1.5", "0.5")]
+        cases += [("fit speed 2x", ["fit.py", "--duration", "2", "--method", "speed"], ".mp4", 0.0, 2.0),
+                  ("fit speed 0.5x", ["fit.py", "--duration", "8", "--method", "speed"], ".mp4", 0.0, 0.5),
+                  ("audio tempo 1.5", ["audio.py", "--tempo", "1.5"], ".wav", 0.0, 1.5),
+                  ("audio tempo 0.3", ["audio.py", "--tempo", "0.3"], ".wav", 0.0, 0.3)]
+        for name, argv, ext, at, tempo in cases:
+            with self.subTest(case=name):
+                out = OUT / f"i541_attack_out{ext}"
+                script(argv[0], src, *argv[1:], *(["--fast"] if ext == ".mp4" else []), "-o", out, "--overwrite")
+                self.assertGreater(peak(out, at, tempo), -3, f"{name}: the tone at {at} s")
 
     def test_a_one_frame_speedramp_segment_keeps_its_length(self):
         """#525 review: a segment whose picture is one frame (0-0.1 at 3x of a 30 fps clip) was

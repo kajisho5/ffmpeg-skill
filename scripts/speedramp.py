@@ -120,7 +120,8 @@ def main() -> int:
         # leaves at the unscaled 1/rate, so every 2x segment pushed the rest of the picture two
         # frames late against the sound (and added those frames)
         vchain = f"[0:v]{vtrim},setpts=PTS/{factor:.6f},{frame_durations(meta, out_rate)}"
-        achain = f"[0:a]{atrim},{atempo_chain(factor, srate)}"
+        # a 1x segment is not retimed: atempo would place its sound by windows for nothing (#541)
+        achain = f"[0:a]{atrim}" if factor == 1.0 else f"[0:a]{atrim},{atempo_chain(factor, srate)}"
         if out_rate:
             # Each segment holds the frames (and samples) between its retimed ends on the whole
             # output's grid, not its own length rounded: eight 0.5 s segments at 27 fps rounded

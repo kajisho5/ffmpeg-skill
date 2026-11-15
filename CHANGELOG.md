@@ -15,18 +15,22 @@
   half a frame of where they belong, with and without sound (FFmpeg 6.1.1). A constant-rate source
   is reversed as before.
 - **`speedramp.py`, `fit.py --method speed` and `audio.py --tempo` keep each sound where the
-  retiming puts it (#523).** `atempo` starts its output half its window into the input (1024
-  samples at 44.1 and 48 kHz), so the first 21 ms were lost and every sound after them came early:
-  21 ms at 1x and 40 ms at 0.5x in `speedramp.py`, 17-25 ms in `fit.py --method speed`, 10-31 ms
-  in `audio.py --tempo` and about 100 ms through a chain of two stages (0.3). Each chain is now led
-  by that much silence, which atempo leaves out, and the beeps of a test clip land within 5 ms of
-  their place on average (a single one within 10 ms, 30 ms through a chain). The `timing.atempo`
-  stages `audio.py` reports are unchanged.
+  retiming puts it (#523).** `atempo` lays its first window down without retiming it and sets
+  everything after it about half a window early (1024 samples at 44.1 and 48 kHz): 21 ms at 1x
+  and 40 ms at 0.5x in `speedramp.py`, 17-25 ms in `fit.py --method speed`, 10-31 ms in `audio.py
+  --tempo` and about 100 ms through a chain of two stages (0.3). Each chain is now led by a
+  window and a half of silence and a window is cut off after it, so the beeps of a test clip land
+  within 5 ms of their place on average and a short sound at the very start keeps its level (a
+  first try with half a window faded a 10 ms tone there by 7 dB, or lost it). A 1x
+  `speedramp.py` segment is no longer put through `atempo` at all. The `timing.atempo` stages
+  `audio.py` reports are unchanged.
 - **`freeze.py --at` inside a gap of a variable-rate source keeps what follows with its sound
   (#523).** The picture after the hold came 56 ms (`--at 0.15`) and 93 ms (`--at 2.2`) early
-  against its sound on a clip with gaps from 0.1 s and 2.1 s, and the picture ran short. A hold inside the clip now conforms
-  the picture as it is decoded and cuts, holds and counts on the delivered grid, so every frame
-  of it is there and each flash stays within half a frame of its beep.
+  against its sound on a clip with gaps from 0.1 s and 2.1 s, and the picture ran short. A hold
+  inside the clip now conforms the picture as it is decoded and cuts, holds and counts on the
+  delivered grid, so every frame of it is there and each flash stays within half a frame of its
+  beep. A hold of one frame (`--hold 0.04` at 30 fps, any source) no longer loses that frame and
+  runs the rest of the picture a frame before its sound.
 - Not changed: in a `render.py` project of several clips, `--export-timeline` still sizes the
   sequence from `frame` while the render reframes the join with `fit` (#526); which of the two
   wins is a decision for a minor release, with the options in `docs/design-decisions.md`.

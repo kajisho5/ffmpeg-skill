@@ -717,12 +717,16 @@ def cfr_at_input(graph: str, meta: Optional[Dict[str, Any]], fps: Optional[float
     the graph reads once), for a graph that composites onto that picture and moves no frame in
     time. After an overlay the conform comes too late: FFmpeg 6.1's overlay ends its output at its
     last frame's start, so an fps filter there lost the last frame (3.963 s of a 4 s picture).
-    With `origin` (where the picture starts on the graph's clock, stream_starts()) the grid is
-    laid from it and the conformed frames get a microsecond time base, for a graph that cuts the
-    picture on that grid (freeze.py, #523): the fps filter's grid starts at the clock's 0, so a
-    picture that starts 50 ms in was cut a frame off the times computed from its start, and its
-    output's time base is one frame, to which `trim` rescales its bound (a half-frame bound
-    written to the microsecond, 3.907407 at 27 fps, became the frame at 3.888889 and cut it)."""
+    With `origin` (where the picture starts on the graph's clock, stream_starts()) the picture is
+    moved to start at 0 ahead of the conform, so the grid is laid from its first frame, and the
+    conformed frames get a microsecond time base, for a graph that cuts the picture on that grid
+    (freeze.py, #523): the caller counts the picture's times from its own start. The fps
+    filter's grid starts at the clock's 0, so a picture that starts 50 ms in was cut a frame off
+    the times computed from its start, and its output's time base is one frame, to which `trim`
+    rescales its bound (a half-frame bound written to the microsecond, 3.907407 at 27 fps, became
+    the frame at 3.888889 and cut it). The picture is not moved back after the conform: from
+    FFmpeg 7.0 setpts leaves its output frames no duration and no rate, and a tpad after it (the
+    hold) cloned nothing: 109 frames for 135 on 7.1."""
     f = cfr_filter(meta, fps)
     if not f:
         return graph
@@ -730,8 +734,7 @@ def cfr_at_input(graph: str, meta: Optional[Dict[str, Any]], fps: Optional[float
         # a graph that read the picture twice, or not at all, would go unconformed or not parse
         raise ValueError(f"cfr_at_input: the graph reads {src} {graph.count(src)} times, not once")
     if origin is not None:
-        f = (f"setpts=PTS-{origin:.6f}/TB,{f},settb=AVTB,setpts=PTS+{origin:.6f}/TB" if origin
-             else f"{f},settb=AVTB")
+        f = f"setpts=PTS-{origin:.6f}/TB,{f},settb=AVTB" if origin else f"{f},settb=AVTB"
     return f"{src}{f}[cfrin];" + graph.replace(src, "[cfrin]")
 
 
@@ -754,21 +757,32 @@ def atempo_lead(sample_rate: Any) -> int:
 
 
 def atempo_chain_with_lead(stages: List[str], sample_rate: Any) -> str:
-    """`atempo` stages (each value as written) led by the samples they leave out, as silence, so
-    the output opens on the input's first sample and keeps its timing: a beep at 0.5 s of a 1x
-    stage came out at 0.479 s, and at 0.5 s with the lead (FFmpeg 6.1.1). Each stage leaves out
-    atempo_lead() samples of its own input, which are the earlier stages' tempo product times
-    that many of the chain's input, so one lead of their sum goes in front of the first stage:
-    an `adelay` between two stages made FFmpeg 6.1.1 fail a graph that joins the result with
-    `concat` ("Invalid data found when processing input", speedramp.py with a 0.25x segment).
-    The bare stages when the rate is not known (a dry run's pending input)."""
+    """`atempo` stages (each value as written) led by silence and trimmed after, so the output
+    keeps the input's timing from its first sample: a beep at 0.5 s of a 1x stage came out at
+    0.479 s (FFmpeg 6.1.1). Each stage leaves out atempo_lead() samples of its own input, which
+    are the earlier stages' tempo product times that many of the chain's input, so one lead of
+    their sum goes in front of the first stage: an `adelay` between two stages made FFmpeg 6.1.1
+    fail a graph that joins the result with `concat` ("Invalid data found when processing
+    input", speedramp.py with a 0.25x segment). That lead alone put the chain's first window,
+    which atempo fades in, over the input's first 21 ms: a 10 ms attack there came out 7 dB down
+    at 1x and was gone at 2x (#541 review). So one whole window more of silence goes in front
+    (as many of the chain's input samples as leave a window of it ahead of every stage), and
+    that much of the output, at the chain's tempo, is cut off again and its timestamps moved
+    back by it, so a track that starts after 0 keeps its start. The bare stages when the rate is
+    not known (a dry run's pending input)."""
     lead = atempo_lead(sample_rate)
-    total, product = 0.0, 1.0
+    chain = ",".join(f"atempo={value}" for value in stages)
+    if not lead:
+        return chain
+    total, product, widest = 0.0, 1.0, 1.0
     for value in stages:
         total += lead * product
         product *= float(value)
-    chain = ",".join(f"atempo={value}" for value in stages)
-    return f"adelay={round(total)}S:all=1,{chain}" if lead else chain
+        widest = max(widest, product)
+    extra = round(2 * lead * widest)  # a window of silence ahead of the stage that shrinks it most
+    cut = round(extra / product)
+    return (f"adelay={round(total) + extra}S:all=1,{chain},"
+            f"atrim=start_sample={cut},asetpts=PTS-{cut}/SR/TB")
 
 
 def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Optional[float]:

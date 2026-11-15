@@ -5200,33 +5200,41 @@ the slot at 0.519 s, "After 3.8.14").
   constant-rate path is unchanged. Code: `reverse.main()`. Tests:
   `test_a_reversed_variable_rate_picture_keeps_its_sound`,
   `test_reverse_of_a_variable_rate_clip_opens_on_its_last_frame`.
-- **Every `atempo` chain is led by the samples atempo leaves out** (#523). `atempo` opens its
-  output half its window into the input, the window being the power of two at or above
-  sample_rate / 24 (1024 samples at 44.1 and 48 kHz, 256 at 8 kHz, 2048 at 96 kHz; measured at
-  each), so every sound after it was early and the first 21 ms of the track were lost:
-  `speedramp.py`'s beeps came 21.3 ms early at 1x and 40 ms at 0.5x on a constant-rate clip,
-  `fit.py --method speed`'s 17-25 ms (1.11x, 0.91x), `audio.py --tempo`'s 10-31 ms (1.5, 0.8, 3)
-  and 89-123 ms at 0.3 (two stages). That is the cause the 3.8.16 entry gave as "atempo" and
-  left. `atempo_chain_with_lead()` puts that many samples of silence ahead of the first stage,
-  summed over the stages (each stage leaves out half a window of its own input, which is the
-  earlier stages' tempo product times that many of the chain's input); the beeps' mean offset is
-  now within 5 ms of where the retiming puts them in every case above, a single beep within 10
-  ms (atempo places its windows by the content) and within about 30 ms through a chain below
-  0.5x. A sound that starts on the chain's first sample (a beep right at a `speedramp.py`
-  segment's start) comes 2.7 ms late, where the first window fades in from the lead; before, its
-  first 21 ms were dropped and its onset stayed where it was, so
-  `test_speedramp_segments_hold_the_frames_between_their_retimed_ends` now holds the picture to
-  its slot and the sound to its place (within 4 ms) instead of the one to the other. One lead, not one per stage: an `adelay` between two stages made FFmpeg 6.1.1 fail a graph
-  that joins the result with `concat` ("Invalid data found when processing input",
-  `speedramp.py --segment 0-2:0.25 --segment 2-4:3`). `speedramp.py` measures its sound on the
-  VFR clip within half a frame now (its row in
-  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame` checks the sound too).
-  `fit.py --method speed` still ends a retimed track on the millisecond `-t` ("After 3.8.11"):
-  3 s to 1.23425 s still writes 59392 AAC samples. A rate that is not known (a dry run's pending
-  input) leaves the chain as it was. The window rule is af_atempo's own; it was measured on 6.1.1
-  only, and the CI jobs on 7.1, 8 and 9 run the test. Code: `decision.atempo_lead()`,
-  `atempo_chain_with_lead()`, `fit.atempo_chain()`, `speedramp.atempo_chain()`, `audio.main()`.
-  Test: `test_a_tempo_change_keeps_each_sound_where_it_belongs`.
+- **Every `atempo` chain is led by a window and a half of silence and cut by a window after;
+  a 1x `speedramp.py` segment is not retimed** (#523, #541 review). `atempo` lays its first
+  window down without retiming it and sets everything after it about half a window early, the
+  window being the power of two at or above sample_rate / 24 (1024 samples at 44.1 and 48 kHz,
+  256 at 8 kHz, 2048 at 96 kHz; measured at each): `speedramp.py`'s beeps came 21.3 ms early at
+  1x and 40 ms at 0.5x on a constant-rate clip, `fit.py --method speed`'s 17-25 ms (1.11x,
+  0.91x), `audio.py --tempo`'s 10-31 ms (1.5, 0.8, 3) and 89-123 ms at 0.3 (two stages), and a
+  1x track ended 21 ms short. That is the cause the 3.8.16 entry gave as "atempo" and left.
+  `atempo_chain_with_lead()` puts half a window of silence per stage ahead of the first one
+  (each stage's half window of its own input is the earlier stages' tempo product times that
+  many of the chain's input) and a whole window more, then cuts that window off the output at
+  the chain's tempo and moves its timestamps back by it, so a track that starts after 0 keeps its
+  start. The extra window is the review's finding: with the half window alone the chain's first
+  window, which atempo fades in, lay over the input's first 21 ms, and a 10 ms tone there came out
+  7 dB down at 1x and was gone at 1.5x and 2x (`speedramp.py`, `fit.py --method speed` 2x and
+  `audio.py --tempo 1.5`); it now keeps its -1.9 dBFS peak at every factor tried (1, 1.5, 2, 0.5,
+  0.3), a slowed tone spread over the windows its new length takes. The beeps' mean offset is
+  within 5 ms of where the retiming puts them in every case above, a single beep within half a
+  30 fps frame (12.6 ms at 0.91x; atempo places its windows by the content) and within about
+  30 ms through a chain below 0.5x. A 1x `speedramp.py` segment is cut and not retimed, so its
+  sound is the source's to the sample; `fit.py --method speed` within 1e-4 of 1x and `audio.py
+  --tempo 1` already added no `atempo`. One lead for the chain, not one per stage: an `adelay`
+  between two stages made FFmpeg 6.1.1 fail a graph that joins the result with `concat`
+  ("Invalid data found when processing input", `speedramp.py --segment 0-2:0.25 --segment
+  2-4:3`). `speedramp.py` measures its sound on the VFR clip within half a frame now (its row in
+  `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame` checks the sound too),
+  and `test_speedramp_segments_hold_the_frames_between_their_retimed_ends` holds the picture to
+  its slot and the sound to its place (within 4 ms) separately: their difference adds the grid's
+  18.5 ms to any sound offset. `fit.py --method speed` still ends a retimed track on the
+  millisecond `-t` ("After 3.8.11"): 3 s to 1.23425 s still writes 59392 AAC samples. A rate that
+  is not known (a dry run's pending input) leaves the chain as it was. The window rule is
+  af_atempo's own; it was measured on 6.1.1 only, and the CI jobs on 7.1, 8 and 9 run the tests.
+  Code: `decision.atempo_lead()`, `atempo_chain_with_lead()`, `fit.atempo_chain()`,
+  `speedramp.main()`, `audio.main()`. Tests: `test_a_tempo_change_keeps_each_sound_where_it_belongs`,
+  `test_a_tempo_change_keeps_an_attack_at_its_start`.
 - **`freeze.py` conforms a VFR picture as it is decoded when it holds a frame inside the clip,
   and works on the delivered grid** (#523). On the source's own frames the head segment ended at
   its last frame's nominal duration, so with `--at` inside a gap the hold, and everything after
@@ -5238,10 +5246,18 @@ the slot at 0.519 s, "After 3.8.14").
   rescales its bound to it, so a half-frame bound written to the microsecond (3.907407 for --at
   3.9) became frame 105 itself: that frame was cut from the head and held in place of frame 106,
   two frames short. A `settb=AVTB` after the conform keeps the bounds between the frames. The
-  grid is laid from the picture's start (`setpts` to 0 ahead of the `fps` filter and back after
-  it): the filter lays it from the clock's 0, and every time above is counted from the start, so
-  a picture that starts 50 ms after its sound came out a frame early after the hold (flash minus
-  beep 68 ms before it, 31 ms after; on 3.8.20 `--at 2.2` moved it 73 ms). A hold at the start or
+  grid is laid from the picture's start (`setpts` to 0 ahead of the `fps` filter, the picture's
+  trims counted from there): the filter lays it from the clock's 0, and every time above is
+  counted from the start, so a picture that starts 50 ms after its sound came out a frame early
+  after the hold (flash minus beep 68 ms before it, 31 ms after; on 3.8.20 `--at 2.2` moved it
+  73 ms). The joined picture's timestamps are then rebuilt from its frame count (`setpts=N*...`
+  ahead of the closing `fps`, as `speedramp.py` does): FFmpeg 6.1.1's video `concat` gives a
+  one-frame segment no length, so a hold of one frame (`--hold 0.04` at 30 fps, `--hold 0.05` on
+  the 27 fps clip, on constant-rate sources too and on 3.8.20) lost its frame and the rest of the
+  picture ran a frame before its sound (33 ms on the 30 fps clip; #541 review). The picture is not
+  moved back after the conform: a `setpts` there left its frames no
+  duration and no rate from FFmpeg 7.0, and the hold's `tpad` after it cloned nothing (109 frames
+  for 135 on 7.1, in CI; 6.1.1, 8.0.1 and 9.0.2 wrote 135). A hold at the start or
   the end of the clip already ran through `with_cfr()` and is unchanged. Code: `freeze.main()`,
   `decision.cfr_at_input()` (its `origin`). Tests: the `freeze-gap` rows of
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
