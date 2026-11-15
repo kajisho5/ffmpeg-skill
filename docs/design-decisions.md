@@ -5909,3 +5909,54 @@ before it was changed. Five classes are changed, two are left for a decision.
   AAC into the `.mka` (`reencoded: true`, verified). What `.mka` should mean is open: an audio
   extension (the sound is extracted, the read and write sets and the contract grow), a refusal, or
   a video container (the copy maps its picture and the needless re-encode goes).
+- **What the review of #554 found in the five changes above, each measured on FFmpeg 6.1.1 first.**
+  `waveform.py`'s older refusal of an audio extension had no `reason` while README named
+  `output_extension_audio_only` for every picture tool; it gives that reason now, from its own
+  place ahead of its measuring passes. The `dropped_non_av_streams` text in the contract said
+  "false when the muxer writes the timecode track itself" without the condition stated above (a
+  source with both a subtitle and a data stream); it says it now. `audio.py --audio-stream N`
+  read the first track's start for the lead: a second track 0.476 s late beside a first at 0 was
+  written 2.53 s long with the sound at 0, and is 3.0 s with the sound at 0.49 s now
+  (`audio.main_track_lead()` reads the selected track's start; `loudness.py` has no
+  `--audio-stream`). `metadata.py`'s preflight left `.m4a` out of the MPEG-4 family, so sound with
+  a SubRip track written to `.m4a` still failed in ffmpeg after a dry run that completed; and its
+  timecode retry into `.m4v` completed without the timecode (the ipod muxer writes no tmcd track
+  unless asked; `source_carry` listed it as dropped), so that retry passes `-write_tmcd 1` and the
+  label read back is the source's. In `graphics.py`, the lower third's two slides met at an
+  instant the ASS route writes in centiseconds (0.61 for 0.614286 in a 0.5 to 0.7 s window), so
+  the text's slide-out led the bar's: no frame differed at 25 or 30 fps, one did at 60 fps (the
+  text 11 px ahead of the bar at 640 px wide, 2 px between the routes after); the instant is
+  rounded to a centisecond for both routes when the slides fill the window. A window they fill
+  exactly had a rest line of no length whose emoji PNG, which has no fade, showed for the one
+  frame at that instant (saturation of the bar's corner 30.7 on that frame against 4.8 and 2.1
+  beside it; 6.6 after); the line is not written. The sticker's 0.25 s pop was cut on the ASS
+  route only, so in a 0.2 s window drawtext peaked at 1.18 against 2.10 (full strength 2.10); the
+  pop is `min(0.25, fade)` on both, and its ASS `\move` with it. Tests: the five above, extended.
+- **The padded lead is cut into frames of 4096 samples (`asetnsamples=n=4096:p=0`).** From #554's
+  CI log, not measured locally: on FFmpeg 9.0.2 `loudness.py -o x.flac` of a late sound failed
+  in the FLAC encoder ("invalid block size: 111305"), the pad having handed it the lead and the
+  sound as one frame; 6.1.1 splits the frames itself. The split is part of
+  `decision.PAD_SOUND_FROM_ZERO`, so `audio.py` and `loudness.py` both have it, for every codec
+  (the lengths and onsets measured on 6.1.1 are the same with it, `.wav`, `.flac`, `.m4a`,
+  `.mp3`, `.ogg` and `.opus`). Whether it clears the failure on 9 is reasoned from the encoder's
+  message. Not changed, and likely to meet the same on FFmpeg 9 where a filter upstream emits one
+  large frame: the same pad without the split in `cut.py --accurate` to `.flac` (`cut.cut_one()`)
+  and in the re-cut `silence.py` and `cut.py --segments` use (`cut.join_from_source()`). The same
+  CI run had two data streams in the fixture of
+  `test_a_refused_data_stream_does_not_cost_the_subtitles_beside_it`; the new tests no longer
+  assert how many data tracks a muxer writes.
+- **The fade's alpha is held in 0..1.** From #554's CI on FFmpeg 9.0.2 (macOS), not reproduced
+  here: the drawtext chip in a 0.5 to 0.95 s window was 6.94 on the frame at `--start` where
+  every other frame was under 1, in that one window only; the same subtest passes on 6.1.1, 7.1
+  and 8. Evaluated by hand, the expression is exactly 0 on that frame and on a frame at `--end`,
+  and negative on a frame the window selects a hair before `--start` (1.234567 s for
+  `--start 1.235` at 30000/1001: -0.0014). FFmpeg 6.1.1 draws nothing for 0 or a negative alpha
+  (measured: the frame is black for -0.05 and 0), so the cause on 9 is not established. The
+  expression is `max(0,min(1,...))` now, which removes the negative case by construction; on
+  6.1.1 every frame of the three windows measures as before. It does not change the frame at
+  `--start` itself, whose alpha was 0 already, so it may not clear the CI failure. Leaving that
+  frame out of the drawtext's `enable` would, if a zero alpha is what FFmpeg 9 draws wrongly, but
+  `test_a_window_or_a_length_on_a_frame_time_keeps_that_frame` pins the `enable` text of this
+  drawtext, so it was not done; that needs an FFmpeg 9 run and a decision. The test is not
+  loosened: one rise and one fall, which a first frame brighter than the next fails. Code:
+  `graphics.main()` (`fade_a`).

@@ -131,6 +131,9 @@ class AudioTests(MediaFixtures):
                     written = probe(str(out))
                     self.assertAlmostEqual(written["audio"].get("start_time") or 0.0, 0.0, delta=0.001)
                     self.assertAlmostEqual(written["duration"], end, delta=0.05)
+                    # the padded sound reaches the encoder in ordinary frames: FFmpeg 9 handed the
+                    # FLAC encoder the lead and the sound as one frame, which it refused (#554's CI)
+                    self.assertTrue(any("first_pts=0,asetnsamples=n=4096:p=0" in str(c) for c in doc["commands"]), doc["commands"])
         # beside its picture the sound keeps its place in the container, unpadded
         for tool, args in (("audio.py", ["--gain", "1"]), ("loudness.py", [])):
             with self.subTest(tool=tool, kept_video=True):
@@ -138,6 +141,22 @@ class AudioTests(MediaFixtures):
                 script(tool, src, *args, "-o", out, "--overwrite")
                 written = probe(str(out))
                 self.assertAlmostEqual(written["audio"]["start_time"] - written["video"]["start_time"], late, delta=0.03)
+        # --audio-stream N: the lead is the selected track's, not the first one's (#554 review)
+        two = d / "two_tracks.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=3",
+           "-f", "lavfi", "-i", "sine=f=440:d=3", "-f", "lavfi", "-i", "sine=f=880:d=2.5",
+           "-filter_complex", "[2:a]asetpts=PTS+0.5/TB[b]", "-map", "0:v", "-map", "1:a", "-map", "[b]",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", two)
+        starts = [float(x) for x in sh("ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=start_time",
+                                       "-of", "csv=p=0", two).stdout.replace(",", " ").split()]
+        self.assertLess(starts[0], 0.03, "fixture: the first track starts with the picture")
+        self.assertGreater(starts[1], 0.4, "fixture: the second track starts late")
+        for n, want in ((0, 0.0), (1, starts[1])):
+            with self.subTest(audio_stream=n):
+                out = d / f"track{n}.wav"
+                script("audio.py", two, "--gain", "1", "--audio-stream", str(n), "-o", out, "--overwrite")
+                self.assertAlmostEqual(onset(out), want, delta=0.03)
+                self.assertAlmostEqual(probe(str(out))["duration"], 3.0, delta=0.06)
         # a sound that starts with its picture is not touched
         plan = json.loads(script("audio.py", self.src, "--gain", "1", "-o", d / "plain.wav", "--dry-run", "--overwrite", "--json").stdout)
         self.assertNotIn("first_pts", str(plan["commands"][-1]))

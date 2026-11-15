@@ -2545,7 +2545,10 @@ class ProbedStreamTests(unittest.TestCase):
            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text",
            "-timecode", "01:00:00:00", src)
         kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", src).stdout.split()
-        self.assertEqual((kinds.count("subtitle"), kinds.count("data")), (1, 1), "fixture: one text track, one tmcd track")
+        # how many data tracks the muxer writes beside the timecode depends on the FFmpeg version
+        # (two on 9.0.2): the test needs one text track and a data stream, not a count
+        self.assertEqual(kinds.count("subtitle"), 1, "fixture: one text track")
+        self.assertGreaterEqual(kinds.count("data"), 1, "fixture: a timecode (tmcd) data track")
         tools = [("crop", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]), ("color", ["--correct"]),
                  ("denoise", []), ("loudness", [])]
         for name, args in tools:
@@ -2562,9 +2565,13 @@ class ProbedStreamTests(unittest.TestCase):
                     self.assertNotIn("subtitles", (doc.get("source_carry") or {}).get("dropped") or [])
                     written = sh("ffprobe", "-v", "error", "-select_streams", "d", "-show_entries", "stream=index",
                                  "-of", "csv=p=0", out).stdout.split()
-                    # what the result says is what the file holds: the timecode track is not in a
-                    # Matroska file, and an MP4 muxer writes its own from the picture's timecode tag
-                    self.assertEqual(doc["dropped_non_av_streams"], not written, doc.get("diagnostics"))
+                    # what the result says is what the file holds: no data stream is in a Matroska
+                    # file, and an MP4 holds the source's (copied, or the muxer's own timecode track)
+                    # or fewer, which is then said
+                    self.assertEqual(doc["dropped_non_av_streams"], len(written) < kinds.count("data"),
+                                     doc.get("diagnostics"))
+                    if ext == ".mkv":
+                        self.assertEqual(written, [])
                     for fb in [f for f in (doc.get("diagnostics") or {}).get("fallbacks") or []
                                if f["code"] == "non_av_streams_dropped"]:
                         self.assertEqual(fb["dropped"], ["data"], "only the data stream is retried away")

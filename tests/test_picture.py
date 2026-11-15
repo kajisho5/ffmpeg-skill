@@ -2490,6 +2490,31 @@ class PictureTests(MediaFixtures):
                     self.assertTrue(all(x > -0.02 for x in rise + fall), f"one peak: it rises, then falls: {inside}")
                     if rise and fall:
                         self.assertLess(max(fall), max(rise) * 1.8 + 0.02, f"no jump where the fade-out takes over: {inside}")
+        if "drawtext" in routes:
+            # the alpha is held in 0..1 for every frame the window selects: the frame at --start
+            # came out far brighter than the rest on FFmpeg 9.0.2 (#554's CI), which the one-peak
+            # check above is there to catch
+            plan = json.loads(script("graphics.py", black, "--template", "chapter", "--title", "HELLO", "--start", "0.5",
+                                     "--end", "0.95", "--text-render", "drawtext", "-o", d / "plan.mp4", "--dry-run",
+                                     "--overwrite", "--json").stdout)
+            cmd = str(plan["commands"][-1])
+            self.assertIn("max(0,min(1,if(lt(t,0.500+0.225),", cmd)
+        # the sticker pops in over 0.25 s: cut with the fade on both routes, or drawtext's chip
+        # reached half the brightness the ASS route's did in a 0.2 s window (#554 review)
+        peaks = {}
+        for route in routes:
+            out = d / f"sticker_{route}.mp4"
+            script("graphics.py", black, "--template", "sticker", "--text", "HELLO", "--start", "0.5", "--end", "0.7",
+                   "--text-render", route, "--fast", "-o", out, "--overwrite")
+            inside = levels(out, 0.5, 0.7)
+            peaks[route] = max(inside)
+            self.assertLess(inside[-1], peaks[route] * 0.6, f"{route}: the chip leaves faded out: {inside}")
+        long_out = d / "sticker_long.mp4"
+        script("graphics.py", black, "--template", "sticker", "--text", "HELLO", "--start", "0.2", "--end", "1.8",
+               "--text-render", routes[0], "--fast", "-o", long_out, "--overwrite")
+        full = max(levels(long_out, 0.2, 1.8))
+        for route, peak in peaks.items():
+            self.assertGreater(peak, full * 0.8, f"{route}: the chip reaches its strength in a 0.2 s window: {peak} of {full}")
         # the lower third: in a 0.35 s window the bar is still sliding out on its last frame (it sat
         # at rest until the window closed before, having jumped back part way through)
         out = d / "lower_third_short.mp4"
@@ -2502,6 +2527,24 @@ class PictureTests(MediaFixtures):
                         and all(b <= a + 0.02 for a, b in zip(cover[at:], cover[at + 1:])),
                         f"the bar slides in, then out, without jumping back: {cover}")
         self.assertLess(cover[-1], max(cover) * 0.6, f"the bar is leaving the frame on its last frame: {cover}")
+        if "ass" in routes:
+            # the instant the slides meet is one centisecond for the bar and for the ASS lines (the
+            # text's slide-out started 4 ms before the bar's at 0.614286 s and led it by 11 px at
+            # 60 fps), and a window the slides fill has no rest line: its emoji PNG, which has no
+            # fade, showed for the one frame at that instant (#554 review)
+            out = d / "lower_third_ass.mp4"
+            doc = json.loads(script("graphics.py", black, "--template", "lower-third", "--name", "HELLO \U0001F389",
+                                    "--start", "0.5", "--end", "0.7", "--text-render", "ass", "--emoji", "png",
+                                    "--emoji-assets", _emoji_assets(), "--fast", "-o", out, "--overwrite", "--json").stdout)
+            cmd = str(doc["commands"][-1])
+            meet = 0.5 + float(re.search(r"lt\(t,0\.500\+([0-9.]+)\)", cmd).group(1))
+            ass = next(p for p in d.glob("lower_third_ass*.ass")).read_text(encoding="utf-8")
+            times = [tuple(int(h) * 3600 + int(m) * 60 + float(sec) for h, m, sec in re.findall(r"(\d+):(\d\d):(\d\d\.\d\d)", ln)[:2])
+                     for ln in ass.splitlines() if ln.startswith("Dialogue:")]
+            self.assertEqual(sorted(set(times)), [(0.5, round(meet, 6)), (round(meet, 6), 0.7)], cmd)
+            windows = re.findall(r"enable=\S*?between\(t,([0-9.]+),([0-9.]+)\)", cmd)
+            self.assertTrue(windows, "the emoji is composited")
+            self.assertTrue(all(float(a) < float(b) for a, b in windows), f"no emoji overlay of no length: {windows}")
 
     def test_filter_paths_with_drive_colon_spaces_and_unicode(self):
         """subtitles= / ass= / lut3d=file= / fontfile= take a path with a colon, spaces and non-ASCII.

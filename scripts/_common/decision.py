@@ -417,8 +417,12 @@ def stream_starts(meta: Optional[Dict[str, Any]]) -> Tuple[float, float]:
     return out[0], out[1]
 
 
-# Pads a sound that starts after the clock's 0 with silence from 0 (#409's rule for a re-encode)
-PAD_SOUND_FROM_ZERO = "aresample=async=1:first_pts=0"
+# Pads a sound that starts after the clock's 0 with silence from 0 (#409's rule for a re-encode),
+# then cuts the result into frames of 4096 samples (p=0: the last one is not padded, so the length
+# is the sound's). On FFmpeg 9 the pad handed the encoder the lead and the sound in one frame, and
+# the FLAC encoder, which takes frames as they come, refused it ("invalid block size: 111305",
+# #554's CI on 9.0.2; 6.1.1 splits the frames itself, so this was not seen locally)
+PAD_SOUND_FROM_ZERO = "aresample=async=1:first_pts=0,asetnsamples=n=4096:p=0"
 
 
 def late_sound_lead(meta: Optional[Dict[str, Any]]) -> float:

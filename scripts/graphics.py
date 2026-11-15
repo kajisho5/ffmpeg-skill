@@ -283,7 +283,13 @@ def main(force_route: Optional[str] = None) -> int:
     # emoji PNGs ride the same envelope (emoji_overlays below), as overlay.py cuts its fade-out.
     fade_s = min(0.3, (e - s) / 2.0)
     fade_ms = (round(fade_s * 1000), round(fade_s * 1000))
-    fade_a = f"if(lt(t,{s:.3f}+{fade_s:g}),(t-{s:.3f})/{fade_s:g},if(gt(t,{e:.3f}-{fade_s:g}),({e:.3f}-t)/{fade_s:g},1))"
+    # Held in 0..1 for every t: the window selects frames by their own times, half a frame either
+    # side, so a frame a hair before --start (1.234567 s for "1.235" at 30000/1001) gave a
+    # negative alpha. FFmpeg 6.1.1 draws nothing for it; FFmpeg 9.0.2 drew the window's first
+    # frame far brighter than any other in #554's CI (drawtext only, one window; the cause was not
+    # established there, and no FFmpeg 9 was run here)
+    fade_a = (f"max(0,min(1,if(lt(t,{s:.3f}+{fade_s:g}),(t-{s:.3f})/{fade_s:g},"
+              f"if(gt(t,{e:.3f}-{fade_s:g}),({e:.3f}-t)/{fade_s:g},1))))")
 
     # --- which renderer draws the text (1.15) --------------------------------------------------
     # drawtext does bidi and Arabic joining on a fribidi build, but it never reorders or
@@ -468,6 +474,13 @@ def main(force_route: Optional[str] = None) -> int:
         # a window shorter than the two together shares itself between them 4:3, so the bar still
         # ends off the frame and does not jump where the slide-out takes over (#539)
         in_s, out_s = min(0.4, (e - s) * 4 / 7), min(0.3, (e - s) * 3 / 7)
+        if in_s + out_s >= e - s:
+            # the two meet at one instant, which the ASS route writes in centiseconds: put it on
+            # one for both routes, or the text's slide-out started up to 5 ms before the bar's
+            # and sat ahead of it for the whole exit (11 px at 640 px wide, 60 fps; #554 review)
+            meet = round((s + in_s) * 100) / 100
+            if s < meet < e:
+                in_s, out_s = meet - s, e - meet
         x_expr = (f"if(lt(t,{s:.3f}+{in_s:g}),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/{in_s:g}),"
                   f"if(gt(t,{e:.3f}-{out_s:g}),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/{out_s:g}),{m_left}))")
         fc.append(f"{layer_src(bg, 0.85, bar_w, bar_h)}[bar]")
@@ -489,10 +502,14 @@ def main(force_route: Optional[str] = None) -> int:
                                      align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
                                      outline_color="000000", start=s, end=s + in_s,
                                      move=(x_off, ty, x_rest, ty, 0, round(in_s * 1000)), x_expr=tx))
-                elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
-                                     align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
-                                     outline_color="000000", start=s + in_s, end=e - out_s,
-                                     x_expr=tx))
+                if e - out_s > s + in_s:
+                    # no rest phase in a window the two slides fill: a line of no length drew
+                    # nothing, but its emoji PNG, which has no fade, showed for the one frame at
+                    # that instant between the other two phases' faded ones (#554 review)
+                    elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
+                                         align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
+                                         outline_color="000000", start=s + in_s, end=e - out_s,
+                                         x_expr=tx))
                 elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
                                      align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
                                      outline_color="000000", start=e - out_s, end=e,
@@ -584,7 +601,11 @@ def main(force_route: Optional[str] = None) -> int:
         fs = int(base * 0.05)
         padx, pady = int(fs * 0.7), int(fs * 0.45)
         rise = int(fs * 0.5)
-        pop = f"min(1,(t-{s:.3f})/0.25)"
+        # the pop is cut to the fade's length in a short window, on both routes: drawtext kept
+        # its 0.25 s while the ASS \fad was cut, so the chip reached half the brightness there
+        # (#554 review)
+        pop_s = min(0.25, fade_s)
+        pop = f"min(1,(t-{s:.3f})/{pop_s:g})"
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
         # every position rises into place, on both routes: a bottom chip started `rise` px above
         # its rest on drawtext and dropped, where the ASS \move below rises (A177)
@@ -603,9 +624,9 @@ def main(force_route: Optional[str] = None) -> int:
                  size=fs, color=bg, font=ass_font_family(), align=align,
                  x=(m_left if "left" in pos else W - m_right), y=y_rest,
                  box=True, box_color=primary, box_alpha=0x0D, outline=float(pady),
-                 outline_color=primary, start=s, end=e, fade=(min(250, fade_ms[0]), min(250, fade_ms[1])),
+                 outline_color=primary, start=s, end=e, fade=(round(pop_s * 1000), min(250, fade_ms[1])),
                  move=(m_left if "left" in pos else W - m_right, y_start,
-                       m_left if "left" in pos else W - m_right, y_rest, 0, 250))
+                       m_left if "left" in pos else W - m_right, y_rest, 0, round(pop_s * 1000)))
 
     elif args.template == "hook":
         # The opener: a full-width card over the first --duration seconds with a thin bar along

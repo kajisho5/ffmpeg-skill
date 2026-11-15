@@ -41,7 +41,7 @@ from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
-from _common.emit import absorb_stage_hw, note, warn
+from _common.emit import absorb_stage_hw, note, refuse, warn
 from _common.runner import refuse_missing_components_first
 from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
@@ -182,8 +182,12 @@ def main() -> int:
     # every audio-only extension this skill reads, not only those it writes (is_audio_output():
     # .aif, .aiff, .caf and .wma are not there, and passed this to fail in ffmpeg, or in a dry run not at all)
     if os.path.splitext(output)[1].lower() in AUDIO_MEDIA_EXT:
-        die(f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
-            "name a video file (.mp4, .mov, .mkv)", kind="input")
+        # the reason every tool that writes a picture gives (runner._check_picture_into_audio_extension,
+        # #539), from here because it comes before the measuring passes
+        refuse("input", "output_extension_audio_only",
+               f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
+               "name a video file (.mp4, .mov, .mkv)",
+               output=output, extension=os.path.splitext(output)[1].lower(), encoders=[])
 
     # The visualisation's own band. Without --image/--position it fills the frame, which is what
     # every 1.15 command line did, so the graph below is byte-identical when no new flag is given.

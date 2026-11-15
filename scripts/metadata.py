@@ -75,15 +75,16 @@ def refuse_uncopyable_streams(streams: List[Dict[str, Any]], src: str, output: s
     other container is left to its muxer."""
     ext = Path(output).suffix.lower().lstrip(".")
     matroska = "." + ext in MATROSKA_EXT
-    if not (ext in MP4_FAMILY or matroska or ext == "webm"):
+    mpeg4 = ext in MP4_FAMILY or ext == "m4a"  # .m4a is the same muxer family: no SubRip there either
+    if not (mpeg4 or matroska or ext == "webm"):
         return
-    family = "mkv" if matroska else ext  # .mka and .mks hold what .mkv holds
+    family = "mkv" if matroska else "mp4" if ext == "m4a" else ext  # .mka and .mks hold what .mkv holds
     refused = []
     for s in streams:
         if s["type"] == "subtitle":
             ok = subtitle_container_holds(s["codec"], family) and subtitle_codec_for(s["codec"], family) == "copy"
         elif s["type"] == "data":
-            ok = ext in MP4_FAMILY
+            ok = mpeg4
         else:
             ok = matroska
         if not ok:
@@ -375,7 +376,9 @@ def main() -> int:
                             "non_av_streams_dropped", output=output, returncode=proc.returncode, error=error, dropped=["data"])
             for s in timecode_tracks:
                 cmd += ["-map", f"-0:{s['index']}"]
-            run(cmd + tail)
+            # .m4v is written by the ipod muxer, which writes no timecode track unless asked: the
+            # retry completed without the timecode there (#554 review)
+            run(cmd + tail[:-1] + (["-write_tmcd", "1"] if out_ext == ".m4v" else []) + tail[-1:])
     else:
         run(cmd + tail)
     if tmpdir:

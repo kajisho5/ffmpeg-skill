@@ -8942,8 +8942,13 @@ class Issue415Tests(unittest.TestCase):
         self.assertIn("subrip,subtitle", kinds(srt_mkv), "fixture")
         self.assertIn("mov_text,subtitle", kinds(text_mp4), "fixture")
         self.assertTrue(any(k.endswith(",data") for k in kinds(timed_mp4)), "fixture: a tmcd data track")
+        # sound and a SubRip track, no picture: .m4a is the MPEG-4 family too (the ipod muxer),
+        # and was left to fail in ffmpeg after a dry run that completed (#554 review)
+        sound_mkv = d / "sound_srt.mkv"
+        ffmpeg("-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-c:a", "aac", "-c:s", "srt", sound_mkv)
+        self.assertEqual(sorted(kinds(sound_mkv)), ["aac,audio", "subrip,subtitle"], "fixture")
         for src, ext, named in ((srt_mkv, ".mp4", "subrip"), (srt_mkv, ".mov", "subrip"), (text_mp4, ".mkv", "mov_text"),
-                                (timed_mp4, ".mkv", "data")):
+                                (timed_mp4, ".mkv", "data"), (sound_mkv, ".m4a", "subrip")):
             for dry in ((), ("--dry-run",)):
                 with self.subTest(src=src.name, ext=ext, dry=bool(dry)):
                     out = d / f"refused_{src.stem}{ext}"
@@ -8953,18 +8958,27 @@ class Issue415Tests(unittest.TestCase):
                     self.assertIn(named, doc["error"]["message"])
                     self.assertIn("export.py", doc["error"]["hint"])
                     self.assertFalse(out.exists())
-        for src, ext in ((srt_mkv, ".mkv"), (text_mp4, ".mp4"), (text_mp4, ".mov"), (timed_mp4, ".mp4"), (timed_mp4, ".mov")):
+
+        def held(path):
+            # a muxer writes data tracks of its own (how many depends on the FFmpeg version), so
+            # the copy is compared by its picture, sound and subtitles, and by having a data track
+            rows = kinds(path)
+            return sorted(k for k in rows if not k.endswith(",data")), any(k.endswith(",data") for k in rows)
+        for src, ext in ((srt_mkv, ".mkv"), (text_mp4, ".mp4"), (text_mp4, ".mov"), (timed_mp4, ".mp4"), (timed_mp4, ".mov"),
+                         (timed_mp4, ".m4v")):
             with self.subTest(src=src.name, ext=ext, kept=True):
                 out = d / f"kept_{src.stem}{ext}"
                 doc = json.loads(tool("metadata", src, "--title", "x", "-o", out, "--json", check=False).stdout)
                 self.assertEqual(doc["status"], "completed", doc.get("error"))
-                self.assertEqual(sorted(kinds(out)), sorted(kinds(src)), "every stream of the source is in the copy")
+                self.assertEqual(held(out), held(src), "every stream of the source is in the copy")
 
         def timecode(path):
             return sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream_tags=timecode",
                       "-of", "csv=p=0", path).stdout.strip()
         self.assertEqual(timecode(timed_mp4), "01:00:00:00", "fixture")
-        self.assertEqual(timecode(d / "kept_timed.mp4"), "01:00:00:00")
+        # .m4v too: its muxer writes no timecode track unless asked, and the retry lost the label
+        for ext in (".mp4", ".mov", ".m4v"):
+            self.assertEqual(timecode(d / f"kept_timed{ext}"), "01:00:00:00", ext)
 
     def test_a_picture_written_into_an_audio_only_extension_is_refused_before_ffmpeg_runs(self):
         """#539: a tool that always writes a picture took `-o x.m4a` and completed, verified, with
@@ -8997,9 +9011,10 @@ class Issue415Tests(unittest.TestCase):
                         continue
                     self.assertEqual(doc["status"], "failed", doc)
                     self.assertEqual(doc["error"]["kind"], "input", doc["error"])
-                    if name != "waveform":  # its own, older refusal has no reason
-                        self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc["error"])
-                        self.assertEqual(doc["error"]["details"]["extension"], ext)
+                    # waveform.py refuses by its own rule, before its measuring passes, with the
+                    # same reason (it had none, and README named this one for every picture tool)
+                    self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc["error"])
+                    self.assertEqual(doc["error"]["details"]["extension"], ext)
         # a real run refuses the same way and writes nothing; a video container still works
         out = d / "real.m4a"
         doc = json.loads(tool("crop", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out,

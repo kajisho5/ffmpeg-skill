@@ -227,6 +227,25 @@ def main_track_channels(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
     return (meta.get("audio") or {}).get("channels") or 0
 
 
+def main_track_lead(args: argparse.Namespace, meta: Dict[str, Any]) -> float:
+    """late_sound_lead() of the track audio.py processes: --replace's file, or the input's
+    --audio-stream N. probe() describes the first audio stream, so for another track its own start
+    is read (a second track that starts late beside a first that does not lost its lead, and the
+    other way round a pad was written that did nothing; #554 review). 0.0 when it cannot be read."""
+    if args.replace:
+        return 0.0 if dry_run_input_pending(args.replace) else late_sound_lead(probe(args.replace))
+    if not args.audio_stream or meta.get("dry_run"):
+        return late_sound_lead(meta)
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", f"a:{args.audio_stream}", "-show_entries",
+                "stream=start_time", "-of", "csv=p=0", args.input], quiet=True, check=False)
+    first = (proc.stdout or "").strip().splitlines()[:1]
+    try:
+        lead = float(first[0].strip().strip(",")) - file_origin(meta)
+    except (IndexError, ValueError):
+        return 0.0
+    return lead if lead > 0.0005 else 0.0
+
+
 def main_track_rate(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
     """Sample rate of the track audio.py processes (as main_track_channels() picks it); 0 when it
     is not known (a dry run's pending input)."""
@@ -519,8 +538,7 @@ def main() -> int:
         # start time and lost it, .m4a kept it as an edit a decoder does not pad, so the
         # extraction played that much early (#539). Beside a copied picture the container holds
         # the start, and nothing is padded.
-        track_meta = meta if not args.replace else ({} if dry_run_input_pending(args.replace) else probe(args.replace))
-        if late_sound_lead(track_meta):
+        if main_track_lead(args, meta):
             fx.append(PAD_SOUND_FROM_ZERO)
     if args.channel is not None:
         # #487: one channel by index, first, so every later stage works on it alone
