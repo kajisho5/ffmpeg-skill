@@ -1788,9 +1788,11 @@ class EditingTests(MediaFixtures):
             ("export", ["export.py", "--preset", "youtube"], same, True),
             ("cut", ["cut.py", "--start", "0", "--end", "4", "--accurate"], same, True),
             ("segments", ["cut.py", "--segments", "0-2,2.2-4"], [0.5, 1.5, 2.3, 3.3], False),
-            ("pad", ["pad.py", "--start", "0.5"], [1.0, 2.0, 3.0, 4.0], False),
+            # #538: the padding is whole frames of the delivered rate (14 of 27 fps for 0.5 s), and
+            # the sound waits as long as they last
+            ("pad", ["pad.py", "--start", "0.5"], [14 / 27 + t for t in same], False),
             # a fill with chroma is drawn in a split/maskedmerge graph (drawn_chain)
-            ("pad-colour", ["pad.py", "--start", "0.5", "--color", "red"], [1.0, 2.0, 3.0, 4.0], False),
+            ("pad-colour", ["pad.py", "--start", "0.5", "--color", "red"], [14 / 27 + t for t in same], False),
             ("graphics", ["graphics.py", "--template", "chapter", "--title", "C"], same, True),
             ("freeze", ["freeze.py", "--at", "1.2", "--hold", "1"], [0.5, 2.5, 3.5, 4.5], False),
             # #523: an --at inside a gap (frames at 0.067 and 0.3 s, at 2.067 and 2.3 s): the
@@ -1917,6 +1919,77 @@ class EditingTests(MediaFixtures):
                 self.assertEqual(stream_spans(out)["video"][2], frames, stream_spans(out))
                 offsets = av_offsets_ms(out)
                 self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
+
+    def test_a_variable_rate_cut_lays_its_grid_from_its_start(self):
+        """#538: a re-encoded cut seeks a margin early and drops it on the output side, after the
+        conform, whose grid was laid from the first decoded frame: the seek landed between two of
+        its slots and the encoder line's rate rounded the picture again, so on the 27 fps average
+        clip cut.py --start 0.45 showed every flash 24 ms after its beep and --start 0.2 33 ms
+        (plain and --accurate), and fit.py --method trim --from-center 24-37 ms. The grid is laid
+        from the cut now: the output's slot k is the source's time start + k/27, and a source frame
+        takes the slot its time rounds to and stays until the next frame's slot, the conform's own
+        rule (so across a gap a slot keeps the frame before it, not the nearest). Each flash is held to the slot that rule
+        names (to a millisecond: timestamps), each beep to its place (the sound is not touched),
+        and the picture to its count of slots."""
+        src = make_vfr_flash_beep(OUT / "i538_vfr.mp4")
+        self.assertTrue(probe(str(src))["video"].get("variable_frame_rate_suspected"), "the fixture must read as VFR")
+        rate = 27
+        frames = [n / 30 for n in range(120) if not 3 <= n <= 8 and not 63 <= n <= 68]
+        lit = {n / 30 for n in range(120) if n / 30 >= 0.5 and (n / 30 - 0.5) % 1 < 0.06 - 1e-9}
+        self.assertEqual(len(lit), 8, "two frames per flash")
+
+        def slots(start, length):
+            # the fps filter's rule: a frame takes the slot its time rounds to and is shown until the
+            # next frame's slot; the nearest frame is not searched for (#549 review: in the gap at
+            # 2.2 the frame of 2.067 fills slots 0-2, though 2.3 is nearer slot 2)
+            at = [(math.floor((f - start) * rate + 0.5), f) for f in frames]
+            shown = [[f for s, f in at if s <= k][-1] for k in range(math.ceil(length * rate - 1e-9))]
+            return [k / rate for k, f in enumerate(shown) if f in lit and (k == 0 or shown[k - 1] not in lit)]
+        cases = (
+            (["cut.py", "--start", "0.45"], 0.45, 3.55),
+            (["cut.py", "--start", "0.45", "--accurate"], 0.45, 3.55),
+            (["cut.py", "--start", "0.2", "--end", "3.9"], 0.2, 3.7),
+            (["cut.py", "--start", "1.45"], 1.45, 2.55),  # a whole second's margin
+            (["cut.py", "--start", "2.2"], 2.2, 1.8),  # inside the second gap
+            (["fit.py", "--duration", "3.1", "--method", "trim", "--from-center"], 0.45, 3.1),
+        )
+        for argv, start, length in cases:
+            with self.subTest(args=argv[1:]):
+                out = OUT / "i538_cut.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                want = slots(start, length)
+                got = flash_times(out)
+                self.assertEqual(len(got), len(want), f"flashes at {got}, want {want}")
+                for g, w in zip(got, want):
+                    self.assertLessEqual(abs(g - w), 0.001, f"flashes at {got}, want {want}")
+                heard = [f - o / 1000 for f, o in zip(got, av_offsets_ms(out))]
+                for h, s in zip(heard, [s - start for s in (0.5, 1.5, 2.5, 3.5) if s > start]):
+                    self.assertLessEqual(abs(h - s), 0.002, f"beeps at {heard}")
+                self.assertEqual(stream_spans(out)["video"][2], math.ceil(length * rate - 1e-9), stream_spans(out))
+
+    def test_a_variable_rate_hold_or_pad_at_the_start_keeps_every_frame(self):
+        """#538: an fps conform after tpad's start pad wrote a slot too few: tpad passes its
+        input's end on without the pad, so the filter ended the picture at its last frame's start.
+        freeze.py --at 0 --hold 1 and pad.py --start 1 wrote 134 frames of the 27 fps average
+        clip's 135 (the picture ending 37 ms before its sound). A VFR picture is conformed first,
+        and the hold or the padding is whole frames of the delivered rate, which the sound waits as
+        long as: the picture holds the source's 108 slots and the frames added, and every flash
+        keeps one offset from its beep (the conform's own, within half a frame)."""
+        src = make_vfr_flash_beep(OUT / "i538_vfr.mp4")
+        half = 0.5 / 27 + 0.001
+        cases = ((["freeze.py", "--at", "0", "--hold", "1"], 27), (["freeze.py", "--at", "0", "--hold", "0.5"], 14),
+                 (["freeze.py", "--at", "0", "--hold", "0.05"], 1),
+                 (["pad.py", "--start", "1"], 27), (["pad.py", "--start", "0.5"], 14),
+                 (["pad.py", "--start", "1", "--color", "red"], 27), (["pad.py", "--start", "1", "--end", "1"], 54))
+        for argv, added in cases:
+            with self.subTest(args=argv):
+                out = OUT / "i538_start.mp4"
+                script(argv[0], src, *argv[1:], "--fast", "-o", out, "--overwrite")
+                self.assertEqual(stream_spans(out)["video"][2], 108 + added, stream_spans(out))
+                offsets = av_offsets_ms(out)
+                self.assertEqual(len(offsets), 4, offsets)
+                self.assertLessEqual(max(offsets) - min(offsets), 2, f"flash minus beep {offsets} ms")
+                self.assertLessEqual(max(abs(o) for o in offsets), half * 1000, f"flash minus beep {offsets} ms")
 
     def test_a_tempo_change_keeps_each_sound_where_it_belongs(self):
         """#523: atempo lays its first window down without retiming it and sets every sound after

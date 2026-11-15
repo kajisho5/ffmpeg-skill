@@ -102,6 +102,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.22 — streams kept: a late-starting sound, audio-only extensions and subtitle tracks (#515, #517, #520)](#after-3822--streams-kept-a-late-starting-sound-audio-only-extensions-and-subtitle-tracks-515-517-520)
 - [After 3.8.23 — a still where a clip is expected, RGB input to stabilize, and where fit puts the picture (#531, #519)](#after-3823--a-still-where-a-clip-is-expected-rgb-input-to-stabilize-and-where-fit-puts-the-picture-531-519)
 - [After 3.9.0 — caches read in a dry run and stored after the inputs changed (#540)](#after-390--caches-read-in-a-dry-run-and-stored-after-the-inputs-changed-540)
+- [After 3.9.1 — a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#538)](#after-391--a-variable-frame-rate-cut-lays-its-grid-from-its-start-a-hold-or-pad-at-the-start-keeps-its-last-frame-538)
 <!-- contents:end -->
 
 ## Time limits
@@ -4582,7 +4583,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   (3.963 s of 4; `export.py --preset reels --pad-fill blur`, whose `-r 30` was appended after the
   blur pad, wrote 119 frames of a 4 s 30 fps picture). `fit.py` conforms after any retiming and
   ahead of the frame's own filters. `pad.py` conforms right after `tpad`, inside its drawn chain: in front of it the
-  padding was rounded to the 27 fps grid on top of the frames' own rounding (37 ms late).
+  padding was rounded to the 27 fps grid on top of the frames' own rounding (37 ms late). After 3.9.0 it conforms ahead of `tpad`, the padding counted in the delivered
+  rate's frames and the sound delayed by them (#538, in that section).
   `cfr_at_input()` raises when such a graph does not read the main picture exactly once, so no
   graph goes unconformed without a word. A graph that moves frames in time closes on the delivered
   rate (`speedramp.py`, `freeze.py` inside the clip) or takes the filter after its concat (`cut.py
@@ -5275,7 +5277,8 @@ the slot at 0.519 s, "After 3.8.14").
   moved back after the conform: a `setpts` there left its frames no
   duration and no rate from FFmpeg 7.0, and the hold's `tpad` after it cloned nothing (109 frames
   for 135 on 7.1, in CI; 6.1.1, 8.0.1 and 9.0.2 wrote 135). A hold at the start or
-  the end of the clip already ran through `with_cfr()` and is unchanged. Code: `freeze.main()`,
+  the end of the clip already ran through `with_cfr()` and is unchanged. (After 3.9.0 a hold at the start is conformed first,
+  #538.) Code: `freeze.main()`,
   `decision.cfr_at_input()` (its `origin`). Tests: the `freeze-gap` rows of
   `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`,
   `test_a_variable_rate_freeze_keeps_every_frame_of_its_grid`.
@@ -5291,7 +5294,7 @@ the slot at 0.519 s, "After 3.8.14").
   `--start 0.45`, 33 ms at 0.2, plain or `--accurate`): the conform's grid is the source clock's,
   and the output-side seek then lands between two of its slots, which the encoder line's rate
   rounds again. `freeze.py --at 0` on the VFR clip writes 134 frames for 135 (the picture ends 37 ms
-  before its sound; the same on 3.8.20, cause not looked into). `loop.py --boomerang` retimes
+  before its sound; the same on 3.8.20, cause not looked into). Both fixed after 3.9.0 (#538). `loop.py --boomerang` retimes
   its frames by index and has no sound (decided, its docstring). `insert.py` takes a still. The
   atempo class reaches `speedramp.py`, `fit.py --method speed` (and `render.py`'s speed stage,
   which runs it) and `audio.py --tempo`; all three are changed.
@@ -5564,3 +5567,68 @@ the slot at 0.519 s, "After 3.8.14").
   by path), the ffprobe banner, the owned-files snapshot, and the font and emoji lookups. A file
   replaced while one process runs is outside what they claim.
 
+
+## After 3.9.1 — a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#538)
+
+Measured on `make_vfr_flash_beep()`'s clip (30 fps with two runs of six frames dropped, 27 fps on
+average; flashes and beeps every second from 0.5 s) and `make_flash_beep()`'s constant 30 fps one,
+FFmpeg 6.1.1 only; 7.1, 8.0.1 and 9.0.2 run the tests in CI. The two items "After 3.8.21" left
+with their own cause.
+
+- **A conform followed by an output-side seek lays its grid from the seek** (#538). `cut.py`'s
+  re-encode (plain and `--accurate`, which a VFR source takes either way) seeks a margin of up to
+  a second early and drops it with an output `-ss`, and `fit.py --method trim --from-center` does
+  the same. The `fps` filter ahead of that seek laid its grid from the first decoded frame on a
+  time base of one frame, so the seek landed between two slots and `-fps_mode cfr -r` rounded the
+  picture again: every flash of the VFR clip came 24 ms after its beep at `cut.py --start 0.45`,
+  33 ms at `--start 0.2`, and 24 ms (37 ms at `--duration 3`) through `fit.py --method trim
+  --from-center`, against 18-19 ms for the uncut clip. `cfr_filter(meta, seek=m)` moves the
+  picture so the seek is its 0, conforms it with `start_time=0` (a frame takes the slot its
+  time rounds to and is shown until the next frame's slot; the last frame before the seek fills
+  the slots up to the first one after it, the earlier ones are dropped), and moves it back on a
+  microsecond time base, so the seek lands on a slot and slot k is the source's time start +
+  k/27. That is the `fps` filter's rounding of timestamps, not a search for the nearest frame:
+  cut at 2.2, inside a gap, slots 0-2 show the frame of 2.067 although 2.3 is nearer slot 2
+  (measured with numbered frames, #549 review). From the cut: -13 ms at `--start 0.45` and `--from-center` 3.1, -4 ms at
+  `--start 0.2`; `--start 1.45` and `2.2` (a whole second's margin, and a start inside a gap)
+  measured -13 and -4 ms before and after. The frame counts are unchanged (96, 103, 69, 49, 84).
+  The setpts after the conform leaves its frames no duration from FFmpeg 7.0; the encoder line's
+  `-fps_mode cfr`, which cfr_args() always gives with this filter, sets each to one frame (by
+  reading FFmpeg's sync code, not run here: CI runs it). A seek of 0 (a cut from the start, `fit.py
+  --method trim` from the start) keeps the plain filter. Not changed: `fit.py --method trim
+  --from-center --fps R` on a VFR source (24 ms at `--fps 27`, -8 at 24): its rate filter is the
+  caller's and the encoder line carries no `-r`, so a setpts after it would leave FFmpeg 7+
+  writing a rate it no longer knows; a constant-rate source's cut is not conformed and starts on
+  the first frame at or after `--start` (17 ms on the 30 fps clip, decided in `cut_one()`).
+  `cut.py --segments` conforms after its concat, from 0, and was already within half a frame.
+  Code: `decision.cfr_filter()`, `cut.cut_one()`, `fit.main()`. Test:
+  `test_a_variable_rate_cut_lays_its_grid_from_its_start`.
+- **A VFR picture is conformed before a hold or a pad at its start, and the hold or padding is
+  whole frames of the delivered rate** (#538). `tpad`'s start pad passes its input's end on
+  without the pad, and an `fps` filter after it ended the picture at its last frame's start:
+  `freeze.py --at 0 --hold 1` and `pad.py --start 1` wrote 134
+  frames of the VFR clip's 135, the picture 37 ms short of its sound; a 30 fps clip through
+  `tpad,fps=30` writes 149 of 150 the same way, but a constant-rate source is not conformed. A
+  stop pad ends on its own clones and was not affected (`pad.py --end`, a hold at the end). The
+  conform now comes first, `tpad` clones or pads `round(T * R)` frames of the delivered rate R
+  (at least one for a hold), and the sound waits as long as they last (`n / R`, in samples), as a
+  hold inside the clip does ("After 3.8.21"): 135 frames for `--hold 1` and `--start 1`, 122 for
+  0.5 (14 frames, 0.519 s), 109 for `--hold 0.05`, every flash 18-19 ms after its beep. This
+  changes one sentence "After 3.8.14": "`pad.py` conforms right after `tpad` ...: in front of it
+  the padding was rounded to the 27 fps grid on top of the frames' own rounding (37 ms late)". The
+  37 ms was against a sound delayed by `--start` itself; delayed by the padding's own frames the
+  sound moves with the picture, and flash minus beep is the grid's 18-19 ms (it was 0 ms at
+  `--start 0.5`, by the rounding, with the last frame lost). The conform is now ahead of the drawn
+  chain, so a maskedmerge never meets it (#512's reason for keeping it inside). `--start 0.5` thus
+  pads 0.519 s on the 27 fps output, as a constant-rate source pads whole frames of its own rate
+  (`tpad_length`), with the same `notes` line. Code: `freeze.main()`, `pad.main()`. Tests:
+  `test_a_variable_rate_hold_or_pad_at_the_start_keeps_every_frame`, the `pad` and `pad-colour`
+  rows of `test_a_variable_rate_conform_keeps_each_picture_within_half_a_frame`.
+- **Swept for the classes "a conform followed by an output-side seek" and "a conform after a
+  filter that passes its input's end on early".** `python3 tests/sweep.py VFR --baseline CFR`
+  printed no differing row, before and after (the defects are in the output, not in what a tool
+  says). Every output-side `-ss` in `scripts/` was read: `cut.py` and `fit.py` are the two after
+  a conform; `sync.py --trim-second` does not conform a VFR second file; `_smartcut.py` does not
+  run on a VFR source (reason `vfr`). `tpad`'s start pad is used by `freeze.py`, `pad.py` and
+  `sync.py`, which has no conform. Measured on both clips: `pad.py --end` and `--start --end`,
+  `freeze.py` at the end, and `fit.py --method trim` from the start were already right.
