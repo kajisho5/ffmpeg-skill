@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.9.1
+
+_Automated release: version and notes generated from pull requests merged since 3.9.0._
+
 ### Fixed
 
 - **Caches read in a dry run and stored after the inputs changed (#540).**
@@ -19,6 +25,7 @@
     whose key, made again when it ends, is not the key it started with now stores nothing and
     records a `cache_inputs_changed` skip; `batch.py` has done the same since #537. A change that
     is undone before the stage ends, the file's fingerprint restored, is not seen.
+- fix: a batch dry run says a cached row's cuts apart from its plans, and render stores a stage only under the key its inputs still have (#546)
 
 ## 3.9.0
 
