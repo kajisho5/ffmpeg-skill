@@ -32,7 +32,12 @@
   a later file named as an image that is not one (a text file called `.png`, a truncated PNG) was
   left out while the frame before it was shown in its place, and the run reported success. Every
   frame is decoded once before the encode (ffprobe, so a dry run checks too) and the run is
-  refused, `kind: input`, `reason: still_unreadable`, naming the frames.
+  refused, `kind: input`, `reason: still_unreadable`, naming the frames. When ffprobe cannot read
+  the frame list back, a note says the frames were not checked and the encode runs.
+- **A side file named like a brand file's font or logo is refused (review of #534).**
+  `graphics.py --write-ass`, `caption.py --write-srt`/`--write-ass` (and its `--plan`), and
+  `render.py --template --write-project` with `--overwrite` replaced the brand's `font_file` or
+  `logo` with the text they write; only the brand file itself was guarded.
 
 ## 3.8.18
 

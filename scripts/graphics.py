@@ -757,8 +757,10 @@ def main(force_route: Optional[str] = None) -> int:
         require_filter("ass", "drawing this text through libass")  # before the sidecar is written
         # a file this run writes itself: never the input or the video, a missing directory or an
         # existing file without --overwrite is refused before anything is written (#408)
-        guard_sidecar(ass_path, *[q for q in (args.input, getattr(args, "brand", None), getattr(args, "font_file", None))
-                                  if isinstance(q, str)], siblings=(output,))
+        # the font the text is drawn with, a brand file's font_file included (review of #534: only
+        # --font-file was here, and --write-ass naming the brand's font replaced it with ASS text)
+        guard_sidecar(ass_path, *[q for q in (args.input, getattr(args, "brand", None), args.font_file or brand.get("font_file"))
+                                  if isinstance(q, str) and q], siblings=(output,))
         if STATE.dry_run:
             info(f"[dry-run] would write {ass_path} ({len(elements)} text elements)")
         else:

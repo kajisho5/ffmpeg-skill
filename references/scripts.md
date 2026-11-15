@@ -524,9 +524,11 @@ Turns a numbered or glob-matched set of still images into a video. Glob
 matches are ordered naturally (`img2` before `img10`). The match
 is checked on disk before ffmpeg runs (an empty match or a missing first
 frame is refused here, not discovered from an opaque ffmpeg error), and every
-frame is decoded once (ffprobe) before the encode: a frame that is not an image
-it can decode (a text file named `.png`, a truncated PNG) is refused, `kind:
-input`, `reason: still_unreadable`, with the frames named.
+frame is decoded once (ffprobe) before the encode. When that check completes, a
+frame that is not an image it can decode (a text file named `.png`, a truncated
+PNG) is refused, `kind: input`, `reason: still_unreadable`, with the frames
+named. When ffprobe fails on the frame list or reads back no frame, the frames
+are not checked: a note says so and the encode runs.
 
 ### waveform.py — audio waveform/spectrum visualization video
 ```

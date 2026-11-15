@@ -1557,6 +1557,20 @@ class EditingTests(MediaFixtures):
         gap = json.loads(proc.stdout)["diagnostics"]["warnings"][0]
         self.assertEqual((gap["code"], gap["missing"], gap["frames_left_out"]), ("sequence_gap", "frame_0002.png", 2))
 
+    def test_sequence_frame_check_that_cannot_be_made_calls_no_frame_bad(self):
+        """Review of #534: the frame check is one ffprobe over the frame list. When it fails, or
+        exits 0 and reads nothing back, the frames are not checked (None: a note, then the
+        encode), never all reported undecodable; what it reads back names the missing ones."""
+        import sequence as seq_mod
+        from fractions import Fraction
+        from unittest import mock
+        frames = [Path(f"f{i}.png") for i in range(3)]
+        for rc, out, want in ((1, "", None), (0, "", None), (0, "0.000000\n2.000000\n", [frames[1]])):
+            with self.subTest(rc=rc, out=out):
+                done = subprocess.CompletedProcess([], rc, out, "")
+                with mock.patch.object(seq_mod, "run", return_value=done):
+                    self.assertEqual(seq_mod.undecodable_frames(Path("list.txt"), frames, Fraction(1)), want)
+
     def test_sequence_refuses_a_frame_that_does_not_decode(self):
         """#529: only the first frame was probed, and a later file named as an image that is not one
         (a text file called frame_0001.png, a truncated PNG) was left out by the decoder while the

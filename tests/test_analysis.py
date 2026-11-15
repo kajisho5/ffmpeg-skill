@@ -1319,6 +1319,45 @@ class AnalysisTests(MediaFixtures):
                 self.assertEqual((err["kind"], err["reason"]), ("input", "output_path_taken"), err)
                 self.assertFalse(fresh.exists(), "a refused run leaves no --out folder")
 
+    def test_a_side_file_never_replaces_a_brand_files_font_or_logo(self):
+        """Review of #534 (class: a side file a run writes, guarded against the brand file but not
+        against the files the brand names). graphics.py --write-ass naming the brand's font_file,
+        with --overwrite, replaced the font with ASS text; the sweep found caption.py --write-srt,
+        --write-ass and --plan (libass is handed the font's folder, so the plan named no font) and
+        render.py --template --write-project (font_file and logo) doing the same. Each is refused as
+        output_is_input and the file's bytes stay."""
+        font = default_font_file("DejaVu Sans")
+        if not font:
+            self.skipTest("no DejaVu Sans font file here")
+        work = OUT / "brand_side_files"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir()
+        clip = tiny_clip(work / "clip.mp4", "testsrc2=s=160x90:r=25", seconds=2, audio=True)
+        cues = work / "cues.txt"
+        cues.write_text("0:00-0:01 Hello\n", encoding="utf-8")
+        logo = work / "logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", logo)
+        shutil.copy(font, work / "font.ttf")
+        brand = work / "brand.json"
+        brand.write_text(json.dumps({"font": "DejaVu Sans", "font_file": "font.ttf", "logo": "logo.png"}), encoding="utf-8")
+        title = ["graphics.py", clip, "--template", "title", "--title", "T", "--start", "0", "--end", "1", "--brand", brand,
+                 "--text-render", "ass", "-o", work / "g.mp4"]
+        burn = ["caption.py", clip, "--text", cues, "--brand", brand, "-o", work / "c.mp4"]
+        cases = [("graphics --write-ass", "font.ttf", title + ["--write-ass"]),
+                 ("caption --write-srt", "font.ttf", burn + ["--write-srt"]),
+                 ("caption --write-ass", "font.ttf", burn + ["--write-ass"]),
+                 ("caption --plan", "font.ttf", burn + ["--plan"]),
+                 ("render --write-project, font", "font.ttf", ["render.py", clip, "--template", "youtube", "--brand", brand, "--write-project"]),
+                 ("render --write-project, logo", "logo.png", ["render.py", clip, "--template", "youtube", "--brand", brand, "--write-project"])]
+        for label, name, argv in cases:
+            with self.subTest(case=label):
+                target = work / name
+                before = target.read_bytes()
+                proc = script(*argv, target, "--overwrite", "--json", expect_fail=True)
+                err = json.loads(proc.stdout)["error"]
+                self.assertEqual((err["kind"], err["reason"]), ("input", "output_is_input"), err)
+                self.assertEqual(target.read_bytes(), before, f"{label} replaced the brand's {name}")
+
     def test_an_output_named_like_a_file_the_run_reads_is_refused(self):
         """#522 (class: an output named like a file the run reads but does not hand to the writing
         ffmpeg command as -i, so run()'s guard never saw it). sync.py --trim-second's command takes

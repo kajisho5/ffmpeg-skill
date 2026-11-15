@@ -1387,6 +1387,10 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     for key in ("logo", "font_file"):
         if brand.get(key) and not os.path.isabs(brand[key]):
             brand[key] = str(base / brand[key])
+        # a file the run reads: a --plan binds it and is never written over it (review of #534's
+        # sweep: caption.py hands libass the font's folder, so its plan named neither)
+        if brand.get(key) and os.path.isfile(brand[key]) and brand[key] not in STATE.plan_inputs:
+            STATE.plan_inputs.append(brand[key])
     brand["_path"] = str(path)
     # What the FILE said, separate from BRAND_DEFAULTS' filler: a brand.json that never mentions
     # a font must not read as "the caller chose a font" (which would switch font-by-script off).

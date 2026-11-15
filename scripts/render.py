@@ -1602,7 +1602,11 @@ def main() -> int:
         # the project file and every clip it names are inputs the JSON must not replace
         where = Path(args.project).resolve().parent if args.project else Path.cwd()
         srcs = [c["src"] for c in proj.get("clips") or [] if isinstance(c, dict) and isinstance(c.get("src"), str)]
-        guard_sidecar(args.write_project, args.project, *[str(where / s) for s in srcs])
+        # every file the project reads, not only its clips: a template's brand, its font_file and
+        # logo, the cue or SRT file, the chapters (review of #534's sweep: --write-project naming
+        # the brand's font or logo replaced it with the JSON)
+        guard_sidecar(args.write_project, args.project, *[str(where / s) for s in srcs],
+                      *project_input_files(proj, lambda p: p if os.path.isabs(str(p)) else str(where / str(p))))
         try:
             Path(args.write_project).write_text(json.dumps(proj, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:

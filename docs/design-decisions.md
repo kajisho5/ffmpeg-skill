@@ -4894,6 +4894,21 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   as `kind: ffmpeg` with the LUT unchanged. Not measured here: another case of the name on a
   case-insensitive volume when the output does not exist yet (`same_file()` compares resolved
   names until both files exist). Test: `test_an_output_named_like_a_file_the_run_reads_is_refused`.
+- **A side file is never written over a file a brand file names** (review of #534). The side-file
+  guards compared a side output with the brand file but not with its `font_file` and `logo`:
+  `graphics.py --write-ass`, `caption.py --write-srt` and `--write-ass`, and
+  `render.py --template --write-project` with `--overwrite` replaced the brand's font (or logo)
+  with the text they write. graphics.py now guards with the font it draws with, caption.py with
+  the brand's font_file and logo, and render.py's `--write-project` with every file the project
+  reads (`project_input_files()`, which already followed the brand to them). `load_brand()`
+  adds the font_file and logo to the files a `--plan` binds, so a plan is not written over them
+  either; caption.py hands libass the font's folder, so its plan named no font. The sweep (each
+  side output named like each side input, brand-named files included, with `--overwrite`) found
+  every other guard holding: graphics and overlay `--plan`, cut, metadata, join, silence and sync
+  `--plan`, silence `--edl` and `--timemap`. Seen and not changed here: `waveform.py --brand`
+  fails on every brand file, the default one included, because the brand background `101418` is
+  a bare hex colour starting with a digit, which `validate_color()` refuses although "After
+  3.8.16" says six bare hex digits pass. Test: `test_a_side_file_never_replaces_a_brand_files_font_or_logo`.
 - **`verify.py` never replaces a cue file without `--overwrite`, and the caption step fails on it
   instead of the run being refused** (#522). Through 3.8.18 the `<stem>_cues.txt` it writes in
   `--out` was replaced unasked. Without `--overwrite` an existing one is left as it is and the
@@ -4932,8 +4947,9 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   list the encode reads, so it costs one more decode of every frame, and it runs under `--dry-run`
   too (ffprobe, not ffmpeg: the contract's dry-run note says so). When ffprobe fails or reads
   nothing back, the frames are not called bad: a note says they could not be checked and the
-  encode runs as before. Code: `sequence.undecodable_frames()`. Test:
-  `test_sequence_refuses_a_frame_that_does_not_decode`.
+  encode runs as before; the contract's dry-run note and the reason's text say so too. Code:
+  `sequence.undecodable_frames()`. Tests: `test_sequence_refuses_a_frame_that_does_not_decode`,
+  `test_sequence_frame_check_that_cannot_be_made_calls_no_frame_bad`.
 - **Checked and not changed:** `speedramp.py` with a sound whose sample rate reads 0 skips the
   per-segment sample count, but no run reaches a written file: a Matroska file patched to rate 0
   probes as 0 and its sound does not decode (FFmpeg 6.1.1: "Value inf for parameter
