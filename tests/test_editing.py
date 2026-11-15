@@ -1929,7 +1929,9 @@ class EditingTests(MediaFixtures):
         atempo places its windows by the content, and a beep shorter than a window that a chain
         slows to 0.3x is laid down as several grains (four onsets on macOS's FFmpeg 9.0.2), each
         read as an onset. A single stage (0.5x-3x) is held to a mean of 5 ms and each beep to
-        half a 30 fps frame. Through a chain the first grain that carries the beep can sit
+        half a 30 fps frame; a beep is held to the bound of the segment it is in, so the 3x
+        beeps after a 0.25x segment are held to half a frame too (#541 review: the case's chain
+        gave them a window), and the mean is read where all four beeps are single-stage. Through a chain the first grain that carries the beep can sit
         anywhere in a window that holds its start, so each beep is held to a window (43 ms):
         -34 to +26 ms on FFmpeg 6.1.1 and macOS's 9.0.2, where the systematic shift was 70-155
         ms early. A chain is led once, ahead of its first stage: a lead between two stages failed
@@ -1966,15 +1968,23 @@ class EditingTests(MediaFixtures):
                 got = heard(out)
                 chain = re.findall(r"(?:adelay|atempo|atrim=start_sample)[^,;'\]]*", proc.stderr)
                 facts = f"{name}: onsets {got}, chain {chain}, {version}"
-                errors = []
+                single, chain_errors = [], []
                 for t in beeps:
                     w = moved(t)
                     near = [h for h in got if w - 0.25 <= h <= w + 0.04 / tempo(t) + window]
                     self.assertTrue(near, f"no onset near {w:.3f} s, so not measured; {facts}")
-                    errors.append(near[0] - w)
-                mean_bound, each_bound = (window, window) if chained else (0.005, 0.5 / 30)
-                self.assertLessEqual(abs(sum(errors) / len(errors)), mean_bound, f"beeps off by {errors} s; {facts}")
-                self.assertLessEqual(max(abs(e) for e in errors), each_bound, f"beeps off by {errors} s; {facts}")
+                    # a beep is held to the bound of the segment it is in, not of the case
+                    (chain_errors if tempo(t) < 0.5 else single).append(near[0] - w)
+                self.assertEqual(bool(chain_errors), chained, facts)
+                facts = f"beeps off by {single} s (one stage), {chain_errors} s (chain); {facts}"
+                if single:
+                    self.assertLessEqual(max(abs(e) for e in single), 0.5 / 30, facts)
+                if not chain_errors:
+                    # the mean is read over the four beeps of a case with no chain in it: the two
+                    # 3x beeps after speedramp.py's 0.25x segment are 7 and 8 ms early, no mean
+                    self.assertLessEqual(abs(sum(single) / len(single)), 0.005, facts)
+                if chain_errors:
+                    self.assertLessEqual(max(abs(e) for e in chain_errors), window, facts)
 
     def test_a_tempo_change_keeps_an_attack_at_its_start(self):
         """#541 review: a lead of half atempo's window put the chain's first window, which atempo

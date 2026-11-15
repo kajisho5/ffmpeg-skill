@@ -5227,7 +5227,10 @@ the slot at 0.519 s, "After 3.8.14").
   where the systematic shift was 70-155 ms early. The test takes, for each beep, the first onset
   from 0.25 s before its place to a window after the stretched beep ends, and says "not
   measured" when there is none; a failure prints the onsets, the chain and `ffmpeg -version`.
-  The other CI versions (7.1, 8.0.1, Windows' 9.0.2) passed the earlier nearest-onset form. A 1x `speedramp.py` segment is cut and not retimed, so its
+  The other CI versions (7.1, 8.0.1, Windows' 9.0.2) passed the earlier nearest-onset form. Each
+  beep is held to the bound of the segment it is in: the two 3x beeps after `speedramp.py`'s
+  0.25x segment are held to half a frame (7 and 8 ms early on 6.1.1), not to the chain's window,
+  and the 5 ms mean is read only where all four beeps go through one stage. A 1x `speedramp.py` segment is cut and not retimed, so its
   sound is the source's to the sample; `fit.py --method speed` within 1e-4 of 1x and `audio.py
   --tempo 1` already added no `atempo`. One lead for the chain, not one per stage: an `adelay`
   between two stages made FFmpeg 6.1.1 fail a graph that joins the result with `concat`
