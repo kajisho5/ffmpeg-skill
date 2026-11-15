@@ -30,7 +30,7 @@ from typing import Any, Dict, List
 from _common.probe import SILENT_PEAK_DBFS
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import file_origin, stream_end, warn
-from _common.decision import LOSSLESS_AUDIO_EXT, atempo_chain_with_lead, conform_filter, conform_to_length
+from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, conform_filter, conform_to_length, late_sound_lead
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -225,6 +225,25 @@ def main_track_channels(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
     if 0 <= args.audio_stream < len(streams):
         return streams[args.audio_stream].get("channels") or 0
     return (meta.get("audio") or {}).get("channels") or 0
+
+
+def main_track_lead(args: argparse.Namespace, meta: Dict[str, Any]) -> float:
+    """late_sound_lead() of the track audio.py processes: --replace's file, or the input's
+    --audio-stream N. probe() describes the first audio stream, so for another track its own start
+    is read (a second track that starts late beside a first that does not lost its lead, and the
+    other way round a pad was written that did nothing; #554 review). 0.0 when it cannot be read."""
+    if args.replace:
+        return 0.0 if dry_run_input_pending(args.replace) else late_sound_lead(probe(args.replace))
+    if not args.audio_stream or meta.get("dry_run"):
+        return late_sound_lead(meta)
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", f"a:{args.audio_stream}", "-show_entries",
+                "stream=start_time", "-of", "csv=p=0", args.input], quiet=True, check=False)
+    first = (proc.stdout or "").strip().splitlines()[:1]
+    try:
+        lead = float(first[0].strip().strip(",")) - file_origin(meta)
+    except (IndexError, ValueError):
+        return 0.0
+    return lead if lead > 0.0005 else 0.0
 
 
 def main_track_rate(args: argparse.Namespace, meta: Dict[str, Any]) -> int:
@@ -512,6 +531,15 @@ def main() -> int:
         idx += 1
 
     fx: List[str] = []
+    if not keep_video:
+        # A sound-only output of a track that starts after its file's origin (late against its
+        # picture): the lead is written as silence, first, so every stage after it works on the
+        # file's clock from 0 (--tempo retimes the lead with the sound). .wav and .flac have no
+        # start time and lost it, .m4a kept it as an edit a decoder does not pad, so the
+        # extraction played that much early (#539). Beside a copied picture the container holds
+        # the start, and nothing is padded.
+        if main_track_lead(args, meta):
+            fx.append(PAD_SOUND_FROM_ZERO)
     if args.channel is not None:
         # #487: one channel by index, first, so every later stage works on it alone
         fx.append(f"pan=mono|c0=c{args.channel}")

@@ -4,7 +4,47 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A data stream the container refuses no longer costs the subtitle track beside it (#539).** The
+  tools that keep a source's subtitle and data streams through one helper (`fit`, `color`, `crop`,
+  `stabilize`, `graphics`, `overlay`, `audio`, `loudness`, `proxy`, `deinterlace`, `denoise`,
+  `redact`, `sphere`, `straighten`, `pad --end`, `freeze` of the last frame) retried without all of
+  them when one failed: an MP4 with a mov_text track and a start timecode lost the track when
+  written to `.mkv`, and on FFmpeg 6.1.1 to `.mp4` too. The data stream is now retried away alone,
+  as `export.py` does; the `non_av_streams_dropped` fallback carries `dropped`, the stream types
+  left out, and for a source with a subtitle and a data stream `dropped_non_av_streams` is false
+  when the MP4 muxer wrote the timecode track itself (a source with a data stream and no subtitle
+  still reports true after its retry). `color.py --retag`'s re-encode fallback has its own copy step and is not changed.
+- **`metadata.py` refuses a stream the output container cannot take as a copy, before ffmpeg runs
+  (#539).** A SubRip MKV written to `.mp4` (a mov_text MP4 to `.mkv`, a timecode track to Matroska,
+  an attachment outside Matroska) failed inside ffmpeg after a dry run that said completed; it is
+  `kind: input` now, a dry run included, with a hint naming `export.py --preset copy`. An MP4 with
+  a start timecode, which FFmpeg 6.1.1 would not copy even into `.mp4`, is written: the timecode
+  track alone is left out of the copy and the muxer writes it again (`.m4v` too). `.m4a` is judged
+  as the MPEG-4 family it is: sound with a SubRip track is refused there as well.
+- **A tool that writes a picture refuses an audio-only output extension (#539).** `fit`, `pad`,
+  `speedramp`, `reverse`, `loop` and the other picture tools completed with H.264 inside `-o x.m4a`
+  and failed in the muxer for `-o x.wav`. Both are refused before ffmpeg runs (`kind: input`,
+  reason `output_extension_audio_only`), dry runs included; `metadata.py` refuses it for a source
+  with a picture, and `waveform.py`'s own refusal carries the same reason. A stream copy by
+  `sync.py --replace-audio` is not covered.
+- **An audio output of `audio.py` or `loudness.py` keeps a late sound in place (#539).** A source
+  whose sound starts after its picture was written from the sound's first sample, so a `.wav`,
+  `.flac` or `.m4a` extraction played that much early. The lead is written as silence, as
+  `cut.py --accurate` writes it, for the track `--audio-stream` selects, and reaches the encoder in
+  frames of 4096 samples (FFmpeg 9's FLAC encoder refused the one large frame the pad produced).
+  Beside a copied picture nothing changes.
+- **`graphics.py`'s 0.3 s fades and the lower third's slide fit a short window (#539).** In a
+  `--start`/`--end` window under 0.3 s the text never faded out, and between 0.3 and 0.6 s its
+  brightness jumped; the lower third's bar jumped back in a window under 0.7 s. Each fade is cut
+  to half the window and the slide shares it 4:3, on drawtext and on the ASS route; the sticker's
+  pop is cut with its fade on both routes, and a lower third whose slides fill the window draws no
+  rest phase (its emoji showed for one frame).
+
+Checked on FFmpeg 6.1.1 (Linux) only. Left open in #539 for a decision: `caption.py`'s burn and
+`waveform.py` drop the source's subtitle track, and `cut.py -o x.mka` re-encodes a picture into the
+`.mka`.
 
 ## 3.10.0
 

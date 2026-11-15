@@ -8918,6 +8918,124 @@ class Issue415Tests(unittest.TestCase):
         tool("metadata", self.src, "--title", "Hi", "-o", out, "--json")
         self.assertTrue(self.faststart(out))
 
+    def test_metadata_refuses_a_stream_the_output_container_does_not_take_as_a_copy(self):
+        """#539: metadata.py copies every stream (-map 0 -c copy), so a subtitle, data or attachment
+        stream the output's container does not hold as it is failed the whole file in the muxer
+        (kind ffmpeg) after a dry run that said completed: a SubRip MKV written to .mp4, a mov_text
+        MP4 to .mkv, a timecode (tmcd) track to .mkv. Each is refused before ffmpeg runs, dry run
+        and real run alike, naming the stream; the source's own container still takes the copy,
+        and an MP4 with a start timecode keeps it (FFmpeg 6.1.1's MP4 muxer refuses the copied
+        tmcd track, so every such file failed in its own container)."""
+        d = self.dir("meta_streams")
+        srt = d / "s.srt"
+        srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nfirst cue\n", encoding="utf-8")
+        plain = d / "plain.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", plain)
+        srt_mkv, text_mp4, timed_mp4 = d / "srt.mkv", d / "text.mp4", d / "timed.mp4"
+        ffmpeg("-i", plain, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt", srt_mkv)
+        ffmpeg("-i", plain, "-i", srt, "-map", "0", "-map", "1", "-c", "copy", "-c:s", "mov_text", text_mp4)
+        ffmpeg("-i", plain, "-map", "0", "-c", "copy", "-timecode", "01:00:00:00", timed_mp4)
+
+        def kinds(path):
+            return sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", path).stdout.split()
+        self.assertIn("subrip,subtitle", kinds(srt_mkv), "fixture")
+        self.assertIn("mov_text,subtitle", kinds(text_mp4), "fixture")
+        self.assertTrue(any(k.endswith(",data") for k in kinds(timed_mp4)), "fixture: a tmcd data track")
+        # sound and a SubRip track, no picture: .m4a is the MPEG-4 family too (the ipod muxer),
+        # and was left to fail in ffmpeg after a dry run that completed (#554 review)
+        sound_mkv = d / "sound_srt.mkv"
+        ffmpeg("-f", "lavfi", "-i", "sine=d=2", "-i", srt, "-map", "0", "-map", "1", "-c:a", "aac", "-c:s", "srt", sound_mkv)
+        self.assertEqual(sorted(kinds(sound_mkv)), ["aac,audio", "subrip,subtitle"], "fixture")
+        for src, ext, named in ((srt_mkv, ".mp4", "subrip"), (srt_mkv, ".mov", "subrip"), (text_mp4, ".mkv", "mov_text"),
+                                (timed_mp4, ".mkv", "data"), (sound_mkv, ".m4a", "subrip")):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(src=src.name, ext=ext, dry=bool(dry)):
+                    out = d / f"refused_{src.stem}{ext}"
+                    doc = json.loads(tool("metadata", src, "--title", "x", *dry, "-o", out, "--json", check=False).stdout)
+                    self.assertEqual(doc["status"], "failed", doc)
+                    self.assertEqual(doc["error"]["kind"], "input", doc["error"])
+                    self.assertIn(named, doc["error"]["message"])
+                    self.assertIn("export.py", doc["error"]["hint"])
+                    self.assertFalse(out.exists())
+
+        def held(path):
+            # a muxer writes data tracks of its own (how many depends on the FFmpeg version), so
+            # the copy is compared by its picture, sound and subtitles, and by having a data track
+            rows = kinds(path)
+            return sorted(k for k in rows if not k.endswith(",data")), any(k.endswith(",data") for k in rows)
+        for src, ext in ((srt_mkv, ".mkv"), (text_mp4, ".mp4"), (text_mp4, ".mov"), (timed_mp4, ".mp4"), (timed_mp4, ".mov"),
+                         (timed_mp4, ".m4v")):
+            with self.subTest(src=src.name, ext=ext, kept=True):
+                out = d / f"kept_{src.stem}{ext}"
+                doc = json.loads(tool("metadata", src, "--title", "x", "-o", out, "--json", check=False).stdout)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertEqual(held(out), held(src), "every stream of the source is in the copy")
+
+        def timecode(path):
+            return sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream_tags=timecode",
+                      "-of", "csv=p=0", path).stdout.strip()
+        self.assertEqual(timecode(timed_mp4), "01:00:00:00", "fixture")
+        # .m4v too: its muxer writes no timecode track unless asked, and the retry lost the label
+        for ext in (".mp4", ".mov", ".m4v"):
+            self.assertEqual(timecode(d / f"kept_timed{ext}"), "01:00:00:00", ext)
+
+        # a planned sound file that is not written yet has no measured picture: its dry run is not
+        # refused for one (#554 review)
+        pending = d / "pending_not_written.m4a"
+        pending.unlink(missing_ok=True)
+        doc = json.loads(tool("metadata", pending, "--title", "x", "--dry-run", "-o", d / "pending_tagged.m4a", "--json",
+                              check=False).stdout)
+        self.assertEqual(doc["status"], "completed", doc)
+    def test_a_picture_written_into_an_audio_only_extension_is_refused_before_ffmpeg_runs(self):
+        """#539: a tool that always writes a picture took `-o x.m4a` and completed, verified, with
+        H.264 in a file named for sound, and failed in the muxer for `-o x.wav` (kind ffmpeg, "WAVE
+        files have exactly one stream") after a dry run that said completed; waveform.py alone
+        refused it. Swept over every tool of tests/sweep.py that writes media: each that encodes a
+        picture is refused through the one check every ffmpeg command passes (dry runs here, which
+        run the same check), metadata.py by its own rule (it copies), and the tools that write
+        sound for an audio extension still plan it."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sweep_tool_539", ROOT / "tests" / "sweep.py")
+        sweep = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sweep)
+        d = self.dir("audio_ext")
+        src = d / "in.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        facts = sweep.facts_for(str(src), str(d))
+        sound = {"audio", "cut", "cut --accurate", "loudness", "silence"}  # an audio extension is an extraction for these
+        tools = [t for t, (_, ext) in sweep.TABLE.items() if ext == ".mp4"]
+        self.assertGreater(len(tools), 20, "the sweep's table of media-writing tools")
+        for name in tools:
+            argv = [a.format(**facts) for a in sweep.TABLE[name][0]]
+            for ext in (".m4a", ".wav"):
+                with self.subTest(tool=name, ext=ext):
+                    out = d / f"{name.split()[0]}{ext}"
+                    doc = json.loads(tool(name.split()[0], src, *argv, "--dry-run", "-o", out, "--json", check=False).stdout)
+                    if name in sound:
+                        self.assertEqual(doc["status"], "completed", doc.get("error"))
+                        continue
+                    self.assertEqual(doc["status"], "failed", doc)
+                    self.assertEqual(doc["error"]["kind"], "input", doc["error"])
+                    # waveform.py refuses by its own rule, before its measuring passes, with the
+                    # same reason (it had none, and README named this one for every picture tool)
+                    self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc["error"])
+                    self.assertEqual(doc["error"]["details"]["extension"], ext)
+        # a real run refuses the same way and writes nothing; a video container still works
+        out = d / "real.m4a"
+        doc = json.loads(tool("crop", src, "--x", "0", "--y", "0", "--width", "80", "--height", "60", "-o", out,
+                              "--json", check=False).stdout)
+        self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_extension_audio_only"), doc)
+        self.assertFalse(out.exists())
+        # a cover picture copied beside its sound is not a picture the run encodes
+        from _common.runner import _check_picture_into_audio_extension
+        _check_picture_into_audio_extension(["ffmpeg", "-y", "-i", str(src), "-map", "0:a", "-c:a", "aac", str(d / "a.m4a")])
+        _check_picture_into_audio_extension(["ffmpeg", "-y", "-i", str(src), "-c:v", "copy", "-c:a", "aac", str(d / "a.m4a")])
+        _check_picture_into_audio_extension(["ffmpeg", "-y", "-i", str(src), "-vn", "-c:v", "libx264", "-c:a", "aac", str(d / "a.m4a")])
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _check_picture_into_audio_extension(["ffmpeg", "-y", "-i", str(src), "-c:v", "libx264", "-c:a", "aac", str(d / "a.m4a")])
+
     # -------------------------------------------------------------- default output names
     def test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes(self):
         """The default output kept .webm while the encoders are x264/AAC: the dry run said

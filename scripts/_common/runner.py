@@ -1273,6 +1273,38 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
                output=output, container="webm", encoders=refused)
 
 
+def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:
+    """An output named with an audio-only extension (probe.AUDIO_MEDIA_EXT) whose command encodes
+    a picture is refused before anything runs, dry runs included (#539): the tools that always
+    write a picture took `-o x.m4a` and completed, verified, with H.264 in a file named for sound,
+    and failed in the muxer for `-o x.wav` (`kind: ffmpeg`, "WAVE files have exactly one stream")
+    after a dry run that said completed. waveform.py has refused it by its own rule since #516.
+    Judged from the command, as the WebM rule above is: a video encoder named for the output
+    (`-c:v` other than copy), no `-vn`, and an input that can give a picture. A stream copy is not
+    judged (a cover picture copied beside its sound stays), nor is a command that names no
+    video encoder (a sound extraction)."""
+    from _common.probe import AUDIO_MEDIA_EXT  # probe imports this module
+    output = cmd[-1]
+    ext = os.path.splitext(output)[1].lower()
+    if ext not in AUDIO_MEDIA_EXT:
+        return
+    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    if "-vn" in cmd[last_input + 2:-1]:
+        return
+    encoders = []
+    for i, tok in enumerate(cmd[:-2]):
+        m = _CODEC_OPTION_RE.match(tok)
+        if m and (m.group(1) or m.group(2)) == "v" and cmd[i + 1] != "copy":
+            encoders.append(cmd[i + 1])
+    if not encoders or not _an_input_has(cmd, "v"):
+        return
+    refuse("input", "output_extension_audio_only",
+           f"output {output!r}: {ext} holds sound only, and this run writes a picture ({encoders[0]})",
+           hint="name a video file (.mp4, .mov, .mkv); for the sound alone, cut.py or audio.py with an audio "
+                "extension extracts it",
+           output=output, extension=ext, encoders=list(dict.fromkeys(encoders)))
+
+
 # the options whose value is a filter graph this module can read the filter names out of
 _GRAPH_OPTIONS = frozenset({"-vf", "-af", "-filter:v", "-filter:a", "-filter_complex", "-lavfi"})
 _ENCODER_OPTION_RE = re.compile(r"^-(?:c|codec):([vas])(?::\d+)?$|^-([vas])codec$")
@@ -2414,6 +2446,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _check_output_path(cmd)
         _check_output_extension(cmd)
         _check_container_codecs(cmd)
+        _check_picture_into_audio_extension(cmd)
         _check_build_components(cmd)
         _check_existing_output(cmd)
         ctx.commands.append(_cmdline(cmd))
@@ -2917,29 +2950,59 @@ def subtitle_codec_args(src: Optional[str], output: str) -> List[str]:
     return args
 
 
-def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
-    """Run an ffmpeg command that already maps its video/audio, trying first to also
-    stream-copy any subtitle/data streams the source has (`-map 0:s?`/`0:d?` are no-ops when
-    there are none). A source whose subtitle codec cannot be copied into the target container
-    (e.g. a container change) makes that first attempt fail; retry the same command without the
-    extra maps rather than let a tool that never touched subtitles start hard-failing because of
-    them. `cmd` is the full argv *without* the output path. Returns True only when the
-    retry-without-subtitles path was actually needed (i.e. subtitle/data streams were dropped).
-    A text track the container takes in another format is converted (subtitle_codec_args), so the
-    retry is left for a track no conversion fits (a bitmap track in MPEG-4) or a refused data stream.
+def _non_av_kinds(src: Optional[str]) -> Optional[Dict[str, int]]:
+    """How many subtitle and data streams `src` holds ({"subtitle": n, "data": n}); None when it
+    cannot be told (not a file here, or ffprobe failed), so the caller runs as for a source that
+    has both."""
+    if not src or not os.path.isfile(src):
+        return None
+    try:
+        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+                               *still_input_args(src), src], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                              encoding="utf-8", errors="replace", timeout=_probe_limit())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    kinds = [ln.strip().strip(",") for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    if proc.returncode != 0 or not kinds:
+        return None
+    return {"subtitle": kinds.count("subtitle"), "data": kinds.count("data")}
 
-    The retry is recorded with the first attempt's error (`diagnostics.fallbacks`,
-    `non_av_streams_dropped`): the caller's `dropped_non_av_streams` says that streams went, the
-    record says why, which is the only way to tell a container that cannot hold them from a first
-    attempt that failed for another reason and happened to succeed the second time.
+
+def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = False) -> bool:
+    """Run an ffmpeg command that already maps its video/audio, trying first to also keep the
+    subtitle and data streams the source has (`-map 0:s?`/`0:d?` are no-ops when there are
+    none): a text track converted to the container's own format where it needs it
+    (subtitle_codec_args), everything else stream-copied. `cmd` is the full argv *without* the
+    output path.
+
+    A stream the container refuses fails that attempt, and the tool never touched it, so the
+    command is run again without it rather than failed. The rungs are export.py's
+    (_run_keeping_non_av): subtitles and data, then the subtitles alone, then neither. A refused
+    data stream (a timecode track into Matroska, and on FFmpeg 6.1.1 a copied tmcd track into
+    MP4) so no longer costs the subtitles beside it (#539); the last rung is left for a track no
+    conversion fits (a bitmap track in MPEG-4). A rung is tried only when the source has what it
+    drops, so a source with one kind of stream is encoded twice at most, as before.
+
+    Returns True when a subtitle or data stream of the source is not in the output: always after
+    the last rung, and after the data-only rung unless the written file holds as many data
+    streams as the source (the MOV/MP4 muxer writes a timecode track of its own from the picture's
+    timecode tag, so the track that could not be copied is there all the same; read back, as
+    export.py does).
+
+    Each retry is recorded with the failed attempt's error (`diagnostics.fallbacks`,
+    `non_av_streams_dropped`, `dropped`: the stream types that retry leaves out): the caller's
+    `dropped_non_av_streams` says that streams went, the record says which and why, which is the
+    only way to tell a container that cannot hold them from an attempt that failed for another
+    reason and happened to succeed the next time.
 
     `relabel_timecode`: the command writes its own start timecode (timeline.output_timecode_args),
     so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
     the new one; the MOV/MP4 muxer builds the track again from the label."""
     skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
     src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
-    first = run(cmd + ["-map", "0:s?", "-map", "0:d?"] + skip_tmcd + carried_stream_maps(src, output)
-                + subtitle_codec_args(src, output) + ["-c:d", "copy", output], check=False)
+    sub_args = ["-map", "0:s?"] + carried_stream_maps(src, output, chapters=False) + subtitle_codec_args(src, output)
+    data_args = ["-map", "0:d?"] + skip_tmcd + carried_stream_maps(src, output, attachments=False) + ["-c:d", "copy"]
+    first = run(cmd + sub_args + data_args + [output], check=False)
     if first.returncode == 0:
         return False
     if classify_ffmpeg_failure(first.stderr or "") or not _has_non_av_streams(cmd):
@@ -2947,12 +3010,30 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
         # way: report the first failure rather than run the whole encode again and blame streams
         # the source may not even have
         _fail(first.args, first.returncode, first.stderr or "")
-    error = " | ".join([ln.strip() for ln in (first.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
-    record_fallback(f"the subtitle/data streams could not be copied into {os.path.basename(output)} "
-                    f"({error or 'ffmpeg exit ' + str(first.returncode)}); encoding again without them",
-                    "non_av_streams_dropped", output=output, returncode=first.returncode, error=error)
+    kinds = _non_av_kinds(src)
+    both = kinds is None or (kinds["subtitle"] > 0 and kinds["data"] > 0)
+    attempt = first
+    if both:
+        _record_non_av_retry(attempt, output, ["data"])
+        attempt = run(cmd + sub_args + [output], check=False)
+        if attempt.returncode == 0:
+            if STATE.dry_run or kinds is None:
+                return True
+            written = _non_av_kinds(output)
+            return written is None or written["data"] < kinds["data"]
+        fail_if_classified(attempt)
+    _record_non_av_retry(attempt, output, [k for k in ("subtitle", "data") if kinds is None or kinds[k]] or ["subtitle", "data"])
     run(cmd + [output])
     return True
+
+
+def _record_non_av_retry(attempt: subprocess.CompletedProcess, output: str, going: List[str]) -> None:
+    """The `non_av_streams_dropped` fallback of one failed rung of run_keeping_subtitles():
+    `going` is what the next attempt leaves out."""
+    error = " | ".join([ln.strip() for ln in (attempt.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
+    record_fallback(f"the {' and '.join(going)} stream(s) could not be written into {os.path.basename(output)} "
+                    f"({error or 'ffmpeg exit ' + str(attempt.returncode)}); encoding again without them",
+                    "non_av_streams_dropped", output=output, returncode=attempt.returncode, error=error, dropped=list(going))
 
 
 def _limit_for(cmd: Sequence[str]) -> Optional[float]:

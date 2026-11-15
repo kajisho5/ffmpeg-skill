@@ -276,7 +276,20 @@ def main(force_route: Optional[str] = None) -> int:
         edge = f",pad={w + left}:{h + top}:{left}:{top}:color=black@0" if left or top else ""
         return (f"color=c=0x{colour}" + (f"@{alpha:g}" if alpha < 1 else "") + f":s={w}x{h}:r={rate},format=rgba"
                 + edge + conv)
-    fade_a = f"if(lt(t,{s:.3f}+0.3),(t-{s:.3f})/0.3,if(gt(t,{e:.3f}-0.3),({e:.3f}-t)/0.3,1))"
+    # Every template fades its text in and out over 0.3 s, cut to half the window when the window
+    # is shorter than the two together (#539): with a fixed 0.3 s a window under 0.3 s never
+    # reached its fade-out and vanished part way up, and one between 0.3 and 0.6 s jumped down in
+    # brightness where the fade-out took over, on drawtext and on the ASS route (\fad) alike. The
+    # emoji PNGs ride the same envelope (emoji_overlays below), as overlay.py cuts its fade-out.
+    fade_s = min(0.3, (e - s) / 2.0)
+    fade_ms = (round(fade_s * 1000), round(fade_s * 1000))
+    # Held in 0..1 for every t: the window selects frames by their own times, half a frame either
+    # side, so a frame a hair before --start (1.234567 s for "1.235" at 30000/1001) gave a
+    # negative alpha. FFmpeg 6.1.1 draws nothing for it; FFmpeg 9.0.2 drew the window's first
+    # frame far brighter than any other in #554's CI (drawtext only, one window; the cause was not
+    # established there, and no FFmpeg 9 was run here)
+    fade_a = (f"max(0,min(1,if(lt(t,{s:.3f}+{fade_s:g}),(t-{s:.3f})/{fade_s:g},"
+              f"if(gt(t,{e:.3f}-{fade_s:g}),({e:.3f}-t)/{fade_s:g},1))))")
 
     # --- which renderer draws the text (1.15) --------------------------------------------------
     # drawtext does bidi and Arabic joining on a fribidi build, but it never reorders or
@@ -457,8 +470,19 @@ def main(force_route: Optional[str] = None) -> int:
         # it did)
         bar_w = max(1, min(room, max(int(base * 0.62), int(widest + 0.999) + 2 * tx_pad)))
         y0 = H - m_bottom - bar_h
-        # slide in from the left over 0.4 s, slide out over 0.3 s (overlay evaluates x per frame)
-        x_expr = f"if(lt(t,{s:.3f}+0.4),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/0.4),if(gt(t,{e:.3f}-0.3),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/0.3),{m_left}))"
+        # slide in from the left over 0.4 s, slide out over 0.3 s (overlay evaluates x per frame);
+        # a window shorter than the two together shares itself between them 4:3, so the bar still
+        # ends off the frame and does not jump where the slide-out takes over (#539)
+        in_s, out_s = min(0.4, (e - s) * 4 / 7), min(0.3, (e - s) * 3 / 7)
+        if in_s + out_s >= e - s:
+            # the two meet at one instant, which the ASS route writes in centiseconds: put it on
+            # one for both routes, or the text's slide-out started up to 5 ms before the bar's
+            # and sat ahead of it for the whole exit (11 px at 640 px wide, 60 fps; #554 review)
+            meet = round((s + in_s) * 100) / 100
+            if s < meet < e:
+                in_s, out_s = meet - s, e - meet
+        x_expr = (f"if(lt(t,{s:.3f}+{in_s:g}),-{bar_w}+({bar_w}+{m_left})*((t-{s:.3f})/{in_s:g}),"
+                  f"if(gt(t,{e:.3f}-{out_s:g}),{m_left}-({bar_w}+{m_left})*(1-({e:.3f}-t)/{out_s:g}),{m_left}))")
         fc.append(f"{layer_src(bg, 0.85, bar_w, bar_h)}[bar]")
         fc.append(f"{layer_src(primary, 1.0, int(base * 0.012), bar_h)}[acc]")
         fc.append(f"[0:v][bar]overlay={layer_at(x_expr, y0, en)}:eof_action=pass[v1]")
@@ -476,16 +500,20 @@ def main(force_route: Optional[str] = None) -> int:
                 # the same three phases the bar itself slides through, as \move Dialogues
                 elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
                                      align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
-                                     outline_color="000000", start=s, end=min(e, s + 0.4),
-                                     move=(x_off, ty, x_rest, ty, 0, 400), x_expr=tx))
+                                     outline_color="000000", start=s, end=s + in_s,
+                                     move=(x_off, ty, x_rest, ty, 0, round(in_s * 1000)), x_expr=tx))
+                if e - out_s > s + in_s:
+                    # no rest phase in a window the two slides fill: a line of no length drew
+                    # nothing, but its emoji PNG, which has no fade, showed for the one frame at
+                    # that instant between the other two phases' faded ones (#554 review)
+                    elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
+                                         align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
+                                         outline_color="000000", start=s + in_s, end=e - out_s,
+                                         x_expr=tx))
                 elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
                                      align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
-                                     outline_color="000000", start=min(e, s + 0.4), end=max(s, e - 0.3),
-                                     x_expr=tx))
-                elements.append(dict(text=text, size=fs, color=colour, font=ass_font_family(),
-                                     align=7, x=x_rest, y=ty, outline=max(1.0, fs / 16.0),
-                                     outline_color="000000", start=max(s, e - 0.3), end=e,
-                                     move=(x_rest, ty, x_off, ty, 0, 300), x_expr=tx))
+                                     outline_color="000000", start=e - out_s, end=e,
+                                     move=(x_rest, ty, x_off, ty, 0, round(out_s * 1000)), x_expr=tx))
         fc.append(f"[v2]{TEXT}[vout]" if route != "ass" else "[v2]null[vout]")
         if route != "ass":
             filters.extend(draws)  # the text chain, which drawn_chain() places at TEXT
@@ -515,7 +543,7 @@ def main(force_route: Optional[str] = None) -> int:
                  f"drawtext={drawtext_text_opts(title_t)}:{fo}:fontsize={h1}:fontcolor={ff_color(text_c)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2-{h2 if sub_t else 0}:alpha='{fade_a}':{en}",
                  size=h1, color=text_c, font=ass_font_family(), align=5, x=W / 2,
                  y=H / 2 - (h2 if sub_t else 0), outline=max(1.0, h1 / 20.0),
-                 outline_color="000000", start=s, end=e, fade=(300, 300))
+                 outline_color="000000", start=s, end=e, fade=fade_ms)
         acc_w, acc_h = int(base * 0.12), max(2, int(base * 0.006))
         fill_box(primary, 1.0, f"x=(iw-{acc_w})/2:y=(ih)/2+{title_h // 2}:w={acc_w}:h={acc_h}",
                  (W - acc_w) // 2, H // 2 + title_h // 2, acc_w, acc_h, en)
@@ -524,7 +552,7 @@ def main(force_route: Optional[str] = None) -> int:
                      f"drawtext={drawtext_text_opts(sub_t)}:{fo}:fontsize={h2}:fontcolor={ff_color(primary)}{drawtext_center_align()}:x=(w-text_w)/2:y=(h-text_h)/2+{sub_y + sub_extra // 2}:alpha='{fade_a}':{en}",
                      size=h2, color=primary, font=ass_font_family(), align=5, x=W / 2,
                      y=H / 2 + sub_y + sub_extra // 2, outline=max(1.0, h2 / 20.0),
-                     outline_color="000000", start=s, end=e, fade=(300, 300))
+                     outline_color="000000", start=s, end=e, fade=fade_ms)
 
     elif args.template in ("chapter", "bug"):
         if not args.title:
@@ -547,7 +575,7 @@ def main(force_route: Optional[str] = None) -> int:
                  x=(m_left if "left" in pos else W - m_right),
                  y=(m_top if "top" in pos else H - m_bottom),
                  box=True, box_color=box_hex, box_alpha=(0x19 if args.template == "chapter" else 0x4C),
-                 outline=float(pady), outline_color=box_hex, start=s, end=e, fade=(300, 300))
+                 outline=float(pady), outline_color=box_hex, start=s, end=e, fade=fade_ms)
 
     elif args.template == "progress":
         h = max(3, int(base * 0.008))
@@ -573,7 +601,11 @@ def main(force_route: Optional[str] = None) -> int:
         fs = int(base * 0.05)
         padx, pady = int(fs * 0.7), int(fs * 0.45)
         rise = int(fs * 0.5)
-        pop = f"min(1,(t-{s:.3f})/0.25)"
+        # the pop is cut to the fade's length in a short window, on both routes: drawtext kept
+        # its 0.25 s while the ASS \fad was cut, so the chip reached half the brightness there
+        # (#554 review)
+        pop_s = min(0.25, fade_s)
+        pop = f"max(0,min(1,(t-{s:.3f})/{pop_s:g}))"  # held in 0..1, as fade_a is, for a frame selected before --start
         xe = f"{m_left}" if "left" in pos else f"w-text_w-{m_right}"
         # every position rises into place, on both routes: a bottom chip started `rise` px above
         # its rest on drawtext and dropped, where the ASS \move below rises (A177)
@@ -592,9 +624,9 @@ def main(force_route: Optional[str] = None) -> int:
                  size=fs, color=bg, font=ass_font_family(), align=align,
                  x=(m_left if "left" in pos else W - m_right), y=y_rest,
                  box=True, box_color=primary, box_alpha=0x0D, outline=float(pady),
-                 outline_color=primary, start=s, end=e, fade=(250, 250),
+                 outline_color=primary, start=s, end=e, fade=(round(pop_s * 1000), min(250, fade_ms[1])),
                  move=(m_left if "left" in pos else W - m_right, y_start,
-                       m_left if "left" in pos else W - m_right, y_rest, 0, 250))
+                       m_left if "left" in pos else W - m_right, y_rest, 0, round(pop_s * 1000)))
 
     elif args.template == "hook":
         # The opener: a full-width card over the first --duration seconds with a thin bar along

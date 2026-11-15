@@ -25,6 +25,7 @@ chapters.txt:
 """
 import argparse
 import re
+import json
 import os
 import sys
 import tempfile
@@ -35,10 +36,66 @@ from _common import (guard_sidecar, add_common, apply_common, default_output, de
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
                      STATE, read_text_or_die)
 from _common.emit import input_length, refuse_still
-from _common.runner import carried_stream_maps, refuse_output_is_input
+from _common.emit import record_fallback, refuse
+from _common.probe import AUDIO_MEDIA_EXT
+from _common.runner import (MATROSKA_EXT, MP4_FAMILY, carried_stream_maps, fail_if_classified, refuse_output_is_input, require_tool,
+                            subtitle_codec_for, subtitle_container_holds)
 
 CHAPTER_CONTAINERS = {".mp4", ".m4v", ".m4a", ".mov", ".mkv", ".mka", ".webm"}
 TAG_KEYS = ("title", "artist", "album", "comment", "date", "genre")
+
+
+def non_av_streams(path: str) -> List[Dict[str, Any]]:
+    """The subtitle, data and attachment streams of `path` ({index, type, codec, tag}), without an
+    MP4/MOV chapter track when the file has chapters: the muxer writes that one again from the
+    chapters and the copy leaves it out (carried_stream_maps, A173). A list that cannot be read
+    stops the run: an empty one would let through what the check below is there to refuse."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-show_entries",
+                "stream=index,codec_type,codec_name,codec_tag_string:chapter=id", "-of", "json", path], quiet=True)
+    try:
+        doc = json.loads(proc.stdout or "")
+    except ValueError:
+        die(f"ffprobe's stream list for {path} did not parse", kind="ffmpeg")
+    out = []
+    for s in doc.get("streams") or []:
+        tag = str(s.get("codec_tag_string") or "").lower()
+        if s.get("codec_type") not in ("subtitle", "data", "attachment") or (doc.get("chapters") and s.get("codec_type") == "data" and tag == "text"):
+            continue
+        out.append({"index": s.get("index"), "type": s.get("codec_type"), "codec": s.get("codec_name") or tag or "unknown", "tag": tag})
+    return out
+
+
+def refuse_uncopyable_streams(streams: List[Dict[str, Any]], src: str, output: str) -> None:
+    """Refuse, before ffmpeg runs, a stream the output's container does not take as a copy (#539).
+    Every stream is copied here (`-map 0 -c copy`), so a text track cannot be converted as
+    export.py converts it, and the muxer refused the whole file: `kind: ffmpeg` after a dry run
+    that said completed. Only what the three container families are known to refuse is judged
+    (MPEG-4, Matroska, WebM; measured on FFmpeg 6.1.1): a subtitle track in another format than
+    the container's own, a data stream into Matroska or WebM, an attachment outside Matroska. Any
+    other container is left to its muxer."""
+    ext = Path(output).suffix.lower().lstrip(".")
+    matroska = "." + ext in MATROSKA_EXT
+    mpeg4 = ext in MP4_FAMILY or ext == "m4a"  # .m4a is the same muxer family: no SubRip there either
+    if not (mpeg4 or matroska or ext == "webm"):
+        return
+    family = "mkv" if matroska else "mp4" if ext == "m4a" else ext  # .mka and .mks hold what .mkv holds
+    refused = []
+    for s in streams:
+        if s["type"] == "subtitle":
+            ok = subtitle_container_holds(s["codec"], family) and subtitle_codec_for(s["codec"], family) == "copy"
+        elif s["type"] == "data":
+            ok = mpeg4
+        else:
+            ok = matroska
+        if not ok:
+            refused.append(f"stream {s['index']} ({s['type']}, {s['codec']})")
+    if not refused:
+        return
+    src_ext = Path(src).suffix.lower() or "the source's own"
+    die(f"{output}: a .{ext} file does not hold {', '.join(refused)} of {src} as a copy, and metadata.py copies every "
+        "stream as it is; nothing was written", kind="input",
+        hint=f"write a {src_ext} file (the default output keeps the source's container), or change the container first "
+             "with export.py --preset copy, which converts a text subtitle track and says which streams it left out")
 
 
 def parse_chapters(path: str, duration: float) -> List[Dict[str, Any]]:
@@ -266,6 +323,21 @@ def main() -> int:
     if args.auto_chapters:
         chapters, auto = propose(args, meta, duration, notes)
 
+    # a planned input not yet written (a dry run of a later stage) has a placeholder picture, not a
+    # measured one: its own extension says what it will hold (#554 review)
+    pending_sound = bool(meta.get("dry_run")) and os.path.splitext(args.input)[1].lower() in AUDIO_MEDIA_EXT
+    if out_ext in AUDIO_MEDIA_EXT and meta.get("video") and not pending_sound:
+        # the picture is copied with everything else: .m4a took it (H.264 in a file named for
+        # sound) and .wav failed in its muxer; the reason the tools that encode a picture give (#539)
+        refuse("input", "output_extension_audio_only",
+               f"output {output!r}: {out_ext} holds sound only, and metadata.py copies every stream of "
+               f"{args.input}, its picture ({meta['video'].get('codec')}) included",
+               hint="name a video file of the source's container; for the sound alone, cut.py or audio.py with an "
+                    "audio extension extracts it",
+               output=output, extension=out_ext, encoders=[])
+    streams = [] if meta.get("dry_run") else non_av_streams(args.input)
+    refuse_uncopyable_streams(streams, args.input, output)
+
     cmd = ffmpeg_base() + ["-i", args.input]
     tmpdir = None
     if chapters:
@@ -280,16 +352,38 @@ def main() -> int:
     # not the source's MP4/MOV chapter track: the muxer writes one from the chapters it is given,
     # and the copy was a stray data track holding the old titles (A173)
     cmd += carried_stream_maps(args.input, output, attachments=False)
+    tail: List[str] = []
     for key, value in tags.items():
-        cmd += ["-metadata", f"{key}={value}"]
-    cmd += ["-c", "copy"]
+        tail += ["-metadata", f"{key}={value}"]
+    tail += ["-c", "copy"]
     if out_ext in (".mp4", ".mov", ".m4v", ".m4a"):
         # A stream copy into the MPEG-4 family writes the index (moov) after the media unless told
         # otherwise, so without +faststart a faststart input -- render's export -- came out with
         # its index at the end (#415; every other MP4 write here is faststart since #279)
-        cmd += ["-movflags", "+faststart"]
-    cmd.append(output)
-    run(cmd)
+        tail += ["-movflags", "+faststart"]
+    tail.append(output)
+    timecode_tracks = [s for s in streams if s["type"] == "data" and s["tag"] == "tmcd"]
+    if timecode_tracks and out_ext in (".mp4", ".m4v"):
+        # FFmpeg 6.1.1's MP4 muxer refuses a copied timecode (tmcd) track ("Could not find tag for
+        # codec none"; .mov takes it), so every MP4 with a start timecode failed here, in its own
+        # container. The copy is tried as it is, for an FFmpeg that takes it; when it is refused
+        # the track alone is left out and the muxer writes one again from the picture's timecode
+        # tag, which the copy carries (the label is compared by emit's source_carry)
+        proc = run(cmd + tail, check=False)
+        if proc.returncode != 0:
+            fail_if_classified(proc)
+            error = " | ".join([ln.strip() for ln in (proc.stderr or "").splitlines() if ln.strip()][-3:])[-500:]
+            record_fallback(f"the timecode track could not be copied into {os.path.basename(output)} "
+                            f"({error or 'ffmpeg exit ' + str(proc.returncode)}); copying again without it, "
+                            "the muxer writes it from the picture's timecode tag",
+                            "non_av_streams_dropped", output=output, returncode=proc.returncode, error=error, dropped=["data"])
+            for s in timecode_tracks:
+                cmd += ["-map", f"-0:{s['index']}"]
+            # .m4v is written by the ipod muxer, which writes no timecode track unless asked: the
+            # retry completed without the timecode there (#554 review)
+            run(cmd + tail[:-1] + (["-write_tmcd", "1"] if out_ext == ".m4v" else []) + tail[-1:])
+    else:
+        run(cmd + tail)
     if tmpdir:
         tmpdir.cleanup()
 

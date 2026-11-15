@@ -2447,6 +2447,139 @@ class PictureTests(MediaFixtures):
                     self.assertLess(inside[-1] - 16, (peak - 16) * 0.5,
                                     f"the layer leaves at --end faded out, not at full strength: {inside}")
 
+    def test_graphics_fades_and_slides_fit_a_window_shorter_than_they_are(self):
+        """#539: every graphics.py template faded its text in and out over a fixed 0.3 s. In a window
+        shorter than 0.3 s the fade-out was never reached, so the text vanished part way up its
+        fade-in; between 0.3 and 0.6 s the brightness jumped down where the fade-out took over. The
+        ASS route did the same with its fixed \\fad. Both are cut to half the window now (the emoji
+        overlay already was, and overlay.py cuts its fade-out): the text's brightness rises to one
+        peak and falls, leaving at most half its peak on the last frame, with no step larger than
+        the fade's own. The lower third's slide shares a short window the same way: the bar's last
+        frame is further left than its rest, not at it."""
+        d = OUT / "graphics_fade_cap"
+        d.mkdir(parents=True, exist_ok=True)
+        black = d / "black.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=30:d=2",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", black)
+
+        def stat_levels(path, start, end, stat):
+            stats = sh("ffmpeg", "-v", "error", "-i", path, "-vf",
+                       f"format=gray,signalstats,metadata=print:key=lavfi.signalstats.{stat}:file=-", "-f", "null", "-").stdout
+            rows = list(zip(map(float, re.findall(r"pts_time:([0-9.]+)", stats)),
+                            map(float, re.findall(stat + r"=([0-9.]+)", stats))))
+            base = min(y for _, y in rows)
+            return [y - base for t, y in rows if start - 0.001 <= t < end - 0.001]
+
+        def levels(path, start, end, stat="YAVG"):
+            """Each frame's mean brightness above the darkest frame's, for the frames in [start, end).
+            Counted from the decoded pixels: signalstats' YAVG named a frame 6.94 brighter than its
+            own YMAX allowed on FFmpeg 9.0.2 (#554's CI), so the filter's sum is not what is asserted."""
+            if stat != "YAVG":
+                return stat_levels(path, start, end, stat)
+            times = [float(t) for t in sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                          "frame=pts_time", "-of", "csv=p=0", path).stdout.replace(",", " ").split()]
+            v = probe(str(path))["video"]
+            size = v["width"] * v["height"]
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-vf", "format=gray",
+                                  "-f", "rawvideo", "-"], stdout=subprocess.PIPE, check=True).stdout
+            self.assertEqual(len(raw), size * len(times), "one decoded frame per frame time")
+            means = [sum(raw[i * size:(i + 1) * size]) / size for i in range(len(times))]
+            base = min(means)
+            return [y - base for t, y in zip(times, means) if start - 0.001 <= t < end - 0.001]
+        routes = ["drawtext"] if _no_fontconfig() else ["drawtext", "ass"]
+        filters = sh("ffmpeg", "-hide_banner", "-filters").stdout
+        routes = [r for r in routes if (r == "drawtext" and " drawtext " in filters) or (r == "ass" and " subtitles " in filters)]
+        if not routes:
+            self.skipTest("this ffmpeg build has neither drawtext nor libass")
+        for route in routes:
+            for start, end in ((0.5, 0.7), (0.5, 0.95), (0.5, 1.5)):
+                with self.subTest(route=route, window=(start, end)):
+                    out = d / f"chapter_{route}_{end}.mp4"
+                    script("graphics.py", black, "--template", "chapter", "--title", "HELLO", "--start", str(start),
+                           "--end", str(end), "--text-render", route, "--fast", "-o", out, "--overwrite")
+                    inside = levels(out, start, end)
+                    peak = max(inside)
+                    self.assertGreater(peak, 0.3, f"the chip shows inside its window: {inside}")
+                    at = inside.index(peak)
+                    self.assertLess(inside[-1], peak * 0.5, f"the chip leaves faded out, not part way up: {inside}")
+                    rise = [b - a for a, b in zip(inside[:at], inside[1:at + 1])]
+                    fall = [a - b for a, b in zip(inside[at:], inside[at + 1:])]
+                    if not all(x > -0.02 for x in rise + fall):
+                        # what the odd frame holds, for a build this cannot be run on locally: the
+                        # brightest and darkest pixel of each frame in the window, and the filter
+                        plan = json.loads(script("graphics.py", black, "--template", "chapter", "--title", "HELLO",
+                                                 "--start", str(start), "--end", str(end), "--text-render", route,
+                                                 "-o", d / "diag.mp4", "--dry-run", "--overwrite", "--json").stdout)
+                        raw = sh("ffmpeg", "-v", "error", "-i", out, "-vf", "format=gray,signalstats,metadata=print:file=-",
+                                 "-f", "null", "-").stdout
+                        frames = [blk for blk in raw.split("frame:")[1:]
+                                  if start - 0.11 <= float(re.search(r"pts_time:([0-9.]+)", blk).group(1)) <= start + 0.08]
+                        kept = [" ".join(ln.replace("lavfi.signalstats.", "") for ln in blk.splitlines()
+                                         if re.search(r"pts_time|YMIN|YLOW|YAVG|YHIGH|YMAX", ln)) for blk in frames]
+                        types = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                   "frame=pts_time,pict_type", "-of", "csv=p=0", out).stdout.split()
+                        self.fail(f"one peak: it rises, then falls: {inside}; signalstats YAVG "
+                                  f"{stat_levels(out, start, end, 'YAVG')}; YMAX {stat_levels(out, start, end, 'YMAX')}; "
+                                  f"before the window {levels(out, start - 0.1, start)}; raw frames around --start {kept}; "
+                                  f"frame types {types[10:20]}; command {plan['commands'][-1]}")
+                    if rise and fall:
+                        self.assertLess(max(fall), max(rise) * 1.8 + 0.02, f"no jump where the fade-out takes over: {inside}")
+        if "drawtext" in routes:
+            # the alpha is held in 0..1 for every frame the window selects: the frame at --start
+            # came out far brighter than the rest on FFmpeg 9.0.2 (#554's CI), which the one-peak
+            # check above is there to catch
+            plan = json.loads(script("graphics.py", black, "--template", "chapter", "--title", "HELLO", "--start", "0.5",
+                                     "--end", "0.95", "--text-render", "drawtext", "-o", d / "plan.mp4", "--dry-run",
+                                     "--overwrite", "--json").stdout)
+            cmd = str(plan["commands"][-1])
+            self.assertIn("max(0,min(1,if(lt(t,0.500+0.225),", cmd)
+        # the sticker pops in over 0.25 s: cut with the fade on both routes, or drawtext's chip
+        # reached half the brightness the ASS route's did in a 0.2 s window (#554 review)
+        peaks = {}
+        for route in routes:
+            out = d / f"sticker_{route}.mp4"
+            script("graphics.py", black, "--template", "sticker", "--text", "HELLO", "--start", "0.5", "--end", "0.7",
+                   "--text-render", route, "--fast", "-o", out, "--overwrite")
+            inside = levels(out, 0.5, 0.7)
+            peaks[route] = max(inside)
+            self.assertLess(inside[-1], peaks[route] * 0.6, f"{route}: the chip leaves faded out: {inside}")
+        long_out = d / "sticker_long.mp4"
+        script("graphics.py", black, "--template", "sticker", "--text", "HELLO", "--start", "0.2", "--end", "1.8",
+               "--text-render", routes[0], "--fast", "-o", long_out, "--overwrite")
+        full = max(levels(long_out, 0.2, 1.8))
+        for route, peak in peaks.items():
+            self.assertGreater(peak, full * 0.8, f"{route}: the chip reaches its strength in a 0.2 s window: {peak} of {full}")
+        # the lower third: in a 0.35 s window the bar is still sliding out on its last frame (it sat
+        # at rest until the window closed before, having jumped back part way through)
+        out = d / "lower_third_short.mp4"
+        script("graphics.py", black, "--template", "lower-third", "--name", "HELLO", "--start", "0.5", "--end", "0.85",
+               "--text-render", "drawtext" if "drawtext" in routes else routes[0], "--fast", "-o", out, "--overwrite")
+        cover = levels(out, 0.5, 0.85)
+        self.assertGreater(max(cover), 0.3, cover)
+        at = cover.index(max(cover))
+        self.assertTrue(all(b >= a - 0.02 for a, b in zip(cover[:at], cover[1:at + 1]))
+                        and all(b <= a + 0.02 for a, b in zip(cover[at:], cover[at + 1:])),
+                        f"the bar slides in, then out, without jumping back: {cover}")
+        self.assertLess(cover[-1], max(cover) * 0.6, f"the bar is leaving the frame on its last frame: {cover}")
+        if "ass" in routes:
+            # the instant the slides meet is one centisecond for the bar and for the ASS lines (the
+            # text's slide-out started 4 ms before the bar's at 0.614286 s and led it by 11 px at
+            # 60 fps), and a window the slides fill has no rest line: its emoji PNG, which has no
+            # fade, showed for the one frame at that instant (#554 review)
+            out = d / "lower_third_ass.mp4"
+            doc = json.loads(script("graphics.py", black, "--template", "lower-third", "--name", "HELLO \U0001F389",
+                                    "--start", "0.5", "--end", "0.7", "--text-render", "ass", "--emoji", "png",
+                                    "--emoji-assets", _emoji_assets(), "--fast", "-o", out, "--overwrite", "--json").stdout)
+            cmd = str(doc["commands"][-1])
+            meet = 0.5 + float(re.search(r"lt\(t,0\.500\+([0-9.]+)\)", cmd).group(1))
+            ass = next(p for p in d.glob("lower_third_ass*.ass")).read_text(encoding="utf-8")
+            times = [tuple(int(h) * 3600 + int(m) * 60 + float(sec) for h, m, sec in re.findall(r"(\d+):(\d\d):(\d\d\.\d\d)", ln)[:2])
+                     for ln in ass.splitlines() if ln.startswith("Dialogue:")]
+            self.assertEqual(sorted(set(times)), [(0.5, round(meet, 6)), (round(meet, 6), 0.7)], cmd)
+            windows = re.findall(r"enable=\S*?between\(t,([0-9.]+),([0-9.]+)\)", cmd)
+            self.assertTrue(windows, "the emoji is composited")
+            self.assertTrue(all(float(a) < float(b) for a, b in windows), f"no emoji overlay of no length: {windows}")
+
     def test_filter_paths_with_drive_colon_spaces_and_unicode(self):
         """subtitles= / ass= / lut3d=file= / fontfile= take a path with a colon, spaces and non-ASCII.
 
