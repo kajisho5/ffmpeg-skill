@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.9.3
+
+_Automated release: version and notes generated from pull requests merged since 3.9.2._
+
 ### Fixed
 
 - **`.aif`, `.aiff` and `.caf` outputs are written; a `.wma` output the run would encode into is refused (#517).** The audio
@@ -32,6 +38,7 @@
   refused `--copy` as a stream mismatch. Each is now the refusal `cut.py` and the others give a still
   since 3.9.0, a dry run included; `insert.py STILL --duration T` makes the clip. A `render.py`
   project with a still clip meets it through its join or export stage.
+- fix: aif, aiff and caf outputs are written, a .wma encode is refused; a still given to export or join is refused (#550)
 
 ## 3.9.2
 
