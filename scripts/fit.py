@@ -36,12 +36,14 @@ Examples:
 import argparse
 import sys
 from fractions import Fraction
-from typing import Any, List
+from typing import Any, List, Optional
 
-from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.color import bt709_matrix_filter
+from _common.runner import require_tool, run_analysis
+from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, keeps_source_tags, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
-from _common.emit import input_length
+from _common.emit import input_length, refuse_still
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 
 
@@ -86,6 +88,71 @@ def picture_output_t(target: float, meta: dict) -> str:
     if out - 1 / rate + 1e-6 < float(text) <= out + 1e-9:
         return text
     return f"{out - 0.5 / rate:.6f}"
+
+
+def _picture_rows(path_meta: dict, chain: str, colour: str, sw: int, sh: int, size: int,
+                  out_pix: "Optional[str]") -> "Optional[bytes]":
+    """One frame of `colour` at the source's displayed size and pixel format through `chain`, as
+    8-bit grey bytes, or None when ffmpeg did not give exactly one frame of `size` bytes. The chain
+    ends in the written file's pixel format, as the encoder line makes it end: pad rounds its
+    offset and the picture's size to that format's chroma grid (a 203-row picture is padded as 202
+    rows of a 4:2:0 frame), and a chain ending in grey would pad in grey."""
+    pix = (path_meta.get("video") or {}).get("pix_fmt")
+    src = f"color=c={colour}:s={sw}x{sh}:r=1:d=1" + (f",format={pix}" if pix else "")
+    # one filter thread: with slice threads FFmpeg 8.0.1 once gave a white frame's band of rows
+    # (128-217 of 640, a fifth of the frame down to the picture) a value the black frame's did not
+    # have, and the picture was reported 90 rows taller than the file held it (#543 CI)
+    cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-filter_threads", "1",
+           "-f", "lavfi", "-i", src,
+           "-vf", chain + (f",format={out_pix}" if out_pix else "") + ",format=gray", "-frames:v", "1", "-f", "rawvideo", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    return proc.stdout if proc.returncode == 0 and len(proc.stdout or b"") == size else None
+
+
+def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, sized: bool) -> dict:
+    """Where the picture sits in the written frame (#519): measured, not judged. ffmpeg runs the
+    frame's own filters (the scale and pad, the blur graph with its background drawn black, or the
+    scale and crop) on one white and one black frame of the source's displayed size and pixel
+    format, after the colour conversion the encoder line adds; the picture is where the two
+    differ, and the frame is the written file's. No frame of the source is decoded. Whether the
+    subject is inside that rectangle is still a look (subject_framing stays unverified)."""
+    filters, crop_scale, cropped = geometry
+    W, H = int(out_video.get("width") or 0), int(out_video.get("height") or 0)
+    why = None
+    if not (sw and sh and W and H):
+        why = "the source or the written frame has no size"
+    else:
+        conv = None if keeps_source_tags() else bt709_matrix_filter(meta)
+        chain = ",".join(([conv] if conv else []) + list(filters))
+        out_pix = out_video.get("pix_fmt")
+        white = _picture_rows(meta, chain, "white", sw, sh, W * H, out_pix)
+        black = _picture_rows(meta, chain, "black", sw, sh, W * H, out_pix) if white is not None else None
+        if white is None or black is None:
+            why = f"ffmpeg did not give one {W}x{H} frame of the frame's filters (the written frame's size)"
+    if why:
+        note(f"picture: not measured: {why}")
+        return {"measured": False, "reason": why}
+    rows = [r for r in range(H) if white[r * W:(r + 1) * W] != black[r * W:(r + 1) * W]]
+    if not rows:
+        note("picture: not measured: no pixel of the frame changed with the picture")
+        return {"measured": False, "reason": "no pixel of the frame changed with the picture"}
+    left, right = W, -1
+    for r in rows:
+        # the row's difference as one integer: its leading zero bytes are the columns before the
+        # first differing pixel, its trailing ones those after the last (no per-pixel loop)
+        d = int.from_bytes(white[r * W:(r + 1) * W], "big") ^ int.from_bytes(black[r * W:(r + 1) * W], "big")
+        x0 = W - (d.bit_length() + 7) // 8
+        x1 = W - 1 - ((d & -d).bit_length() - 1) // 8
+        left, right = min(left, x0), max(right, x1)
+    x, y, w, h = left, rows[0], right - left + 1, rows[-1] - rows[0] + 1
+    scale = crop_scale if crop_scale is not None else w / sw
+    pic = {"measured": True, "x": x, "y": y, "width": w, "height": h, "frame_width": W, "frame_height": H,
+           "frame_share": round(w * h / (W * H), 4), "scale": round(scale, 4),
+           "cropped": cropped or {"left": 0, "right": 0, "top": 0, "bottom": 0}}
+    if scale < 1 and not sized:
+        note(f"picture: scaled to {scale:.1%} of the source's width ({w}x{h} in a {W}x{H} frame): with no --width or "
+             "--height the frame keeps the source's height or width (give --width/--height for a larger frame)")
+    return pic
 
 
 def main() -> int:
@@ -184,6 +251,8 @@ def main() -> int:
         target = time_arg(args.duration, "--duration", meta["video"].get("fps") if meta.get("video") else None)
         if target <= 0:
             die("target duration must be > 0")
+        # speed refused it as "0.00x", and trim wrote one frame as verified (#531)
+        refuse_still(meta, args.input, "--duration retimes or trims the input's length, and a still has none")
         # speed and trim are both computed from the source's length: one that states none is refused
         # (#491). Not under --dry-run, where render.py plans a clip's speed stage on the source in
         # place of a cut that does not exist yet and records the stand-in itself (A97)
@@ -275,6 +344,7 @@ def main() -> int:
             vf.append(cfr_filter(meta))
 
     # ---- aspect / size
+    geometry = None  # (the frame's filters with every fill drawn black, scale, cropped) for the picture measurement
     if args.aspect or args.width or args.height:
         # the one sizing rule, shared with render.py --export-timeline's sequence frame
         out_w, out_h = frame_size(parse_aspect(args.aspect) if args.aspect else None, args.width, args.height, sw, sh)
@@ -298,6 +368,11 @@ def main() -> int:
                          f"(4:2:0 chroma), on a {m}px margin")
             vf.append(f"scale={out_w + mx}:{out_h + my}")
             vf.append(f"crop={out_w}:{out_h}:{ox}:{oy}")
+            # the source pixels the crop leaves out on each side, at the scale it was cut at: each
+            # axis by its own, since the margin widened to a multiple of 4 scales the two apart
+            kx, ky = sw / (out_w + mx), sh / (out_h + my)
+            geometry = (vf[-2:], (out_w + mx) / sw, {"left": round(ox * kx), "right": round((mx - ox) * kx),
+                                                     "top": round(oy * ky), "bottom": round((my - oy) * ky)})
         elif args.fit == "crop":  # a dry run's pending input has no size: the expressions, planned only
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
@@ -314,8 +389,10 @@ def main() -> int:
                      "(an eq on PQ/HLG code values is not the -15% dim it is on SDR); "
                      "run color.py --to-sdr first for the SDR look")
             vf.append(pad_filters(out_w, out_h, "blur", args.pad_color, args.pad_blur, darken))
+            geometry = ([pad_filters(out_w, out_h, "blur", args.pad_color, args.pad_blur, darken, blank=True)], None, None)
         else:
             vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur, meta=meta))
+            geometry = ([pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur, meta=meta, blank=True)], None, None)
         vf.append("setsar=1")
         # a non-square-pixel source is made square at its display aspect before anything else
         # (the size above is computed in that frame), so the fitted picture is not squashed
@@ -366,7 +443,10 @@ def main() -> int:
     if abs(factor - 1.0) > 1e-4:
         msg += f", speed {factor:.3f}x"
     info(msg)
-    emit(output, dropped_non_av_streams=dropped_streams)
+    extra = {}
+    if geometry and not STATE.dry_run:
+        extra["picture"] = measure_picture(geometry, meta, sw, sh, result["video"], sized=bool(args.width or args.height))
+    emit(output, dropped_non_av_streams=dropped_streams, **extra)
     return 0
 
 

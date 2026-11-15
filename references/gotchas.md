@@ -233,7 +233,9 @@ printing one line — `font: /usr/share/fonts/.../wqy-zenhei.ttc (covers ko)`.
   font is not a choice — the script still picks one.
 - `--fonts-dir` (`caption.py`) adds faces to the search, it does not switch the
   check off: if nothing in the directory covers the script, one line says so and
-  a covering font is resolved as usual.
+  a covering font is resolved as usual. A directory with no face named `--font`
+  is not an error either: libass asks fontconfig, and `font_used` says what it
+  drew with (`substituted: true` when it is another family).
 - **No fontconfig is `unknown`, not `missing`.** With no `fc-list` on PATH (or
   one that fails) coverage cannot be verified: the job runs with the font as
   given behind one info line, because libass and drawtext have font backends of

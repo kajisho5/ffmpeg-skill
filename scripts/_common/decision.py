@@ -32,7 +32,7 @@ def boxblur_chroma_radius(want: int) -> str:
 
 
 def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken: float = 0.0,
-                meta: Optional[Dict[str, Any]] = None) -> str:
+                meta: Optional[Dict[str, Any]] = None, blank: bool = False) -> str:
     """The letterbox/pillarbox step shared by fit.py and export.py, as one -vf segment.
 
     fill="color": scale to fit, then pad with a solid colour (the historical behaviour).
@@ -46,7 +46,9 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
     what `fit.py --fit blur` uses (1.14).
     `meta`: the probe of the picture being padded, when the output is that picture's re-encode: a
     --pad-color with chroma is then drawn in the BT.709 the line tags (drawn_chain()). Without it
-    (a still made RGB, an export to GIF) the pad is what it always was."""
+    (a still made RGB, an export to GIF) the pad is what it always was.
+    `blank` (fit.py's picture measurement, #519): the blurred copy is drawn black instead, so it
+    does not change with the picture; the graph is otherwise the same."""
     if fill == "blur":
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
@@ -56,7 +58,8 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
         chroma = boxblur_chroma_radius(radius)
         return (f"split[__fitfg][__fitbg];"
                 f"[__fitbg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},"
-                f"boxblur={radius}:2:{chroma}:2" + (f",eq=brightness=-{darken:g}" if darken else "") + "[__fitbgb];"
+                + ("drawbox=c=black:t=fill" if blank else
+                   f"boxblur={radius}:2:{chroma}:2" + (f",eq=brightness=-{darken:g}" if darken else "")) + "[__fitbgb];"
                 f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
                 f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
     pad = f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color="

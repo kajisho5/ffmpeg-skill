@@ -4,7 +4,46 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`fit.py` says where the picture sits in the frame it wrote (#519).** After a reframe
+  (`--aspect`, `--width` or `--height`) the result carries `picture`: the picture's rectangle
+  `{x, y, width, height}` in the written frame, `frame_share` (its share of the frame's area),
+  `scale` (its width over the source's) and the source pixels `--fit crop` cut on each side
+  (`cropped`). It is measured, not judged: ffmpeg runs the frame's own filters on a white and a
+  black frame of the source's size and pixel format, and the picture is where the two differ, so
+  `--aspect 9:16 --width 360` on a 640x360 clip reports 360x202 at y 218 in a 360x640 frame, as
+  the written file has it (no frame of the source is decoded). A picture scaled down with no `--width`/`--height`
+  asked gets a note. `subject_framing` stays in `unverified`.
+
+### Fixed
+
+- **A still picture given where a clip with a length is needed is refused as an input (#531).**
+  `cut.py` wrote 0.04 s with `verified: true` from `--start 0` and failed as `kind: output` past
+  the one frame; `fit.py --duration` refused a speed of 0.00x or wrote one frame as verified
+  (`--method trim`); `freeze.py`, `speedramp.py` and `loop.py` quoted a length of 0.000;
+  `metadata.py --chapters` failed inside ffmpeg. Each is now `kind: input`, naming the still and
+  `insert.py`, which makes a clip of one. `freeze.py --at 0` still holds a still's one frame.
+- **`look.py --at` past a still's one frame, and `--compare` past either clip's end, is refused
+  (#531).** Both were `kind: output` ("not written"), where a plain clip with a time past its end
+  got a `kind: input` refusal; `--compare` checked neither picture's length. `--at 0` on a TGA
+  still (which image2 gives a length of one frame) wrote nothing and now shows it.
+- **`stabilize.py` takes an RGB source (#531).** vid.stab aborts on RGB (a PNG still, a qtrle
+  or RGB `.mov`: `kind: ffmpeg`); both passes now stabilize a YUV 4:4:4 copy, converted to BT.709
+  as every SDR RGB re-encode is (an HDR or BT.2020 one by FFmpeg's own conversion, as on every
+  other line), and a note says so. The output's pixel format is the encoder line's,
+  as before (`probe.video.pix_fmt`).
+- **`caption.py --fonts-dir DIR --font NAME` reports the font libass drew with (#531).** With no
+  face named NAME in DIR, libass asks fontconfig, and the result said
+  `font_used.substituted: false` whatever it got. DIR is now read for the face (`fc-scan`); without
+  one, the font is reported as a run without `--fonts-dir` reports it: `substituted: true`, with a
+  `font_substituted` fallback, only when fontconfig gives another family. A face counts as found
+  only as libass 0.17 matches one: the folder's own files (not subfolders), by family name, or by
+  full name for TrueType and PostScript name for CFF. A file is named only for a face in exactly
+  the asked style (upright, regular or `--bold`) or one asked by its full or PostScript name; a
+  folder holding the family in other styles only gets `file: null` and a note, since libass then
+  chooses among those and the installed faces. `font_used` names one face: libass draws a glyph
+  it lacks from another face, not recorded.
 
 ## 3.8.23
 

@@ -100,6 +100,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.20 — the decided items of #510](#after-3820--the-decided-items-of-510)
 - [After 3.8.21 — variable-frame-rate sources in reverse, speedramp and freeze, and the timeline of several clips (#523, #526)](#after-3821--variable-frame-rate-sources-in-reverse-speedramp-and-freeze-and-the-timeline-of-several-clips-523-526)
 - [After 3.8.22 — streams kept: a late-starting sound, audio-only extensions and subtitle tracks (#515, #517, #520)](#after-3822--streams-kept-a-late-starting-sound-audio-only-extensions-and-subtitle-tracks-515-517-520)
+- [After 3.8.23 — a still where a clip is expected, RGB input to stabilize, and where fit puts the picture (#531, #519)](#after-3823--a-still-where-a-clip-is-expected-rgb-input-to-stabilize-and-where-fit-puts-the-picture-531-519)
 <!-- contents:end -->
 
 ## Time limits
@@ -4844,7 +4845,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   (`cut.py STILL --start 0 --end 2` writes 0.04 s with `verified: true`, as it clamps any `--end`
   past an input; `join.py --transition none` joins one frame; a render clip with `in`/`out` on a
   still is cut to one frame and then refused by the join's transition). What a still means
-  there (refused, naming `insert.py`, or held for the window asked) is a decision of its own.
+  there (refused, naming `insert.py`, or held for the window asked) is a decision of its own:
+  for `cut.py` it is refused since #531 ("After 3.8.20"), `join.py` is still open.
 - **A font file the caller names is refused when it is not there or not a font**, from
   `--font-file` (`overlay.py`, `graphics.py`) and from a brand file's `font_file` (those two and
   `caption.py` when it burns, which hands libass its folder; `--mode mux` draws nothing). On FFmpeg 6.1.1 drawtext that cannot load its
@@ -5371,3 +5373,154 @@ the slot at 0.519 s, "After 3.8.14").
   its declick fades. The fade-in keeps its asked length; where the two overlap, the layer peaks
   below full strength, as before for text. Code: `overlay.fade_out_length()`, `overlay.alpha_expr()`.
   Test: `test_overlay_fade_out_longer_than_its_window_is_cut_to_it`.
+
+## After 3.8.23 — a still where a clip is expected, RGB input to stabilize, and where fit puts the picture (#531, #519)
+
+- **A still picture given where a clip with a length is needed is refused, `kind: input`,
+  naming the still and `insert.py`** (#531). `input_length()` lets a still through as 0 s on
+  purpose (grid.py and broll.py show one for as long as the clip beside it, "After 3.8.17"), and
+  a tool that then computed with that 0 failed in a way that blamed something else: `cut.py`
+  wrote 0.04 s with `verified: true` from `--start 0` and wrote nothing past the one frame
+  (`kind: output`, "no video or audio stream"); `fit.py --duration` refused "0.00x" with
+  `--method speed` and wrote one frame as verified with `--method trim`; `freeze.py --at` past 0,
+  `speedramp.py` and `loop.py` were refused with a length of 0.000 or "no measurable duration";
+  `metadata.py --chapters` failed inside ffmpeg (a chapter ending before it starts). The cut is the
+  decision #510 left open for `cut.py`; `fit.py --method trim` is the same keep-the-first-N-seconds
+  and is refused with it, and `metadata.py` is the sibling the sweep found (the same 0 s reaching
+  ffmpeg). What a still has is kept: `freeze.py --at 0` still holds its one frame and
+  `look.py --at 0` still shows it. Still means `probe._is_still()`: one picture read by an image
+  demuxer (PNG, JPEG and TGA tested; a GIF is a clip). A render clip with `in`/`out` on a still
+  now meets cut.py's refusal instead of the join's transition refusal. `verify.py STILL` now fails
+  its cut steps and the steps built on the cut, where every step passed on a 0.04 s cut before.
+  Code: `_common.emit.refuse_still()`, its callers in `cut.py`, `fit.py`, `freeze.py`,
+  `speedramp.py`, `loop.py`, `metadata.py`. Test: `test_a_still_where_a_length_is_needed_is_refused_as_an_input`.
+- **`look.py --at` past the picture it is taken from is refused, on either side of `--compare`**
+  (#531). A still has one picture at 0, and `--at 1.5` on one wrote nothing (`kind: output`), where a
+  clip with a time past its end got "--at T is beyond the duration" (`kind: input`); that is the
+  refusal a still now gets, saying `--at 0` shows it. `--compare` checked neither picture's length,
+  and a clip past its own end there was `kind: output` too. A still is read without `-ss`: image2
+  given `-ss 0.000` dropped a TGA's only frame (image2 gives a TGA a length of one frame), so
+  `look.py white.tga --at 0` wrote nothing. Code: `look._refuse_past_end()`, `look._seek()`.
+  Test: the same one.
+- **Left for a product decision, not changed:** `export.py STILL` writes a 0.04 s file with
+  `verified: true`, and `join.py --transition none` with a still joins one frame (a transition is
+  refused, `kind: input`, by the clip's length). The options: (a) refuse, `kind: input`, naming
+  `insert.py STILL --duration T`, as cut.py now does; (b) hold the still for a stated time (a
+  `--still-duration` flag, or the join's transition length, or a default such as 3 s, said in a
+  note), which is what a caller who joins a title card means. Recommended: (a) for `export.py`
+  (a delivery of one frame is never meant, and insert.py already sizes and times a still) and (a)
+  for `join.py` too, until (b) has a flag: holding for a time nobody stated is the decision this
+  skill leaves to its caller. The same class, also not changed and recorded for the same decision:
+  `fit.py STILL --aspect` (no `--duration`), `stabilize.py STILL`, `reverse.py STILL` and
+  `scenes.py STILL` write or read one frame and complete; `graphics.py STILL` with no `--end` is
+  refused as "--end must be after --start", and `look.py STILL` (a contact sheet) as "without a
+  known duration", both `kind: input` but not naming the still.
+- **`stabilize.py` takes an RGB source** (#531). vid.stab aborts on an RGB picture: FFmpeg 6.1.1
+  with libvidstab 1.1 fails the assertion `fi->planes==1` on rgb24, bgr24, rgba and gbrp alike,
+  and runs on yuv444p of the same frames, so a PNG still, a qtrle or RGB `.mov` and a gbrp file
+  failed in pass 1 (`kind: ffmpeg`), while a JPEG still (YUV) ran. Both passes now see YUV 4:4:4:
+  the BT.709 conversion every other re-encode of an RGB source makes (`bt709_matrix_filter()`; pass
+  2 already had it, folded in by run(), pass 1 had none), or FFmpeg's own conversion to yuv444p
+  on a line that keeps the source's tags and converts no matrix (`--codec prores`), and for an
+  RGB source that probes HDR or BT.2020, which no line converts (below). Converting is
+  what the other tools do with RGB input, so it is not refused. A note says the source was RGB;
+  the output's pixel format is the encoder line's (yuv420p for H.264, yuv422p10le for ProRes),
+  read back in `probe.video.pix_fmt`. Not verified on another libvidstab: one that took RGB would
+  still get the YUV copy. Code: `stabilize.main()`. Test: `test_stabilize_takes_an_rgb_source`.
+- **`caption.py --fonts-dir DIR --font NAME` names a face of DIR only where libass's pick is
+  certain** (#531). libass looks NAME up among the faces in DIR and, with none of that name, asks
+  fontconfig as it does without a fonts dir; the result said `how: fonts_dir`,
+  `substituted: false` whatever DIR held, an empty folder or a text file named `.ttf` included.
+  DIR's own files are now read with `fc-scan` and their name tables. Without a face of that name
+  the font is reported as a run without `--fonts-dir` reports it (fontconfig's answer,
+  `substituted: true` and a `font_substituted` fallback only when it is another family; an
+  installed family is its own file, and on Windows the family is given to libass by name, both
+  `substituted: false`; `fonts_dir` still named), and a note says the folder had no such face.
+  "That name" is libass 0.17's match, each part checked by drawing on 0.17.1 with fontconfig given
+  no fonts, so a face not matched drew nothing: the family is the Microsoft-platform name ID 1 only
+  (`Inter` is not a family of `Inter-Black.otf`, whose ID 1 is `Inter Black`; fontconfig also lists
+  ID 16), or FreeType's family name when there is no such record (DejaVu Sans with only its
+  Macintosh records drew); the full name matches a TrueType outline and the PostScript name a CFF
+  or Type 1 one, not the other way (`LiberationMono-Bold` and `Inter Display SemiBold Italic` drew
+  nothing); only the folder's own files, not a subfolder and not a dot-file (fc-scan given the
+  folder recurses, so it is given the files).
+  Which face of the family libass then takes is not repeated here: libass scores the folder's faces
+  and the installed ones together (a folder holding only DejaVuSans-Bold.ttf, with DejaVu Sans
+  installed, drew the installed regular face for a regular burn; libass's debug log names it), and
+  its weight and slant scoring differs between versions. So a `file` is named only for a face in
+  exactly the asked style, upright at weight 400 or, with `--bold` (ASS Bold -1, which libass asks
+  as 700), 700, or for a face asked by its full or PostScript name: libass scores either 0, the
+  best there is, and an installed face that ties is the same family and style, so the face drawn
+  may be that installed copy. A folder that holds the family only in other styles reports
+  `how: fonts_dir`, `file: null`, `family` as asked and `substituted: false` (libass draws a face of
+  that family either way), with a note that libass picks among those and the installed faces;
+  `file: null` with a note is what an unreadable folder already reported. An earlier commit of this
+  change ranked the faces by distance from the asked weight; a review reported that libass 0.17.4
+  takes an italic 700 over an upright 600 for a bold request, where that ranking took the upright
+  (not reproduced here: no such pair of one family is installed), and the ranking was dropped
+  rather than chased. `font_used`
+  names one face: libass draws a glyph that face lacks from another (its log: "Glyph 0x2605 not
+  found, selecting one more font"), which is not recorded; drawtext draws its missing-glyph box
+  from the same face.
+  It is reported, not refused: an installed family found by fontconfig is drawn as asked, and
+  `--font NAME` without `--fonts-dir` is not refused either. This differs from the font *file*
+  check of 3.8.18 ("After 3.8.17"), which refuses a file the caller names that is not a font: here
+  the caller named a family, and only the folder lacked it. Checked by drawing: the burn with the
+  missing family and the burn naming the family reported are the same picture. When fc-scan
+  cannot read the folder (no fontconfig), the family is reported as asked with a note that it was
+  not checked. Code: `fonts.fonts_dir_face()`, `fonts._sfnt_names()`, `caption.main()`. Tests:
+  `test_a_fonts_dir_without_the_asked_face_reports_the_substitution`,
+  `test_a_fonts_dir_face_is_matched_as_libass_matches_it`.
+- **`fit.py` reports where the picture sits in the frame it wrote, measured** (#519). After
+  `--aspect`, `--width` or `--height` the result has `picture`: `{measured, x, y, width, height,
+  frame_width, frame_height, frame_share, scale, cropped}`. The issue proposed computing it from
+  the geometry the tool gave ffmpeg, but for a pad or a blur that geometry is ffmpeg's: the scale
+  rounds the fitted size (`force_original_aspect_ratio`), pad rounds its offset and the picture's
+  rows to the chroma grid of the format it runs in (a 203-row picture is 202 rows in a 4:2:0 pad,
+  203 in a 4:2:2 or RGB one), and overlay rounds only the offset (the blur keeps 203). So ffmpeg
+  measures it: the frame's own filters (the blur graph with its background drawn black,
+  `pad_filters(blank=True)`) run on a white and a black frame of the source's displayed size and
+  pixel format, after the conversion the encoder line adds and ending in the written file's pixel
+  format, and the picture is the rectangle where the two differ. No frame of the source is
+  decoded, and the frame size is the written file's. The narrowest reading of the issue: `scale`
+  is the picture's width over the source's displayed width (for a crop, the width scaled to
+  before the crop); `cropped` is in source pixels, rounded, each axis at its own scale (the
+  scaled frame's margin is widened to a multiple of 4, so a 360x640 source cut to 360x202 is
+  scaled to 360x642 and its 220 cut rows a side are 219 source rows); the note is given when
+  `scale` is below 1 and no size was asked. A measurement that gives no frame of the written size
+  is `{measured: false, reason}` and a note, never a rectangle. Only `fit.py` reports `picture`.
+  The issue's sweep, not done here: `crop.py` (the caller gives the rectangle, so where the
+  picture sits is known) and `pad.py` (it pads in time, before and after the clip; the picture
+  fills its frame) have nothing to measure; `render.py`'s frame stage runs fit.py and does not
+  pass its result on, and `export.py`'s presets that reframe (`--fit pad` with any `--pad-fill`,
+  `--fit crop`) build the same `pad_filters()` frame but are not measured: both report no
+  `picture`, left for a change of their own rather than a guess at the rectangle. Tested against
+  the written file on a white source (black or red bars, the darkened blur, a 4:2:2 ProRes line, an
+  RGB source, three crop anchors, a portrait source's rows cut) on 6.1.1 only. Code: `fit.measure_picture()`. Tests:
+  `test_fit_reports_the_picture_rectangle_it_wrote`,
+  `test_a_picture_measurement_that_fails_is_reported_as_not_measured`. The two frames are
+  compared byte for byte, so they are rendered with `-filter_threads 1`: on FFmpeg 8.0.1 (CI, once
+  in three runs of the red-pad case) the white frame's render differed from the black frame's in
+  rows 128-217 of the 360x640 frame, one slice of rows above the picture, and `picture` said 293
+  rows for the 203 the file held. The cause was not isolated (it did not recur locally on 6.1.1);
+  one thread removes the slices. Test: `test_the_picture_measurement_runs_its_filters_on_one_thread`.
+- **Seen and not changed** (the RGB sweep, `rgb24.mov` (qtrle, PCM) against the same clip in
+  H.264): `audio.py`, `loudness.py` and `metadata.py` to `.mp4` stream-copy the qtrle picture,
+  which MP4 cannot hold, and fail inside ffmpeg (`kind: ffmpeg`); to `.mov` they complete. That is
+  a stream copy into a container that cannot hold the codec, not RGB (a gbrp H.264 `.mov` gave no
+  differing row), and is a class of its own.
+- **Seen and not changed: an RGB source that probes HDR or BT.2020 is written with BT.601 YUV
+  under BT.2020 tags, or not at all** (found from a review of `stabilize.py`'s RGB path; the class
+  is the HDR encoder line, not stabilize). `bt709_matrix_filter()` converts no HDR/BT.2020 source
+  and the HDR line tags the source's own matrix, so FFmpeg's default RGB-to-YUV conversion
+  (BT.601) makes the YUV. "One that probes HDR or BT.2020 is not converted to BT.709: FFmpeg's own
+  conversion makes its YUV, as before" (#496, above) holds for not converting to BT.709, but says
+  nothing of the matrix that conversion uses, which is not the one tagged. Measured on 6.1.1 with
+  a gbrp10le FFV1 source of C03028 tagged bt2020/smpte2084 and no matrix: `stabilize.py`, `fit.py
+  --fps 30`, `denoise.py` and `crop.py` alike write HEVC tagged bt2020nc that decodes, by its tag,
+  as 196/52/35, and as 192/47/39 (the source) with BT.601. The same source tagged `gbr` (FFmpeg's
+  own tag for RGB) fails every re-encoding tool of `tests/sweep.py` (`kind: ffmpeg`: the line
+  passes `-colorspace gbr`, which no encoder option parses). The fix belongs to the HDR line of
+  every tool (name the BT.2020 matrix in the conversion and tag `bt2020nc` for an RGB picture),
+  with `fold_bt709_matrix()` and the alpha line's #496 rule to change with it; not done in a
+  stabilize change, where a matrix of its own would be a second convention.

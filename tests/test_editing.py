@@ -5275,6 +5275,227 @@ class StillAsClipTests(unittest.TestCase):
         doc = json.loads(script("grid.py", self.a, still, "--cols", "2", "--rows", "1", "--dry-run", "--json").stdout)
         self.assertEqual(doc["output"], str(self.dir / "black_grid.mp4"))
 
+    def test_a_still_where_a_length_is_needed_is_refused_as_an_input(self):
+        """#531: a still has no length, and a tool that computes with one was refused as kind
+        output (cut, look --at past its one frame: nothing written), quoted a length of 0.000 or a
+        speed of 0.00x (fit, freeze, speedramp, loop), failed inside ffmpeg (metadata --chapters: a
+        chapter that ends before it starts), or wrote one frame as verified (fit --method trim). Each is now a kind input refusal naming the still; the ones that
+        take a time name insert.py, and look says --at 0 shows it, as a clip past its end is
+        refused. --compare checked neither picture's length."""
+        chapters = self.dir / "chapters.txt"
+        chapters.write_text("0:00 One\n0:01 Two\n", encoding="utf-8")
+        refused = {
+            "metadata --chapters": ("metadata.py", "--chapters", chapters),
+            "cut": ("cut.py", "--start", "0", "--end", "1"),
+            "cut past its frame": ("cut.py", "--start", "0.2", "--end", "1"),
+            "cut --accurate": ("cut.py", "--start", "0.2", "--end", "1", "--accurate"),
+            "fit speed": ("fit.py", "--duration", "1"),
+            "fit trim": ("fit.py", "--duration", "1", "--method", "trim"),
+            "freeze": ("freeze.py", "--at", "0.4", "--hold", "0.5"),
+            "speedramp": ("speedramp.py", "--segment", "0-1:2.0"),
+            "loop": ("loop.py", "--times", "2"),
+        }
+        for still in self.stills:
+            for name, (tool, *flags) in refused.items():
+                with self.subTest(tool=name, still=still.name):
+                    out = self.dir / f"refused_{name.replace(' ', '_')}_{still.suffix[1:]}.mp4"
+                    out.unlink(missing_ok=True)
+                    doc = json.loads(script(tool, still, *flags, "-o", out, "--json", expect_fail=True).stdout)
+                    err = doc["error"]
+                    self.assertEqual(err["kind"], "input", err)
+                    self.assertIn(f"{still} is a still picture", err["message"])
+                    self.assertNotIn("0.000", err["message"])
+                    self.assertIn("insert.py", doc.get("hint") or err.get("hint") or "")
+                    self.assertFalse(out.exists())
+            for flags in (("--at", "1.5"), ("--at", "1.5", "--compare", self.a), ("--at", "0.5", "--compare", self.a)):
+                with self.subTest(tool="look", flags=" ".join(map(str, flags)), still=still.name):
+                    out = self.dir / f"look_{still.suffix[1:]}.png"
+                    out.unlink(missing_ok=True)
+                    err = json.loads(script("look.py", still, *flags, "-o", out, "--json", expect_fail=True).stdout)["error"]
+                    self.assertEqual(err["kind"], "input", err)
+                    self.assertIn("still picture", err["message"])
+                    self.assertIn("--at 0 shows it", err["message"])
+            with self.subTest(tool="look --compare STILL", still=still.name):
+                err = json.loads(script("look.py", self.a, "--compare", still, "--at", "1", "-o", self.dir / "look_cmp.png",
+                                        "--json", expect_fail=True).stdout)["error"]
+                self.assertEqual(err["kind"], "input", err)
+                self.assertIn("the --compare clip, a still picture", err["message"])
+            # what a still has, its one frame at 0, is still shown and held
+            with self.subTest(tool="look --at 0 / freeze --at 0", still=still.name):
+                out = self.dir / f"look0_{still.suffix[1:]}.png"
+                self.assertEqual(json.loads(script("look.py", still, "--at", "0", "-o", out, "--json").stdout)["status"], "completed")
+                out = self.dir / f"freeze0_{still.suffix[1:]}.mp4"
+                doc = json.loads(script("freeze.py", still, "--at", "0", "--hold", "0.5", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+        # a clip past its own end under --compare: refused as the plain --at is, on either side
+        for flags in ((self.a, "--compare", self.a, "--at", "5"),):
+            err = json.loads(script("look.py", *flags, "-o", self.dir / "look_cmp.png", "--json", expect_fail=True).stdout)["error"]
+            self.assertEqual(err["kind"], "input", err)
+            self.assertRegex(err["message"], r"^--at 5 is beyond the duration \(3\.\d\ds\)$")
+        short = self.dir / "short1.mp4"
+        if not short.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=160x90:r=30:d=1", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", short)
+        err = json.loads(script("look.py", self.a, "--compare", short, "--at", "2", "-o", self.dir / "look_cmp.png", "--json",
+                                expect_fail=True).stdout)["error"]
+        self.assertEqual(err["kind"], "input", err)
+        self.assertRegex(err["message"], r"^--at 2 is beyond the --compare clip's duration \(1\.\d\ds\)$")
+
+
+class FitPictureTests(unittest.TestCase):
+    """#519: fit.py reports where the picture sits in the frame it wrote after a reframe, measured
+    by ffmpeg running the frame's own filters, and the numbers are the ones in the written file."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "fit_picture"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.white = cls.dir / "white_640x360.mp4"
+        if not cls.white.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=640x360:r=25:d=1", "-c:v", "libx264",
+               "-pix_fmt", "yuv420p", cls.white)
+        cls.rgb = cls.dir / "white_rgb_320x240.mov"
+        if not cls.rgb.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=white:s=320x240:r=25:d=1,format=rgb24",
+               "-c:v", "qtrle", cls.rgb)
+
+    @staticmethod
+    def bright_box(path, threshold):
+        """(x, y, w, h, W, H) of the pixels of the first frame whose luma is at or above `threshold`."""
+        m = probe(str(path))["video"]
+        W, H = m["width"], m["height"]
+        data = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-vf", "format=gray",
+                               "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+        rows = [r for r in range(H) if max(data[r * W:(r + 1) * W]) >= threshold]
+        cols = [c for c in range(W) if max(data[c::W][:H]) >= threshold]
+        return cols[0], rows[0], cols[-1] - cols[0] + 1, rows[-1] - rows[0] + 1, W, H
+
+    def test_the_picture_measurement_runs_its_filters_on_one_thread(self):
+        """#543 CI (FFmpeg 8.0.1, once in three runs): the white frame's render differed from the
+        black frame's in rows 128-217 of a 360x640 pad, a slice of the frame above the picture, and
+        `picture` said 293 rows for the 203 the file held. The two renders are compared byte for
+        byte, so they run with one filter thread; the measurement is the same on every run."""
+        sys.path.insert(0, str(SCRIPTS))
+        import fit
+        seen = []
+        real = fit.run_analysis
+
+        def spy(cmd, **kw):
+            seen.append(list(cmd))
+            return real(cmd, **kw)
+        fit.run_analysis = spy
+        try:
+            meta = probe(str(self.white))
+            chain = "scale=360:202,pad=360:640:0:218:color=black"
+            boxes = set()
+            for _ in range(5):
+                white = fit._picture_rows(meta, chain, "white", 640, 360, 360 * 640, "yuv420p")
+                black = fit._picture_rows(meta, chain, "black", 640, 360, 360 * 640, "yuv420p")
+                rows = [r for r in range(640) if white[r * 360:(r + 1) * 360] != black[r * 360:(r + 1) * 360]]
+                boxes.add((rows[0], rows[-1]))
+        finally:
+            fit.run_analysis = real
+        self.assertEqual(boxes, {(218, 419)}, "the same rows on every run")
+        for cmd in seen:
+            self.assertEqual(cmd[cmd.index("-filter_threads") + 1], "1", cmd)
+            self.assertLess(cmd.index("-filter_threads"), cmd.index("-i"), "a global option, ahead of the input")
+
+    def test_fit_reports_the_picture_rectangle_it_wrote(self):
+        # threshold between the fill and the white picture: black bars and a red pad are below
+        # 128, the blurred white background is darkened to about 206
+        cases = [
+            ("pad 9:16 at 360 wide", self.white, ["--aspect", "9:16", "--fit", "pad", "--width", "360"], 128),
+            ("pad 9:16 at the source's height", self.white, ["--aspect", "9:16", "--fit", "pad"], 128),
+            ("red pad", self.white, ["--aspect", "9:16", "--fit", "pad", "--pad-color", "red", "--width", "360"], 128),
+            ("blur", self.white, ["--aspect", "9:16", "--fit", "blur", "--width", "360"], 235),
+            ("pad 1:1", self.white, ["--aspect", "1:1", "--fit", "pad", "--width", "300"], 128),
+            ("pad of an RGB source", self.rgb, ["--aspect", "9:16", "--fit", "pad", "--width", "270"], 128),
+            ("prores 4:2:2 pad", self.white, ["--aspect", "9:16", "--fit", "pad", "--width", "360", "--codec", "prores"], 128),
+        ]
+        for name, src, flags, threshold in cases:
+            with self.subTest(case=name):
+                out = self.dir / f"fit_{name.replace(' ', '_').replace(':', '')}{'.mov' if 'prores' in flags else '.mp4'}"
+                doc = json.loads(script("fit.py", src, *flags, "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                pic = doc["picture"]
+                self.assertTrue(pic["measured"], pic)
+                x, y, w, h, W, H = self.bright_box(out, threshold)
+                self.assertEqual((pic["x"], pic["y"], pic["width"], pic["height"], pic["frame_width"], pic["frame_height"]),
+                                 (x, y, w, h, W, H))
+                self.assertAlmostEqual(pic["frame_share"], w * h / (W * H), places=3)
+                src_w = probe(str(src))["video"]["width"]
+                self.assertAlmostEqual(pic["scale"], w / src_w, places=3)
+                self.assertEqual(pic["cropped"], {"left": 0, "right": 0, "top": 0, "bottom": 0})
+                self.assertIn("subject_framing", doc.get("unverified") or [], "whether the subject is in it is still a look")
+                scaled_note = any(n.startswith("picture: scaled to") for n in doc.get("notes") or [])
+                self.assertEqual(scaled_note, "--width" not in flags and pic["scale"] < 1, doc.get("notes"))
+        # a crop fills the frame; what it cut off is said in source pixels on each side
+        for crop_x, cut in (("0.5", {"left": 219, "right": 219}), ("1", {"left": 439, "right": 0}), ("0", {"left": 0, "right": 439})):
+            with self.subTest(case=f"crop --crop-x {crop_x}"):
+                out = self.dir / f"fit_crop_{crop_x}.mp4"
+                doc = json.loads(script("fit.py", self.white, "--aspect", "9:16", "--fit", "crop", "--crop-x", crop_x,
+                                        "-o", out, "--json").stdout)
+                pic = doc["picture"]
+                self.assertEqual((pic["x"], pic["y"], pic["width"], pic["height"], pic["frame_share"]), (0, 0, 202, 360, 1.0))
+                self.assertEqual(pic["cropped"], dict(cut, top=0, bottom=0))
+        # the rows cut are in source rows, at the vertical scale: a 360x640 source to 360x202 is
+        # scaled to 360x642 (the margin is a multiple of 4), so the 220 rows cut on each side of the
+        # scaled frame are 219 of the source's, not 220 at the width's scale. The written file says
+        # so: with T black rows at the top and bottom of a white source, the first and last rows
+        # written are white for T = 219 and grey for T = 220.
+        for band, edge in ((219, "white"), (220, "grey")):
+            with self.subTest(case=f"crop of a portrait source, {band} black rows at each end"):
+                src = self.dir / f"portrait_band{band}.mp4"
+                if not src.exists():
+                    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                       f"color=white:s=360x640:r=25:d=0.2,drawbox=x=0:y=0:w=360:h={band}:color=black:t=fill,"
+                       f"drawbox=x=0:y={640 - band}:w=360:h={band}:color=black:t=fill",
+                       "-c:v", "libx264", "-crf", "0", "-pix_fmt", "yuv420p", src)
+                out = self.dir / f"fit_crop_portrait_{band}.mp4"
+                doc = json.loads(script("fit.py", src, "--width", "360", "--height", "202", "--fit", "crop",
+                                        "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertEqual(doc["picture"]["cropped"], {"left": 0, "right": 0, "top": 219, "bottom": 219})
+                rows = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-frames:v", "1", "-f", "rawvideo",
+                                       "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+                self.assertEqual(len(rows), 360 * 202)
+                first, last = rows[180], rows[201 * 360 + 180]
+                for got in (first, last):
+                    self.assertEqual("white" if got > 200 else "grey", edge, (first, last))
+        # nothing reframed, nothing measured; a dry run writes and measures nothing
+        doc = json.loads(script("fit.py", self.white, "--fps", "30", "-o", self.dir / "fit_fps.mp4", "--json").stdout)
+        self.assertNotIn("picture", doc)
+        doc = json.loads(script("fit.py", self.white, "--aspect", "9:16", "--dry-run", "--json").stdout)
+        self.assertNotIn("picture", doc)
+
+    def test_a_picture_measurement_that_fails_is_reported_as_not_measured(self):
+        """When ffmpeg gives no frame of the written size, `picture` says it was not measured and
+        carries no rectangle (not a zero one), with the reason in a note."""
+        import contextlib
+        import io
+        import unittest.mock
+        sys.path.insert(0, str(SCRIPTS))
+        import fit
+        out_video = {"width": 360, "height": 640, "pix_fmt": "yuv420p"}
+        geometry = (["scale=360:640:force_original_aspect_ratio=decrease,pad=360:640:(ow-iw)/2:(oh-ih)/2:color=black"], None, None)
+        before = list(_common.STATE.notes)
+        try:
+            with unittest.mock.patch.object(fit, "_picture_rows", return_value=None), contextlib.redirect_stderr(io.StringIO()):
+                pic = fit.measure_picture(geometry, {"video": {"pix_fmt": "yuv420p"}}, 640, 360, out_video, sized=True)
+            self.assertEqual(set(pic), {"measured", "reason"})
+            self.assertFalse(pic["measured"])
+            self.assertTrue(any(n.startswith("picture: not measured") for n in _common.STATE.notes))
+            # the real measurement of the same geometry, for contrast
+            with contextlib.redirect_stderr(io.StringIO()):
+                pic = fit.measure_picture(geometry, {"video": {"pix_fmt": "yuv420p"}}, 640, 360, out_video, sized=True)
+            self.assertEqual((pic["measured"], pic["y"], pic["height"]), (True, 218, 202))
+        finally:
+            _common.STATE.notes[:] = before
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -36,7 +36,7 @@ from _common import STATE, concat_list_line, add_common, aac_args, apply_common,
 from _common.emit import warn
 from _common.decision import HELD_FRAMES_WARN_BYTES, av_trim, held_frames_bytes, length_output_t, stream_starts
 from _common.probe import decode_gray_frames, decode_pcm_mono
-from _common.emit import input_length, own_length
+from _common.emit import input_length, own_length, refuse_still
 
 
 # The loop filter's size is capped at 32767 frames, so one boomerang cycle (2N-2 frames) must fit.
@@ -253,6 +253,7 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    refuse_still(meta, args.input, "a loop repeats a clip's length, and a still has none")  # #531
     src_dur = input_length(meta)  # no stated length: refused with the way out (#491)
     if src_dur <= 0:
         die("input has no measurable duration to loop")
