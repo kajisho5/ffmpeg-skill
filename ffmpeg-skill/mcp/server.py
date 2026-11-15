@@ -70,7 +70,7 @@ def build_argv(name: str, args: Dict[str, Any]) -> List[str]:
     if isinstance(args.get("argv"), list):
         argv = [str(a) for a in args["argv"]]
         if name not in _contract.MCP_JSON_EXEMPT and "--json" not in argv and "--help" not in argv:
-            argv.append("--json")
+            argv = _common.runner.with_flags(argv, ["--json"])  # before a `--`, where it is still an option
         return argv
     spec = specs().get(name)
     exceptions = spec["mcp"]["argument_exceptions"] if spec else {}
