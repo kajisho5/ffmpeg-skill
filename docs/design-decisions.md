@@ -5319,8 +5319,8 @@ the slot at 0.519 s, "After 3.8.14").
   and cannot add silence, so the extraction is that much early against the picture. The result
   said only that it was 0.235 s short (`duration_delta_seconds`), which reads as an end that
   landed on a packet. It is not re-encoded: a copy's start that is off by less than `--tolerance`
-  is kept and reported (a keyframe snap is, `start_snapped`), and a copy that comes out more
-  than `--tolerance` short is re-encoded by the length check, which pads the sound from the
+  is kept and reported (a keyframe snap is, `start_snapped`), and a copy that comes out
+  `--tolerance` or more short is re-encoded by the length check, which pads the sound from the
   start (A46). The check judges the written length, not the lead: the copy is short by up to a
   packet less than the lead (0.351 s for a lead of 0.355 s, 0.235 s for 0.254 s), so a
   `--tolerance` between the two keeps the copy and its warning (#542 review). What changed is that the run says it: an `audio_lead_dropped` warning
@@ -5328,7 +5328,7 @@ the slot at 0.519 s, "After 3.8.14").
   in) and a `notes` line naming `--accurate`, which keeps the lead. A dry run reports it too, from
   the source's stream starts, whatever `--tolerance` is: it cannot know the written length, so
   for a lead of `--tolerance` or more its note says a run re-encodes and pads instead when the
-  copy comes out more than `--tolerance` short (`length_unjudged`). It left the warning out
+  copy comes out `--tolerance` or more short (`length_unjudged`). It left the warning out
   there, where a run with `--tolerance 0.353` kept the copy and gave it. It is reported from one frame of the source's picture (an offset
   under a frame cannot be seen against it), and for the part a re-cut replaced not at all. Not
   changed, and not decided here: whether the copy should instead re-encode whenever it would drop

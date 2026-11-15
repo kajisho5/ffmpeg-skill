@@ -12,7 +12,7 @@
   and the extraction was early against its picture; the result only said the file was short. An
   `audio_lead_dropped` warning (`{seconds, segments}`) and a note now say how much went and that
   `--accurate` keeps it, in a dry run too (which says, for a lead of `--tolerance` or more, that a
-  run re-encodes and pads instead when the copy comes out more than `--tolerance` short). The
+  run re-encodes and pads instead when the copy comes out `--tolerance` or more short). The
   copy itself is unchanged.
 - **`crop.py` and `stabilize.py` keep the source's subtitle track (#520).** They left it to
   FFmpeg's default stream selection, which on FFmpeg 6.1 drops an MP4's mov_text track; they now

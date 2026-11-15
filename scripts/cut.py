@@ -1072,7 +1072,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             notes.append(f"the sound starts {lead:.3f}s after {start:.3f}s in the source; a stream copy cannot "
                          f"add silence, so the extraction starts with the sound, {lead:.3f}s early against the "
                          "picture (--accurate pads it from the start"
-                         + ("; a run re-encodes and pads it instead when the copy comes out more than --tolerance short)" if unsure else ")"))
+                         + ("; a run re-encodes and pads it instead when the copy comes out --tolerance or more short)" if unsure else ")"))
         return _outcome(meta, dst, False, reasons, notes=notes, audio_lead_dropped_seconds=lead or None, **pending)
     if reencode:
         return _outcome(meta, dst, reencode, reasons)
