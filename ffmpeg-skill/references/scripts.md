@@ -1133,7 +1133,10 @@ damaged entry (`sidecar_corrupt`, `artifact_truncated`) is also a
 `cache_entry_damaged` warning and a line in `DIR/.ffskill-audit.jsonl`. A sidecar keeps
 the stage's `verified`, `verification`, `notes` and `diagnostics`, and a hit replays
 them, so a cached stage counts toward the render's `verified` as a live one does. A
-store that fails is a `cache_store_failed` warning (the run is unaffected).
+store that fails is a `cache_store_failed` warning (the run is unaffected). The key is made
+again when the stage ends: a stage whose inputs (a `--brand` file's logo or font included)
+changed while it ran stores nothing, a `cache_inputs_changed` skip (#540); a change undone
+before the stage ends is not seen.
 
 A stage whose flags changed misses the cache, so editing the captions block (for
 example to `"fit_size": "off"`) re-runs captions and everything after it and
@@ -1469,7 +1472,9 @@ stream_copy_rate}`) and `cut_reencode_reasons` (counts per reason; `unknown` for
 re-encoded call cached by an earlier 2.x batch); both are `null`
 when no `cut.py` step ran. Under `--dry-run` they count the calls' plans, and a planned stream
 copy may still re-encode in a real run: each row then carries `cut_possible_reencode_reason`, every
-`cut.py` call's `possible_reencode_reason`.
+`cut.py` call's `possible_reencode_reason`. A row a real run serves from the cache is served by the
+dry run too (`cached: true`): its calls are what the run that stored it measured, and the summary
+line counts them apart from the plans.
 
 **`--jobs N` (1.17)** processes N files at once (threads: the work is
 subprocess waiting). Capped at `min(N, cpu_count, 8)` — every item is itself an
