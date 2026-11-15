@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
@@ -1417,22 +1417,19 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
     export = proj.get("export")
     frame_from_preset(frame, export if isinstance(export, dict) else {})
     fit = proj.get("fit")
-    if isinstance(fit, dict) and len(proj.get("clips") or []) == 1:
-        # one clip: the render's fit stage reframes the clip's own picture with the fit object's
-        # aspect, mode, sides and rate, the frame's only where the fit object has none (the
-        # render's setdefault), so the sequence takes them by the same rule (#506: frame 16:9 with
-        # fit 1:1 rendered a square and exported 1920x1080). Several clips are fitted inside the
-        # join, which join.py sizes from the frame first; their sequence stays the frame's
+    if isinstance(fit, dict):
+        # the render's fit stage reframes the picture with the fit object's aspect, mode, sides
+        # and rate, the frame's only where the fit object has none (the render's setdefault), so
+        # the sequence takes them by the same rule (#506: frame 16:9 with fit 1:1 rendered a
+        # square and exported 1920x1080). One rule for any number of clips (#526): several clips
+        # are joined and then fitted by that same fit.py call, and their sequence was the frame's
+        # (frame 16:9 with fit 1:1 over two 160x120 clips rendered 120x120 and exported 160x90)
         if fit.get("aspect") and aspect_ratio(str(fit["aspect"])) is None:
             die(f"--export-timeline: fit.aspect {fit['aspect']!r}: use W:H with whole numbers, like 16:9 "
                 "(fit.py refuses it too)", kind="input")
         if fit.get("fit") is not None and fit["fit"] not in ("pad", "crop", "blur"):
             die(f"--export-timeline: fit.fit {fit['fit']!r}: use pad, crop or blur (fit.py's --fit)", kind="input")
         frame.update({k: fit[k] for k in ("aspect", "fit", "width", "height", "fps") if fit.get(k) is not None})
-    elif isinstance(fit, dict) and fit.get("aspect") and frame.get("aspect") and aspect_ratio(frame["aspect"]) is None:
-        # the render hands fit.py the fit object's own aspect, never this one (only the preset
-        # match above reads it), and completes: the sequence is the frame's size without it
-        del frame["aspect"]
     try:
         tl = tlmod.build(dict(proj, frame=frame), probes, rel)
         text = tlmod.WRITERS[fmt](tl)  # a writer refuses what its format cannot hold (EDL: 999 events, 24 h)
@@ -1980,10 +1977,20 @@ def main() -> int:
     if len(parts) > 1:
         current = str(work / f"joined{mid}")
         argv = list(parts) + ["-o", current, "--transition", trans.get("type", "fade"), "--duration", str(trans.get("duration", 0.5))]
-        if frame.get("width"):
-            argv += option_args("--width", frame["width"])
-        if frame.get("height"):
-            argv += option_args("--height", frame["height"])
+        jw, jh = frame.get("width"), frame.get("height")
+        side = jw or jh
+        if bool(jw) != bool(jh) and str(side).isdigit():
+            # one side: the other follows the first clip's displayed aspect, rounded to even as
+            # fit.py and the exported sequence round it (frame_size()). join.py rounds it down,
+            # so {width 100} over 4:3 clips joined at 100x74 against a 100x76 sequence (#526).
+            # A side join.py's argparse refuses is handed to it as written, to be refused there.
+            fw, fh = display_size(probe(rel(clips[0]["src"])).get("video") or {})
+            if fw and fh:
+                jw, jh = frame_size(None, int(jw) if jw else None, int(jh) if jh else None, fw, fh)
+        if jw:
+            argv += option_args("--width", jw)
+        if jh:
+            argv += option_args("--height", jh)
         if frame.get("fps"):
             argv += option_args("--fps", frame["fps"])
         sh("join.py", *argv, stage="join")
@@ -2014,23 +2021,20 @@ def main() -> int:
         fit.setdefault("aspect", frame["aspect"])
     if frame.get("fit"):
         fit.setdefault("fit", frame["fit"])
-    # Several clips were joined by join.py: into frame.width x frame.height when the frame gives
-    # both, else at the FIRST clip's aspect. A frame of an aspect and ONE side then reached fit.py
-    # as the aspect alone, which fit.py bounds by the joined picture: {aspect 9:16, width 1080}
-    # over two 16:9 clips rendered 342x608, where one clip (and --export-timeline's sequence) is
-    # 1080x1920. Only that case gets the frame's side. A frame with both sides is already the
-    # join's size, and a project fit object with its own width, height or another aspect renders
-    # as 2.2.1 rendered it: filling the frame's sides in there overrode the fit object's aspect
-    # (fit {width 540} under a 1080x1920 frame came out 540x1920).
-    own = proj.get("fit") or {}
-    one_side = bool(frame.get("width")) != bool(frame.get("height"))
-    sized = len(parts) == 1 or bool(frame.get("aspect") and one_side and not own.get("width") and not own.get("height")
-                                    and own.get("aspect") in (None, frame.get("aspect")))
-    if frame.get("width") and sized:
-        fit.setdefault("width", frame["width"])
-    if frame.get("height") and sized:
-        fit.setdefault("height", frame["height"])
-    if frame.get("fps") and len(parts) == 1:
+    # The fit object wins, for any number of clips (#526): fit.py gets its aspect, mode, sides and
+    # rate, and the frame's only where it has none, so the delivered size is the one
+    # --export-timeline states. Several clips were fitted inside the join, which join.py sizes
+    # from the frame first, with the frame's sides only when the fit object gave no side or
+    # aspect of its own: frame 16:9 with fit 1:1 over two 160x120 clips rendered 120x120 against
+    # a 160x90 sequence, and fit {width 36} under a 72x128 frame rendered 36x64 where one clip
+    # renders 36x128.
+    # A join with no fit stage of its own already has the frame's sides and rate, and is not
+    # re-encoded to state them again.
+    if fit or len(parts) == 1:
+        for key in ("width", "height"):
+            if frame.get(key):
+                fit.setdefault(key, frame[key])
+    if frame.get("fps") and len(parts) == 1:  # several clips: join.py has conformed them to it
         fit.setdefault("fps", frame["fps"])
     if fit:
         nxt = str(work / f"fit{mid}")
