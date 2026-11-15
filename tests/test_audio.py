@@ -1500,7 +1500,7 @@ class AudioOnlyOutputExtensionTests(unittest.TestCase):
                 with self.subTest(tool=name, ext=ext, dry_run=True):
                     doc = self.run_case(name, out, "--dry-run")
                     self.assertEqual(doc["status"], "completed", doc)
-                    planned = [c for c in doc["commands"] if c.endswith(str(out))]
+                    planned = [c for c in doc["commands"] if c.rstrip("'\"").endswith(str(out))]
                     self.assertTrue(planned, doc["commands"])
                     self.assertIn("-c copy" if codec == "pcm_s16le" else f"-c:a {codec}", planned[-1])
                     self.assertFalse(out.exists())
@@ -1513,6 +1513,8 @@ class AudioOnlyOutputExtensionTests(unittest.TestCase):
                     # the same samples as the tool's .wav: within one sample, where a codec frame
                     # of PCM is one sample
                     self.assertAlmostEqual(float(streams[0]["duration"]), float(want["duration"]), delta=1.5 / self.RATE)
+                    if name == "cut --accurate":
+                        self.assertEqual(doc["precision"], "sample", "PCM is cut to the sample, as in .wav")
 
     def test_a_wma_output_is_refused_before_ffmpeg_runs(self):
         for name in self.cases:
@@ -1620,6 +1622,65 @@ class AudioOnlyOutputExtensionTests(unittest.TestCase):
                 self.assertTrue(any("output_extension_unsupported" in n for n in doc["notes"]), doc["notes"])
                 doc = json.loads(script(*tight[:-4], "--tolerance", "-1", "-o", out, "--json").stdout)
                 self.assertEqual((doc["status"], self.packets(out)[1][0][1]), ("completed", codec))
+
+    FAILED_COPY_CHILD = (
+        "import subprocess, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import cut\n"
+        "real = cut.run\n"
+        "def run(cmd, **kw):\n"
+        "    if '-c:a' in cmd and cmd[list(cmd).index('-c:a') + 1] == 'copy' or ('-c' in cmd and cmd[list(cmd).index('-c') + 1] == 'copy'):\n"
+        "        return subprocess.CompletedProcess(list(cmd), 1, '', 'the copy failed for no reason this skill names')\n"
+        "    return real(cmd, **kw)\n"
+        "cut.run = run\n"
+        "sys.argv = ['cut.py', sys.argv[2], '--start', '0.5', '--end', '2.5', '-o', sys.argv[3], '--overwrite', '--json']\n"
+        "sys.exit(cut.main())\n")
+
+    def test_a_failed_wma_copy_leaves_the_file_it_was_to_replace(self):
+        """Review of #550: a stream copy that fails wrote nothing under the name (run() writes an
+        existing path through a temp file and replaces it only on success), so the refusal of the
+        re-encode that would follow must not remove the file --overwrite named: it is the caller's
+        earlier one, not a copy this run wrote."""
+        src = self.wma_source("wmav2")
+        out = self.dir / "earlier.wma"
+        out.write_bytes(b"the caller's earlier file")
+        proc = subprocess.run([sys.executable, "-c", self.FAILED_COPY_CHILD, str(SCRIPTS), str(src), str(out)],
+                              capture_output=True, text=True, encoding="utf-8")
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual((err["kind"], err.get("reason")), ("input", "output_extension_unsupported"), err)
+        self.assertEqual(out.read_bytes(), b"the caller's earlier file")
+
+    def test_a_render_refuses_wma_only_where_it_would_write_one(self):
+        """Review of #550: render.py refused every project naming a .wma. A single uncut WMA clip
+        no stage touches is the source itself, delivered as it was (as before #517); a
+        --stop-after preview writes nothing under the name. A stage's file is still refused."""
+        src = self.wma_source("wmav2")
+        video = self.dir / "render_v.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=d=2:s=160x120:r=25",
+           "-f", "lavfi", "-i", "sine=d=2", "-shortest", video)
+
+        def render(name, body, *flags, fail=False):
+            out = self.dir / f"render_{name}.wma"
+            out.unlink(missing_ok=True)
+            proj = self.dir / f"render_{name}.json"
+            proj.write_text(json.dumps(dict(body, output=str(out))), encoding="utf-8")
+            return json.loads(script("render.py", proj, *flags, "--json", expect_fail=fail).stdout), out
+
+        doc, out = render("source", {"clips": [{"src": str(src)}]})
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertEqual([(t, c) for t, c, _ in self.packets(out)[1]], [("audio", "wmav2")])
+        two = {"clips": [{"src": str(video), "in": 0, "out": 1}, {"src": str(video)}]}
+        doc, out = render("preview", two, "--stop-after", "clips")
+        self.assertEqual(doc["status"], "completed", doc)
+        self.assertFalse(out.exists())
+        for name, body in (("joined", two), ("trimmed", {"clips": [{"src": str(src), "in": 0.5, "out": 2}]}),
+                           ("staged", {"clips": [{"src": str(src)}], "loudness": {"lufs": -16}})):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(project=name, dry_run=bool(dry)):
+                    doc, out = render(name, body, *dry, fail=True)
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err.get("reason")), ("input", "output_extension_unsupported"), err)
+                    self.assertFalse(out.exists())
 
 
 class SilentOutputLoudnessTests(unittest.TestCase):

@@ -1758,8 +1758,15 @@ def main() -> int:
     # is still clipNN.mp4 / fit.mp4 / loudnorm.mp4), while an audio-only delivery (the podcast
     # template) carries its stages through the audio container instead of a video one.
     mid = Path(output).suffix.lower() if Path(output).suffix.lower() in AUDIO_EXT else ".mp4"
-    refuse_unwritten_output(output)  # .wma, before the copied-container rule below names .mp4 for it (#517)
     ex_cfg = proj.get("export")
+    # .wma, before the copied-container rule below names .mp4 for it (#517). Only a run that reaches
+    # the delivery: a --stop-after preview writes no file under the name. A single uncut clip is
+    # left to the stages (each refuses its own encode into .wma) and to the copy at the end, which
+    # checks what the source really is -- a WMA source no stage touches is delivered as it was.
+    c_only = clips[0] if len(clips) == 1 and isinstance(clips[0], dict) else None
+    if (not args.stop_after or args.stop_after == "export") and not (
+            c_only is not None and c_only.get("in") is None and c_only.get("out") is None):
+        refuse_unwritten_output(output)
     if (not args.stop_after or args.stop_after == "export") and not (isinstance(ex_cfg, dict) and ex_cfg.get("preset")):
         # A84: with no export stage the delivery is the last stage's file copied as it is, so a
         # .webm/.mkv name was MP4 bytes, completed and verified. Refused before the first stage
@@ -2200,6 +2207,8 @@ def main() -> int:
         sh("export.py", *argv, stage="export")
         stages_done.append("export")
     else:
+        if stages_done != ["clips"]:
+            refuse_unwritten_output(output)  # a stage's file, not the WMA source itself (#517)
         refuse_copied_container(Path(current).suffix.lower(), output)  # what the copy really is (A84)
         if not STATE.dry_run:
             place_output(current, output)

@@ -191,7 +191,7 @@ def stream_maps(meta: dict, dst: str, copy: bool) -> List[str]:
     return maps
 
 
-LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}
+LOSSLESS_AUDIO = {"pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_f32le", "flac"}  # pcm_s16be: .aif/.aiff/.caf (#517)
 
 
 def precision_of(meta: dict, dst: str, reencoded: bool) -> str:
@@ -958,8 +958,10 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
     if reencode and os.path.splitext(dst)[1].lower() in UNWRITTEN_AUDIO_EXT:
         # a .wma is written only as a stream copy of WMA sound: a copy this run judged and is about
         # to re-encode (its length, a lost stream, a failed copy) is refused, not encoded into ASF,
-        # and the copy it wrote is removed, so a failed run leaves no file under the name (#517)
-        if _reasons and _reasons[-1] in ("copy_failed", "stream_lost", "tolerance") and not STATE.dry_run and os.path.isfile(dst):
+        # and the copy it wrote is removed, so a failed run leaves no file under the name (#517).
+        # A copy that failed wrote nothing there (run() replaces an existing path only on success),
+        # so the file is the caller's earlier one under --overwrite and is left
+        if _reasons and _reasons[-1] in ("stream_lost", "tolerance") and not STATE.dry_run and os.path.isfile(dst):
             os.remove(dst)  # the copy this run just wrote and judged (the recursion's last reason)
         if "tolerance" in reasons:
             info(f"the stream copy into {dst} is re-encoded for its length, and a .wma cannot be encoded; "

@@ -5679,11 +5679,15 @@ with their own cause.
   allowed by name, not by a run). `cut.py`'s copy is judged by its written length and re-encoded
   when it lands `--tolerance` or more off (or wrote no stream, or failed): into `.wma` that
   re-encode is refused with the same reason, the copy this run wrote is removed so no file is left
-  under the name, and a note says `--tolerance -1` keeps the copy as it lands; a dry run cannot
+  under the name (a copy that failed wrote none: `run()` replaces an existing path only on success, so the
+  file `--overwrite` named is the caller's earlier one and is left), and a note says `--tolerance -1` keeps the copy as it lands; a dry run cannot
   know the length and says so in its notes (`cut.cut_one()`). `loudness.py` and `silence.py` always
   encode, so they call the refusal before their measuring pass, beside their other output guards;
   `join.py` (an audio join encodes) and `render.py` call it before their own extension rules, which
-  would name `.wma` a video container or a copied `.mp4`. `waveform.py` keeps its own refusal of every audio-only extension
+  would name `.wma` a video container or a copied `.mp4`. `render.py` refuses where it would write the
+  file: a run that reaches the delivery (not a `--stop-after` preview) of more than a single uncut clip,
+  and at the delivery when any stage after `clips` made the file; a single uncut WMA clip no stage
+  touches is the source itself and is copied as it was, as before #517. `waveform.py` keeps its own refusal of every audio-only extension
   (it writes a picture). Checked on FFmpeg 6.1.1 only, by probing the written file: format `aiff`
   or `caf`, one audio stream, `pcm_s16be` (`pcm_s16le` for the copy), its length within one sample
   of the same tool's `.wav`; for `.wma`, format `asf`, the source's WMA codec and the same packet
@@ -5695,6 +5699,8 @@ with their own cause.
   `join.join_audio()`, `render.AUDIO_EXT`, `loudness.main()`, `silence.main()`. Tests:
   `test_aif_aiff_and_caf_outputs_are_written_as_that_container`,
   `test_a_wma_output_is_refused_before_ffmpeg_runs`,
+  `test_a_failed_wma_copy_leaves_the_file_it_was_to_replace`,
+  `test_a_render_refuses_wma_only_where_it_would_write_one`,
   `test_a_stream_copy_of_wma_sound_into_wma_is_kept`.
 - **A still given to `export.py` or `join.py` is refused, `kind: input`, naming the still and
   `insert.py`** (#531, the two items "After 3.8.23" left for a decision). Option (a) of that entry:
