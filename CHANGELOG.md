@@ -4,7 +4,25 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A variable-frame-rate cut lays its frame grid from its start (#538).** `cut.py --start`
+  (plain and `--accurate`) and `fit.py --method trim --from-center` conform a VFR picture and
+  then drop their seek margin on the output side; the grid was laid from the first decoded frame,
+  so the cut landed between two slots and the encoder's rate rounded the picture again. On a
+  27 fps average clip `cut.py --start 0.45` showed every flash 24 ms after its beep, `--start 0.2`
+  33 ms, and `fit.py --duration 3.1 --method trim --from-center` 24 ms; each slot now shows the
+  source frame nearest its own time from the cut, and the same runs measure -13, -4 and -13 ms
+  (the 27 fps grid's own rounding). A constant-rate source and `fit.py --fps` are unchanged.
+- **A variable-frame-rate hold or pad at the start keeps its last frame (#538).**
+  `freeze.py --at 0` and `pad.py --start` without `--end` conformed after `tpad`'s start pad,
+  which passes the clip's end on without the pad, so the conform ended at the last frame's start:
+  134 frames of 135 for `--hold 1` / `--start 1` on a 27 fps average clip. A VFR picture is now
+  conformed before `freeze.py --at 0` holds it and before `pad.py` pads it (with or without
+  `--end`), and the hold or the padding ahead of the clip is whole frames of the delivered rate,
+  with the sound delayed by the same frames (`--start 0.5` pads 14 frames, 0.519 s, as a
+  constant-rate source pads whole frames of its own rate). Constant-rate sources are unchanged.
+  Measured on FFmpeg 6.1.1; CI runs 7.1, 8 and 9.
 
 ## 3.9.1
 

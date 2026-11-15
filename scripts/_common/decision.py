@@ -671,15 +671,32 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
     return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
 
 
-def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> str:
+def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek: float = 0.0) -> str:
     """The `fps` filter that puts the picture on the grid cfr_args() delivers, as the last filter of
     the video chain; "" when cfr_args() forces no rate. The encoder line's `-fps_mode cfr -r` alone
     let a frame fall up to about two frames behind its slot before it dropped one, so a VFR clip
     conformed at its average rate showed its picture up to 56 ms after its sound (#512); the
     filter takes the nearest frame for every slot. The encoder line keeps cfr_args(), which then
-    moves no frame."""
+    moves no frame.
+
+    `seek` is an output-side `-ss` that follows the conform (cut.py's and fit.py --method trim's
+    margin after an input seek): the grid is laid from it instead (#538). The filter lays its grid
+    from the first frame on the clock, its output's time base is one frame, and the output seek
+    then landed between two slots, which the encoder line's rate rounded again: on a 27 fps
+    average clip `cut.py --start 0.45` put its picture 24 ms after its sound, 33 ms at 0.2. The
+    picture is moved so the seek is its 0, conformed from there (`start_time=0`: the slot at the
+    seek takes the nearest frame, the frames before it are dropped), and moved back on a
+    microsecond time base, so the seek lands on a slot and the output's frames sit on the grid
+    from 0. The setpts after the conform leaves its frames no duration from FFmpeg 7.0; the
+    encoder line's `-fps_mode cfr`, which cfr_args() always gives with this filter, sets each to
+    one frame."""
     args = cfr_args(meta, fps)
-    return f"fps={args[-1]}" if args else ""
+    if not args:
+        return ""
+    if seek > 0:
+        return (f"setpts=PTS-{seek:.6f}/TB,fps={args[-1]}:start_time=0,"
+                f"settb=AVTB,setpts=PTS+{seek:.6f}/TB")
+    return f"fps={args[-1]}"
 
 
 def with_cfr(chain: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> str:

@@ -91,12 +91,22 @@ def main() -> int:
         # split/trim/concat approach below needs a non-empty head, which trim=end=0 can't give
         # it -- ffmpeg fails filtering an empty stream). Symmetric to --mode extend at the other
         # end: tpad's start_duration clones the *first* frame backwards instead.
-        vf = with_cfr(f"tpad=start_mode=clone:start_duration={args.hold:.3f}", meta)
+        vf = f"tpad=start_mode=clone:start_duration={args.hold:.3f}"
+        lead = tpad_length(args.hold, meta)
+        if cfr_filter(meta):
+            # A VFR picture is conformed before the hold, which then clones whole frames of the
+            # delivered rate, and the sound waits as long as they last, as a hold inside the clip
+            # does (#538). The fps filter after tpad's start pad ended a slot early: tpad passes
+            # its input's end on without the pad, and the filter then ends the picture at its last
+            # frame's start (134 frames of 135 for --hold 1 on a 27 fps average clip; a 30 fps clip
+            # through fps=30 the same, 149 of 150)
+            n = max(1, round(args.hold * rate))
+            vf, lead = f"{cfr_filter(meta)},tpad=start_mode=clone:start={n}", n / rate
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
         if has_audio:
             # the sound waits as long as the picture is held: whole frames (tpad_length), as the
             # hold in the middle of a clip pads by the held frames' length
-            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), lead=tpad_length(args.hold, meta))]
+            cmd += ["-map", "0:a:0?", "-af", silence_filter(meta["audio"].get("sample_rate"), lead=lead)]
     else:
         # freeze N frames at `at` by holding on that one source frame for --hold seconds, then
         # resuming the rest of the clip: split the timeline at `at` and hold the remainder's

@@ -972,8 +972,9 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             cmd = ffmpeg_base() + ["-ss", f"{start - m:.6f}", "-i", src, "-ss", f"{m:.6f}", "-t", f"{dur:.6f}"]
             cmd += stream_maps(meta, dst, copy=False)
             # a VFR source is conformed by the fps filter at the rate cfr_args() delivers: the
-            # encoder line's -fps_mode cfr alone let a frame run up to two frames late (#512)
-            cmd += ["-vf", cfr_filter(meta)] if cfr_filter(meta) else []
+            # encoder line's -fps_mode cfr alone let a frame run up to two frames late (#512). Its
+            # grid is laid from the output-side seek, so the cut lands on a slot (#538)
+            cmd += ["-vf", cfr_filter(meta, seek=m)] if cfr_filter(meta) else []
         # ffmpeg's default stream selection also picks one subtitle stream; a re-encode cannot
         # trim it (the cues kept their timestamps and the container grew to 2 s for a 1 s cut,
         # sweep F2), so the re-encode carries video/audio only and the result says so
