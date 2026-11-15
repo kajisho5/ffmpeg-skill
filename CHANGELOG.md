@@ -4,12 +4,32 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **A `render.py` project of several clips takes its picture size from the `fit` object, as a
+  one-clip project does, in the render and in `--export-timeline` (#526).** fit.py gets the
+  `fit` object's aspect, mode, width and height and the frame's only where the object has none,
+  and the exported sequence (FCPXML, EDL, OTIO) is sized, and timed, from the same merge.
+  Before, a multi-clip render fitted the object inside the joined picture and the export sized
+  the sequence from `frame` alone, so the two disagreed. Over two 160x120 clips: frame 16:9 with
+  `fit` 1:1 rendered 120x120 against a 160x90 sequence (now both 120x120); frame `{aspect 16:9,
+  width 320}` with `fit {aspect 4:5, fit crop}` rendered 192x240 against 320x180 (now 320x400);
+  frame 1:1 with `fit {width 200}` exported 120x120 (now 200x200, as rendered); frame
+  `{width 320, height 180}` with `fit` 1:1 rendered 180x180 (now 320x180, as exported: two
+  sides given are kept, as for one clip); frame 16:9 at 25 fps with `fit {fps 24}` exported a
+  25 fps sequence (now 24, as rendered). A frame of one side now gives join.py the other side
+  rounded as fit.py rounds it: `{width 100}` over 4:3 clips rendered 100x74 against a 100x76
+  sequence (now 100x76). Where the `fit` object gives that side itself the join is sized from it
+  (`{width 100}` with `fit {width 200}`: 200x150 both), and a key the `fit` object gives as `null` counts
+  as not given, in the render as in the export. The clips are joined at the rate the render delivers, the
+  `fit` object's where it gives one: joined at the frame's 25 fps and conformed to `fit {fps 24}`, two
+  0.7 s clips rendered 35 frames against a 34-frame sequence. A multi-clip export now refuses a `fit.aspect` or `fit.fit` that fit.py
+  refuses, as a one-clip export already did. One-clip projects render and export as before.
+  Which multi-clip projects change is listed in `docs/design-decisions.md` ("After 3.9.3").
 
 ## 3.9.3
 
 _Automated release: version and notes generated from pull requests merged since 3.9.2._
-
 ### Fixed
 
 - **`.aif`, `.aiff` and `.caf` outputs are written; a `.wma` output the run would encode into is refused (#517).** The audio

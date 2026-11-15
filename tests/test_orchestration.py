@@ -2653,24 +2653,100 @@ class TimelineExportTests(unittest.TestCase):
                 doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
                 m = probe(doc["output"])
                 self.assertEqual((m["video"]["width"], m["video"]["height"]), seq_size)
-        # Only that case changed. A frame with both sides is already the join's size, and a
-        # project fit object with its own width or aspect renders the size 2.2.1 rendered: the
-        # first 2.2.2 draft filled the frame's sides in there too, and fit {width 36} under a
-        # 72x128 crop frame came out 36x128 (half the picture cut away and barred by the export).
+        # A fit object with its own width or aspect takes the frame's sides where it has none, as
+        # one clip does (#526): before, fit.py fitted it inside the joined picture and fit {width
+        # 36} under a 72x128 crop frame rendered 36x64, where one clip renders 36x128
         for i, (frame, fit, size) in enumerate((
-                ({"aspect": "9:16", "width": 72, "height": 128, "fit": "crop"}, {"width": 36}, (36, 64)),
-                ({"width": 128, "height": 72}, {"aspect": "9:16", "fit": "crop"}, (40, 72)),
-                ({"aspect": "9:16", "width": 72}, {"aspect": "4:5"}, (32, 40)))):
+                ({"aspect": "9:16", "width": 72, "height": 128, "fit": "crop"}, {"width": 36}, (36, 128)),
+                ({"width": 128, "height": 72}, {"aspect": "9:16", "fit": "crop"}, (128, 72)),
+                ({"aspect": "9:16", "width": 72}, {"aspect": "4:5"}, (72, 90)))):
             with self.subTest(frame=frame, fit=fit):
                 proj = self.dir / f"multi_own{i}.json"
                 proj.write_text(json.dumps({"output": f"multi_own{i}.mp4", "frame": frame, "fit": fit,
                                             "transition": {"type": "none"},
                                             "clips": [{"src": "w128.mp4", "in": 0, "out": 1}] * 2}), encoding="utf-8")
+                _, seq_size, _ = self._sequence(proj, f"multi_own{i}.fcpxml")
                 work = self.dir / f"multi_own{i}_work"
                 shutil.rmtree(work, ignore_errors=True)
                 doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
                 m = probe(doc["output"])
                 self.assertEqual((m["video"]["width"], m["video"]["height"]), size)
+                self.assertEqual(seq_size, size)
+
+    def test_a_sequence_of_several_clips_takes_the_fit_objects_frame(self):
+        """#526: the fit object wins for any number of clips. Its aspect, mode, sides and rate go to
+        fit.py and the frame's only where it has none, so two clips render, and export, what one
+        clip does. Before, the export sized a multi-clip sequence from the frame alone, the
+        render fitted the fit object inside the join, and join.py rounded a frame's lone side's
+        other side down where fit.py rounds it up: over two 160x120 clips, frame 16:9 with fit
+        1:1 rendered 120x120 against a 160x90 sequence, frame {16:9, width 320} with fit {4:5,
+        crop} 192x240 against 320x180, frame 1:1 with fit {width 200} 200x200 against 120x120,
+        frame 16:9 at 25 fps with fit {fps 24} a 24 fps picture against a 25 fps sequence, and
+        frame {width 100} 100x74 against 100x76. The one-clip numbers are pinned unchanged."""
+        from fractions import Fraction
+        if not (self.dir / "q160.mp4").exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30",
+               "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", self.dir / "q160.mp4")
+        cases = ((({"aspect": "16:9"}, {"aspect": "1:1"}), (120, 120, "1/30s")),
+                 (({"aspect": "16:9", "width": 320}, {"aspect": "4:5", "fit": "crop"}), (320, 400, "1/30s")),
+                 (({"aspect": "1:1"}, {"width": 200}), (200, 200, "1/30s")),
+                 (({"width": 320, "height": 180}, {"aspect": "1:1"}), (320, 180, "1/30s")),
+                 (({"aspect": "16:9", "fps": 25}, {"fps": 24}), (160, 90, "1/24s")),
+                 (({"width": 100}, None), (100, 76, "1/30s")),
+                 # review of #553: the fit object's side sizes the join too (it was joined at the
+                 # frame's 100x76 and fitted to 200x152), and a null in the fit object gives nothing
+                 (({"width": 100}, {"width": 200}), (200, 150, "1/30s")),
+                 (({"width": 320, "height": 180}, {"aspect": "1:1", "width": None}), (320, 180, "1/30s")))
+        for i, ((frame, fit), want) in enumerate(cases):
+            for n in (1, 2):
+                with self.subTest(frame=frame, fit=fit, clips=n):
+                    proj = self.dir / f"several{i}_{n}.json"
+                    body = {"output": f"several{i}_{n}.mp4", "frame": frame, "transition": {"type": "none"},
+                            "clips": [{"src": "q160.mp4", "in": 0, "out": 1}] * n}
+                    if fit:
+                        body["fit"] = fit
+                    proj.write_text(json.dumps(body), encoding="utf-8")
+                    _, seq_size, root = self._sequence(proj, f"several{i}_{n}.fcpxml")
+                    seq = root.find("./library/event/project/sequence")
+                    rate = root.find(f"./resources/format[@id='{seq.get('format')}']").get("frameDuration")
+                    work = self.dir / f"several{i}_{n}_work"
+                    shutil.rmtree(work, ignore_errors=True)
+                    doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
+                    v = probe(doc["output"])["video"]
+                    self.assertEqual((v["width"], v["height"]), seq_size, "the rendered file is the sequence's size")
+                    self.assertEqual(Fraction(rate[:-1]), 1 / Fraction(v["fps"]).limit_denominator(1001))
+                    self.assertEqual((*seq_size, rate), want)
+                    shutil.rmtree(work, ignore_errors=True)
+
+    def test_several_clips_are_joined_at_the_rate_the_fit_object_delivers(self):
+        """Review of #553: with frame.fps 25 and fit.fps 24 the clips were joined at 25 and
+        conformed to 24 by fit.py, so each was rounded twice: two 0.7 s clips rendered 35 frames
+        against the 34 the sequence states (it rounds each clip once, at the delivered rate).
+        The join takes the fit object's rate where it gives one."""
+        from fractions import Fraction
+        if not (self.dir / "q160.mp4").exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30",
+               "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", self.dir / "q160.mp4")
+        for i, (frame, fit, out) in enumerate((({"aspect": "16:9", "fps": 25}, {"fps": 24}, 0.7),
+                                               ({"aspect": "16:9", "fps": 25}, {"fps": 24}, 8 / 30),
+                                               ({"aspect": "16:9"}, {"fps": 24}, 0.7))):
+            with self.subTest(frame=frame, fit=fit, out=out):
+                proj = self.dir / f"joinrate{i}.json"
+                proj.write_text(json.dumps({"output": f"joinrate{i}.mp4", "frame": frame, "fit": fit,
+                                            "transition": {"type": "none"},
+                                            "clips": [{"src": "q160.mp4", "in": 0, "out": out}] * 2}), encoding="utf-8")
+                _, _, root = self._sequence(proj, f"joinrate{i}.fcpxml")
+                seq = root.find("./library/event/project/sequence")
+                rate = Fraction(root.find(f"./resources/format[@id='{seq.get('format')}']").get("frameDuration")[:-1])
+                stated = Fraction(seq.get("duration")[:-1]) / rate
+                work = self.dir / f"joinrate{i}_work"
+                shutil.rmtree(work, ignore_errors=True)
+                doc = json.loads(script("render.py", proj, "--fast", "--stop-after", "fit", "--work", work, "--json").stdout)
+                frames = int(sh("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                "stream=nb_read_frames", "-of", "csv=p=0", doc["output"]).stdout.strip())
+                self.assertEqual(rate, Fraction(1, 24))
+                self.assertEqual(frames, stated, "the render has the frames the sequence states")
+                shutil.rmtree(work, ignore_errors=True)
 
     def test_a_one_clip_sequence_takes_the_fit_objects_frame(self):
         """#506: the render's fit stage gives fit.py the fit object's aspect, sides and mode, the

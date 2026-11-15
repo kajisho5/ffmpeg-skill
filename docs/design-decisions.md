@@ -104,6 +104,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.9.0 — caches read in a dry run and stored after the inputs changed (#540)](#after-390--caches-read-in-a-dry-run-and-stored-after-the-inputs-changed-540)
 - [After 3.9.1 — a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#538)](#after-391--a-variable-frame-rate-cut-lays-its-grid-from-its-start-a-hold-or-pad-at-the-start-keeps-its-last-frame-538)
 - [After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)](#after-392--audio-only-output-extensions-and-a-still-given-to-export-or-join-517-531)
+- [After 3.9.3 — the timeline of several clips takes its size from fit (#526)](#after-393--the-timeline-of-several-clips-takes-its-size-from-fit-526)
 <!-- contents:end -->
 
 ## Time limits
@@ -1122,34 +1123,27 @@ not a new file format this tool would have to maintain.
   reads `--aspect` with too: two sides split at `:`, each read with `int()` as fit.py read them
   in 2.2.1 (`+16:9` and `1_6:9` parse, `0:9` is a zero ratio that sizes as no aspect). So the
   export refuses `16/9` where the render hands it to fit.py, which refuses it too, and fit.py
-  refuses nothing it took in 2.2.1. With one clip the sequence takes the project's `fit` object
-  first and the frame only where it has none, as the render's fit stage does (#506, in the
-  "After 3.8.11" section below). With several clips, when the project's own `fit.aspect`
-  replaces it, the render never gives fit.py the frame's aspect and completes, so the export
-  sizes the sequence without it. `frame_from_preset()` keeps 2.2.1's looser match (`16/9`, `1.78:1`) for the
+  refuses nothing it took in 2.2.1. The sequence takes the project's `fit` object first and the
+  frame only where it has none, as the render's fit stage does: for one clip since #506 (in the
+  "After 3.8.14" section below), for any number of clips since #526 ("After 3.9.3", the last
+  section), so a frame aspect fit.py would refuse is no longer read where `fit.aspect` replaces
+  it. `frame_from_preset()` keeps 2.2.1's looser match (`16/9`, `1.78:1`) for the
   preset size: it drops nothing a 2.2.1 render was sized by.
-  A render of several clips gives fit.py the frame's side when the frame gives an aspect and
-  one side, and the project's `fit` object gives no width, height or other aspect. Before,
-  join.py sized the join at the first clip's aspect and fit.py fitted the aspect inside it
-  (`{aspect 9:16, width 1080}` over 16:9 clips rendered 342x608). Every other multi-clip
-  project renders as 2.2.1 rendered it: a frame with both sides is already the join's size,
-  and a `fit` object with its own size or aspect is fitted inside the joined picture
-  (`fit {aspect 4:5}` under `{aspect 9:16, width 72}` over 16:9 clips renders 32x40 against a
-  72x128 sequence, where one clip renders 72x90). Filling the frame's sides in there too
-  overrode the `fit` object (`fit {width 540}` under a 1080x1920 crop frame rendered 540x1920,
-  half the picture cut away). Which of `frame` and `fit` wins is deferred to a minor release.
-  Three render gaps remain, all from join.py sizing the join before fit.py reframes it. (1)
-  With several clips, one side and no aspect, join.py rounds an odd side down where fit.py
-  rounds up (`{width 100}` over 4:3 renders 100x74, the sequence is 100x76). (2) join.py pads
-  every clip into the joined frame before fit.py crops: the frame's own W x H when it gives
+  A render of several clips gave fit.py the frame's side only when the frame gave an aspect and
+  one side and the `fit` object no width, height or other aspect (before that, `{aspect 9:16,
+  width 1080}` over 16:9 clips rendered 342x608); every other `fit` object was fitted inside the
+  joined picture. Since #526 it gets the frame's sides by the one-clip rule, and a frame of one
+  side gives join.py the other side fit.py would compute, so a project renders the size its
+  sequence states whatever its number of clips. One render gap remains, in the picture and not
+  its size: join.py pads every clip into the joined frame before fit.py crops, the frame's own W x H when it gives
   both sides (as every template frame does after `frame_from_preset()`), else the first clip's
   aspect. So a multi-clip `frame.fit: crop` render keeps bars on every clip of another aspect
   than that frame, even when all the clips share one aspect, while the timeline states
   `fill`, the project's choice (the timeline follows the project, not the render's drift).
-  Passing `frame.fit` to join.py would change rendered output and waits for a minor release.
-  (3) The `fit`-object case above.
+  Passing `frame.fit` to join.py would change rendered output and is not part of #526.
   Tests: `test_sequence_frame_is_the_frame_the_render_delivers`,
   `test_a_multi_clip_render_delivers_the_sequence_size`,
+  `test_a_sequence_of_several_clips_takes_the_fit_objects_frame`,
   `test_the_export_and_fit_py_read_one_aspect_grammar`,
   `test_render_frame_aspect_takes_the_export_presets_size`.
 - **A clip of another aspect is a reframe FCPXML states and EDL and OTIO cannot.** FCPXML's
@@ -4673,7 +4667,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `fit.fit` fit.py would refuse is refused under its own name. Several clips are unchanged: their
   join is sized from the frame before fit.py reframes it, and the three render gaps listed under
   "The sequence is the project's frame" (one side and no aspect, padding before a crop, a `fit`
-  object over the join) are still open there. Code: `render.export_timeline()`. Test:
+  object over the join) are still open there (after 3.9.1 the first and the third are closed,
+  #526). Code: `render.export_timeline()`. Test:
   `test_a_one_clip_sequence_takes_the_fit_objects_frame`.
 
 ## After 3.8.16 — shared code and the MCP server (#465)
@@ -5301,7 +5296,8 @@ the slot at 0.519 s, "After 3.8.14").
   its frames by index and has no sound (decided, its docstring). `insert.py` takes a still. The
   atempo class reaches `speedramp.py`, `fit.py --method speed` (and `render.py`'s speed stage,
   which runs it) and `audio.py --tempo`; all three are changed.
-- **Which of `frame` and `fit` sizes a sequence of several clips is not decided here** (#526).
+- **Which of `frame` and `fit` sizes a sequence of several clips was not decided here** (#526;
+  decided after 3.9.1 for (a), the `fit` object, in that section: the numbers below are 3.9.1's).
   It reproduces as the issue says, and the render itself is not one rule either: over two 160x120
   clips joined without a transition, frame 16:9 with `fit` 1:1 renders 120x120 and exports a 160x90 sequence; frame
   `{aspect 16:9, width 320}` with `fit {aspect 4:5, fit crop}` renders 192x240 and exports
@@ -5725,3 +5721,88 @@ with their own cause.
   without `--end`, `look.py`'s contact sheet) is not changed here. Code: `export.main()`,
   `join.main()`. Test: `test_a_still_given_to_export_or_join_is_refused` (and a clip `insert.py`
   made of the still is exported and joined).
+## After 3.9.3 — the timeline of several clips takes its size from fit (#526)
+
+- **The `fit` object wins over the frame for any number of clips, in the render and in
+  `--export-timeline`** (#526, option (a) of "After 3.8.21"). The render's fit stage gives fit.py
+  the `fit` object's aspect, mode, width and height and the frame's only where the object has
+  none (`setdefault`), as it always did for one clip; the export writes the sequence from the
+  same merge (`frame.update()` with the object's aspect, fit, width, height and fps) whatever the
+  number of clips. Before, a multi-clip render gave fit.py the frame's sides in one case only
+  (an aspect and one side, and no size or other aspect in the object) and otherwise fitted the
+  object inside the joined picture, while the export sized the sequence from the frame alone.
+  Over two 160x120 clips joined without a transition, on FFmpeg 6.1.1 (rendered with
+  `--stop-after fit`, exported as FCPXML):
+
+  | frame | fit | 3.9.1 render / sequence | now, both (= one clip, before and now) |
+  |---|---|---|---|
+  | 16:9 | 1:1 | 120x120 / 160x90 | 120x120 |
+  | 16:9, width 320 | 4:5, crop | 192x240 / 320x180 | 320x400 |
+  | 1:1 | width 200 | 200x200 / 120x120 | 200x200 |
+  | 320x180 | 1:1 | 180x180 / 320x180 | 320x180 |
+  | 16:9 at 25 fps | fps 24 | 24 fps / 25 fps | 24 fps |
+  | width 100 | none | 100x74 / 100x76 | 100x76 |
+
+  Why (a): one rule for one clip and for several, the rule #506 already gave a one-clip project,
+  and a `fit` object over several clips keeps doing something that can be seen. Option (b), the
+  frame wins, would have kept every multi-clip render's size only by making the `fit` object's
+  aspect and sides mean nothing there. What the merge implies is the one-clip rule's, now for
+  several clips too: a frame with both sides keeps them under a `fit` object that gives only an
+  aspect (fit.py's `frame_size()` uses two given sides as they are), so frame 320x180 with `fit`
+  1:1 is 320x180 with the picture fitted to it, not a square; and a `fit` object with one side
+  takes the frame's other side (`fit {width 36}` under a 72x128 crop frame is 36x128, the
+  picture cut to that). The rate is the object's too: the render's fit.py already took
+  `fit.fps`, and the multi-clip sequence stated the frame's. No `notes` line says the object
+  won: the one-clip render has never written one, and both are the documented rule.
+  The frame's rate is not handed to fit.py for several clips (join.py already conformed them to
+  it), and a multi-clip project with no fit stage of its own (no `fit` object, `frame.aspect` or
+  `frame.fit`) still gets none: join.py delivers the frame's sides and rate.
+- **A frame of one side gives join.py both sides, the other one by fit.py's rule.** join.py
+  takes a lone `--width` to the first clip's aspect and rounds both sides down to even, fit.py
+  and the sequence round them up (`frame_size()`): `{width 100}` over 4:3 clips rendered 100x74
+  against a 100x76 sequence, `{height 75}` over a 128x72 first clip 132x74 against 136x76, and
+  `{width 101}` over it 100x56 against 102x58. render.py now computes the other side with `frame_size()` from the first clip's
+  displayed size (`display_size()`, as join.py and the export read it) and passes both. A side
+  that is not a whole number goes to join.py as written, which refuses it as before. With this
+  and the entry above, the gaps (1) and (3) of "The sequence is the project's frame" are closed;
+  (2), join.py's padding before a crop, is not (the picture, not the size).
+- **Two combinations the first version left apart (review of #553).** A frame of one side whose
+  side the `fit` object gives too: the join is sized from the object's value (the object giving no
+  other side), since fit.py derives the other side from the joined canvas and the export from the
+  clip (`{width 100}` with `fit {width 200}` rendered 200x152 against 200x150). A key the `fit` object
+  gives as `null` is dropped before the frame's values are merged in, as the export already read it
+  (frame 320x180 with `fit {aspect 1:1, width null}` rendered 180x180 against 320x180, for one clip
+  too). Both are rows of `test_a_sequence_of_several_clips_takes_the_fit_objects_frame`.
+  A third: with `frame.fps` and a different `fit.fps` the clips were joined at the frame's rate and
+  conformed again by fit.py, each clip rounded twice, where the sequence rounds each once at the
+  delivered rate (two 0.7 s clips, frame 25 fps, fit 24 fps: 35 frames against 34; two 8-frame clips: 13
+  against 12). join.py now gets the `fit` object's rate where it gives one, the frame's otherwise
+  (`test_several_clips_are_joined_at_the_rate_the_fit_object_delivers`). Measured on FFmpeg 6.1.1.
+  Filed as #552: (2) above.
+- **Which projects render differently.** Only projects of two or more clips (an audiogram
+  project joins nothing and is not one). (i) With a fit stage (a `fit` object, `frame.aspect` or
+  `frame.fit`) and a frame width or height, fit.py now gets the frame's sides, except where it
+  already did (an aspect and one side in the frame, no size or other aspect in the object). The
+  delivered size changes where the object's aspect or sides were fitted inside the join (the
+  table above); where the join already had the size fit.py now asks for (a `fit` object of only
+  `duration` under a frame of both sides), the size is the same and the fit stage's command
+  line, and so its `--cache` key, differ. (ii) With a frame of exactly one whole-number side,
+  join.py gets both sides: the size changes where that side is odd or the first clip's aspect
+  makes the other one odd, and the join's command line changes in every such project. Their exports change where a
+  `fit` object exists (its aspect, mode, sides or rate now size the sequence), and a
+  `fit.aspect` or `fit.fit` fit.py refuses is now refused by the export, as for one clip. A
+  multi-clip frame of both sides and `frame.fit` with no aspect and no `fit` object failed in
+  fit.py ("nothing to do") and now renders at the frame's size. One-clip projects are unchanged:
+  `test_a_sequence_of_several_clips_takes_the_fit_objects_frame` pins their sizes and rates at
+  3.9.1's (that test, run against 3.9.1's render.py, fails only its two-clip rows).
+  Swept: every place that sizes a render or a sequence from `frame` or `fit` -- render.py's join
+  and fit stages, `export_timeline()` for `.fcpxml`, `.edl` and `.otio` (one `timeline.build()`
+  for all three; FCPXML states the size, EDL and OTIO only in the reframe note), and `batch.py`
+  with a project recipe (it runs render.py, so it renders what render.py does: 120x120 for the
+  first row above, before and after). `tests/sweep.py` over a 4:3 clip against a 16:9 one
+  printed no differing row (the single-file tools do not read a project). `multicam.py
+  --write-project` writes no frame or fit, and a delivery template is one clip. Measured on
+  FFmpeg 6.1.1 only. Code: `render.main()` (the join and fit stages), `render.export_timeline()`.
+  Tests: `test_a_sequence_of_several_clips_takes_the_fit_objects_frame`,
+  `test_a_multi_clip_render_delivers_the_sequence_size`,
+  `test_a_one_clip_sequence_takes_the_fit_objects_frame`.
