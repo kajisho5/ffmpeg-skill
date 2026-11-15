@@ -356,8 +356,9 @@ lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
 rounded, if they aren't; an odd `--x`/`--y` is taken as given. The source's
 subtitle track is kept (converted to mov_text in MP4/MOV, SubRip in Matroska);
-`dropped_non_av_streams: true` says it was dropped: the container refused it, or
-refused a data stream beside it (a timecode track), and the retry drops both.
+`dropped_non_av_streams: true` says a subtitle or data stream is not in the output: the
+container refused it. A refused data stream (a timecode track) is retried away alone, so the
+subtitles beside it stay (`non_av_streams_dropped` fallback, `dropped: ["data"]`).
 
 ### cropdetect.py — measure black bars, report the crop rectangle
 ```
@@ -708,7 +709,13 @@ container that can hold them (.mp4/.m4v/.m4a/.mov, .mkv/.mka/.webm); `.wav`,
 `.gif`, `.mp3` and `.flac` outputs are refused for `--chapters` rather than
 silently dropping them. Tags alone are written to any container that has them.
 `--clear-chapters` removes existing markers; an empty tag value (`--comment ""`)
-clears that tag.
+clears that tag. Because nothing is converted, an output container that does not take one of
+the source's streams as it is refuses the run before ffmpeg starts (`kind: input`, a dry run
+too): a SubRip or ASS track into `.mp4`/`.mov`, a mov_text track into `.mkv`, a data stream
+(a timecode track) into Matroska or WebM, an attachment outside Matroska. Keep the source's
+container (the default output does), or change it first with `export.py --preset copy`, which
+converts a text track. An audio-only extension for a source with a picture is refused too
+(reason `output_extension_audio_only`).
 
 **Proposed chapters (1.16).** `--auto-chapters` measures the file's own
 structure instead of reading a file: silencedetect for the pauses (`--from
@@ -1615,7 +1622,9 @@ the hook card, the meme lines and the sticker chip. A label that already fits is
 
 Drawn with drawbox/drawtext/overlay — no PNG assets needed. Sizes scale with
 the frame's short side; colours, font and safe margin come from `--brand`.
-Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug fade.
+Lower-third slides in over 0.4 s and out over 0.3 s; title/chapter/bug/sticker fade in and out
+over 0.3 s. A `--start`/`--end` window shorter than the two together shares itself between
+them (the fades half each, the slide 4:3), so the graphic still leaves faded out or off the frame.
 Non-Latin `--name`/`--title`/`--subtitle` text picks a font file by script the
 same way `caption.py` does (`--lang XX` disambiguates Han-only text; no font for
 the script fails the job). Arabic and Hebrew are already correct through drawtext
@@ -2355,7 +2364,8 @@ input, `result.input_lra` for the written file, with `targets` echoing the
 requested lufs / tp / lra.
 
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
-the true-peak ceiling allows). Video and any subtitle/data track are
+the true-peak ceiling allows). An audio output of a source whose sound starts after its picture
+holds that lead as silence, so the sound keeps its place (as in `audio.py` and `cut.py --accurate`). Video and any subtitle/data track are
 stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in
 video containers or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac, .mp3).
 The written file is measured again: a lossy encoder can push peaks past the

@@ -41,7 +41,7 @@ from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
-from _common.emit import absorb_stage_hw, note, warn
+from _common.emit import absorb_stage_hw, note, refuse, warn
 from _common.runner import refuse_missing_components_first
 from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
@@ -163,6 +163,21 @@ def main() -> int:
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.silence_threshold >= 0:
         die(f"--silence-threshold is a peak level in dBFS and must be negative, got {args.silence_threshold:g}")
+    # A137: the output always holds a picture, so an audio input's extension is not the default:
+    # talk.wav made talk_waveform.wav, which the WAV muxer refused (kind ffmpeg), and talk.m4a an
+    # H.264 video named .m4a
+    in_ext = os.path.splitext(args.input)[1].lower()
+    output = args.output or default_output(args.input, "waveform", "mp4" if in_ext in AUDIO_MEDIA_EXT else None)
+    # every audio-only extension this skill reads, not only those it writes (is_audio_output():
+    # .aif, .aiff, .caf and .wma are not there, and passed this to fail in ffmpeg, or in a dry run not at all)
+    if os.path.splitext(output)[1].lower() in AUDIO_MEDIA_EXT:
+        # the reason every tool that writes a picture gives (runner._check_picture_into_audio_extension,
+        # #539), from here because it comes before the measuring passes: the level measurement
+        # below runs ffmpeg over the whole input, and a silent input stopped there first (#554 review)
+        refuse("input", "output_extension_audio_only",
+               f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
+               "name a video file (.mp4, .mov, .mkv)",
+               output=output, extension=os.path.splitext(output)[1].lower(), encoders=[])
     # silent input draws a flat line that used to be reported as verified; a writing tool's dry
     # run runs no ffmpeg (docs/contract.md), so only the real run measures
     silent_peak = None
@@ -174,16 +189,6 @@ def main() -> int:
                 die(f"{args.input} is silent (audio stream {args.audio_stream} peaks at {silent_peak:g} dBFS, at or below "
                     f"--silence-threshold {args.silence_threshold:g}): the visualisation would be a flat line",
                     kind="input", hint="check the audio, or pass --on-silent warn to render it anyway")
-    # A137: the output always holds a picture, so an audio input's extension is not the default:
-    # talk.wav made talk_waveform.wav, which the WAV muxer refused (kind ffmpeg), and talk.m4a an
-    # H.264 video named .m4a
-    in_ext = os.path.splitext(args.input)[1].lower()
-    output = args.output or default_output(args.input, "waveform", "mp4" if in_ext in AUDIO_MEDIA_EXT else None)
-    # every audio-only extension this skill reads, not only those it writes (is_audio_output():
-    # .aif, .aiff, .caf and .wma are not there, and passed this to fail in ffmpeg, or in a dry run not at all)
-    if os.path.splitext(output)[1].lower() in AUDIO_MEDIA_EXT:
-        die(f"{output}: waveform.py writes a video, and {os.path.splitext(output)[1].lower()} holds sound only; "
-            "name a video file (.mp4, .mov, .mkv)", kind="input")
 
     # The visualisation's own band. Without --image/--position it fills the frame, which is what
     # every 1.15 command line did, so the graph below is byte-identical when no new flag is given.
