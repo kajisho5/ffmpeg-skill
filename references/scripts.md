@@ -175,7 +175,9 @@ the next source frame and may keep up to one frame of timestamp. A `.mp4`/`.mov`
 edit list hides the priming. A source whose audio starts after its picture keeps
 that offset. An audio-only `--accurate` cut
 still uses `make_zero`; that priming is what `precision: codec_frame` counts
-in the length. Since 3.0.0 `keyframe_snapped` equals `start_snapped` (2.x: true
+in the length, and it pads a sound that starts after `--start` with silence. A stream copy to an audio output
+cannot: it starts at the sound's first packet, and an `audio_lead_dropped` warning (`{seconds,
+segments}`) says how much silence it left out (from one frame of the picture on). Since 3.0.0 `keyframe_snapped` equals `start_snapped` (2.x: true
 for every stream copy, `precision` `packet`); `start_snapped` is measured: true when a copied picture starts more
 than a frame from `--start`, or when its start could not be measured (an unknown start is
 never claimed exact); `null` under `--dry-run`.
@@ -344,7 +346,9 @@ the rectangle for you. Use this when the rectangle is already known (a
 face-detection box, a saved crop, a hand-picked region). The rectangle must
 lie entirely inside the source frame (after accounting for display rotation);
 `--width`/`--height` must be even (4:2:0 chroma) and are refused, never
-rounded, if they aren't; an odd `--x`/`--y` is taken as given.
+rounded, if they aren't; an odd `--x`/`--y` is taken as given. The source's
+subtitle track is kept (converted to mov_text in MP4/MOV, SubRip in Matroska);
+`dropped_non_av_streams: true` says the container refused it.
 
 ### cropdetect.py — measure black bars, report the crop rectangle
 ```
@@ -515,7 +519,8 @@ default, keeps the original framing and lets the edges show: vidstab's own
 "optimal zoom" is off). Needs an ffmpeg built with
 `--enable-libvidstab`; `doctor` reports this tool `usable: no` when that's
 missing (a plain Homebrew ffmpeg build, for example) rather than failing at
-run time.
+run time. The frames keep their times, so the source's subtitle track is kept
+as `crop.py` keeps it (`dropped_non_av_streams` says when it could not be).
 
 ### sequence.py — numbered/globbed image sequence to video
 ```

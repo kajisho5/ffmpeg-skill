@@ -4,7 +4,24 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **`cut.py` says when a copied audio extraction leaves out a late sound's lead (#515).** A
+  stream copy to an audio file (`-o x.m4a` without `--accurate`) starts at the sound's first
+  packet, so for a source whose sound starts after `--start` the silence before it was left out
+  and the extraction was early against its picture; the result only said the file was short. An
+  `audio_lead_dropped` warning (`{seconds, segments}`) and a note now say how much went and that
+  `--accurate` keeps it, in a dry run too. The copy itself is unchanged.
+- **`crop.py` and `stabilize.py` keep the source's subtitle track (#520).** They left it to
+  FFmpeg's default stream selection, which on FFmpeg 6.1 drops an MP4's mov_text track; they now
+  keep it as `fit.py` and `color.py` do, and report `dropped_non_av_streams`. Every tool that keeps
+  subtitles this way (`fit`, `color`, `crop`, `stabilize`, `graphics`, `overlay`, `audio`,
+  `loudness`, `proxy`, `deinterlace`, `denoise`, `redact`, `sphere`, `straighten`, `pad --end`,
+  `freeze` of the last frame) now converts a text track to the output container's own format
+  (mov_text in MP4/MOV, SubRip in Matroska) instead of dropping it when the container changes.
+- **`overlay.py --fade` fades the layer out when `--end` comes before the fade would finish
+  (#517).** With `--end` at or before `--fade` an image layer faded in and vanished at full
+  strength; the fade-out is now cut to the layer's window, for image and text layers alike.
 
 ## 3.8.22
 

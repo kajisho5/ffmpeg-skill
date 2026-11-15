@@ -187,6 +187,12 @@ def enable_expr(start: Optional[float], end: Optional[float], meta: Optional[dic
     return window_expr(start, end, meta)
 
 
+def fade_out_length(start: float, end: float, fade: float) -> float:
+    """The fade-out of a layer shown from `start` to `end`: --fade, cut to the window when the window
+    is shorter, so the fade still ends at `end` (audio.py and cut.py cap theirs the same way)."""
+    return min(fade, end - start)
+
+
 def alpha_expr(opacity: float, start: Optional[float], end: Optional[float], fade: float) -> str:
     """Time-varying alpha with linear fade in/out inside [start, end]."""
     if fade <= 0 or (start is None and end is None):
@@ -195,8 +201,8 @@ def alpha_expr(opacity: float, start: Optional[float], end: Optional[float], fad
     parts = [f"{opacity:g}"]
     fin = f"min(1,(t-{s:.3f})/{fade:g})"
     parts.append(fin)
-    if end is not None:
-        parts.append(f"min(1,({end:.3f}-t)/{fade:g})")
+    if end is not None and end > s:
+        parts.append(f"min(1,({end:.3f}-t)/{fade_out_length(s, end, fade):g})")
     return "max(0," + "*".join(parts) + ")"
 
 
@@ -527,8 +533,12 @@ def main() -> int:
             # the common ask, and a matching fade-out at the very end surprised every eval run)
             s = start if start is not None else 0.0
             chain.append(f"fade=t=in:st={s:.3f}:d={args.fade:g}:alpha=1")
-            if end is not None and end > args.fade:
-                chain.append(f"fade=t=out:st={end - args.fade:.3f}:d={args.fade:g}:alpha=1")
+            if end is not None and end > s:
+                # a fade-out longer than the layer's window is cut to it, so the layer still leaves
+                # at --end fully faded (#517: with --end at or before --fade it was left out, and the
+                # layer vanished at full opacity); the text layer's alpha_expr() caps it the same way
+                out = fade_out_length(s, end, args.fade)
+                chain.append(f"fade=t=out:st={end - out:.3f}:d={out:g}:alpha=1")
         x, y = position_exprs(args.position, args.margin, text_mode=False, margins=safe_margins)
         grid = on_grid(x, y, (vw, vh), (lw, lh))
         if grid:

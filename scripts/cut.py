@@ -449,6 +449,19 @@ def first_frame_from(src: str, meta: dict, start: float, reencode: bool, edit_li
     return key[0] - v0
 
 
+def copied_lead(meta: dict, start: float, end: float) -> Optional[float]:
+    """The seconds of a sound's late start that an audio-only stream copy of start..end leaves out
+    (#515): the copy begins at the first packet, so a sound that starts after `start` on the file's
+    clock (stream_starts) comes out that much early. None when it is less than one frame of the
+    source's picture (1 ms without one), which no picture could show, or when the start is unknown."""
+    audio = meta.get("audio") or {}
+    if not isinstance(audio.get("start_time"), (int, float)):
+        return None
+    lead = min(stream_starts(meta)[1], end) - start
+    fps = (meta.get("video") or {}).get("fps")
+    return round(lead, 6) if lead >= (1.0 / float(fps) if fps else 0.001) else None
+
+
 def av_skew(out_meta: dict, edit_list_remedy: bool = False, expected: float = 0.0):
     """(seconds audio starts after video, warning note or None); None when either is missing.
     A lossless cut can start its streams apart -- Core Media HEVC once gave 3.7 s of sound with no
@@ -1044,11 +1057,23 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             info(f"stream copy landed on a keyframe {abs(got - dur):.2f}s away from the requested cut "
                  f"(> {tolerance:.2f}s tolerance); re-encoding this segment for accuracy{alt}")
             return _with_notes(cut_one(src, start, end, dst, True, crf, preset, tolerance, meta, reasons + ["tolerance"], edit_list_ok), notes)
-    if reencode or audio_only:
+    if audio_only and not reencode:
         # an audio-only copy is judged by its written length too (above): a dry run that wrote
         # nothing says a real run may still re-encode it (#510 review)
-        pending = {"length_unjudged": True} if (STATE.dry_run and not reencode and copy_t is None and tolerance >= 0) else {}
-        return _outcome(meta, dst, reencode, reasons, **pending)
+        pending = {"length_unjudged": True} if (STATE.dry_run and copy_t is None and tolerance >= 0) else {}
+        lead = copied_lead(meta, start, end)
+        if lead and STATE.dry_run and 0 <= tolerance <= lead:
+            # the run's length check re-encodes such a copy, and the re-encode pads the lead (A46)
+            lead = None
+        if lead:
+            # a copy cannot add silence: the sound starts at its first packet, `lead` earlier than it
+            # sat after `start` (#515). Kept within --tolerance, as a start that snapped is, and said
+            notes.append(f"the sound starts {lead:.3f}s after {start:.3f}s in the source; a stream copy cannot "
+                         f"add silence, so the extraction starts with the sound, {lead:.3f}s early against the "
+                         "picture (--accurate pads it from the start)")
+        return _outcome(meta, dst, False, reasons, notes=notes, audio_lead_dropped_seconds=lead or None, **pending)
+    if reencode:
+        return _outcome(meta, dst, reencode, reasons)
     if STATE.dry_run:
         # the planned copy: whether it keeps an edit list is known; where it lands is not, so a
         # real run that judges the written copy by its length may still re-encode it (#510)
@@ -1962,6 +1987,15 @@ def main() -> int:
                f"(cut writes one audio track, on a stream copy as on a re-encode)")
         warn(msg, "audio_tracks_dropped", source=len(src_audio), kept=kept, dropped=dropped_audio)
         notes.append(msg)
+    # a copied audio extraction that starts with the sound, not where it sat after --start (#515); an
+    # outcome a re-cut replaced carries none, so this is what the written file holds
+    leads = [(i + 1, o["audio_lead_dropped_seconds"]) for i, o in enumerate(outcomes) if o.get("audio_lead_dropped_seconds")]
+    if leads:
+        where = (f" (segment{'s' if len(leads) > 1 else ''} {', '.join(str(i) for i, _ in leads)})"
+                 if len(outcomes) > 1 else "")
+        warn(f"the stream copy left out {sum(s for _, s in leads):.3f}s of silence before the sound{where}, so the "
+             "sound is early against the source's picture; --accurate keeps it", "audio_lead_dropped",
+             seconds=round(sum(s for _, s in leads), 6), segments=[{"index": i, "seconds": s} for i, s in leads])
     emit(output, expected_duration=round(expected, 6), duration_error_ms=error_ms, precision=precision, reencoded=reencoded,
          expect_streams=expect_streams, stream_reference=[meta], stream_windows=[(s, e) for s, e in requested],
          dropped_non_av_streams=bool(DROPPED_STREAMS), dropped_audio_streams=max(dropped_audio, 0),
