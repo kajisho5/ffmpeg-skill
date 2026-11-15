@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, integrated_lufs,  # noqa: E402
                        make_multistream, script, sh, written_track)
 from _common import probe  # noqa: E402
+from _common.decision import AUDIO_CODECS  # noqa: E402
 
 
 class AudioTests(MediaFixtures):
@@ -1433,6 +1434,192 @@ class Audit459AudioTests(MediaFixtures):
                     self.assertEqual(doc["error"]["kind"], "input", doc)
                     self.assertIn("holds sound only", doc["error"]["message"])
                     self.assertFalse(out.exists())
+
+
+class AudioOnlyOutputExtensionTests(unittest.TestCase):
+    """#517: an audio extension the skill reads had no codec in AUDIO_CODECS, so it was taken for
+    a video container. -o .aif, .aiff or .caf failed inside ffmpeg (kind ffmpeg, "Nothing was
+    written") after a dry run had planned AAC for it, and -o .wma completed, verified, with H.264
+    and AAC in an ASF file. The first three are written as 16-bit PCM (the AIFF and CAF muxers'
+    own codec, as .wav is), and .wma is refused before ffmpeg runs, in every tool that writes an
+    audio file, dry runs included."""
+
+    RATE = 48000
+    CONTAINER = {".aif": "aiff", ".aiff": "aiff", ".caf": "caf"}
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "audio_only_ext"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+
+        def make(name, *args):
+            path = cls.dir / name
+            if not path.exists():
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args, path)
+            return path
+        cls.clip = make("clip.mp4", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=3", "-f", "lavfi",
+                        "-i", f"sine=f=440:r={cls.RATE}:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                        "-shortest")
+        cls.tone = make("tone.wav", "-f", "lavfi", "-i", f"sine=f=440:r={cls.RATE}:d=3,volume=4", "-ac", "2", "-c:a", "pcm_s16le")
+        cls.tone2 = make("tone2.wav", "-f", "lavfi", "-i", f"sine=f=660:r={cls.RATE}:d=2,volume=4", "-ac", "2", "-c:a", "pcm_s16le")
+        # a tone, 1.5 s of digital silence, a tone: silence.py has a pause to take out
+        cls.gap = make("gap.wav", "-f", "lavfi", "-i", f"sine=f=300:r={cls.RATE}:d=4,volume='if(between(t,1,2.5),0,4)':eval=frame",
+                       "-ac", "2", "-c:a", "pcm_s16le")
+        # name -> (script, source, flags, the codec the output holds)
+        cls.cases = {
+            "cut, sound of a video": ("cut.py", cls.clip, ("--start", "0.5", "--end", "2.5"), "pcm_s16be"),
+            "cut, copy of PCM": ("cut.py", cls.tone, ("--start", "0.5", "--end", "2.5"), "pcm_s16le"),
+            "cut --accurate": ("cut.py", cls.clip, ("--start", "0.5", "--end", "2.5", "--accurate"), "pcm_s16be"),
+            "audio": ("audio.py", cls.clip, ("--voice", "light"), "pcm_s16be"),
+            "silence": ("silence.py", cls.gap, (), "pcm_s16be"),
+            "loudness": ("loudness.py", cls.tone, (), "pcm_s16be"),
+            "join": ("join.py", cls.tone, (cls.tone2, "--transition", "none"), "pcm_s16be"),
+        }
+
+    def run_case(self, name, out, *extra, expect_fail=False):
+        tool, src, flags, _ = self.cases[name]
+        out.unlink(missing_ok=True)
+        return json.loads(script(tool, src, *flags, "-o", out, *extra, "--json", expect_fail=expect_fail).stdout)
+
+    def stream(self, path):
+        doc = json.loads(sh("ffprobe", "-v", "error", "-show_entries",
+                            "format=format_name:stream=codec_type,codec_name,duration", "-of", "json", path).stdout)
+        return doc["format"]["format_name"], doc["streams"]
+
+    def test_aif_aiff_and_caf_outputs_are_written_as_that_container(self):
+        for name, (_, _, _, codec) in self.cases.items():
+            wav = self.dir / f"{name.replace(' ', '_').replace(',', '')}.wav"
+            self.assertEqual(self.run_case(name, wav)["status"], "completed", name)
+            _, (want,) = self.stream(wav)
+            for ext, container in self.CONTAINER.items():
+                out = wav.with_suffix(ext)
+                with self.subTest(tool=name, ext=ext, dry_run=True):
+                    doc = self.run_case(name, out, "--dry-run")
+                    self.assertEqual(doc["status"], "completed", doc)
+                    planned = [c for c in doc["commands"] if c.endswith(str(out))]
+                    self.assertTrue(planned, doc["commands"])
+                    self.assertIn("-c copy" if codec == "pcm_s16le" else f"-c:a {codec}", planned[-1])
+                    self.assertFalse(out.exists())
+                with self.subTest(tool=name, ext=ext):
+                    doc = self.run_case(name, out)
+                    self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
+                    fmt, streams = self.stream(out)
+                    self.assertEqual(fmt, container)
+                    self.assertEqual([(s["codec_type"], s["codec_name"]) for s in streams], [("audio", codec)])
+                    # the same samples as the tool's .wav: within one sample, where a codec frame
+                    # of PCM is one sample
+                    self.assertAlmostEqual(float(streams[0]["duration"]), float(want["duration"]), delta=1.5 / self.RATE)
+
+    def test_a_wma_output_is_refused_before_ffmpeg_runs(self):
+        for name in self.cases:
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, dry_run=bool(dry)):
+                    out = self.dir / f"{name.replace(' ', '_').replace(',', '')}.wma"
+                    doc = self.run_case(name, out, *dry, expect_fail=True)
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err.get("reason")), ("input", "output_extension_unsupported"), err)
+                    self.assertEqual(err["details"]["extension"], ".wma")
+                    self.assertEqual(err["details"]["written"], list(AUDIO_CODECS))
+                    self.assertIn("name -o with an extension it writes: " + ", ".join(AUDIO_CODECS), doc.get("hint") or err.get("hint"))
+                    self.assertFalse(out.exists())
+        # a tool that writes a picture, and render.py, whose own copied-container rule named .mp4 for it
+        for label, argv in (("fit", ("fit.py", self.clip, "--aspect", "1:1")),
+                            ("render podcast", ("render.py", self.tone, "--template", "podcast", "--dry-run"))):
+            with self.subTest(tool=label):
+                out = self.dir / f"{label.replace(' ', '_')}.wma"
+                err = json.loads(script(*argv, "-o", out, "--json", expect_fail=True).stdout)["error"]
+                self.assertEqual((err["kind"], err.get("reason")), ("input", "output_extension_unsupported"), err)
+                self.assertFalse(out.exists())
+
+
+    def wma_source(self, codec):
+        path = self.dir / f"src_{codec}.wma"
+        if not path.exists():
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:r=44100:d=4,volume=4",
+               "-ac", "2", "-c:a", codec, path)
+        return path
+
+    def packets(self, path):
+        doc = json.loads(sh("ffprobe", "-v", "error", "-count_packets", "-show_entries",
+                            "format=format_name:stream=codec_type,codec_name,nb_read_packets", "-of", "json", path).stdout)
+        return doc["format"]["format_name"], [(st["codec_type"], st["codec_name"], int(st["nb_read_packets"]))
+                                              for st in doc["streams"]]
+
+    def test_a_stream_copy_of_wma_sound_into_wma_is_kept(self):
+        """Review of the first #517 change: a stream copy of a WMA source's sound into .wma wrote
+        the WMA it was (cut without --accurate, metadata, a copy join of --segments), and refusing
+        every .wma broke it. Only a run that would encode into .wma is refused, a dry run alike,
+        whether the name came from -o or from the input's default; the hint names the extensions
+        AUDIO_CODECS writes. A copy that cut.py's length check would re-encode is refused, not
+        written as AAC in ASF, and leaves no file."""
+        for codec in ("wmav1", "wmav2"):
+            src = self.wma_source(codec)
+            self.assertEqual(self.packets(src)[1], [("audio", codec, self.packets(src)[1][0][2])], "fixture")
+            ref = self.dir / f"ref_{codec}.wma"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-ss", "0.5", "-t", "2", "-c", "copy",
+               "-avoid_negative_ts", "make_zero", ref)
+            kept = {
+                "cut -o": (("cut.py", src, "--start", "0.5", "--end", "2.5"), self.dir / f"cut_{codec}.wma", ref),
+                "cut, default name": (("cut.py", src, "--start", "0.5", "--end", "2.5"), src.with_name(f"src_{codec}_cut.wma"), ref),
+                "cut --segments": (("cut.py", src, "--segments", "0.2-1.0,2.0-3.0"), self.dir / f"seg_{codec}.wma", None),
+                "metadata": (("metadata.py", src, "--title", "kept"), self.dir / f"meta_{codec}.wma", src),
+            }
+            for name, (argv, out, same_as) in kept.items():
+                named = () if name.endswith("default name") else ("-o", out)
+                for dry in (("--dry-run",), ()):
+                    with self.subTest(codec=codec, case=name, dry_run=bool(dry)):
+                        out.unlink(missing_ok=True)
+                        doc = json.loads(script(*argv, *named, *dry, "--json").stdout)
+                        self.assertEqual(doc["status"], "completed", doc)
+                        self.assertEqual(doc["output"], str(out))
+                        if dry:
+                            self.assertFalse(out.exists())
+                            continue
+                        self.assertTrue(doc["verified"], doc)
+                        fmt, streams = self.packets(out)
+                        self.assertEqual(fmt, "asf")
+                        self.assertEqual([(t, c) for t, c, _ in streams], [("audio", codec)])
+                        if same_as is not None:
+                            self.assertEqual(streams[0][2], self.packets(same_as)[1][0][2], "the same packets as ffmpeg's own copy")
+            # every run that would encode into .wma, -o given or the default name
+            refused = {
+                "cut --accurate, default name": (("cut.py", src, "--start", "0.5", "--end", "2.5", "--accurate"), src.with_name(f"src_{codec}_cut.wma"), False),
+                "audio, default name": (("audio.py", src, "--voice", "light"), src.with_name(f"src_{codec}_audio.wma"), False),
+                "loudness, default name": (("loudness.py", src), src.with_name(f"src_{codec}_loudnorm.wma"), False),
+                "silence, default name": (("silence.py", src), src.with_name(f"src_{codec}_tight.wma"), False),
+                "loudness -o": (("loudness.py", src), self.dir / f"loud_{codec}.wma", True),
+            }
+            for name, (argv, out, named) in refused.items():
+                for dry in ((), ("--dry-run",)):
+                    with self.subTest(codec=codec, case=name, dry_run=bool(dry)):
+                        out.unlink(missing_ok=True)
+                        doc = json.loads(script(*argv, *(("-o", out) if named else ()), *dry, "--json", expect_fail=True).stdout)
+                        err = doc["error"]
+                        self.assertEqual((err["kind"], err.get("reason"), err["details"]["output"]),
+                                         ("input", "output_extension_unsupported", str(out)), err)
+                        self.assertIn("name -o with an extension it writes: " + ", ".join(AUDIO_CODECS),
+                                      doc.get("hint") or err.get("hint"))
+                        self.assertFalse(out.exists())
+                        if argv[0] in ("loudness.py", "silence.py"):
+                            self.assertEqual(doc.get("commands"), [], "refused before the measuring pass")
+            # the copy's length check: a copy --tolerance or more off would be re-encoded, which a
+            # .wma cannot take -- refused, the copy it wrote removed; a dry run says so in a note
+            out = self.dir / f"tol_{codec}.wma"
+            out.unlink(missing_ok=True)
+            tight = ("cut.py", src, "--start", "0.5", "--end", "2.5", "--tolerance", "0.001", "-o", out)
+            with self.subTest(codec=codec, case="tolerance re-encode"):
+                err = json.loads(script(*tight, "--json", expect_fail=True).stdout)["error"]
+                self.assertEqual((err["kind"], err.get("reason")), ("input", "output_extension_unsupported"), err)
+                self.assertFalse(out.exists())
+                doc = json.loads(script(*tight, "--dry-run", "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                self.assertTrue(any("output_extension_unsupported" in n for n in doc["notes"]), doc["notes"])
+                doc = json.loads(script(*tight[:-4], "--tolerance", "-1", "-o", out, "--json").stdout)
+                self.assertEqual((doc["status"], self.packets(out)[1][0][1]), ("completed", codec))
 
 
 class SilentOutputLoudnessTests(unittest.TestCase):

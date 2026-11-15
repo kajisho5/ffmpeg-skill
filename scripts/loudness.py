@@ -27,7 +27,7 @@ from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_blo
 from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
 from _common.decision import LOSSLESS_AUDIO_EXT
-from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
+from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, refuse_unwritten_output, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
 
@@ -282,7 +282,7 @@ def main() -> int:
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
     ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container (default 192k), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
-                         "refused for .wav/.flac. Raised to 256k/320k for AAC only when the encoder overshoots the true-peak ceiling and you did not pin it")
+                         "refused for .wav/.flac/.aif/.aiff/.caf. Raised to 256k/320k for AAC only when the encoder overshoots the true-peak ceiling and you did not pin it")
     ap.add_argument("--versions", metavar="LIST",
                     help="write one normalised file per target from this master, each measured after: a comma list of "
                          + ", ".join(f"{n} ({i:g} LUFS / {t:g} dBTP)" for n, (i, t) in VERSION_TARGETS.items())
@@ -309,6 +309,10 @@ def main() -> int:
     if not meta.get("audio"):
         die("input has no audio stream")
     out_ext = os.path.splitext(args.output or default_output(args.input, "loudnorm"))[1].lower()
+    if not args.measure_only:
+        # loudnorm encodes the sound: a .wma name (an -o, or a .wma input's default) is refused
+        # before the measuring pass, not after it (#517)
+        refuse_unwritten_output(args.output or default_output(args.input, "loudnorm"))
     if args.audio_bitrate is not None and not args.measure_only and out_ext in LOSSLESS_AUDIO_EXT:
         # A143: the rate was dropped without a word; a lossless codec has none to set
         die(f"--audio-bitrate has no effect on a lossless {out_ext} output; drop it, or write a lossy one (.m4a, .mp3, ...)")

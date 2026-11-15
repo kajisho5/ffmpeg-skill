@@ -103,6 +103,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.8.23 — a still where a clip is expected, RGB input to stabilize, and where fit puts the picture (#531, #519)](#after-3823--a-still-where-a-clip-is-expected-rgb-input-to-stabilize-and-where-fit-puts-the-picture-531-519)
 - [After 3.9.0 — caches read in a dry run and stored after the inputs changed (#540)](#after-390--caches-read-in-a-dry-run-and-stored-after-the-inputs-changed-540)
 - [After 3.9.1 — a variable-frame-rate cut lays its grid from its start; a hold or pad at the start keeps its last frame (#538)](#after-391--a-variable-frame-rate-cut-lays-its-grid-from-its-start-a-hold-or-pad-at-the-start-keeps-its-last-frame-538)
+- [After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)](#after-392--audio-only-output-extensions-and-a-still-given-to-export-or-join-517-531)
 <!-- contents:end -->
 
 ## Time limits
@@ -4421,7 +4422,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `test_scenes_beats_keep_their_refit_on_a_range_bound`.
 - **`waveform.py` of an audio input writes `<name>_waveform.mp4` by default**, and `-o` with an
   audio extension is refused (`kind: input`): the output always has a picture. Other tools keep an
-  audio input's extension, which is right for them (cut, silence, loudness, audio write sound);
+  audio input's extension, which is right for them (cut, silence, loudness, audio write sound),
+  except where a `.wma` input's would be encoded into, refused since #517 ("After 3.9.2"): name `-o`;
   the tools that always write a picture refuse an audio-only input. Test:
   `test_waveform_of_an_audio_input_is_a_video_by_default`.
 ## After 3.8.13 — frame size, colour tags, delivery limits and verify's outputs (#463, #464)
@@ -4849,7 +4851,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   past an input; `join.py --transition none` joins one frame; a render clip with `in`/`out` on a
   still is cut to one frame and then refused by the join's transition). What a still means
   there (refused, naming `insert.py`, or held for the window asked) is a decision of its own:
-  for `cut.py` it is refused since #531 ("After 3.8.20"), `join.py` is still open.
+  for `cut.py` it is refused since #531 ("After 3.8.23"), and for `join.py` since the decision
+  recorded in "After 3.9.2".
 - **A font file the caller names is refused when it is not there or not a font**, from
   `--font-file` (`overlay.py`, `graphics.py`) and from a brand file's `font_file` (those two and
   `caption.py` when it burns, which hands libass its folder; `--mode mux` draws nothing). On FFmpeg 6.1.1 drawtext that cannot load its
@@ -5406,7 +5409,8 @@ the slot at 0.519 s, "After 3.8.14").
   given `-ss 0.000` dropped a TGA's only frame (image2 gives a TGA a length of one frame), so
   `look.py white.tga --at 0` wrote nothing. Code: `look._refuse_past_end()`, `look._seek()`.
   Test: the same one.
-- **Left for a product decision, not changed:** `export.py STILL` writes a 0.04 s file with
+- **Decided after 3.9.2 as (a), refused** ("After 3.9.2"); recorded here as it was left. Not
+  changed then: `export.py STILL` writes a 0.04 s file with
   `verified: true`, and `join.py --transition none` with a still joins one frame (a transition is
   refused, `kind: input`, by the clip's length). The options: (a) refuse, `kind: input`, naming
   `insert.py STILL --duration T`, as cut.py now does; (b) hold the still for a stated time (a
@@ -5632,3 +5636,86 @@ with their own cause.
   run on a VFR source (reason `vfr`). `tpad`'s start pad is used by `freeze.py`, `pad.py` and
   `sync.py`, which has no conform. Measured on both clips: `pad.py --end` and `--start --end`,
   `freeze.py` at the end, and `fit.py --method trim` from the start were already right.
+
+## After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)
+
+- **`.aif`, `.aiff` and `.caf` outputs are written as that container, in 16-bit PCM; a `.wma`
+  output is written only as a stream copy of WMA sound, and refused, `kind: input`, where the run
+  would encode into it** (#517, item 1). The audio extensions the skill reads
+  (`AUDIO_MEDIA_EXT`) were wider than the ones it had a codec for (`AUDIO_CODECS`), and an
+  extension with no codec was taken for a video container: `cut.py` (from a video, and
+  `--accurate` from any source), `audio.py`, `silence.py` and `loudness.py`, from a video or an
+  audio source, given `-o x.aiff` (or `.aif`, `.caf`) mapped the picture or encoded AAC and
+  failed in the muxer (`kind: ffmpeg`, "Nothing was written"), after a dry run had completed with that plan; an audio
+  `join.py` refused it as "cannot fill a video container"; `render.py`'s audio-only delivery (the
+  podcast template) refused it as a copied `.mp4`. A stream copy of PCM (`cut.py` of a `.wav`,
+  `metadata.py`) already wrote it. `-o x.wma` completed, verified, in every tool of the sweep that
+  writes media but `waveform.py` and an audio `join.py` (both refused it), with the tools' H.264
+  and AAC (or the copied stream) in an ASF file. The three are now in
+  `AUDIO_CODECS`, so `is_audio_output()`, `audio_codec_for()` and every tool that reads them agree,
+  a dry run included: `-c:a pcm_s16be`, the AIFF and CAF muxers' own default and the same 16-bit
+  PCM as `.wav` (big-endian, plain AIFF's byte order), lossless, so `--bitrate` / `--audio-bitrate` is
+  refused for them as for `.wav` and `.flac` (`LOSSLESS_AUDIO_EXT`). A stream copy keeps the
+  source's PCM (a `.wav`'s `pcm_s16le` is copied as it is: ffprobe reads `pcm_s16le` in the
+  `aiff` or `caf` file); a
+  copy of a source that is not PCM is re-encoded, as for `.wav` (`cut.cut_one()`). `render.py`'s
+  audio list is `AUDIO_CODECS` now, not a copy of it. `.wma` is what is left of the read set
+  (`decision.UNWRITTEN_AUDIO_EXT`, the read set less the written one). The skill has no WMA
+  encoder line, and the ASF muxer writes anything under the name, so a run that would encode into
+  `.wma` is refused with reason `output_extension_unsupported` by
+  `runner.refuse_unwritten_output()`, whose hint names the extensions `AUDIO_CODECS` writes; `run()`
+  calls it for every ffmpeg command it records or runs, beside the missing-extension rule
+  (`output_extension_missing`, A159), so before the command that would write the file runs, a dry
+  run included, and it is the same refusal whether the name came from `-o` or from a `.wma` input's
+  default (`talk_loudnorm.wma`). What it lets through is the result that was right before: a
+  command that encodes nothing (every audio codec option `copy`, no filter) from inputs whose sound
+  is WMA as ffprobe names it (`runner.WMA_CODECS`: wmav1, wmav2, wmapro, wmalossless, wmavoice) and
+  that hold no picture or drop it (`-vn`), the parts of a copy join (`-f concat`) read from its
+  list (in a dry run, parts not yet written named `.wma` count, as each part's own command was
+  checked). So `cut.py` without `--accurate` (`--segments` included) and `metadata.py` still write
+  the source's WMA into ASF, a review of the first version of this change having found that
+  refusing every `.wma` broke them. Only wmav1 and wmav2 were run (FFmpeg 6.1.1 encodes those two;
+  wmapro, wmalossless and wmavoice have decoders only, so no fixture was made and those three are
+  allowed by name, not by a run). `cut.py`'s copy is judged by its written length and re-encoded
+  when it lands `--tolerance` or more off (or wrote no stream, or failed): into `.wma` that
+  re-encode is refused with the same reason, the copy this run wrote is removed so no file is left
+  under the name, and a note says `--tolerance -1` keeps the copy as it lands; a dry run cannot
+  know the length and says so in its notes (`cut.cut_one()`). `loudness.py` and `silence.py` always
+  encode, so they call the refusal before their measuring pass, beside their other output guards;
+  `join.py` (an audio join encodes) and `render.py` call it before their own extension rules, which
+  would name `.wma` a video container or a copied `.mp4`. `waveform.py` keeps its own refusal of every audio-only extension
+  (it writes a picture). Checked on FFmpeg 6.1.1 only, by probing the written file: format `aiff`
+  or `caf`, one audio stream, `pcm_s16be` (`pcm_s16le` for the copy), its length within one sample
+  of the same tool's `.wav`; for `.wma`, format `asf`, the source's WMA codec and the same packet
+  count as ffmpeg's own copy of the window. Not changed: a tool that writes a picture given an audio-only
+  extension, `.wav` included, still fails in the muxer (`kind: ffmpeg`), as before (the sweep:
+  every picture tool of `tests/sweep.py`, and `join.py` of video clips); that is a class of its
+  own. Code: `decision.AUDIO_CODECS`, `decision.UNWRITTEN_AUDIO_EXT`,
+  `runner.refuse_unwritten_output()`, `runner._copies_wma_only()`, `cut.cut_one()`,
+  `join.join_audio()`, `render.AUDIO_EXT`, `loudness.main()`, `silence.main()`. Tests:
+  `test_aif_aiff_and_caf_outputs_are_written_as_that_container`,
+  `test_a_wma_output_is_refused_before_ffmpeg_runs`,
+  `test_a_stream_copy_of_wma_sound_into_wma_is_kept`.
+- **A still given to `export.py` or `join.py` is refused, `kind: input`, naming the still and
+  `insert.py`** (#531, the two items "After 3.8.23" left for a decision). Option (a) of that entry:
+  a delivery of one frame and a join of one frame are never meant, `insert.py STILL --duration T`
+  makes the clip, and holding a still for a time nobody stated is the decision this skill leaves to
+  its caller. Before, on FFmpeg 6.1.1: the `export.py` presets tried (`youtube`, `reels`, `h265`,
+  `prores` and `--preset copy`) wrote one frame (0.04 s, 0.033 s for `reels`) with
+  `verified: true`, `--preset gif` failed in its muxer (`kind: ffmpeg`), and the alpha presets
+  refused an opaque still for its lack of alpha (`prores4444` wrote an RGBA PNG as one frame,
+  verified);
+  `join.py --transition none` joined one frame, verified; a transition was refused as "0.04s, too
+  short for a 0.48s transition" in a real run and planned in a dry run; `--copy` was refused as a
+  stream-layout mismatch; a still beside audio-only inputs was refused as a picture among sounds.
+  None of these was a still working on purpose (no entry or test kept one), so every preset and
+  every `--transition`, `--copy` included, now meets the same refusal through
+  `_common.emit.refuse_still()`, a dry run included, wherever the still stands in the join; a
+  dry run's pending input is not a still. Siblings through these two: a `render.py` project whose
+  clip is a still with an `export` stage wrote one frame, verified, and is refused by the export
+  stage; two clips, one a still, were refused by the join's transition rule and planned in a dry
+  run, and are refused by the join now, a dry run included. The rest of the class recorded "After
+  3.8.23" (`fit.py STILL --aspect`, `stabilize.py`, `reverse.py`, `scenes.py`, `graphics.py`
+  without `--end`, `look.py`'s contact sheet) is not changed here. Code: `export.main()`,
+  `join.main()`. Test: `test_a_still_given_to_export_or_join_is_refused` (and a clip `insert.py`
+  made of the still is exported and joined).

@@ -53,7 +53,7 @@ from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
-from _common.emit import file_identity, input_length, own_length
+from _common.emit import file_identity, input_length, own_length, refuse_still
 from check import SPECS as PLATFORMS, measure_loudness
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, UPLOAD_LIMITS_AS_OF, resolve as resolve_platform
@@ -552,6 +552,9 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
+    # the presets tried delivered one frame of a still (0.04 s, verified; gif failed in its muxer): a
+    # delivery has a length, and insert.py times a still (#531)
+    refuse_still(meta, args.input, "a delivery is a clip with a length, and a still has none")
     notes: List[str] = []
     if p.get("hdr_only") and not meta["video"].get("bt2020_or_hdr"):
         # The point of this preset is that the delivery stays HDR. Running it on an SDR source

@@ -1113,7 +1113,10 @@ def _check_output_extension(cmd: Sequence[str]) -> None:
     executes are checked: a sidecar (a report, an SRT) is a plain file and needs no extension,
     and look.py takes an -o without an image extension as a stem (docs/design-decisions.md)."""
     output = cmd[-1]
-    if output == "-" or output.startswith("pipe:") or len(os.path.splitext(output)[1]) > 1:
+    if output == "-" or output.startswith("pipe:"):
+        return
+    if len(os.path.splitext(output)[1]) > 1:
+        refuse_unwritten_output(output, cmd)
         return
     last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
     if "-f" in cmd[last_input + 2:-1]:
@@ -1121,6 +1124,83 @@ def _check_output_extension(cmd: Sequence[str]) -> None:
     refuse("input", "output_extension_missing",
            f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
            f"name it with one (for example {output + '.mp4'!r})", output=output)
+
+
+# The WMA codecs ffprobe names (FFmpeg's decoders): a stream of one of them copied into `.wma` is
+# the WMA it was, which the ASF muxer holds; wmav1 and wmav2 were written so on 6.1.1 (#517)
+WMA_CODECS = frozenset({"wmav1", "wmav2", "wmapro", "wmalossless", "wmavoice"})
+
+
+def _copies_wma_only(cmd: Sequence[str]) -> bool:
+    """True when `cmd` encodes nothing and every input holds WMA sound and no picture (or the
+    picture is dropped with -vn): a stream copy of a WMA source, which `.wma` holds as it was."""
+    if any(tok in ("-filter_complex", "-lavfi", "-filter_complex_script", "-af", "-filter:a", "-vf", "-filter:v")
+           for tok in cmd):
+        return False
+    codecs = [cmd[i + 1] for i, tok in enumerate(cmd[:-2]) if _CODEC_OPTION_RE.match(tok)
+              and (_CODEC_OPTION_RE.match(tok).group(1) or _CODEC_OPTION_RE.match(tok).group(2)) in (None, "a")]
+    if not codecs or any(c != "copy" for c in codecs):
+        return False
+    no_video = "-vn" in cmd
+    paths: List[str] = []
+    parts: List[str] = []
+    for i, tok in enumerate(cmd[:-1]):
+        if tok != "-i":
+            continue
+        if "concat" in [cmd[j + 1] for j in range(max(0, i - 6), i) if cmd[j] == "-f"]:
+            # a copy join of parts (cut.py --segments): the parts the list names are the inputs
+            try:
+                with open(cmd[i + 1], encoding="utf-8") as fh:
+                    listed = [ln.strip()[5:].strip() for ln in fh if ln.strip().startswith("file ")]
+            except OSError:
+                return False
+            names = [p[1:-1].replace("'\\''", "'") if p.startswith("'") and p.endswith("'") else p for p in listed]
+            parts += [os.path.join(os.path.dirname(cmd[i + 1]), p) for p in names]  # a relative name is the list's
+        else:
+            paths.append(cmd[i + 1])
+    if not paths and not parts:
+        return False
+    for path in paths + parts:
+        if not os.path.isfile(path):
+            # a dry run has not written the parts it joins; each was a .wma copy its own command let
+            # through, so the join of them is one too
+            if STATE.dry_run and path in parts and os.path.splitext(path)[1].lower() == os.path.splitext(cmd[-1])[1].lower():
+                continue
+            return False
+        probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
+                     "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", path]
+        try:
+            proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  timeout=_probe_limit())
+            streams = json.loads(proc.stdout or "{}").get("streams") or []
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return False
+        audio = [st.get("codec_name") for st in streams if st.get("codec_type") == "audio"]
+        video = [st for st in streams if st.get("codec_type") == "video"]
+        if not audio or any(c not in WMA_CODECS for c in audio) or (video and not no_video):
+            return False
+    return True
+
+
+def refuse_unwritten_output(output: str, cmd: Optional[Sequence[str]] = None) -> None:
+    """An output named with an audio extension this skill reads but does not write
+    (decision.UNWRITTEN_AUDIO_EXT: .wma) is refused as `kind: input`, before ffmpeg runs, dry runs
+    included (#517): there is no WMA encoder line, and FFmpeg's ASF muxer took the H.264 and AAC
+    the tools encode and the run completed, verified, with a file no player takes for WMA. The one
+    command let through is a stream copy of WMA sound (`cmd` given, `_copies_wma_only()`): that
+    was WMA before and is kept. Called for every ffmpeg command run() checks, and with no `cmd`
+    (an encode) by a tool that knows it encodes, before its measuring pass or its own extension
+    rule (join.py, render.py, loudness.py, silence.py)."""
+    from _common.decision import AUDIO_CODECS, UNWRITTEN_AUDIO_EXT  # decision imports this module
+    ext = os.path.splitext(output)[1].lower()
+    if ext not in UNWRITTEN_AUDIO_EXT or (cmd is not None and _copies_wma_only(cmd)):
+        return
+    written = list(AUDIO_CODECS)
+    refuse("input", "output_extension_unsupported",
+           f"output {output!r}: this skill writes no {ext} file except a stream copy of WMA sound, and this "
+           f"run would encode into it",
+           hint=f"name -o with an extension it writes: {', '.join(written)} for sound, or a video container",
+           output=output, extension=ext, written=written)
 
 
 # What the WebM muxer takes (6.1: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and
