@@ -8015,11 +8015,14 @@ class HdrRgbSourceTests(unittest.TestCase):
     def _assert_colours(self, video, matrix, what):
         """Each patch's centre, decoded with the matrix the file's own tag names."""
         vf = None if matrix is None else f"scale=in_color_matrix={matrix}:in_range=tv,format=rgb24"
+        read = {}
         for patch, (want, (x, y)) in self.PATCHES.items():
             got = frame_rgb(video, 0.4, x, y, vf=vf)
             self.assertEqual(len(got), 3, f"{what}: a pixel was read")  # zip() of an empty read passes
-            worst = max(abs(g - w) for g, w in zip(got, want))
-            self.assertLessEqual(worst, self.TOLERANCE, f"{what}: {patch} {want} came back {got}")
+            read[patch] = (want, tuple(got), max(abs(g - w) for g, w in zip(got, want)))
+        # every patch is in the message: which way each is off tells a wrong matrix from a level shift
+        self.assertLessEqual(max(w for _, _, w in read.values()), self.TOLERANCE,
+                             f"{what}: " + "; ".join(f"{k} {want} came back {got}" for k, (want, got, _) in read.items()))
 
     def test_an_hdr_or_bt2020_rgb_source_keeps_its_colours_on_the_hdr_line(self):
         """The line tagged the source's matrix and left the conversion to FFmpeg: `gbr` (what FFV1,
@@ -8044,7 +8047,17 @@ class HdrRgbSourceTests(unittest.TestCase):
             v = probe(str(src))["video"]
             self.assertRegex(v["pix_fmt"], r"^gbr", "fixture: the source is RGB")
             self.assertTrue(v["bt2020_or_hdr"], "fixture: the source probes BT.2020 or HDR")
-            self._assert_colours(src, None, f"fixture {name}")
+            try:
+                self._assert_colours(src, None, f"fixture {name}")
+            except AssertionError as exc:
+                if matrix != "bt2020nc":
+                    raise
+                # RGB mislabelled with a YUV matrix is read back through that matrix by FFmpeg 7.1
+                # (CI: C03028 read 197/53/37), so the variant that pins "already right, unchanged"
+                # on 6.1 cannot be made there; the others still run
+                with self.subTest(source=name):
+                    self.skipTest(f"this FFmpeg does not read the mislabelled fixture back as written: {exc}")
+                continue
             if v.get("color_space") != matrix:
                 # the muxer or decoder of this FFmpeg did not keep the matrix tag as asked: the
                 # variant cannot be made here, and the others still run
