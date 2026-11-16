@@ -8000,8 +8000,14 @@ class HdrRgbSourceTests(unittest.TestCase):
         if not path.exists():
             cells = ";".join(f"color=c=0x{'%02X%02X%02X' % rgb}:s=80x60:r=25:d=1,format=gbrp[{k}]"
                              for k, (rgb, _) in self.PATCHES.items())
+            # the tags are set on the frames as well as asked of the encoder: FFmpeg 7 and later write
+            # a stream's colour from its frames, and the encoder options alone left the file
+            # untagged there (8.0.1 in CI: the source did not probe as BT.2020)
+            asked = dict(zip(tags[::2], tags[1::2]))
+            frame_tags = (f"setparams=color_primaries=bt2020:color_trc={asked['-color_trc']}"
+                          f":colorspace={ {'rgb': 'gbr'}.get(asked['-colorspace'], asked['-colorspace']) }")
             sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-               f"{cells};[red][green][blue][grey]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0",
+               f"{cells};[red][green][blue][grey]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0,{frame_tags}",
                "-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=48000", "-pix_fmt", "gbrp10le", "-c:v", "ffv1",
                "-color_primaries", "bt2020", *tags, "-c:a", "pcm_s16le", "-shortest", path)
         return path
