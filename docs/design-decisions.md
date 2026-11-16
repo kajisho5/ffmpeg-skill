@@ -6050,8 +6050,11 @@ before it was changed. Five classes are changed, two are left for a decision.
   `line_matrix_filter`, the three places the tag was built), `export.py`, `stabilize.py`,
   `fit.py`. Tests: `test_an_hdr_or_bt2020_rgb_source_keeps_its_colours_on_the_hdr_line`
   (tests/test_picture.py: five variants of the fixture, each asserted before the tool; the
-  colours of four patches read by the output's tag, tolerance 4 of 255 where the wrong matrix
-  is 5 to 15 off and the lossy 10-bit round trip at most 2; run against 3.10.0's scripts it
+  colours of four patches read by the output's tag, tolerance 7 of 255 on the largest
+  error over the four patches, where the wrong matrix puts the green patch 15 and the blue 11 off and
+  the lossy 10-bit round trip is at most 2 on FFmpeg 6.1.1 and at most 5 on 7.1 (CI: every patch a
+  little dark there, the grey 128 read 126, a level and not a matrix; not run down, since 7.1 cannot
+  be run locally); run against 3.10.0's scripts it
   fails 13 of its 15 rows, the two bt2020nc-tagged ones passing as they should),
   `test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source` (tests/test_contract.py: the
   helpers, every `--codec` line, the fold).

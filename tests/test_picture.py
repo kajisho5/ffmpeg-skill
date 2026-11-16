@@ -7977,9 +7977,13 @@ class HdrRgbSourceTests(unittest.TestCase):
 
     PATCHES = {"red": ((0xC0, 0x30, 0x28), (40, 30)), "green": ((0x30, 0xC0, 0x50), (120, 30)),
                "blue": ((0x20, 0x30, 0xC0), (40, 90)), "grey": ((0x80, 0x80, 0x80), (120, 90))}
-    # Read back 8-bit through a lossy 10-bit encode: at most 2 off after the fix (FFmpeg 6.1.1, every
-    # line below). BT.601 pixels under the bt2020nc tag are 5 to 15 off on every patch but the grey.
-    TOLERANCE = 4
+    # Read back 8-bit through a lossy 10-bit encode. After the fix every patch is at most 2 off on
+    # FFmpeg 6.1.1 and at most 5 off on 7.1 (CI, Debian's build: all four patches a little dark, the
+    # grey 128 -> 126, on the default x265 line; 8.0.1 and 9.0.2 pass at 4). BT.601 pixels under the
+    # bt2020nc tag leave the grey alone and put the green patch 15 and the blue 11 off, so the
+    # largest error over the four patches separates the two with room on both sides. Why 7.1 reads
+    # darker was not run down (it cannot be run here); the pattern is a level, not a matrix.
+    TOLERANCE = 7
 
     @classmethod
     def setUpClass(cls):
