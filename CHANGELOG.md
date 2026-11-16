@@ -4,7 +4,19 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **An HDR or BT.2020 RGB source is re-encoded with the matrix its output is tagged with (#544).**
+  The 10-bit line that keeps such a source's colour (x265 Main10 by default, `--codec hevc`,
+  `av1` and `prores`, `export.py --preset youtube-hdr` and `youtube-av1`) left the RGB-to-YUV
+  conversion to FFmpeg. A source whose matrix tag is `gbr` (FFV1, PNG, qtrle and most RGB
+  codecs) failed inside ffmpeg in every tool that re-encodes (`-colorspace gbr` is no encoder
+  option); one with no matrix tag was written as BT.601 YUV tagged bt2020nc, so a player that
+  follows the tag showed C03028 as C53525 (up to 15 of 255 off on FFmpeg 6.1.1). The conversion
+  now names the matrix the line tags (bt2020nc), in the single-source tools, `join.py`,
+  `multicam.py`, `broll.py` and `overlay.py --video`. YUV sources and SDR RGB sources are
+  unchanged, and so are the 8-bit BT.709 lines given such a source (`export.py`'s fixed presets,
+  `grid.py`) and the alpha lines. Measured on FFmpeg 6.1.1 only.
 
 ## 3.10.1
 

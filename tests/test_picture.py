@@ -7971,5 +7971,104 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
                                  ("fonts_dir", want, "DejaVu Sans", False))
                 self.assertEqual(any("only in other styles" in n for n in doc.get("notes") or []), want is None, doc.get("notes"))
 
+
+class HdrRgbSourceTests(unittest.TestCase):
+    """#544: an RGB source that probes BT.2020 or HDR, re-encoded on the 10-bit line that keeps its colour."""
+
+    PATCHES = {"red": ((0xC0, 0x30, 0x28), (40, 30)), "green": ((0x30, 0xC0, 0x50), (120, 30)),
+               "blue": ((0x20, 0x30, 0xC0), (40, 90)), "grey": ((0x80, 0x80, 0x80), (120, 90))}
+    # Read back 8-bit through a lossy 10-bit encode: at most 2 off after the fix (FFmpeg 6.1.1, every
+    # line below). BT.601 pixels under the bt2020nc tag are 5 to 15 off on every patch but the grey.
+    TOLERANCE = 4
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        encoders = __import__("_common").ffmpeg_encoders()
+        if not {"libx265", "ffv1"} <= set(encoders):
+            raise unittest.SkipTest("needs libx265 (the HDR line) and ffv1 (the RGB fixture)")
+        cls.dir = OUT / "hdr_rgb_source"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+
+    def _source(self, name, tags):
+        """Four flat patches, gbrp10le FFV1 with BT.2020 primaries and `tags`; the patches are RGB
+        code values, so the file itself reads back exactly."""
+        path = self.dir / f"{name}.mkv"
+        if not path.exists():
+            cells = ";".join(f"color=c=0x{'%02X%02X%02X' % rgb}:s=80x60:r=25:d=1,format=gbrp[{k}]"
+                             for k, (rgb, _) in self.PATCHES.items())
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               f"{cells};[red][green][blue][grey]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0",
+               "-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=48000", "-pix_fmt", "gbrp10le", "-c:v", "ffv1",
+               "-color_primaries", "bt2020", *tags, "-c:a", "pcm_s16le", "-shortest", path)
+        return path
+
+    def _assert_colours(self, video, matrix, what):
+        """Each patch's centre, decoded with the matrix the file's own tag names."""
+        vf = None if matrix is None else f"scale=in_color_matrix={matrix}:in_range=tv,format=rgb24"
+        for patch, (want, (x, y)) in self.PATCHES.items():
+            got = frame_rgb(video, 0.4, x, y, vf=vf)
+            self.assertEqual(len(got), 3, f"{what}: a pixel was read")  # zip() of an empty read passes
+            worst = max(abs(g - w) for g, w in zip(got, want))
+            self.assertLessEqual(worst, self.TOLERANCE, f"{what}: {patch} {want} came back {got}")
+
+    def test_an_hdr_or_bt2020_rgb_source_keeps_its_colours_on_the_hdr_line(self):
+        """The line tagged the source's matrix and left the conversion to FFmpeg: `gbr` (what FFV1,
+        PNG and qtrle carry) is no encoder option, so every re-encode failed inside ffmpeg, and with
+        no matrix tag the YUV was BT.601 under a bt2020nc tag (C03028 read 196/52/35 by the tag).
+        The conversion now names the matrix the line tags, in every tool that re-encodes through
+        that line; an RGB file already tagged bt2020nc, which FFmpeg 6.1 converted by its tag, is
+        unchanged."""
+        pq = ["-color_trc", "smpte2084"]
+        variants = {
+            # name: (encoder tags, the matrix probe() must read for the variant to be the one named)
+            "pq_gbr": (pq + ["-colorspace", "rgb"], "gbr"),
+            "pq_untagged": (pq + ["-colorspace", "unknown"], None),
+            "pq_bt2020nc": (pq + ["-colorspace", "bt2020nc"], "bt2020nc"),
+            "hlg_gbr": (["-color_trc", "arib-std-b67", "-colorspace", "rgb"], "gbr"),
+            "bt2020_sdr_gbr": (["-color_trc", "bt2020-10", "-colorspace", "rgb"], "gbr"),
+        }
+        vidstab = "vidstabdetect" in subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout
+        ran = 0
+        for name, (tags, matrix) in variants.items():
+            src = self._source(name, tags)
+            v = probe(str(src))["video"]
+            self.assertRegex(v["pix_fmt"], r"^gbr", "fixture: the source is RGB")
+            self.assertTrue(v["bt2020_or_hdr"], "fixture: the source probes BT.2020 or HDR")
+            self._assert_colours(src, None, f"fixture {name}")
+            if v.get("color_space") != matrix:
+                # the muxer or decoder of this FFmpeg did not keep the matrix tag as asked: the
+                # variant cannot be made here, and the others still run
+                with self.subTest(source=name):
+                    self.skipTest(f"this FFmpeg reads the fixture's matrix as {v.get('color_space')!r}, not {matrix!r}")
+                continue
+            lines = {
+                "crop": ("crop.py", [src, "--x", "0", "--y", "0", "--width", "160", "--height", "120"], ".mp4"),
+                "crop --codec prores": ("crop.py", [src, "--x", "0", "--y", "0", "--width", "160", "--height", "120", "--codec", "prores"], ".mov"),
+                "fit --fps": ("fit.py", [src, "--fps", "30"], ".mp4"),
+                "denoise": ("denoise.py", [src], ".mp4"),
+                "export youtube-hdr": ("export.py", [src, "--preset", "youtube-hdr"], ".mp4"),
+                "join": ("join.py", [src, src, "--transition", "none"], ".mp4"),
+            }
+            if vidstab:
+                lines["stabilize"] = ("stabilize.py", [src], ".mp4")
+            if name != "pq_gbr":  # the other variants take one single-source line and the join
+                lines = {k: lines[k] for k in ("crop", "join")}
+            for line, (tool, args, ext) in lines.items():
+                with self.subTest(source=name, line=line):
+                    out = self.dir / f"{name}_{re.sub(r'[^a-z0-9]+', '_', line)}{ext}"
+                    doc = json.loads(script(tool, *args, "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed", doc.get("error"))
+                    written = probe(str(out))["video"]
+                    self.assertEqual((written["color_space"], written["color_primaries"]), ("bt2020nc", "bt2020"))
+                    self.assertEqual(written["color_transfer"], v["color_transfer"])
+                    self.assertIn("10", written["pix_fmt"], "the line is 10-bit")
+                    self._assert_colours(out, "bt2020", f"{name} through {line}")
+                    ran += 1
+        self.assertGreater(ran, 0, "no variant of the fixture could be made on this FFmpeg")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
