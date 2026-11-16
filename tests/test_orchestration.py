@@ -1646,6 +1646,9 @@ class OrchestrationTests(MediaFixtures):
     def test_render_cache_hit_skips_the_encode(self):
         cdir = OUT / "rcache_hit"
         shutil.rmtree(cdir, ignore_errors=True)
+        cdir.mkdir()
+        sentinel = cdir / ".writable"
+        sentinel.write_text("keep this file", encoding="utf-8")
         proj = self._cache_project("cache_hit")
         first = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
         self.assertEqual(first["cache"]["hits"], [])
@@ -1656,6 +1659,11 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(second["commands"], [])
         self.assertEqual(second["stages"], first["stages"])   # a cached stage still happened
         self.assertTrue(Path(second["output"]).exists())
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
+        dry = json.loads(script("render.py", proj, "--cache", cdir, "--overwrite",
+                                "--dry-run", "--json").stdout)
+        self.assertIn("clips", dry["cache"]["would_hit"])
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
 
     def test_render_cache_misses_when_a_stage_arg_changes(self):
         cdir = OUT / "rcache_arg"
@@ -1725,8 +1733,14 @@ class OrchestrationTests(MediaFixtures):
         shutil.rmtree(cdir, ignore_errors=True)
         data = json.loads(script("render.py", self._cache_project("cache_dry"), "--cache", cdir,
                                  "--dry-run", "--json").stdout)
-        self.assertEqual(sorted(p.name for p in cdir.iterdir()), [])
+        self.assertFalse(cdir.exists())
         self.assertIn("cache", data)
+
+        cdir.mkdir()
+        sentinel = cdir / ".writable"
+        sentinel.write_text("keep this file", encoding="utf-8")
+        script("render.py", self._cache_project("cache_dry"), "--cache", cdir, "--dry-run", "--json")
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
 
     def test_render_failure_with_a_cache_leaves_no_work_dir_and_caches_nothing(self):
         """The failure path of --cache, which the happy-path tests do not reach: a stage that
