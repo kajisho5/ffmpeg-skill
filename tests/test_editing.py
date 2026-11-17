@@ -4457,6 +4457,23 @@ class EditingTests(MediaFixtures):
         self.assertAlmostEqual(first, 0.0)
         self.assertAlmostEqual(last, 39.999667, places=3)
 
+    def test_stream_span_head_packets_can_reach_the_tail_window(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        packets = [{"pts_time": str(100 + i / 2), "duration_time": "0.5"} for i in range(80)]
+        # At 2 fps the first 64 packets cover 32 s, past the 130 s tail seek on this clock.
+        for count, expected_calls in ((64, 2), (80, 1)):
+            with self.subTest(count=count):
+                responses = [subprocess.CompletedProcess([], 0, json.dumps({"packets": p}), "")
+                             for p in (packets[:count], packets)]
+                with mock.patch.object(join_mod, "run", side_effect=responses) as run:
+                    self.assertEqual(join_mod._stream_span("x.mp4", "V", 40.0, 100.0), (100.0, 140.0))
+                self.assertEqual(run.call_count, expected_calls)
+                self.assertIn("%+#64,130.000%", run.call_args_list[0].args[0])
+                if expected_calls == 2:
+                    self.assertNotIn("-read_intervals", run.call_args.args[0])
+
 
 class OneClockTests(MediaFixtures):
     """#409: a tool that cuts, repeats, reverses or re-times both streams keeps them on one clock.
