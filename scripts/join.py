@@ -485,10 +485,11 @@ def _stream_span(path: str, kind: str, duration: float = 0.0, start: float = 0.0
     if not times:
         return None
     first, last = min(t for t, _ in times), max(e for _, e in times)
-    if duration > 3 * SPAN_TAIL_SECONDS and last < start + duration - SPAN_TAIL_SECONDS:
-        # Some ffprobe builds return only the requested head packets and exit 0. A non-empty
-        # result is not proof that the tail was read; measure every packet rather than accept
-        # a head-only span as the clip's end.
+    if duration > 3 * SPAN_TAIL_SECONDS and (
+        len(packets) <= SPAN_HEAD_PACKETS or last < start + duration - SPAN_TAIL_SECONDS
+    ):
+        # Some ffprobe builds exit 0 after the head read. A sparse head can reach the tail
+        # window on its own, so require more packets than the head interval can return.
         return _stream_span(path, kind, 0.0, start)
     return first, last
 
