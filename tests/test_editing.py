@@ -4457,6 +4457,25 @@ class EditingTests(MediaFixtures):
         self.assertAlmostEqual(first, 0.0)
         self.assertAlmostEqual(last, 39.999667, places=3)
 
+    def test_stream_span_falls_back_for_head_only_audio(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        # AAC priming starts below zero; the first 64 packets cover only about 1.46 s.
+        head = [{"pts_time": f"{(i - 1) * 1024 / 44100:.6f}", "duration_time": "0.023220"}
+                for i in range(64)]
+        full = head + [{"pts_time": "39.990000", "duration_time": "0.010000"}]
+        responses = [subprocess.CompletedProcess([], 0, json.dumps({"packets": packets}), "")
+                     for packets in (head, full)]
+        with mock.patch.object(join_mod, "run", side_effect=responses) as run:
+            self.assertEqual(join_mod._stream_span("x.mp4", "a", 40.0), (-0.023220, 40.0))
+        self.assertEqual(run.call_count, 2)
+        sampled, fallback = (call.args[0] for call in run.call_args_list)
+        for cmd in (sampled, fallback):
+            self.assertEqual(cmd[cmd.index("-select_streams") + 1], "a:0")
+        self.assertIn("-read_intervals", sampled)
+        self.assertNotIn("-read_intervals", fallback)
+
     def test_stream_span_head_packets_can_reach_the_tail_window(self):
         sys.path.insert(0, str(SCRIPTS))
         import join as join_mod
