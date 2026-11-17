@@ -5974,7 +5974,8 @@ before it was changed. Five classes are changed, two are left for a decision.
   H.264 into PNG names). One check in `run()`, beside the audio-only rule, refuses all of them
   (`kind: input`, reason `output_multiple_files`), dry runs included; `sibling_temp()` runs it on
   the caller's `-o`, so a tool that encodes beside it (`join.py --copy`, `cut.py`, `waveform.py`)
-  names that path; `render.py` runs it before its first stage, and `cut.py`, `caption.py` and
+  names that path; `render.py` runs it before its first stage (a `--stop-after` preview, which
+  never writes the output, is not checked), and `cut.py`, `caption.py` and
   `graphics.py` once `-o` is known, before a part or an `.srt`/`.ass` beside it is written. Up
   front it comes before `output_exists`, as in `run()`, so an existing `.m3u8` is not first told
   to pass `--overwrite`. Refused, not supported: the
@@ -5984,7 +5985,8 @@ before it was changed. Five classes are changed, two are left for a decision.
   name with exactly one `%Nd` and an extension in `ff_img_tags` (`f%03d.webp` writes `f001.webp`;
   `f.webp` is the webp muxer). `-update` with any value FFmpeg reads as true (as `look.py` and
   `scenes.py` pass it) writes the literal name and is not refused, nor is `100%.png`, `a%%b.png` or a `%` in a `.mp4` or `.avif`
-  name (the avif muxer writes the name as given). Swept: every media-writing tool of
+  name (the avif muxer writes the name as given). A `.y` image2 output is refused whatever the
+  options: planar raw video named so is written as `.y`, `.U` and `.V` files (img2enc's split planes). Swept: every media-writing tool of
   `tests/sweep.py`, and `join` (with `--copy`), `sync`, `insert`, `broll`, `grid`, `background`,
   `multicam`, `render` and `sequence` (writing over its own frames) by hand. Code:
   `runner._check_multi_file_output()`, `runner._expands_frame_number()`, `runner.sibling_temp()`,

@@ -9088,6 +9088,9 @@ class Issue415Tests(unittest.TestCase):
                 doc = json.loads(tool(name, *argv, "--json", check=False).stdout)
                 self.assertEqual((doc["error"]["reason"], doc["error"]["details"]["output"]),
                                  ("output_multiple_files", str(d / out)), doc)
+        # a --stop-after preview writes its stage file, never the project's output, so it still runs
+        doc = json.loads(tool("render", project, "--dry-run", "--stop-after", "clips", "--json", check=False).stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
         # refused before a sidecar beside the output is written
         for name, args in (("caption", ["--text", "0-1 hello"]),
                            ("graphics", ["--template", "title", "--title", "T", "--start", "0", "--end", "1",
@@ -9104,7 +9107,8 @@ class Issue415Tests(unittest.TestCase):
         refused = (["o.m3u8"], ["o.mpd"], ["o.chk"], ["-f", "segment", "o.mp4"], ["-f", "tee", "o.mp4"],
                    ["o%03d.jpg"], ["-update", "0", "o%03d.png"], ["-update", "off", "o%03d.png"],
                    ["-update", "disabled", "o%03d.png"], ["-update", "", "o%03d.png"],
-                   ["-strftime", "1", "o-%Y.png"], ["o%03d.webp"], ["o%03d.dds"])
+                   ["-strftime", "1", "o-%Y.png"], ["o%03d.webp"], ["o%03d.dds"],
+                   ["o.y"], ["-update", "1", "o.y"], ["-f", "image2", "o.Y"])
         written = (["-frames:v", "1", "-update", "1", "s%03d.png"], ["-update", "on", "s%03d.png"],
                    ["-update", "auto", "s%03d.png"], ["-f", "mp4", "o.m3u8"], ["o%03d.mp4"], ["o%03d.avif"],
                    ["-strftime", "1", "plain.png"], ["o%d%d.webp"], ["o.webp"])

@@ -1743,8 +1743,10 @@ def main() -> int:
                     die(f"overlays[{i}].video: file not found: {layer}", kind="input")
     # 2.0 refuses an existing output without --overwrite; the final place_output() would, but
     # only after every stage had run -- say so before the first one instead
-    # #562: before the first stage, and before output_exists, in run()'s order
-    _check_multi_file_output(["ffmpeg", output])
+    # #562: before the first stage, and before output_exists, in run()'s order. Only a run that
+    # reaches the delivery: a --stop-after preview writes its stage file, never `output`
+    if not args.stop_after or args.stop_after == "export":
+        _check_multi_file_output(["ffmpeg", output])
     _check_existing_output(["ffmpeg", output])
     # The default work dir name comes only from the output path, with no PID or timestamp --
     # two concurrent render.py runs targeting the same output (a batch.py "project" recipe

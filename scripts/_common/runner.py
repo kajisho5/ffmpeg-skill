@@ -1383,6 +1383,14 @@ def _check_multi_file_output(cmd: Sequence[str]) -> None:
                "the outputs a tee lists), which this skill neither checks nor delivers",
                hint="name a single-file container (.mp4, .mov, .mkv); HLS/DASH packaging is not done here",
                output=output, muxer=muxer)
+    if muxer == "image2" and ext == ".y":
+        # img2enc's split_planes: planar raw video named .y is written as .y, .U and .V (and .A),
+        # -update or not; the codec is not known from the name, so the name is refused
+        refuse("input", "output_multiple_files",
+               f"output {output!r}: ffmpeg writes planar raw video named .y as separate .y, .U and .V files, "
+               "which this skill neither checks nor delivers",
+               hint="name a single-file container (.mp4, .mov, .mkv, or .yuv for raw video)",
+               output=output, muxer=muxer)
     if muxer != "image2" or _option_on(opts, "-update"):
         return
     if ("%" in output) if _option_on(opts, "-strftime") else _expands_frame_number(output):
