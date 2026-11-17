@@ -9036,6 +9036,90 @@ class Issue415Tests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_picture_into_audio_extension(["ffmpeg", "-y", "-i", str(src), "-c:v", "libx264", "-c:a", "aac", str(d / "a.m4a")])
 
+    def test_an_output_whose_muxer_writes_other_files_is_refused_before_ffmpeg_runs(self):
+        """#562: the output guards checked the name given, while HLS/DASH wrote segments beside it
+        (`out0.ts`, `init-stream0.m4s`) and image2 wrote `frame001.png` for `frame%03d.png`: files
+        already there were replaced without --overwrite, and the run failed afterwards. Every tool
+        reaches the one check in run(), so the sweep over tests/sweep.py's media-writing tools (dry
+        runs, which run the same check) gives one output kind; the others are read by the check
+        directly. A real run keeps the files that were there byte for byte and writes nothing."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sweep_tool_562", ROOT / "tests" / "sweep.py")
+        sweep = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sweep)
+        d = self.dir("multi_file")
+        src = d / "in.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-f", "lavfi", "-i", "sine=d=2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+        facts = sweep.facts_for(str(src), str(d))
+        tools = [t for t, (_, ext) in sweep.TABLE.items() if ext == ".mp4"]
+        self.assertGreater(len(tools), 20, "the sweep's table of media-writing tools")
+        for name in tools:
+            argv = [a.format(**facts) for a in sweep.TABLE[name][0]]
+            with self.subTest(tool=name):
+                doc = json.loads(tool(name.split()[0], src, *argv, "--dry-run", "-o", d / "o%03d.png", "--json", check=False).stdout)
+                self.assertEqual(doc["status"], "failed", doc)
+                self.assertEqual((doc["error"]["kind"], doc["error"]["reason"]), ("input", "output_multiple_files"), doc["error"])
+        marked = {"out0.ts": "out.m3u8", "init-stream0.m4s": "out.mpd", "frame001.png": "frame%03d.png"}
+        for kept, out in marked.items():
+            (d / kept).write_bytes(b"KEEP")
+            doc = json.loads(tool("proxy", src, "--width", "80", "-o", d / out, "--json", check=False).stdout)
+            self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_multiple_files"), doc)
+            self.assertEqual((d / kept).read_bytes(), b"KEEP", kept)
+            self.assertFalse((d / out).exists(), out)
+        # a tool that encodes into a temp or a part beside -o is refused by the name the caller
+        # gave, render.py before its first stage, and an existing target is not first told to
+        # pass --overwrite
+        (d / "e.m3u8").write_bytes(b"KEEP")
+        project = d / "p.json"
+        project.write_text(json.dumps({"output": str(d / "r.m3u8"), "clips": [{"src": str(src)}]}), encoding="utf-8")
+        # segments on keyframes: cut.py copies each into a part named with -o's extension, which
+        # refused `part000.m3u8`, and image2 took H.264 into `part000.png` (kind ffmpeg)
+        gop = d / "gop.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=3", "-c:v", "libx264", "-preset", "ultrafast",
+               "-g", "25", "-pix_fmt", "yuv420p", gop)
+        for name, args, out in (("join", [src, src, "--copy", "--transition", "none"], "j.m3u8"),
+                                ("cut", [gop, "--segments", "0-1,2-3"], "c.m3u8"),
+                                ("cut", [gop, "--segments", "0-1,2-3"], "c%03d.png"),
+                                ("cut", [src, "--start", "0", "--end", "1"], "e.m3u8"),
+                                ("render", [project, "--dry-run"], "r.m3u8")):
+            with self.subTest(tool=name, out=out):
+                argv = [*args, "-o", d / out] if name != "render" else args
+                doc = json.loads(tool(name, *argv, "--json", check=False).stdout)
+                self.assertEqual((doc["error"]["reason"], doc["error"]["details"]["output"]),
+                                 ("output_multiple_files", str(d / out)), doc)
+        # refused before a sidecar beside the output is written
+        for name, args in (("caption", ["--text", "0-1 hello"]),
+                           ("graphics", ["--template", "title", "--title", "T", "--start", "0", "--end", "1",
+                                         "--text-render", "ass"])):  # the route that writes <stem>_gfx.ass
+            with self.subTest(tool=name):
+                doc = json.loads(tool(name, src, *args, "-o", d / f"{name}.m3u8", "--json", check=False).stdout)
+                self.assertEqual(doc["error"]["reason"], "output_multiple_files", doc)
+                self.assertEqual(sorted(p.name for p in d.glob(f"{name}*")), [], name)
+        from _common.runner import _check_multi_file_output, _expands_frame_number
+        for name, expands in (("f%03d.png", True), ("f%d_%%.png", True), ("f%5%%d.png", True), ("100%.png", False),
+                              ("a%%b.png", False), ("f%03x.png", False), ("f%d%.png", False), ("plain.png", False)):
+            self.assertEqual(_expands_frame_number(name), expands, name)
+        i = ["ffmpeg", "-i", str(src)]
+        refused = (["o.m3u8"], ["o.mpd"], ["o.chk"], ["-f", "segment", "o.mp4"], ["-f", "tee", "o.mp4"],
+                   ["o%03d.jpg"], ["-update", "0", "o%03d.png"], ["-update", "off", "o%03d.png"],
+                   ["-update", "disabled", "o%03d.png"], ["-update", "", "o%03d.png"],
+                   ["-strftime", "1", "o-%Y.png"], ["o%03d.webp"], ["o%03d.dds"])
+        written = (["-frames:v", "1", "-update", "1", "s%03d.png"], ["-update", "on", "s%03d.png"],
+                   ["-update", "auto", "s%03d.png"], ["-f", "mp4", "o.m3u8"], ["o%03d.mp4"], ["o%03d.avif"],
+                   ["-strftime", "1", "plain.png"], ["o%d%d.webp"], ["o.webp"])
+        for args in refused:
+            with self.subTest(refused=args), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                _check_multi_file_output(i + args[:-1] + [str(d / args[-1])])
+        for args in written:
+            with self.subTest(written=args):
+                _check_multi_file_output(i + args[:-1] + [str(d / args[-1])])
+        # a still written with -update 1 keeps its literal % name
+        doc = json.loads(tool("look", src, "--at", "0.5", "-o", d / "shot%03d.png", "--json", check=False).stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        self.assertTrue((d / "shot%03d.png").is_file())
+
     # -------------------------------------------------------------- default output names
     def test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes(self):
         """The default output kept .webm while the encoders are x264/AAC: the dry run said

@@ -67,7 +67,7 @@ from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
 from _common.decision import UNWRITTEN_AUDIO_EXT
-from _common import refuse_unwritten_output
+from _common import refuse_unwritten_output, _check_multi_file_output
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -1704,6 +1704,8 @@ def main() -> int:
                     + "; give every segment at least one frame", kind="input")
 
     output = args.output or default_output(args.input, "cut")
+    # #562: by -o, before any part is cut into a temp named with its extension
+    _check_multi_file_output(["ffmpeg", output])
     # --snap-source is read for its beat grid and is never an -i of the cut (#522's sweep)
     refuse_output_is_input(output, args.input, *([args.snap_source] if args.snap_source else []))
     ext = os.path.splitext(output)[1].lower() or ".mp4"  # an upper-case .MP4 is still faststart

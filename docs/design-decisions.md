@@ -106,6 +106,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)](#after-392--audio-only-output-extensions-and-a-still-given-to-export-or-join-517-531)
 - [After 3.9.3 — the timeline of several clips takes its size from fit (#526)](#after-393--the-timeline-of-several-clips-takes-its-size-from-fit-526)
 - [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
+- [After 3.10.1 — an output is one file (#562)](#after-3101--an-output-is-one-file-562)
 <!-- contents:end -->
 
 ## Time limits
@@ -480,8 +481,9 @@ exists. When a decision changes, edit the entry in the same PR.
   (`deliver()` reads it the same way); a path no check recorded is not compared. What remains:
   `run()` stages only an existing target, so a target absent at the check is opened by ffmpeg
   itself, and a file created at that name after the lock's comparison and before ffmpeg opens it
-  is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
-  itself); files written with a plain `open()` after their check (EDLs, SRTs, chapter lists) are
+  is truncated by `-y`. Staging only an existing target was chosen when segment and pattern
+  outputs, whose files ffmpeg names itself, could not be staged; #562 refuses those ("After
+  3.10.1"), so staging an absent target too is now possible and is left for a change of its own; files written with a plain `open()` after their check (EDLs, SRTs, chapter lists) are
   not compared. Code: `runner.refuse_changed_output()`, `replace_checked()`, `run()`,
   `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`
   (`test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced`,
@@ -5960,3 +5962,30 @@ before it was changed. Five classes are changed, two are left for a decision.
   drawtext, so it was not done; that needs an FFmpeg 9 run and a decision. The test is not
   loosened: one rise and one fall, which a first frame brighter than the next fails. Code:
   `graphics.main()` (`fade_a`).
+
+## After 3.10.1 — an output is one file (#562)
+
+- **An output whose muxer writes files other than the one named is refused before ffmpeg runs
+  (defect fix, on by default).** The existing-output check, the output lock and staging look at the
+  name given, while HLS (`.m3u8`) and DASH (`.mpd`) write segments beside it (`out0.ts`,
+  `init-stream0.m4s`), WebM chunks (`.chk`), `-f segment`/`tee` and friends write other names, and
+  the image2 muxer writes `frame001.png`, ... for `frame%03d.png`. Files already at those paths
+  were replaced without `--overwrite`, and the run failed afterwards on its own playlist (or wrote
+  H.264 into PNG names). One check in `run()`, beside the audio-only rule, refuses all of them
+  (`kind: input`, reason `output_multiple_files`), dry runs included; `sibling_temp()` runs it on
+  the caller's `-o`, so a tool that encodes beside it (`join.py --copy`, `cut.py`, `waveform.py`)
+  names that path; `render.py` runs it before its first stage, and `cut.py`, `caption.py` and
+  `graphics.py` once `-o` is known, before a part or an `.srt`/`.ass` beside it is written. Up
+  front it comes before `output_exists`, as in `run()`, so an existing `.m3u8` is not first told
+  to pass `--overwrite`. Refused, not supported: the
+  skill writes and verifies one file per output. An image name counts only when image2 would
+  expand it, read as `av_get_frame_filename2()` reads it (every `%` is `%%`, `%N%` or `%Nd`, one is
+  `%Nd`), or any `%` under `-strftime`. image2 is the muxer for its own extensions, and also for a
+  name with exactly one `%Nd` and an extension in `ff_img_tags` (`f%03d.webp` writes `f001.webp`;
+  `f.webp` is the webp muxer). `-update` with any value FFmpeg reads as true (as `look.py` and
+  `scenes.py` pass it) writes the literal name and is not refused, nor is `100%.png`, `a%%b.png` or a `%` in a `.mp4` or `.avif`
+  name (the avif muxer writes the name as given). Swept: every media-writing tool of
+  `tests/sweep.py`, and `join` (with `--copy`), `sync`, `insert`, `broll`, `grid`, `background`,
+  `multicam`, `render` and `sequence` (writing over its own frames) by hand. Code:
+  `runner._check_multi_file_output()`, `runner._expands_frame_number()`, `runner.sibling_temp()`,
+  `render.main()`. Test: `test_an_output_whose_muxer_writes_other_files_is_refused_before_ffmpeg_runs`.

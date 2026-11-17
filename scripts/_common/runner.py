@@ -1105,6 +1105,17 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "output_dir_not_writable", f"output directory {parent!r} is not writable", output=output, directory=parent)
 
 
+def _last_input(cmd: Sequence[str]) -> int:
+    """The index of the last `-i` in an ffmpeg command, -1 when it has none."""
+    return max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+
+
+def _output_options(cmd: Sequence[str]) -> List[str]:
+    """The options of an ffmpeg command's output: everything after the last input's path, before
+    the output itself (one output per command, as every tool here builds them)."""
+    return [str(tok) for tok in cmd[_last_input(cmd) + 2:-1]]
+
+
 def _check_output_extension(cmd: Sequence[str]) -> None:
     """An ffmpeg output with no file extension and no `-f` after its last input leaves the muxer
     nothing to choose a container by: refused as `kind: input` before anything runs, dry runs
@@ -1118,8 +1129,7 @@ def _check_output_extension(cmd: Sequence[str]) -> None:
     if len(os.path.splitext(output)[1]) > 1:
         refuse_unwritten_output(output, cmd)
         return
-    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
-    if "-f" in cmd[last_input + 2:-1]:
+    if "-f" in _output_options(cmd):
         return
     refuse("input", "output_extension_missing",
            f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
@@ -1288,8 +1298,7 @@ def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:
     ext = os.path.splitext(output)[1].lower()
     if ext not in AUDIO_MEDIA_EXT:
         return
-    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
-    if "-vn" in cmd[last_input + 2:-1]:
+    if "-vn" in _output_options(cmd):
         return
     encoders = []
     for i, tok in enumerate(cmd[:-2]):
@@ -1303,6 +1312,85 @@ def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:
            hint="name a video file (.mp4, .mov, .mkv); for the sound alone, cut.py or audio.py with an audio "
                 "extension extracts it",
            output=output, extension=ext, encoders=list(dict.fromkeys(encoders)))
+
+
+# Muxers that write files ffmpeg names itself, beside the output or in place of it (#562): picked
+# by the output's extension, or named by an -f. The image2 muxer (by _IMAGE2_OUT_EXT, below) is one
+# only for a name it expands (_expands_frame_number(), or -strftime), and never under -update.
+_MULTI_FILE_EXT = {".m3u8": "hls", ".mpd": "dash", ".chk": "webm_chunk"}
+_MULTI_FILE_FORMATS = frozenset({"hls", "dash", "webm_chunk", "segment", "ssegment", "stream_segment",
+                                 "hds", "smoothstreaming", "tee"})
+_FRAME_TOKEN_RE = re.compile(r"%(\d*[%d])?")
+# libavutil's set_string_bool(): these words (any case), else a whole decimal number; anything
+# else fails the option, and ffmpeg writes nothing
+_BOOL_ON = frozenset({"auto", "true", "y", "yes", "enable", "enabled", "on"})
+_BOOL_OFF = frozenset({"false", "n", "no", "disable", "disabled", "off"})
+
+
+def _option_on(opts: Sequence[str], name: str) -> bool:
+    """The last value of the boolean option `name` in `opts`, read as set_string_bool() reads it:
+    on for auto/true/y/yes/enable/enabled/on and a non-zero integer, off for the off words, 0 and
+    an empty value. A value FFmpeg refuses counts as off (that run writes nothing); absent is off."""
+    values = [opts[i + 1] for i in range(len(opts) - 1) if opts[i] == name]
+    if not values:
+        return False
+    value = str(values[-1]).lower()
+    if value in _BOOL_ON or value in _BOOL_OFF:
+        return value in _BOOL_ON
+    return bool(re.fullmatch(r"\s*[+-]?\d+", value)) and int(value) != 0
+
+
+def _frame_numbers(name: str) -> int:
+    """How many `%Nd` image2 fills in `name`: 0 unless av_get_frame_filename2() takes it as a
+    pattern (every `%` is `%%`, `%N%` or `%Nd`, and one is `%Nd`), so `100%.png` is 0."""
+    tokens = _FRAME_TOKEN_RE.findall(name)
+    return 0 if "" in tokens else sum(t.endswith("d") for t in tokens)
+
+
+def _expands_frame_number(name: str) -> bool:
+    """True when image2 writes `name` as a numbered pattern rather than as it is."""
+    return _frame_numbers(name) > 0
+
+
+def _image2_by_name(output: str, ext: str) -> bool:
+    """Whether ffmpeg picks the image2 muxer for `output` with no -f. av_guess_format() first
+    takes a name with exactly one `%Nd` (av_filename_number_test()) and an extension in
+    ff_img_tags (`.webp`, `.xpm`, `.dds`, ...) as image2, whatever muxer that extension has
+    otherwise; then the image2 muxer's own extensions."""
+    return ext in _IMAGE2_OUT_EXT or (ext in _IMAGE2_TAG_EXT and _frame_numbers(output) == 1)
+
+
+def _check_multi_file_output(cmd: Sequence[str]) -> None:
+    """An output whose muxer writes other files than the one named (#562) is refused before
+    anything runs, dry runs included: HLS and DASH write their segments beside the playlist
+    (`out0.ts`, `init-stream0.m4s`), and image2 turns `frame%03d.png` into `frame001.png`, ...
+    The existing-output check, the lock and staging see only the name given, so files already at
+    those paths were replaced without --overwrite, and the run then failed on its own playlist.
+    The skill writes one file per output, so these are refused, not enumerated. image2 names a
+    file, in this order: the name as given under -update; strftime() of it under -strftime; else
+    the frame number (-frame_pts too) in a name _expands_frame_number() takes. sibling_temp() runs
+    this on the caller's -o too, so a refusal names that path, not the temp beside it."""
+    output = cmd[-1]
+    if output == "-" or output.startswith("pipe:"):
+        return
+    opts = _output_options(cmd)
+    forced = next((opts[i + 1] for i in range(len(opts) - 2, -1, -1) if opts[i] == "-f"), None)
+    ext = os.path.splitext(output)[1].lower()
+    muxer = forced or _MULTI_FILE_EXT.get(ext) or ("image2" if _image2_by_name(output, ext) else None)
+    if muxer in _MULTI_FILE_FORMATS:
+        refuse("input", "output_multiple_files",
+               f"output {output!r}: the {muxer} muxer writes files other than the one named (segments, or "
+               "the outputs a tee lists), which this skill neither checks nor delivers",
+               hint="name a single-file container (.mp4, .mov, .mkv); HLS/DASH packaging is not done here",
+               output=output, muxer=muxer)
+    if muxer != "image2" or _option_on(opts, "-update"):
+        return
+    if ("%" in output) if _option_on(opts, "-strftime") else _expands_frame_number(output):
+        refuse("input", "output_multiple_files",
+               f"output {output!r}: ffmpeg expands the % in this image name (a frame number, or a date "
+               "under -strftime) and writes files of other names, which this skill neither checks nor delivers",
+               hint="name the output without a %d pattern (an image sequence is not written here)",
+               output=output, muxer=muxer)
 
 
 # the options whose value is a filter graph this module can read the filter names out of
@@ -1381,11 +1469,11 @@ def _check_build_components(cmd: Sequence[str]) -> None:
     stream kind the output keeps: not one -an/-vn/-sn drops or no input file carries. A VideoToolbox encoder is
     left to --hw's own checks and its CPU retry, a -filter_complex_script and a lavfi input are not
     parsed, and a list that could not be read refuses nothing."""
-    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    last_input = _last_input(cmd)
     encoders: List[str] = []
     streams: Dict[str, set] = {}  # encoder -> the stream kinds ("v", "a", "s") it is named for
     filters: List[str] = []
-    output_opts = {str(tok) for tok in cmd[last_input + 2:-1]}
+    output_opts = set(_output_options(cmd))
     for i in range(1, len(cmd) - 1):
         tok, value = str(cmd[i]), str(cmd[i + 1])
         m = _ENCODER_OPTION_RE.match(tok)
@@ -2447,6 +2535,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         _check_output_extension(cmd)
         _check_container_codecs(cmd)
         _check_picture_into_audio_extension(cmd)
+        _check_multi_file_output(cmd)
         _check_build_components(cmd)
         _check_existing_output(cmd)
         ctx.commands.append(_cmdline(cmd))
@@ -3250,6 +3339,18 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
 # pattern_type not found")
 _IMAGE2_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".dpx", ".exr", ".tga",
                ".ppm", ".pgm", ".pbm", ".pam", ".sgi", ".jp2", ".j2k", ".xbm", ".xpm", ".pcx", ".qoi")
+# The output side is two different lists, read by _check_multi_file_output() (#562). The
+# extensions FFmpeg hands to the image2 *muxer* whatever the name (`ffmpeg -h muxer=image2`, 6.1
+# to 9.0), less .avif, which its own avif muxer takes and writes under the literal name; and
+# ff_img_tags (libavformat/img2.c), the extensions av_guess_format() sends to image2 only for a
+# name with one `%Nd` (`f%03d.webp` is image2, `f.webp` the webp muxer). Neither has .gif or .avif.
+_IMAGE2_OUT_EXT = frozenset(
+    "." + e for e in "bmp dpx exr jls jpeg jpg jxs jxl ljpg pam pbm pcx pfm pgm pgmyuv phm png ppm sgi tga "
+                     "tif tiff jp2 j2c j2k xwd sun ras rs im1 im8 im24 sunras vbn xbm xface pix y qoi "
+                     "hdr wbmp".split())
+_IMAGE2_TAG_EXT = _IMAGE2_OUT_EXT | frozenset(
+    "." + e for e in "webp xpm pnm mng pns jps mpo dds svg svgz dng raw pic pct pict ptx pcd cri im32 jpc "
+                     "yuv10 img ximg timg mpg1-img mpg2-img mpg4-img rw2".split())
 
 
 def still_input_args(path: str) -> List[str]:
@@ -3299,6 +3400,9 @@ def sibling_temp(dst: str, tag: str) -> str:
     """A hidden path next to `dst`, with its extension (the muxer is chosen by it), for a file
     place_output(..., move=True) renames into place: same directory, so the rename never
     crosses a filesystem."""
+    # #562: the temp keeps dst's extension and stem, so a multi-file dst is refused here, by the
+    # name the caller gave, rather than at the encode by the temp's (join.py --copy, cut.py, waveform.py)
+    _check_multi_file_output(["ffmpeg", dst])
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
     path = os.path.join(d, f".{stem}.ffskill-{tag}-{os.getpid()}{ext}")

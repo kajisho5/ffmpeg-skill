@@ -74,7 +74,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
-from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
+from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_multi_file_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
@@ -1743,6 +1743,8 @@ def main() -> int:
                     die(f"overlays[{i}].video: file not found: {layer}", kind="input")
     # 2.0 refuses an existing output without --overwrite; the final place_output() would, but
     # only after every stage had run -- say so before the first one instead
+    # #562: before the first stage, and before output_exists, in run()'s order
+    _check_multi_file_output(["ffmpeg", output])
     _check_existing_output(["ffmpeg", output])
     # The default work dir name comes only from the output path, with no PID or timestamp --
     # two concurrent render.py runs targeting the same output (a batch.py "project" recipe

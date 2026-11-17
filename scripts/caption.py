@@ -55,7 +55,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.emit import note, warn
 from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
+from _common.runner import _check_multi_file_output, carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -1583,6 +1583,8 @@ def main() -> int:
             guard_sidecar(path, *side_inputs)
 
     planned_out = args.output or (default_output(args.input, "captioned") if args.input else None)
+    if planned_out and args.input:
+        _check_multi_file_output(["ffmpeg", planned_out])  # #562: before an .srt/.ass beside it is written
     up_front: List[Tuple[str, str]] = []
     if args.transcribe:
         up_front.append((args.write_srt or os.path.splitext(planned_out)[0] + ".srt", "SRT"))

@@ -51,6 +51,7 @@ from _common.fonts import font_choice, record_font_choice, require_font_file
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _ass_overlay import text_overlay_ass, EMOJI_SENTINEL
 from _common import drawtext_fontfile  # noqa: E402
+from _common import _check_multi_file_output  # noqa: E402
 from _common.decision import window_expr, windowed_overlay_x  # noqa: E402
 from _common.emit import input_length  # noqa: E402
 
@@ -705,6 +706,7 @@ def main(force_route: Optional[str] = None) -> int:
              "through libass, or upgrade FFmpeg", "drawtext_newline_glyph", text_render="drawtext")
 
     output = args.output or default_output(args.input, "gfx", default_ext(alpha_codec) if alpha_codec else None)
+    _check_multi_file_output(["ffmpeg", output])  # #562: before the _gfx.ass beside it is written
     # the brand file and the font file are read here and by drawtext's fontfile=, never as an -i, so
     # run()'s guard did not see them (#522's sweep)
     refuse_output_is_input(output, *[q for q in (args.brand, args.font_file or brand.get("font_file")) if isinstance(q, str) and q])
