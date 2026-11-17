@@ -484,7 +484,13 @@ def _stream_span(path: str, kind: str, duration: float = 0.0, start: float = 0.0
         times.append((t, t + d))
     if not times:
         return None
-    return min(t for t, _ in times), max(e for _, e in times)
+    first, last = min(t for t, _ in times), max(e for _, e in times)
+    if duration > 3 * SPAN_TAIL_SECONDS and last < start + duration - SPAN_TAIL_SECONDS:
+        # Some ffprobe builds return only the requested head packets and exit 0. A non-empty
+        # result is not proof that the tail was read; measure every packet rather than accept
+        # a head-only span as the clip's end.
+        return _stream_span(path, kind, 0.0, start)
+    return first, last
 
 
 def join_copy(args, metas: List[Dict[str, Any]]) -> int:
