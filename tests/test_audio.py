@@ -1314,7 +1314,7 @@ class Audit459AudioTests(MediaFixtures):
         named.write_bytes(self.voice.read_bytes())
         self.assertEqual(riff_wave_args(str(named)), ["-f", "wav"])
         self.assertEqual(probe(str(named))["audio"]["codec"], "pcm_s16le")
-        explicit = ["-f", "wav", "-i", str(self.bed)]
+        explicit = ["-f", "s16le", "-i", str(self.bed)]  # explicit format wins over the WAV header
         output = ["-f", "null", "-"]
         cmd = ["ffmpeg", "-i", str(named), *explicit, *output]
         self.assertEqual(guard_input_formats(cmd),
@@ -1334,10 +1334,8 @@ class Audit459AudioTests(MediaFixtures):
             wav.setparams((1, 2, self.RATE, 0, "NONE", "not compressed"))
             wav.writeframes(pcm)
         version = sh("ffprobe", "-version").stdout.splitlines()[0].split()[2]
-        if version == "9.0.2" or version.startswith("9.0.2-"):
-            auto = subprocess.run(["ffprobe", "-v", "debug", str(source)], capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace")
-            self.assertNotEqual(auto.returncode, 0, auto.stderr)
+        if re.fullmatch(r"n?9\.0\.2(?:[-+].*)?", version):
+            auto = sh("ffprobe", "-v", "debug", source, expect_fail=True)
             self.assertIn("Format mpegts probed", auto.stderr)
         self.assertEqual(probe(str(source))["audio"]["codec"], "pcm_s16le")
 
