@@ -2620,7 +2620,8 @@ def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
         return _run_captured(cmd, False)
 
 
-def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False) -> subprocess.CompletedProcess:
+def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False,
+                 timeout_is_fatal: bool = True) -> subprocess.CompletedProcess:
     """Run an ffmpeg *measurement* (scene scores, crop rectangles, decoded PCM, signal stats,
     silence detection, loudness, stabilisation pass 1): output to `-f null`, a pipe or a temp
     file, no deliverable written. These are not run() calls -- they run under --dry-run too,
@@ -2628,7 +2629,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     silences" and loudness.py a made-up -20 LUFS under --dry-run) -- but they get the same
     wall-clock limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg`
     failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
-    lists the command in the --json `commands` like run() does."""
+    lists the command in the --json `commands` like run() does. With
+    timeout_is_fatal=False, raise TimeoutExpired so advisory callers can report a missing measurement."""
     cmd = guard_still_patterns(cmd)
     _refuse_url_media(cmd)
     if record:
@@ -2642,6 +2644,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
         with long_filters_in_files(cmd) as exec_cmd:
             proc = subprocess.run(exec_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, **text_kw, timeout=limit)
     except subprocess.TimeoutExpired:
+        if not timeout_is_fatal:
+            raise
         _timed_out(cmd, limit or 0)
     if check and proc.returncode != 0:
         err = proc.stderr if text else proc.stderr.decode(errors="replace")

@@ -23,6 +23,12 @@ third (a person at the edge, a product held to one side) is cut off. Say what
 to keep with --crop-x / --crop-y (0=left/top, 0.5=centre, 1=right/bottom, or
 a decimal in between) rather than accepting the default silently when the
 subject isn't centred; --fit pad never loses anything if you don't know yet.
+After a real --fit crop that cuts something away, the result's crop_check
+measures where the source's luma motion (in a still shot, its edge detail)
+sits against the kept window: a proxy sampled at 9 points, not subject
+detection. A crop_content_off_centre warning names --crop-x/--crop-y with a
+suggested value, or --fit pad / --fit blur, when most of it is cut away.
+Advisory only: the output and the exit status are unchanged.
 
 Examples:
   python3 fit.py input.mp4 --duration 60 --method trim      # keep the first 60s
@@ -53,6 +59,17 @@ SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direc
 # reported in the result's diagnostics (large_speed_change): the whole picture and sound
 # sped up or slowed down by more than 15% is easy to ask for by accident -- speed is the
 # default method -- when what was wanted was a cut, so it is never silent
+
+# crop_check (--fit crop): a luma motion/detail proxy, not subject detection. Provisional values
+CROP_SAMPLES = 9  # sample points spread evenly over the kept source range, at (i + 0.5) / 9
+CROP_SAMPLE_GAP = 0.2  # seconds between the two frames of a sample point (their difference is motion)
+CROP_SAMPLE_LONG = 160  # sampled frames are scaled to this many pixels on their long axis
+CROP_DETAIL_MIN = 16  # an 8-bit luma gradient counts as detail at or above this
+CROP_MOTION_MIN = 8  # an 8-bit frame difference counts as motion at or above this
+CROP_MOTION_FLOOR = 0.05  # mean counted difference per pixel per sample: below it nothing moved
+CROP_DETAIL_FLOOR = 0.05  # mean counted gradient per pixel per sample: below it the frames are flat
+CROP_MOTION_OUTSIDE_WARN = 0.5  # with motion: review when this share of it is in the cut-away part
+CROP_DETAIL_EXCESS_WARN = 0.15  # no motion: review when the detail share cut away exceeds the area share by this
 
 
 def parse_aspect(value: str) -> Fraction:
@@ -163,6 +180,159 @@ def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, siz
     return pic
 
 
+def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: float,
+                       length: float) -> "Optional[tuple]":
+    """The crop check's decode step: CROP_SAMPLES points evenly over the kept source range
+    [start, start + length] at (i + 0.5) / CROP_SAMPLES, two 8-bit grey frames CROP_SAMPLE_GAP s
+    apart at each, in the displayed frame the crop is cut from (autorotated, then the run's own
+    --rotate/--flip filters `orient`) scaled to CROP_SAMPLE_LONG px on the long axis. Returns
+    ([(first, second), ...], width, height), or None when no point gave two whole frames. A
+    point that fails (past the end, a decode error) is left out; the others still count."""
+    if not (sw and sh) or length <= CROP_SAMPLE_GAP:
+        return None
+    if sw >= sh:
+        w, h = CROP_SAMPLE_LONG, max(2, round(CROP_SAMPLE_LONG * sh / sw / 2) * 2)
+    else:
+        w, h = max(2, round(CROP_SAMPLE_LONG * sw / sh / 2) * 2), CROP_SAMPLE_LONG
+    size = w * h
+    filters = [f"fps={1 / CROP_SAMPLE_GAP:g}"] + list(orient) + [f"scale={w}:{h}:flags=area", "format=gray"]
+    last = start + max(0.0, length - CROP_SAMPLE_GAP - 0.1)  # room for the second frame
+    frames = []
+    for i in range(CROP_SAMPLES):
+        t = min(start + length * (i + 0.5) / CROP_SAMPLES, last)
+        seek = f"{t:.6f}"
+        remaining = start + length - float(seek)
+        chain = ",".join([f"trim=end={remaining:.6f}"] + filters)
+        cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+               "-ss", seek, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
+               "-vf", chain, "-frames:v", "2", "-f", "rawvideo", "-"]
+        proc = run_analysis(cmd, check=False, text=False, timeout_is_fatal=False)
+        out = proc.stdout or b""
+        if proc.returncode == 0 and len(out) == 2 * size:
+            frames.append((out[:size], out[size:]))
+    return (frames, w, h) if frames else None
+
+
+def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
+    """Where the luma motion and detail sit against a crop's kept window: a measurement, not a
+    judgement, and a proxy, not subject detection. Pure: `frames` is [(first, second), ...] of
+    `width` x `height` 8-bit grey bytes; `window` is (start, end) of the kept part as fractions
+    0..1 of the frame along `axis` ("x": columns, "y": rows).
+
+    Per column (per row for y): detail D = sum of |luma gradient| (right and down neighbours) of
+    the first frame, counting only gradients >= CROP_DETAIL_MIN; motion M = sum of |first -
+    second|, counting only differences >= CROP_MOTION_MIN. motion_outside / detail_outside: the
+    energy share in the discarded part (a column the window edge cuts counts pro rata).
+    centroid: of M when its mean is at or above CROP_MOTION_FLOOR, else of D. suggested_anchor:
+    the --crop-x/--crop-y value (0..1) that centres the kept window on the centroid, clamped.
+    verdict: review when motion is present and motion_outside >= CROP_MOTION_OUTSIDE_WARN, or
+    with no motion when detail_outside - discarded_fraction >= CROP_DETAIL_EXCESS_WARN; ok
+    otherwise; unmeasured when no whole pair was given or the frames are flat (no division by
+    zero, centroid and suggested_anchor null)."""
+    n = max(1, width if axis == "x" else height)
+    size = width * height
+    detail = [0] * n
+    motion = [0] * n
+    used = 0
+    for pair in frames or []:
+        a = pair[0] if len(pair) > 0 else b""
+        b = pair[1] if len(pair) > 1 else b""
+        if size <= 0 or len(a) != size or len(b) != size:
+            continue
+        used += 1
+        for r in range(height):
+            o = r * width
+            row, other = a[o:o + width], b[o:o + width]
+            below = a[o + width:o + 2 * width] if r + 1 < height else None
+            for c in range(width):
+                v = row[c]
+                k = c if axis == "x" else r
+                s = 0
+                if c + 1 < width:
+                    g = abs(row[c + 1] - v)
+                    if g >= CROP_DETAIL_MIN:
+                        s += g
+                if below is not None:
+                    g = abs(below[c] - v)
+                    if g >= CROP_DETAIL_MIN:
+                        s += g
+                if s:
+                    detail[k] += s
+                m = abs(other[c] - v)
+                if m >= CROP_MOTION_MIN:
+                    motion[k] += m
+    w0 = min(max(float(min(window)), 0.0), 1.0)
+    w1 = min(max(float(max(window)), 0.0), 1.0)
+    keep = w1 - w0
+    discarded = 1.0 - keep
+
+    def outside(profile):
+        total = sum(profile)
+        if total <= 0:
+            return None
+        lost = 0.0
+        for k, e in enumerate(profile):
+            if e:
+                inside = max(0.0, min((k + 1) / n, w1) - max(k / n, w0)) * n
+                lost += e * (1.0 - inside)
+        return lost / total
+
+    pixels = used * size
+    has_motion = bool(pixels) and sum(motion) / pixels >= CROP_MOTION_FLOOR
+    has_detail = bool(pixels) and sum(detail) / pixels >= CROP_DETAIL_FLOOR
+    m_out, d_out = outside(motion), outside(detail)
+    check = {"axis": axis, "discarded_fraction": round(discarded, 4),
+             "motion_outside": None if m_out is None else round(m_out, 4),
+             "detail_outside": None if d_out is None else round(d_out, 4),
+             "centroid": None, "suggested_anchor": None, "samples": used,
+             "basis": "luma_motion_proxy", "verdict": "unmeasured"}
+    if not (has_motion or has_detail):
+        return check
+    profile = motion if has_motion else detail
+    centroid = sum((k + 0.5) / n * e for k, e in enumerate(profile)) / sum(profile)
+    check["centroid"] = round(centroid, 4)
+    if discarded > 1e-9:
+        check["suggested_anchor"] = round(min(1.0, max(0.0, (centroid - keep / 2) / discarded)), 2)
+    if has_motion:
+        review = (m_out or 0.0) >= CROP_MOTION_OUTSIDE_WARN
+    else:
+        review = (d_out or 0.0) - discarded >= CROP_DETAIL_EXCESS_WARN
+    check["verdict"] = "review" if review else "ok"
+    return check
+
+
+def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: float, length: float) -> dict:
+    """crop_check for a --fit crop that cut something away: samples the kept source range,
+    measures it with crop_loss and records crop_content_off_centre when the verdict is review.
+    Advisory: nothing here changes the output or the exit status. A measurement that fails is
+    verdict unmeasured with a note, never another diagnostic code."""
+    axis, w0, w1 = window
+    try:
+        got = sample_crop_frames(path, orient, sw, sh, start, length)
+        frames, fw, fh = got if got else ([], 1, 1)
+        check = crop_loss(frames, fw, fh, (w0, w1), axis)
+    except Exception as exc:  # a measurement, never the run's failure
+        note(f"crop check: not measured: {exc}")
+        return crop_loss([], 1, 1, (w0, w1), axis)
+    if check["verdict"] == "unmeasured":
+        note("crop check: not measured: " + ("no sample gave two frames" if not check["samples"]
+                                             else "the sampled frames have no luma motion or detail"))
+        return check
+    if check["verdict"] == "review":
+        moving = check["motion_outside"] is not None and check["motion_outside"] >= CROP_MOTION_OUTSIDE_WARN
+        share = check["motion_outside"] if moving else check["detail_outside"]
+        flag = f"--crop-{axis}"
+        anchor = check["suggested_anchor"]
+        remedy = (f"{flag} {anchor:g} centres the kept window on it" if anchor is not None else f"{flag} moves the kept window")
+        warn(f"--fit crop: {share:.0%} of the sampled luma {'motion' if moving else 'detail'} lies in the "
+             f"{check['discarded_fraction']:.0%} of the frame ({axis} axis) the crop cuts away. This is a "
+             f"luma motion/detail proxy, not subject detection. {remedy}; --fit pad or --fit blur crop nothing",
+             "crop_content_off_centre",
+             **{k: check[k] for k in ("axis", "discarded_fraction", "motion_outside", "detail_outside",
+                                      "centroid", "suggested_anchor", "samples", "basis")})
+    return check
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -242,6 +412,7 @@ def main() -> int:
     tc_first = None  # seconds from the source's first frame to the output's, when a trim moves it
     regridded = False  # a speed change already put the picture on the delivered grid
     out_seek = 0.0  # the output-side -ss a --method trim drops its seek margin with
+    kept = None  # (start, length) of the source a --method trim keeps; None: the whole source
 
     # ---- rotate / flip
     if args.rotate == 90:
@@ -254,6 +425,7 @@ def main() -> int:
         vf.append("hflip")
     elif args.flip == "v":
         vf.append("vflip")
+    orient = list(vf)  # the run's own rotate/flip filters: the crop check samples the frame they make
 
     # ---- duration
     if args.duration:
@@ -323,6 +495,7 @@ def main() -> int:
         else:
             if target < src_dur:
                 start = (src_dur - target) / 2 if args.from_center else 0.0
+                kept = (start, target)
                 # seek SEEK_MARGIN early and drop the margin on the output side, as cut.py does:
                 # an input seek straight to `start` can land on a keyframe whose picture comes
                 # after it (a B-frame HEVC source) and lose the frames before it, so the first
@@ -364,6 +537,7 @@ def main() -> int:
 
     # ---- aspect / size
     geometry = None  # (the frame's filters with every fill drawn black, scale, cropped) for the picture measurement
+    crop_window = None  # (axis, start, end) of the kept part, fractions of the displayed frame, for crop_check
     if args.aspect or args.width or args.height:
         # the one sizing rule, shared with render.py --export-timeline's sequence frame
         out_w, out_h = frame_size(parse_aspect(args.aspect) if args.aspect else None, args.width, args.height, sw, sh)
@@ -392,6 +566,13 @@ def main() -> int:
             kx, ky = sw / (out_w + mx), sh / (out_h + my)
             geometry = (vf[-2:], (out_w + mx) / sw, {"left": round(ox * kx), "right": round((mx - ox) * kx),
                                                      "top": round(oy * ky), "bottom": round((my - oy) * ky)})
+            # the kept window from the same numbers the crop filter above was built from (the
+            # anchor's even offset included): fractions of the scaled frame, which is the displayed
+            # frame's proportions on each axis. No margin on either axis: nothing is cut, no check
+            rel_x, rel_y = mx / (out_w + mx), my / (out_h + my)
+            if rel_x > 0 or rel_y > 0:
+                crop_window = (("x", ox / (out_w + mx), (ox + out_w) / (out_w + mx)) if rel_x >= rel_y
+                               else ("y", oy / (out_h + my), (oy + out_h) / (out_h + my)))
         elif args.fit == "crop":  # a dry run's pending input has no size: the expressions, planned only
             vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase")
             vf.append(f"crop={out_w}:{out_h}:(in_w-out_w)*{args.crop_x:g}:(in_h-out_h)*{args.crop_y:g}")
@@ -465,6 +646,10 @@ def main() -> int:
     extra = {}
     if geometry and not STATE.dry_run:
         extra["picture"] = measure_picture(geometry, meta, sw, sh, result["video"], sized=bool(args.width or args.height))
+    if crop_window and not STATE.dry_run:
+        # the source range the output shows: a trim's window, else the whole source (speed retimes all of it)
+        k0, klen = kept if kept else (0.0, src_dur or (meta.get("duration") or 0.0))
+        extra["crop_check"] = check_crop(args.input, orient, sw, sh, crop_window, k0, klen)
     emit(output, dropped_non_av_streams=dropped_streams, **extra)
     return 0
 
