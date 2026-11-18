@@ -977,27 +977,29 @@ class CutJoinTests(unittest.TestCase):
         # If #533 recurs, let cut stop its own FFmpeg child and retain that child's logs.
         # A relative report name in a temporary cwd also works on Windows without escaping a drive letter.
         with tempfile.TemporaryDirectory(prefix="ffskill_open_gop_") as directory:
-            report_name = "open-gop.ffmpeg.log"
+            cut_diagnostics = ""
             try:
                 proc = script("cut.py", self.hevc25.resolve(), "--segments", "0-2,4-6,8-10",
                               "--timeout", "60", "-o", out.resolve(), "--json", cwd=directory,
-                              env=dict(os.environ, FFREPORT=f"file={report_name}:level=32"))
-            except AssertionError as exc:
-                report = Path(directory, report_name)
-                if report.is_file():
-                    log = report.read_text(encoding="utf-8", errors="replace")
-                    raise AssertionError(f"{exc}\nFFmpeg report (tail):\n{log[-6000:]}") from None
+                              env=dict(os.environ, FFREPORT="file=%p-%t.log:level=32"))
+                cut_diagnostics = proc.stderr[-4000:]
+                data = json.loads(proc.stdout)
+                self.assertTrue(data["reencoded"])
+                self.assertIn("concat_fallback", data["reencode_reason"])
+                self.assertTrue(any("open GOP" in n for n in data["notes"]), data["notes"])
+                self.assertIsNone(data["segment_end_snap_seconds"])
+                self.assertEqual(len(frame_pts(out)), 150)
+                self.assertEqual(steps(out), {0.04})
+                frames, src = gray_frames(out), gray_frames(self.hevc25)
+                for got, want in ((0, 0), (49, 49), (50, 100), (99, 149), (100, 200), (149, 249)):
+                    self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
+            except (AssertionError, subprocess.CalledProcessError) as exc:
+                reports = sorted(Path(directory).glob("ffmpeg-*.log"), reverse=True)
+                if reports:
+                    logs = [report.read_text(encoding="utf-8", errors="replace") for report in reports]
+                    log = next((entry for entry in logs if "concat=n=3" in entry), logs[0])
+                    raise AssertionError(f"{exc}\nCut diagnostics:\n{cut_diagnostics}\nFFmpeg report (tail):\n{log[-6000:]}") from None
                 raise
-        data = json.loads(proc.stdout)
-        self.assertTrue(data["reencoded"])
-        self.assertIn("concat_fallback", data["reencode_reason"])
-        self.assertTrue(any("open GOP" in n for n in data["notes"]), data["notes"])
-        self.assertIsNone(data["segment_end_snap_seconds"])
-        self.assertEqual(len(frame_pts(out)), 150)
-        self.assertEqual(steps(out), {0.04})
-        frames, src = gray_frames(out), gray_frames(self.hevc25)
-        for got, want in ((0, 0), (49, 49), (50, 100), (99, 149), (100, 200), (149, 249)):
-            self.assertFrameIs(frames[got], want, f"output frame {got}", src_frames=src)
 
     def test_an_exact_copy_join_keeps_every_beep_on_its_picture(self):
         """The old join put the beep 67 ms, then 133 ms, after its picture in the second and
