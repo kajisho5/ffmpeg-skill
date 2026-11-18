@@ -463,10 +463,14 @@ It cannot tell you whether the result looks or sounds right, and the result says
 
 `check.py --content` measures black frames, freezes, flashes, silence and audio dropouts where
 the relevant stream exists. Delivery templates run those checks on the written file by default
-and include the rows in `check.checks`. This adds decode time. For an intentional exception,
+and include the rows in `check.checks` when the render reaches its check stage. This adds
+decode time. For an intentional exception,
 fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}`
-in the project before rendering. JSON `commands` records the FFmpeg command lines.
-For sync between separate recordings, `sync.py` measures offset and drift from their audio.
+in the project before rendering. After a failed check, choose a new output or pass
+`--overwrite` to intentionally replace the retained file. JSON `commands` records
+the render's FFmpeg command lines. See `check.commands` for the content-check commands.
+For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to also
+request a drift measurement, which may be unavailable for short or low-confidence recordings.
 Review lip sync by watching and listening to the delivered file.
 
 ### Are silence removal and captions stable?

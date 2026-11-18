@@ -1207,7 +1207,10 @@ class OrchestrationTests(MediaFixtures):
         project_file.write_text(json.dumps(project), encoding="utf-8")
         opt_out = json.loads(script("render.py", project_file, "--fast", "--json").stdout)
         self.assertTrue(opt_out["verified"])
-        self.assertNotIn("black", [r["check"] for r in opt_out["check"]["checks"]])
+        self.assertEqual(opt_out["check"]["platform"], "youtube")
+        rows = {row["check"] for row in opt_out["check"]["checks"]}
+        self.assertIn("loudness", rows)
+        self.assertNotIn("black", rows)
 
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
