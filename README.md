@@ -489,6 +489,12 @@ They are the most used tools here, and they are tested on every pull request and
 
 `caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
 
+### Which engine provides word timestamps for karaoke?
+
+With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. Auto prefers Whisper engines in this order: whisper.cpp, faster-whisper, OpenAI Whisper. An engine's failure can stop automatic selection, for example when the language is known and whisper.cpp fails to produce word timings. Use `--engine` to select an engine explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.
+
+Run `doctor --json` and inspect `speech_engines` for Whisper startup checks and errors. The faster-whisper entry includes the installed PyAV version when readable. Startup checks run without loading a model. Model availability and word timestamps are checked when you transcribe.
+
 ### How well does HDR to SDR work, and what should I watch for?
 
 `color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `clip`, `linear` and `gamma` with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
