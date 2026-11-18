@@ -148,7 +148,7 @@ def verify_output(path: str) -> Dict[str, Any]:
     """The success criterion for every writing tool: the file exists, is not empty and ffprobe
     can read at least one stream from it. Non-media artifacts (srt, edl, html, md) only need to
     exist and be non-empty. Returns the probe (empty dict for non-media)."""
-    if not os.path.exists(path):
+    if not os.path.isfile(path):
         _output_failed(path, "not written")
     if os.path.getsize(path) == 0:
         _output_failed(path, "0 bytes")
@@ -215,12 +215,15 @@ def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
     return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
 
 
-def probe(path: str, role: str = "input") -> Dict[str, Any]:
+def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
     role="output" marks a file this tool just wrote: a read failure is then reported as an
-    output-verification failure (kind "output") instead of an input problem."""
+    output-verification failure (kind "output") instead of an input problem.
+    For an aggregate's evidence check, required=False returns {} on an unreadable file."""
     if not os.path.exists(path) or (role == "output" and STATE.dry_run):
+        if not required:
+            return {}
         if role == "output" and not STATE.dry_run:
             _output_failed(path, "not written")
         if STATE.dry_run:
@@ -247,10 +250,14 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         check=False,
     )
     if proc.returncode != 0:
+        if not required:
+            return {}
         if role == "output":
             _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
     if not (proc.stdout or "").strip():
+        if not required:
+            return {}
         # ffprobe exited 0 and printed nothing we could read. Before 1.17.1 that produced a
         # SUCCESS document of nulls -- "?s | no video | no audio", exit 0 -- which is how #234
         # showed up on a Windows cp932 machine: the capture decoded ffprobe's UTF-8 JSON with the
@@ -267,6 +274,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
     try:
         raw = json.loads(proc.stdout or "{}")
     except ValueError as e:
+        if not required:
+            return {}
         if role == "output":
             _output_failed(path, f"ffprobe printed unreadable JSON: {e}")
         die(f"ffprobe printed unreadable JSON for {path}: {e}", kind="ffmpeg")
@@ -333,6 +342,8 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         vfr = bool(r_rate and avg_rate and abs(float(r_rate) - float(avg_rate)) > 0.01)
         w, h = _to_int(video.get("width")), _to_int(video.get("height"))
         if not (w and h) and _is_still(fmt, video):
+            if not required:
+                return {}
             # audit A184 (#465): a text file named .png reaches the image demuxer, which lists a
             # png stream it could not decode as 0x0. That was reported as a measured picture
             # (probe.py exit 0) and divided by in insert.py and check.py (tracebacks, no JSON).

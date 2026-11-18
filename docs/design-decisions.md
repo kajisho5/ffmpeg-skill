@@ -5769,7 +5769,9 @@ with their own cause.
   displayed size (`display_size()`, as join.py and the export read it) and passes both. A side
   that is not a whole number goes to join.py as written, which refuses it as before. With this
   and the entry above, the gaps (1) and (3) of "The sequence is the project's frame" are closed;
-  (2), join.py's padding before a crop, is not (the picture, not the size).
+  (2), join.py's padding before a crop, remained until #552. An effective crop
+  now fits each source inside the delivery canvas with join.py's crop mode, using
+  the same size as the exported sequence.
 - **Two combinations the first version left apart (review of #553).** A frame of one side whose
   side the `fit` object gives too: the join is sized from the object's value (the object giving no
   other side), since fit.py derives the other side from the joined canvas and the export from the

@@ -871,6 +871,44 @@ class OrchestrationTests(MediaFixtures):
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return tuple(r.stdout[:3])
 
+    def test_render_applies_project_crop_to_each_joined_clip(self):
+        from xml.etree import ElementTree
+
+        for name, color, size in (("wide", "red", "160x90"), ("tall", "blue", "72x128")):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               f"color=c={color}:s={size}:r=25:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+               OUT / f"join_crop_{name}.mp4")
+        cases = (
+            ({"width": 72, "height": 128, "fit": "crop"}, {}, (72, 128), "fill"),
+            ({"aspect": "16:9", "fit": "pad"}, {"aspect": "9:16", "fit": "crop"}, (52, 90), "fill"),
+            ({"width": 72, "height": 128, "fit": "crop"}, {"fit": "pad"}, (72, 128), "fit"),
+        )
+        for i, (frame, fit, size, conform) in enumerate(cases):
+            with self.subTest(frame=frame, fit=fit):
+                project = OUT / f"join_crop_{i}.json"
+                output = OUT / f"join_crop_{i}.mp4"
+                timeline = OUT / f"join_crop_{i}.fcpxml"
+                project.write_text(json.dumps({"output": str(output.resolve()), "frame": frame, "fit": fit,
+                                               "transition": {"type": "none"},
+                                               "clips": [{"src": f"join_crop_{name}.mp4"} for name in ("wide", "tall")]}),
+                                   encoding="utf-8")
+                script("render.py", project, "--export-timeline", timeline, "--overwrite")
+                tree = ElementTree.parse(timeline)
+                sequence = tree.find(".//sequence")
+                sequence_format = tree.find(f"./resources/format[@id='{sequence.get('format')}']")
+                self.assertEqual(tuple(int(sequence_format.get(k)) for k in ("width", "height")), size)
+                self.assertIn(conform, [e.get("type") for e in tree.iter("adjust-conform")])
+                script("render.py", project, "--fast", "--overwrite")
+                picture = probe(str(output))["video"]
+                self.assertEqual((picture["width"], picture["height"]), size)
+                edge = self._rgb_at(output, size[0] // 2, 4, at=0.4)
+                if conform == "fill":
+                    self.assertGreater(edge[0], 120, edge)
+                else:
+                    self.assertLess(max(edge), 20, edge)
+                tall = self._rgb_at(output, size[0] // 2, size[1] // 2, at=1.4)
+                self.assertGreater(tall[2], 120, tall)
+
     def test_render_video_overlay_is_placed_after_fit_against_the_final_frame(self):
         """#326: overlays[] took only logo/image/text, so a webcam PiP or a keyed green screen in a
         project was "unknown key 'video'", and running overlay.py before render.py sized the layer
@@ -2223,6 +2261,14 @@ class TimelineExportTests(unittest.TestCase):
         # b's window: from its visible start minus trim_head, for 15 frames; a's media covers it
         self.assertEqual(a["visible"] + a["trim_tail"], a["length"])
 
+    def test_crop_only_sequence_uses_the_even_canvas_for_several_clips(self):
+        probes = self._probes(**{"a.mp4": 2, "b.mp4": 2})
+        probes["/m/a.mp4"]["video"].update(width=161, height=91)
+        rel = lambda p: f"/m/{p}"  # noqa: E731
+        project = {"frame": {"fit": "crop"}, "clips": [{"src": "a.mp4"}, {"src": "b.mp4"}]}
+        timeline = self._tl().build(project, probes, rel)
+        self.assertEqual((timeline["width"], timeline["height"]), (164, 92))
+
     def test_build_refuses_what_a_timeline_cannot_hold(self):
         tl_mod = self._tl()
         probes = self._probes(**{"a.mp4": 8, "b.mp4": 8})
@@ -3063,6 +3109,41 @@ class Issue458Tests(MediaFixtures):
             shutil.rmtree(work)
 
     # ------------------------------------------------------------------- output name or container
+    def test_export_copy_and_gif_refuse_audio_filenames(self):
+        out = self.d / "export_as_audio.m4a"
+        project = self._project("export_copy_as_audio.json", {
+            "output": str(out), "clips": [{"src": str(self.clip)}], "export": {"preset": "copy"},
+        })
+        commands = (("export.py", self.clip, "--preset", "copy", "-o", out),
+                    ("export.py", self.clip, "--preset", "gif", "-o", out), ("render.py", project))
+        for command in commands:
+            for mode in (("--dry-run",), ()):
+                with self.subTest(command=command, dry_run=bool(mode)):
+                    rc, doc = self._run(*command, *mode)
+                    self.assertRefused(rc, doc, unwritten=[out])
+                    self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc)
+                    self.assertEqual(doc.get("commands", []), [])
+
+    def test_render_copy_refuses_a_picture_delivered_as_audio(self):
+        out = self.d / "picture_as_audio.m4a"
+        project = self._project("picture_as_audio.json", {"output": str(out), "clips": [{"src": str(self.clip)}]})
+        for mode in (("--dry-run",), ()):
+            with self.subTest(dry_run=bool(mode)):
+                rc, doc = self._run("render.py", project, *mode)
+                self.assertRefused(rc, doc, unwritten=[out])
+                self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc)
+                self.assertEqual(doc.get("commands", []), [])
+
+        # A real MPEG-4 audio source can still be copied under the audio-only extension.
+        source = self.d / "sound_only.mp4"
+        out = self.d / "sound_only.m4a"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.clip, "-vn", "-c:a", "copy", source)
+        audio_project = self._project("audio_copy.json", {"output": str(out), "clips": [{"src": str(source)}]})
+        for mode in (("--dry-run",), ()):
+            rc, doc = self._run("render.py", audio_project, *mode)
+            self.assertEqual((rc, doc["status"]), (0, "completed"), doc)
+        self.assertEqual(out.read_bytes(), source.read_bytes())
+
     def test_an_output_is_named_for_the_container_it_holds(self):
         with self.subTest("A84: no export stage, a .webm name"):
             out = self.d / "a84.webm"
