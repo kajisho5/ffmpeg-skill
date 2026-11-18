@@ -48,14 +48,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
-from _common.color import hdr_rgb_matrix_args
+from _common.color import bt709_matrix_filter, hdr_rgb_matrix_args, hdr_rgb_matrix_filter
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, warn
-from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
+from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
 from _common.emit import file_identity, input_length, own_length, refuse_still
 from check import SPECS as PLATFORMS, measure_loudness
+from fit import measure_picture
 from _common.probe import SILENT_PEAK_DBFS, shorter_than_a_loudness_block
 from _platforms import ALIASES as _ALIASES, PLATFORMS as PLATFORM_TABLE, TP_TOLERANCE_DB, UPLOAD_LIMITS_AS_OF, resolve as resolve_platform
 # Frame and duration limit come from the one platform table (scripts/_platforms.py) rather than
@@ -87,6 +88,20 @@ def _from_table(dest: str, **over) -> Dict:
            "max": float(max_duration) if max_duration is not None else None}
     out.update(over)
     return out
+
+
+def _center_crop_geometry(sw: int, sh: int, w: int, h: int) -> tuple:
+    """Source-pixel margins of the preset's scale-to-cover and centred 4:2:0 crop."""
+    # FFmpeg's scale rounds the non-binding side to nearest (halves up); crop floors the
+    # centred offsets to even pixels for chroma. Leave the existing encode filters unchanged.
+    scaled_w = max(w, (2 * h * sw + sh) // (2 * sh))
+    scaled_h = max(h, (2 * w * sh + sw) // (2 * sw))
+    mx, my = scaled_w - w, scaled_h - h
+    x, y = 2 * (mx // 4), 2 * (my // 4)
+    return scaled_w / sw, {
+        "left": round(x * sw / scaled_w), "right": round((mx - x) * sw / scaled_w),
+        "top": round(y * sh / scaled_h), "bottom": round((my - y) * sh / scaled_h),
+    }
 
 
 _H264_HIGH = ["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p"]
@@ -611,18 +626,23 @@ def main() -> int:
                output=output, extension="." + out_ext, encoders=["gif"] if args.preset == "gif" else [])
 
     vf: List[str] = []
+    picture_filters: List[str] = []
     # A GIF is RGB: an untagged SDR source is labelled BT.709 (tags only) for palettegen's conversion,
     # which read "unknown" as BT.601 (C03028 came out B31F28, #410); a tagged one is read by its tag
     gif_label = bt709_label_filter(meta) if args.preset == "gif" else None
     if p["w"] and not args.no_scale:
         if p["h"]:
             if args.fit == "crop":
-                vf += [f"scale={p['w']}:{p['h']}:force_original_aspect_ratio=increase", f"crop={p['w']}:{p['h']}"]
+                picture_filters = [f"scale={p['w']}:{p['h']}:force_original_aspect_ratio=increase", f"crop={p['w']}:{p['h']}"]
+                vf.extend(picture_filters)
             else:
                 # a --pad-color with chroma is drawn in the BT.709 the line is tagged with; a GIF is
                 # not tagged, and palettegen reads the pad back with the same BT.601 it was drawn in
                 vf.append(pad_filters(p["w"], p["h"], args.pad_fill, args.pad_color, args.pad_blur,
                                       meta=None if args.preset == "gif" else meta))
+                if not STATE.dry_run:
+                    picture_filters = [pad_filters(p["w"], p["h"], args.pad_fill, args.pad_color,
+                                                   args.pad_blur, meta=meta, blank=True)]
             vf.append("setsar=1")
         else:
             vf.append(f"scale={p['w']}:-2")
@@ -922,6 +942,15 @@ def main() -> int:
                      f"({', '.join(sorted({d['type'] + ': ' + d['reason'] for d in non_av['dropped']}))}); non_av_streams lists them")
     extra["non_av_streams"] = non_av
     extra["dropped_non_av_streams"] = bool(non_av["dropped"])
+    if picture_filters and not STATE.dry_run:
+        sw, sh = display_size(meta["video"])
+        scale, cropped = (None, None)
+        if args.fit == "crop" and sw and sh:
+            scale, cropped = _center_crop_geometry(sw, sh, p["w"], p["h"])
+        written_video = probe(output, role="output").get("video") or {}
+        matrix = hdr_rgb_matrix_filter(meta) if p.get("codec") else None
+        extra["picture"] = measure_picture((picture_filters, scale, cropped), meta, sw, sh, written_video,
+                                           sized=True, matrix_filter=matrix or bt709_matrix_filter(meta))
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound

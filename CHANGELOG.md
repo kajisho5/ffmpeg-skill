@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Report measured picture placement after reframing in export and render results (#548).
 
 ## 3.13.1
 

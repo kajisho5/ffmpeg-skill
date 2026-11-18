@@ -781,12 +781,11 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
         key_args = ["<out>" if a == dest else a for a in full]
         key_files = {a for a in key_args if os.path.exists(a)}  # the files the key hashes, again at the store
         key = cache_key(stage, script, key_args, inputs, dest, key_files)
+        _LAST_DOC.clear()
         if cache_lookup(stage, key, dest, Path(script).stem):
             CACHE["hits"].append(stage)
             info(f"→ {script} {stage}: served from --cache")
-            # No child ran, so there is no document: say so rather than leaving the PREVIOUS
-            # child's document standing, which a caller reading _LAST_DOC would misattribute.
-            _LAST_DOC.clear()
+            # No child ran; the sidecar carries only the recorded fields we can replay.
             _LAST_DOC["cached"] = True
             if not STATE.dry_run:
                 remember_written(dest)  # placed by this run, as a stage's own write would be (#415)
@@ -1130,6 +1129,8 @@ def cache_lookup(stage: str, key: str, dest: str, tool: Optional[str] = None) ->
     PROJECT_SOURCE["timecode"].append(_timecode_verdict(result) if isinstance(result, dict) and "source_carry" in result
                                       else "unknown")
     if isinstance(result, dict):
+        if isinstance(result.get("picture"), dict):
+            _LAST_DOC["picture"] = result["picture"]
         absorb_stage(tool or stage, dict(result, status="completed", dry_run=False))  # tagged as the stage's tool, as a live run is
     else:
         # an entry written before the stage's result was kept: what the stage verified is unknown
@@ -1142,7 +1143,7 @@ def _stage_result(doc: Any) -> Dict[str, Any]:
     """What a cache entry keeps of the stage's own --json document, replayed on a hit."""
     if not isinstance(doc, dict):
         return {}
-    kept = {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics") if k in doc}
+    kept = {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics", "picture") if k in doc}
     kept["source_carry"] = doc.get("source_carry")  # None too: the stage compared nothing (render's source_carry)
     return kept
 
@@ -1838,6 +1839,8 @@ def main() -> int:
     # what the caption stage reported (wrapped/split counts and the fit-size keys), so a caller
     # reading render.py's JSON can see whether the type was shrunk to fit or a cue was split.
     caption_report: Optional[Dict[str, Any]] = None
+    stage_pictures: Dict[str, Any] = {}
+    picture_fields: Dict[str, Any] = {}
 
     CACHE.clear()
     CACHE.update(_fresh_cache())
@@ -2078,10 +2081,13 @@ def main() -> int:
             if fit.get(k) is not None:
                 argv += option_args(flag, fit[k])
         sh("fit.py", *argv, stage="fit")
+        if isinstance(_LAST_DOC.get("picture"), dict):
+            stage_pictures["fit"] = _LAST_DOC["picture"]
+            picture_fields.update(picture=stage_pictures["fit"], stage_pictures=stage_pictures)
         current = nxt
         stages_done.append("fit")
     if args.stop_after == "fit":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- captions
@@ -2113,7 +2119,7 @@ def main() -> int:
         current = nxt
         stages_done.append("captions")
     if args.stop_after == "captions":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- graphics
@@ -2132,7 +2138,7 @@ def main() -> int:
         if "graphics" not in stages_done:
             stages_done.append("graphics")
     if args.stop_after == "graphics":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- overlays
@@ -2164,7 +2170,7 @@ def main() -> int:
         if "overlays" not in stages_done:
             stages_done.append("overlays")
     if args.stop_after == "overlays":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- audio
@@ -2201,7 +2207,7 @@ def main() -> int:
         current = nxt
         stages_done.append("audio")
     if args.stop_after == "audio":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- loudness
@@ -2222,7 +2228,7 @@ def main() -> int:
         current = nxt
         stages_done.append("loudness")
     if args.stop_after == "loudness":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- export
@@ -2244,6 +2250,13 @@ def main() -> int:
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
         sh("export.py", *argv, stage="export")
+        if PRESETS[ex["preset"]]["w"]:
+            # An older cached export (or a width-only preset) can resize without a report.
+            # Keep the fit-stage report, but never claim it measures that delivery.
+            picture_fields.pop("picture", None)
+            if isinstance(_LAST_DOC.get("picture"), dict):
+                stage_pictures["export"] = _LAST_DOC["picture"]
+                picture_fields.update(picture=stage_pictures["export"], stage_pictures=stage_pictures)
         stages_done.append("export")
     else:
         if stages_done != ["clips"]:
@@ -2274,7 +2287,7 @@ def main() -> int:
         if not args.keep and not args.work:
             shutil.rmtree(work, ignore_errors=True)
         emit(output, stages=stages_done, check=None, cache=cache_report(args.cache),
-             intermediate_preset=_intermediate_used(), caption_srt=caption_srt)
+             intermediate_preset=_intermediate_used(), caption_srt=caption_srt, **picture_fields)
         return 0
 
     # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
@@ -2367,7 +2380,8 @@ def main() -> int:
         snap_report["clips"] = snap_reports
     emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report(args.cache),
          caption=caption_report, intermediate_preset=_intermediate_used(), caption_srt=caption_srt,
-         verification=[{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [])
+         verification=[{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [],
+         **picture_fields)
     return 0
 
 

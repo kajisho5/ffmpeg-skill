@@ -5642,6 +5642,69 @@ class FitPictureTests(unittest.TestCase):
         doc = json.loads(script("fit.py", self.white, "--aspect", "9:16", "--dry-run", "--json").stdout)
         self.assertNotIn("picture", doc)
 
+    def test_export_reports_the_written_reframe(self):
+        stripes = self.dir / "stripes.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+           "nullsrc=s=640x360:r=2:d=1,geq=lum='if(lt(mod(X,8),4),235,16)':cb=128:cr=128",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", stripes)
+        for name, source, flags, threshold in (
+            ("pad", self.white, ["--fit", "pad"], 160),
+            ("blur", stripes, ["--fit", "pad", "--pad-fill", "blur"], 215),
+            ("crop", self.white, ["--fit", "crop"], 160),
+        ):
+            with self.subTest(mode=name):
+                out = self.dir / f"export_picture_{name}.mp4"
+                doc = json.loads(script("export.py", source, "--preset", "reels", *flags,
+                                        "--fast", "--overwrite", "-o", out, "--json").stdout)
+                pic = doc["picture"]
+                self.assertTrue(pic["measured"], pic)
+                x, y, w, h, W, H = self.bright_box(out, threshold)
+                self.assertEqual((pic["y"], pic["height"], pic["frame_width"], pic["frame_height"]), (y, h, W, H))
+                if name != "blur":
+                    self.assertEqual((pic["x"], pic["width"]), (x, w))
+                self.assertEqual(pic["cropped"], dict(left=219, right=219, top=0, bottom=0) if name == "crop"
+                                 else dict(left=0, right=0, top=0, bottom=0))
+                self.assertIn("subject_framing", doc["unverified"])
+                self.assertIn("picture_content", doc["unverified"])
+        for flags in (["--preset", "copy"], ["--preset", "reels", "--dry-run"],
+                      ["--preset", "reels", "--no-scale", "--fast"]):
+            out = self.dir / "export_picture_unchanged.mp4"
+            doc = json.loads(script("export.py", self.white, *flags, "--overwrite", "-o", out, "--json").stdout)
+            self.assertNotIn("picture", doc)
+
+    def test_render_carries_fit_picture_to_delivery_and_replays_it_from_cache(self):
+        with tempfile.TemporaryDirectory(dir=self.dir) as temp:
+            root = Path(temp)
+            project = root / "project.json"
+            project.write_text(json.dumps({"clips": [{"src": str(self.white.resolve())}],
+                                           "frame": {"width": 360, "height": 640, "fit": "pad"}}), encoding="utf-8")
+            for name, extra in (("fresh", []), ("cached", []), ("fit", ["--stop-after", "fit"]),
+                                ("dry", ["--dry-run"])):
+                out = root / f"{name}.mp4"
+                doc = json.loads(script("render.py", project, "--cache", root / "cache",
+                                        "--fast", "-o", out, "--json", *extra).stdout)
+                if name == "dry":
+                    self.assertNotIn("picture", doc)
+                    self.assertNotIn("stage_pictures", doc)
+                    continue
+                self.assertEqual(doc["picture"], doc["stage_pictures"]["fit"])
+                pic = doc["picture"]
+                self.assertTrue(pic["measured"], pic)
+                self.assertEqual(tuple(pic[key] for key in ("x", "y", "width", "height", "frame_width", "frame_height")),
+                                 self.bright_box(doc["output"], 160))
+                self.assertIn("subject_framing", doc["unverified"])
+                if name == "cached":
+                    self.assertIn("fit", doc["cache"]["hits"])
+            spec = json.loads(project.read_text(encoding="utf-8"))
+            spec["export"] = {"preset": "reels", "fit": "pad"}
+            project.write_text(json.dumps(spec), encoding="utf-8")
+            doc = json.loads(script("render.py", project, "--fast", "--stop-after", "export",
+                                    "-o", root / "reframed.mp4", "--json").stdout)
+            self.assertEqual(set(doc["stage_pictures"]), {"fit", "export"})
+            self.assertEqual(doc["stage_pictures"]["fit"]["frame_width"], 360)
+            self.assertEqual(doc["picture"], doc["stage_pictures"]["export"])
+            self.assertEqual((doc["picture"]["frame_width"], doc["picture"]["frame_height"]), (1080, 1920))
+
     def test_a_picture_measurement_that_fails_is_reported_as_not_measured(self):
         """When ffmpeg gives no frame of the written size, `picture` says it was not measured and
         carries no rectangle (not a zero one), with the reason in a note."""

@@ -961,6 +961,8 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
         tool = os.path.splitext(os.path.basename(sys.argv[0] or ""))[0]
         if output and not ctx.dry_run and tool in UNVERIFIED and "unverified" not in extra:
             doc["unverified"] = list(UNVERIFIED[tool])
+            if tool in ("export", "render") and (extra.get("picture") or extra.get("stage_pictures")):
+                doc["unverified"].append("subject_framing")
         doc.update(_encoder_report(ctx))
         doc.update(extra)
         hw_notes = [n for n in _hw_notes_for(ctx) if n not in (doc.get("notes") or [])]
