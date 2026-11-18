@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.11.0`) | any release |
+| `skill.version` | the npm / package.json version (`3.12.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.11.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.12.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -700,6 +700,17 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 
 ## JSON output
 
+The common result writer computes `verified` from the output probe or an equivalent
+artifact check and requires every verification step to pass. `lossless` is true
+only when a successful FFmpeg stream-copy write can be traced to the current
+output and the run recorded no re-encode. Stream copy can still trim the timeline,
+change metadata or drop tracks.
+
+Under `--dry-run`, both flags are false. Top-level output measurements such as
+`output_duration`, width and height are absent or null until measured. Timing
+targets such as `expected_duration` and measurements of existing inputs remain available.
+`probe.py` reports null for facts about a pending input.
+
 Non-finite numbers never reach a `--json` document (2.2.6): every tool prints through one
 writer that turns `-inf` / `inf` into the strings `"-inf"` / `"inf"` (the spelling
 `loudness.py` already used for a silent input) and NaN into `null`, then serialises with
@@ -878,6 +889,12 @@ Keys added after 3.8.20, additive (#519):
 | key | tool | what it holds |
 |---|---|---|
 | `picture` | `fit.py` with `--aspect`, `--width` or `--height` (not under `--dry-run`) | where the picture sits in the frame written, measured, not judged: `{measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}`. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format, and the picture is the rectangle where the two differ; no frame of the source is decoded, and `frame_width`/`frame_height` are the written file's. `frame_share`: the picture's area over the frame's (1.0 for `--fit crop`). `scale`: the picture's width over the source's displayed width (for `--fit crop`, the width it was scaled to before the crop), with a note when it is below 1 and no `--width`/`--height` was given. `cropped`: source pixels `--fit crop` cut on each side, each axis at its own scale (all 0 otherwise). `{measured: false, reason}` and a note when the measurement gave no frame of the written size. `subject_framing` stays in `unverified`: whether the subject is in the rectangle is still a look |
+
+`fit.py --fit crop` also reports `crop_check` after writing a crop with a discarded
+margin. Its `basis` is `luma_motion_proxy`. The `verdict` is `ok`, `review`, or
+`unmeasured`. A `review` verdict adds a `crop_content_off_centre` warning with
+the affected axis and the suggested anchor where available. A sampling timeout
+counts as `unmeasured` and the tool reports the written output.
 
 Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on an alpha source without `--keep-alpha` is the one change to an existing run, see below):
 

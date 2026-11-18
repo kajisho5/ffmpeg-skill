@@ -5726,6 +5726,99 @@ class PhraseWrapTests(unittest.TestCase):
             self._assert_pair_never_torn("你先看看这个再说吧", "看", lang, range(3, 13))
 
 
+class FitCropLossTests(unittest.TestCase):
+    """Crop measurements on a 32x18 grey frame and controlled decoder responses."""
+    W, H = 32, 18
+    WINDOW = (0.35, 0.65)  # a centred crop keeping 30%
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        import sys
+        scripts = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import fit
+        cls.fit = fit
+
+    def frame(self, x0, x1, y0, y1, fill=0):
+        buf = bytearray([fill]) * (self.W * self.H)
+        for y in range(y0, y1):
+            buf[y * self.W + x0:y * self.W + x1] = b"\xff" * (x1 - x0)
+        return bytes(buf)
+
+    def moving(self, x0, x1, y0, y1, dx=1, dy=0, n=3):
+        return [(self.frame(x0, x1, y0, y1), self.frame(x0 + dx, x1 + dx, y0 + dy, y1 + dy))] * n
+
+    def test_crop_check_does_not_decode_past_a_short_trim(self):
+        from unittest.mock import patch
+        with patch.object(self.fit, "run_analysis") as decode:
+            check = self.fit.check_crop("clip.mp4", [], 32, 18, ("x", *self.WINDOW), 1.0, 0.1)
+        decode.assert_not_called()
+        self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
+
+    def test_crop_check_timeout_is_advisory(self):
+        from unittest.mock import patch
+        from _common import runner
+        with patch.object(self.fit, "require_tool", return_value="ffmpeg"), \
+             patch.object(runner.subprocess, "run", side_effect=subprocess.TimeoutExpired("ffmpeg", 1)), \
+             patch.object(self.fit, "note") as note:
+            check = self.fit.check_crop("clip.mp4", [], 32, 18, ("x", *self.WINDOW), 0.0, 2.0)
+        self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
+        self.assertIn("timed out", note.call_args.args[0])
+
+    def test_left_heavy_motion_is_review_anchor_near_0(self):
+        c = self.fit.crop_loss(self.moving(2, 7, 6, 13), self.W, self.H, self.WINDOW, "x")
+        self.assertEqual(c["verdict"], "review", c)
+        self.assertEqual(c["axis"], "x")
+        self.assertEqual(c["basis"], "luma_motion_proxy")
+        self.assertAlmostEqual(c["discarded_fraction"], 0.7, places=4)
+        self.assertGreaterEqual(c["motion_outside"], 0.99)
+        self.assertLess(c["centroid"], 0.25)
+        self.assertLessEqual(c["suggested_anchor"], 0.1)
+        self.assertEqual(c["samples"], 3)
+
+    def test_right_heavy_motion_is_review_anchor_near_1(self):
+        c = self.fit.crop_loss(self.moving(25, 30, 6, 13), self.W, self.H, self.WINDOW, "x")
+        self.assertEqual(c["verdict"], "review", c)
+        self.assertGreater(c["centroid"], 0.75)
+        self.assertGreaterEqual(c["suggested_anchor"], 0.9)
+
+    def test_centred_motion_is_ok(self):
+        c = self.fit.crop_loss(self.moving(14, 19, 6, 13), self.W, self.H, self.WINDOW, "x")
+        self.assertEqual(c["verdict"], "ok", c)
+        self.assertLess(c["motion_outside"], 0.5)
+        self.assertAlmostEqual(c["suggested_anchor"], 0.5, delta=0.1)
+
+    def test_flat_frames_are_unmeasured_without_division_by_zero(self):
+        for fill in (0, 128):
+            flat = self.frame(0, 0, 0, 0, fill=fill)
+            c = self.fit.crop_loss([(flat, flat)] * 3, self.W, self.H, self.WINDOW, "x")
+            self.assertEqual(c["verdict"], "unmeasured", c)
+            self.assertIsNone(c["centroid"])
+            self.assertIsNone(c["suggested_anchor"])
+            self.assertIsNone(c["motion_outside"])
+        # no frames at all, and frames of the wrong size, are unmeasured too
+        c = self.fit.crop_loss([], self.W, self.H, self.WINDOW, "x")
+        self.assertEqual((c["verdict"], c["samples"]), ("unmeasured", 0))
+        c = self.fit.crop_loss([(b"\x00" * 5, b"\x00" * 5)], self.W, self.H, self.WINDOW, "x")
+        self.assertEqual((c["verdict"], c["samples"]), ("unmeasured", 0))
+
+    def test_static_detail_off_centre_is_review_by_the_detail_rule(self):
+        f = self.frame(2, 7, 6, 13)
+        c = self.fit.crop_loss([(f, f)] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertEqual(c["verdict"], "review", c)
+        self.assertGreaterEqual(c["detail_outside"] - c["discarded_fraction"], 0.15)
+        self.assertLessEqual(c["suggested_anchor"], 0.1)
+        f = self.frame(14, 19, 6, 13)
+        c = self.fit.crop_loss([(f, f)] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertEqual(c["verdict"], "ok", c)
+
+    def test_y_axis_profiles_rows(self):
+        c = self.fit.crop_loss(self.moving(12, 20, 13, 16, dx=0, dy=1), self.W, self.H, self.WINDOW, "y")
+        self.assertEqual((c["axis"], c["verdict"]), ("y", "review"), c)
+        self.assertGreaterEqual(c["suggested_anchor"], 0.9)
+
 class FitSizeTests(unittest.TestCase):
     """1.17: the caption size is fitted to the cue before the cue is split (eval 17).
 
