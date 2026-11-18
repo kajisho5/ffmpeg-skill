@@ -582,6 +582,12 @@ ffmpeg-full` does not put it on PATH and the lean build has no drawtext/subtitle
 else is substituted. `ffmpeg` and `ffprobe` (version strings) keep their meaning; the four keys are
 additive.
 
+`doctor` reports the selected FFmpeg executable's build license under `ffmpeg_license` in JSON
+and in the human-readable report. It reads the executable's `-L` notice locally with a 10-second
+timeout. The field is an SPDX identifier for a recognized GPL or LGPL notice, `"nonfree"` for
+FFmpeg's nonfree build notice, or `null` when the binary or its notice could not be read or
+recognized. The result is informational and leaves capability decisions and the exit code unchanged.
+
 `doctor`'s `ffmpeg_security` field compares the `ffmpeg` and `ffprobe` versions with a small table of
 high-severity FFmpeg CVEs and the first upstream release on each branch that carries the fix. The table is
 hand-maintained in `scripts/_contract.py` (`FFMPEG_ADVISORIES`), copied from

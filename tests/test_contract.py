@@ -7650,6 +7650,40 @@ class FfmpegSecurityTableTests(unittest.TestCase):
             self.assertNotRegex(src, rf"(?m)^\s*(import|from) {re.escape(mod)}\b", mod)
 
 
+class DoctorLicenseTests(unittest.TestCase):
+    def test_reports_the_license_from_the_selected_binary(self):
+        exe = str(Path("selected", "ffmpeg").absolute())
+        for name, version, expected in (
+            ("GNU General Public License", "2", "GPL-2.0-or-later"),
+            ("GNU General Public License", "3", "GPL-3.0-or-later"),
+            ("GNU Lesser General Public\nLicense", "2.1", "LGPL-2.1-or-later"),
+            ("GNU Lesser General Public License", "3", "LGPL-3.0-or-later"),
+        ):
+            with self.subTest(expected=expected):
+                text = (f"modify it under the terms of the {name}\n"
+                        f"as published by the Free Software Foundation; either version {version} of the License, or\n"
+                        "(at your option) any later version.")
+                proc = subprocess.CompletedProcess([], 0, text, "")
+                with unittest.mock.patch("subprocess.run", return_value=proc) as run:
+                    self.assertEqual(_contract._ffmpeg_license(exe), expected)
+                self.assertEqual(run.call_args.args[0], [exe, "-hide_banner", "-L"])
+                self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_unknown_or_failed_detection_does_not_guess_a_license(self):
+        self.assertIsNone(_contract._ffmpeg_license(None))
+        for result, expected in (
+            (subprocess.CompletedProcess([], 0, "This version of ffmpeg has nonfree parts compiled in.", ""), "nonfree"),
+            (subprocess.CompletedProcess([], 0, "wrapper: no build info", ""), None),
+            (subprocess.CompletedProcess([], 1, "This version of ffmpeg has nonfree parts compiled in.", ""), None),
+            (subprocess.TimeoutExpired("ffmpeg", 10), None),
+            (FileNotFoundError("binary disappeared"), None),
+        ):
+            with self.subTest(result=result):
+                kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+                with unittest.mock.patch("subprocess.run", **kwargs):
+                    self.assertEqual(_contract._ffmpeg_license("ffmpeg"), expected)
+
+
 @unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")
 class DoctorDetectionTests(unittest.TestCase):
     """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
