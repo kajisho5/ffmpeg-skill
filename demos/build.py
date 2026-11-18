@@ -918,6 +918,8 @@ def demo_cut_accurate(ctx):
                      "--json", "-o", before, capture=True)
     ctx.script("cut.py", src, "--start", "2.05", "--duration", "3", "--accurate",
                "--preset", "veryfast", "-o", after)
+    ctx.script("look.py", src, "--at", "2.05", "--compare", after, "--compare-at", "0",
+               "-o", ctx.path("start.png"))
     if out:
         found = json.loads(out)
         ctx.note("copy: keyframe_snapped=%s, %.2f s of extra material; accurate: 2.05 s exactly"

@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
 
 ## 3.13.0
 

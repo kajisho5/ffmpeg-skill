@@ -47,6 +47,7 @@ Every step in full: `references/workflow.md`.
    asked to replace.
 8. **Look** after any picture change: `look.py OUTPUT --tiles 3x2`, view the PNG, name it in `Look:`;
    flag judgement issues in one line. No vision: say the pixels were not inspected.
+   For a cut's start, compare `look.py SOURCE --at IN --compare OUTPUT --compare-at 0`.
 
 ## Before you run anything: what to ask, what to assume
 
