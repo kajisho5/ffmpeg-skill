@@ -1399,6 +1399,86 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(doc["timing"], {"method": method, "source_duration": None,
                                                  "target_duration": 2.0, "speed_factor": factor})
                 self.assertFalse(doc["verified"])
+    def _crop_fixture(self, name, size, graph, duration=4):
+        """A lavfi clip for the crop check: input 0 a black canvas of `size`, input 1 a white
+        60x60 box; `graph` places the box ([0] and [1] in, one picture out)."""
+        path = self.out(name)
+        sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "lavfi", "-i", f"color=c=black:s={size}:r=25:d={duration}",
+           "-f", "lavfi", "-i", "color=c=white:s=60x60:r=25",
+           "-filter_complex", graph, "-t", str(duration),
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path)
+        self.assertTrue(os.path.exists(path), path)
+        return path
+
+    def test_fit_crop_check_reports_motion_the_crop_cuts_away(self):
+        """A reader of 3.10.0 got a landscape clip centre-cropped to 9:16 with nothing saying
+        whether what moved survived. crop_check measures a luma motion proxy against the kept
+        window; a box moving at the left edge is review with a crop_content_off_centre warning
+        and an anchor near 0, which then keeps it. Centred: ok, no warning. Advisory: the file
+        is written either way."""
+        def crop_warnings(doc):
+            return [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
+                    if w["code"] == "crop_content_off_centre"]
+
+        left = self._crop_fixture("crop_left.mp4", "640x360", "[0][1]overlay=x='40+30*sin(2*PI*t)':y=150:shortest=1")
+        out = self.out("crop_left_fit.mp4")
+        doc = json.loads(tool("fit", left, "--aspect", "9:16", "--fit", "crop", "-o", out, "--json").stdout)
+        self.assertTrue(os.path.exists(out))
+        cc = doc["crop_check"]
+        self.assertEqual((cc["verdict"], cc["axis"], cc["basis"]), ("review", "x", "luma_motion_proxy"), cc)
+        self.assertGreater(cc["samples"], 0)
+        self.assertGreaterEqual(cc["motion_outside"], 0.5)
+        self.assertLessEqual(cc["suggested_anchor"], 0.15)
+        warned = crop_warnings(doc)
+        self.assertEqual(len(warned), 1, doc.get("diagnostics"))
+        self.assertEqual(warned[0]["axis"], "x")
+        self.assertEqual(warned[0]["suggested_anchor"], cc["suggested_anchor"])
+        self.assertIn("--crop-x", warned[0]["message"])
+        self.assertIn("--fit pad", warned[0]["message"])
+        # the anchor flag toward the box: kept, no warning
+        doc = json.loads(tool("fit", left, "--aspect", "9:16", "--fit", "crop", "--crop-x", f"{cc['suggested_anchor']:g}",
+                              "-o", self.out("crop_left_anchored.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertEqual(crop_warnings(doc), [])
+        # a centred box: ok, no warning
+        centre = self._crop_fixture("crop_centre.mp4", "640x360", "[0][1]overlay=x='290+30*sin(2*PI*t)':y=150:shortest=1")
+        doc = json.loads(tool("fit", centre, "--aspect", "9:16", "--fit", "crop", "-o", self.out("crop_centre_fit.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertEqual(crop_warnings(doc), [])
+
+    def test_fit_crop_check_y_axis_trim_range_and_no_crop(self):
+        """A portrait source cropped wider loses rows: a box at the bottom is review on the y
+        axis. Under --method trim only the kept range is sampled, so a box that is off-centre
+        only in the part the trim cuts away is not reported. --fit pad, and a crop with no
+        margin, write no crop_check at all."""
+        def codes(doc):
+            return [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings") or []]
+
+        portrait = self._crop_fixture("crop_portrait.mp4", "360x640", "[0][1]overlay=x=150:y='520+30*sin(2*PI*t)':shortest=1")
+        doc = json.loads(tool("fit", portrait, "--aspect", "16:9", "--fit", "crop", "-o", self.out("crop_portrait_fit.mp4"), "--json").stdout)
+        cc = doc["crop_check"]
+        self.assertEqual((cc["verdict"], cc["axis"]), ("review", "y"), cc)
+        self.assertGreaterEqual(cc["suggested_anchor"], 0.85)
+        self.assertIn("crop_content_off_centre", codes(doc))
+        warned = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "crop_content_off_centre"]
+        self.assertIn("--crop-y", warned[0]["message"])
+        # centred box for the first 4 s, left box after: a trim to 4 s keeps only the centred part
+        split = self._crop_fixture(
+            "crop_split.mp4", "640x360",
+            "[1]split[a][b];[0][a]overlay=x='290+30*sin(2*PI*t)':y=150:enable='lt(t,4)':shortest=1[m];"
+            "[m][b]overlay=x='40+30*sin(2*PI*t)':y=150:enable='gte(t,4)':shortest=1", duration=8)
+        doc = json.loads(tool("fit", split, "--duration", "4", "--method", "trim", "--aspect", "9:16", "--fit", "crop",
+                              "-o", self.out("crop_split_trim.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertNotIn("crop_content_off_centre", codes(doc))
+        # --fit pad cuts nothing: no crop_check
+        doc = json.loads(tool("fit", portrait, "--aspect", "16:9", "--fit", "pad", "-o", self.out("crop_portrait_pad.mp4"), "--json").stdout)
+        self.assertIsNone(doc.get("crop_check"))
+        self.assertNotIn("crop_content_off_centre", codes(doc))
+        # a crop to the source's own aspect has no margin: nothing cut, no crop_check
+        doc = json.loads(tool("fit", split, "--aspect", "16:9", "--fit", "crop", "-o", self.out("crop_same_aspect.mp4"), "--json").stdout)
+        self.assertIsNone(doc.get("crop_check"))
 
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already
@@ -4039,6 +4119,43 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("look", self.src, "-o", self.out("vf_look.png"), "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (True, [{"step": "probe", "ok": True}]))
 
+    def test_cut_lossless_requires_a_real_stream_copy(self):
+        args = (self.src, "--start", "0", "--end", "1")
+        for name, flags, verified, lossless in (
+            ("plan", ("--dry-run",), False, False),
+            ("copy", (), True, True),
+            ("encode", ("--accurate",), True, False),
+        ):
+            with self.subTest(mode=name):
+                dest = self.out(f"honesty_{name}.mp4")
+                doc = json.loads(tool("cut", *args, *flags, "-o", dest, "--json").stdout)
+                self.assertEqual((doc["verified"], doc.get("lossless")), (verified, lossless))
+                self.assertEqual(doc["expected_duration"], 1)
+                if verified:
+                    self.assertAlmostEqual(doc["output_duration"], doc["probe"]["duration"], places=6)
+                else:
+                    self.assertIsNone(doc["output_duration"])
+                    self.assertNotIn("probe", doc)
+                    self.assertFalse(dest.exists())
+
+    def test_output_copy_claim_ignores_command_log_and_intermediate_remux(self):
+        from _common.runner import Context
+        ctx = Context()
+        ctx.json = True
+        mixed, remux = self.out("honesty_mixed.mp4"), self.out("honesty_remux.mp4")
+        base = _common.ffmpeg_base()
+        ctx.commands.append("ffmpeg -i input.mp4 -c copy output.mp4")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            _common.emit(str(self.src), ctx=ctx, lossless=True)
+        self.assertIs(json.loads(out.getvalue())["lossless"], False)
+        _common.run([*base, "-i", str(self.src), "-t", "1", "-c", "copy", "-c:a", "aac", str(mixed)], ctx=ctx)
+        _common.run([*base, "-i", str(mixed), "-c", "copy", str(remux)], ctx=ctx)
+        for path in (mixed, remux):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                _common.emit(str(path), ctx=ctx)
+            doc = json.loads(out.getvalue())
+            self.assertEqual((doc["verified"], doc["lossless"]), (True, False))
+
     def test_sixth_review_regressions(self):
         """Review 6: loudness's verified reflects its target; --plan is written by tools that never
         call emit(); verify refuses --plan; a plan binds argv/side files; a plan's failed platform
@@ -5709,6 +5826,7 @@ def garbage_payload(p):
         self.assertFalse(doc["probe"]["video"]["hdr"])
         self._verify("color", doc["output"])
         doc = self._run_structured("overlay", {"input": str(self.src), "image": str(self.logo), "position": "top-right", "fast": True, "output": str(self.out("ov.mp4"))})
+        self.assertEqual((doc["verified"], doc["lossless"]), (True, False))
         self._verify("overlay", doc["output"])
         doc = self._run_structured("caption", {"input": str(self.src), "text": str(self.cues), "fast": True, "output": str(self.out("cap.mp4"))})
         self._verify("caption", doc["output"])
@@ -5734,6 +5852,22 @@ def garbage_payload(p):
         resp = json.loads(proc.stdout.strip().splitlines()[0])
         self.assertIsNone(resp["result"]["structuredContent"]["video"])
         self.assertEqual(resp["result"]["structuredContent"]["audio"]["codec"], "pcm_s16le")
+
+    def test_mcp_cut_preserves_the_distinction_between_plan_and_execution(self):
+        target = self.out("honesty_mcp.mp4")
+        requests = [
+            {"jsonrpc": "2.0", "id": i, "method": "tools/call",
+             "params": {"name": "cut", "arguments": {"input": str(self.src), "start": "0", "end": "1",
+                                                   "output": str(target), "dry_run": dry_run}}}
+            for i, dry_run in enumerate((True, False), start=1)
+        ]
+        proc = subprocess.run([sys.executable, str(ROOT / "mcp" / "server.py")],
+                              input="\n".join(map(json.dumps, requests)) + "\n",
+                              capture_output=True, text=True, encoding="utf-8", check=True)
+        planned, executed = [json.loads(line)["result"]["structuredContent"] for line in proc.stdout.splitlines()]
+        self.assertEqual((planned["verified"], planned["lossless"], planned["output_duration"]), (False, False, None))
+        self.assertEqual((executed["verified"], executed["lossless"]), (True, True))
+        self.assertAlmostEqual(executed["output_duration"], executed["probe"]["duration"], places=6)
 
     def test_every_tool_help_and_no_shell_paths(self):
         for t in self.contract["tools"]:
@@ -5762,6 +5896,72 @@ def garbage_payload(p):
                 self._run_structured("look", {"input": doc["output"], "output": str(self.out(p.stem + "_look.png")), "json": True})
             after = self._sha(p) if p.stat().st_size < 50_000_000 else p.stat().st_size
             self.assertEqual(before, after, f"{p.name} modified")
+
+
+class ResultHonestyTests(unittest.TestCase):
+    def test_aggregate_requires_readable_artifacts(self):
+        require_ffmpeg_or_skip("ffprobe")
+        from _common.runner import Context
+        ctx = Context()
+        ctx.json = True
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unreadable.mp4"
+            path.write_bytes(b"not a media file")
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                _common.emit(None, ctx=ctx, verification_paths=[str(path)],
+                             verification=[{"step": "item", "ok": True}])
+        doc = json.loads(out.getvalue())
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
+
+    def test_probe_dry_run_reports_pending_input_as_unmeasured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.mp4"
+            doc = json.loads(tool("probe", pending, "--dry-run", "--json").stdout)
+        self.assertTrue(doc["dry_run"])
+        for key in ("duration", "size_bytes", "video", "audio"):
+            self.assertIsNone(doc[key], key)
+
+    def test_probe_dry_run_validates_keyframe_times_for_pending_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.mp4"
+            for time in ("-1", "nan", "00:00:00:99@25"):
+                with self.subTest(time=time):
+                    proc = tool("probe", pending, "--dry-run", "--json", f"--keyframes-near={time}", check=False)
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+            for time in ("1.5", "00:00:01:15@25"):
+                with self.subTest(time=time):
+                    doc = json.loads(tool("probe", pending, "--dry-run", "--json", f"--keyframes-near={time}").stdout)
+                    self.assertNotIn("keyframes", doc)
+
+    def test_result_flags_and_probe_cannot_be_supplied_as_extras(self):
+        from _common.runner import Context
+        ctx = Context()
+        ctx.json = True
+        for claims in ({}, {"verified": True, "lossless": True, "probe": {"duration": 3}}):
+            with self.subTest(claims=claims), contextlib.redirect_stdout(io.StringIO()) as out:
+                _common.emit(None, ctx=ctx, verification=[{"step": "probe", "ok": True}], **claims)
+                doc = json.loads(out.getvalue())
+                self.assertFalse(doc["verified"])
+                self.assertIs(doc.get("lossless"), False)
+                self.assertNotIn("probe", doc)
+
+    def test_dry_run_keeps_targets_but_not_claimed_output_measurements(self):
+        from _common.runner import Context
+        ctx = Context()
+        ctx.json = ctx.dry_run = True
+        ctx.commands.append("ffmpeg -i in.mp4 -c copy out.mp4")
+        for brief in (False, True):
+            ctx.json_brief = brief
+            with self.subTest(brief=brief), contextlib.redirect_stdout(io.StringIO()) as out:
+                _common.emit("out.mp4", ctx=ctx, dry_run=False, verified=True, lossless=True,
+                             duration=3, output_duration=3, width=640, height=360,
+                             resolution=[640, 360], expected_duration=3)
+                doc = json.loads(out.getvalue())
+                self.assertEqual((doc["dry_run"], doc["verified"], doc["lossless"]), (True, False, False))
+                self.assertEqual(doc["expected_duration"], 3)
+                for key in ("duration", "output_duration", "width", "height", "resolution"):
+                    self.assertIsNone(doc[key], key)
 
 
 class SilentPathTests(unittest.TestCase):
@@ -6626,6 +6826,8 @@ class BatchSourcePathTests(unittest.TestCase):
     def test_batch_watch_delivers_over_its_own_unchanged_output(self):
         """The control for the test above: nobody touched the delivered file, so the next pass
         replaces it without --overwrite."""
+        from importlib import import_module
+
         folder = self.work / "in"
         folder.mkdir()
         src = folder / "a.mp4"
@@ -6641,8 +6843,11 @@ class BatchSourcePathTests(unittest.TestCase):
             if argv[0] == "probe.py":
                 return True, {"status": "completed", "verified": True}
             return self.child_step(argv, owned)
-        code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        with unittest.mock.patch.object(import_module("_common.emit"), "_verified_artifact") as reprobe:
+            code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        reprobe.assert_not_called()
         self.assertTrue(doc["results"][0]["ok"], doc)
+        self.assertFalse(doc["verified"], doc)
         self.assertEqual(final.read_bytes(), b"B" * 100)
 
     def test_batch_watch_step_refuses_its_own_output_replaced_before_its_check(self):

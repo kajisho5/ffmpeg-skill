@@ -12,7 +12,7 @@ import shlex
 import stat
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file
+from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file, stream_copy_output
 
 
 # Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
@@ -114,6 +114,9 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
             if value is not None:
                 doc["error"][key] = value
         doc.update(extra)
+        for key in ("verified", "lossless"):
+            if key in doc:
+                doc[key] = False
         _merge_collector(doc, ctx)
         print_json(doc)
     sys.exit(code)
@@ -871,11 +874,30 @@ def file_identity(path: str) -> "Optional[Dict[str, int]]":
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns} if os.path.isfile(path) else None
 
 
-def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any) -> None:
+_RESULT_FIELDS = frozenset({"status", "dry_run", "commands", "probe", "output_identity", "verified", "lossless"})
+_OUTPUT_MEASUREMENTS = frozenset({
+    "duration", "width", "height", "resolution", "fps", "size_bytes",
+    "output_duration", "output_width", "output_height", "output_resolution", "output_fps", "output_size_bytes",
+})
+
+
+def _verified_artifact(path: str) -> bool:
+    identity = file_identity(path)
+    if not identity or not identity["size"]:
+        return False
+    if os.path.splitext(path)[1].lower() not in MEDIA_EXT:
+        return True
+    meta = probe(path, role="output", required=False)
+    return bool(meta.get("video") or meta.get("audio"))
+
+
+def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
+         verification_paths: Sequence[str] = (), **extra: Any) -> None:
     """Final stdout line: the output path, or a JSON document with --json.
 
     `ctx` is the optional per-request Context added in 1.10 (2.0 makes it required, issue #189 B);
-    omitted, every read falls back to the process-global STATE as before."""
+    omitted, every read falls back to the process-global STATE as before. A tool with no
+    single output can name the files its verification steps concern in verification_paths."""
     ctx = ctx or STATE
     _set_current_ctx(ctx)  # so the atexit hook writes (or skips) this ctx's plan, not STATE's
     meta: Dict[str, Any] = {}
@@ -887,8 +909,14 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         if carry and "source_carry" not in extra:
             extra["source_carry"] = carry
     if ctx.json:
+        for key in _RESULT_FIELDS.intersection(extra):
+            del extra[key]
+        if output and ctx.dry_run:
+            for key in _OUTPUT_MEASUREMENTS.intersection(extra):
+                extra[key] = None
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
-        if meta:
+        probed = bool(meta and not meta.get("dry_run"))
+        if probed:
             doc["probe"] = meta
         identity = file_identity(output) if output and not ctx.dry_run else None
         if identity:
@@ -902,8 +930,10 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         expect_streams = extra.pop("expect_streams", None)
         stream_reference = extra.pop("stream_reference", None)
         stream_windows = extra.pop("stream_windows", None)
-        steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if meta else []) + list(extra.pop("verification", None) or [])
-        if meta and expect_streams:
+        own_steps = extra.pop("verification", None) or []
+        steps: List[Dict[str, Any]] = ([{"step": "probe", "ok": True}] if probed else [])
+        steps.extend(s for s in own_steps if s.get("step") != "probe")
+        if probed and expect_streams:
             steps.append(stream_inventory_step(meta, expect_streams))
             kept = [k for k in ("video", "audio") if _expected_count(expect_streams.get(k, 0))]
             if stream_reference is not None and len(kept) == 2:
@@ -913,9 +943,17 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
                 steps.append(decode_step(output, meta, present))
         # a tool that ran others (render.py) verified what its stages verified too (absorb_stage())
         steps += [s for s in ctx.stage_verification if s not in steps]
-        if output and not ctx.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT:
+        non_media = bool(output and not ctx.dry_run and os.path.splitext(output)[1].lower() not in MEDIA_EXT)
+        if non_media:
             steps.insert(0, {"step": "exists", "ok": True})
-        doc["verified"] = not ctx.dry_run and bool(steps) and all(s.get("ok") for s in steps)
+        if ctx.dry_run:
+            steps = []
+        passed = bool(steps) and all(s.get("ok") is True for s in steps)
+        evidence = probed or non_media
+        if passed and not evidence and verification_paths:
+            evidence = all(_verified_artifact(path) for path in dict.fromkeys(verification_paths))
+        doc["verified"] = bool(passed and evidence)
+        doc["lossless"] = bool(probed and output and stream_copy_output(ctx, output))
         # a failed check asserts that something in artifact, reference, instrument or the expected
         # value's provenance is wrong; until a tool knows which, it says it does not know
         steps = [dict(s, attribution=s.get("attribution") or "unresolved") if s.get("ok") is False else s for s in steps]
@@ -931,7 +969,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None, **extra: Any
         _merge_collector(doc, ctx)
         if ctx.plan:
             doc["plan"] = write_plan(ctx.plan, output, extra, ctx=ctx)
-        print_json(_brief(doc, meta) if ctx.json_brief else doc)
+        print_json(_brief(doc, meta if probed else {}) if ctx.json_brief else doc)
     elif ctx.plan:
         print(write_plan(ctx.plan, output, extra, ctx=ctx))
     elif output:
@@ -1220,4 +1258,4 @@ def print_json(obj: Any) -> None:
 
 # Deferred for the same reason as runner's import of this module: probe needs die() from here, and
 # emit() needs verify_output() from there, but only ever at call time.
-from _common.probe import MEDIA_EXT, _to_float, fingerprint, verify_output  # noqa: E402
+from _common.probe import MEDIA_EXT, _to_float, fingerprint, probe, verify_output  # noqa: E402

@@ -214,7 +214,7 @@ def pack_report(args) -> int:
         except OSError as e:
             die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
-    emit(None, report=output, pack=[dict(zip(header, r)) for r in rows], check=None,
+    emit(None, report=output, pack=[dict(zip(header, r)) for r in rows], check=None, verification_paths=(output,),
          verification=([{"step": "exists", "ok": True}] if not STATE.dry_run else []))
     if not args.json:
         print(output)
@@ -342,7 +342,8 @@ def main() -> int:
         except OSError as e:
             die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
-    emit(None, report=output, check=chk, verification=([{"step": "exists", "ok": True}] + verification if not STATE.dry_run else []))
+    emit(None, report=output, check=chk, verification_paths=(output,),
+         verification=([{"step": "exists", "ok": True}] + verification if not STATE.dry_run else []))
     if not args.json:
         print(output)
     return 0
