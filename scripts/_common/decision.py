@@ -14,7 +14,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
-                           is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+                           hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
 from _common.runner import read_json
@@ -896,7 +896,7 @@ def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: b
         return None
     v = (meta or {}).get("video") or {}
     hdr = bool(v.get("bt2020_or_hdr"))
-    hdr_tags = ["-colorspace", v.get("color_space") or "bt2020nc", "-color_primaries", v.get("color_primaries") or "bt2020",
+    hdr_tags = ["-colorspace", hdr_line_matrix(v), "-color_primaries", v.get("color_primaries") or "bt2020",
                 "-color_trc", source_transfer(v)]
     if codec == "prores":
         return ["-c:v", name, "-profile:v", "hq", "-pix_fmt", "p210le"] + (hdr_tags if hdr else [])
@@ -1026,7 +1026,7 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
     """
     v = (meta or {}).get("video") or {}
     hdr = bool(v.get("bt2020_or_hdr"))
-    cs = v.get("color_space") or "bt2020nc"
+    cs = hdr_line_matrix(v)
     prim = v.get("color_primaries") or "bt2020"
     trc = source_transfer(v)
     hdr_tags = ["-colorspace", cs, "-color_primaries", prim, "-color_trc", trc]
@@ -1184,18 +1184,37 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     """
     v = (meta or {}).get("video") or {}
     fix = bt709_matrix_args(meta if source is None else source) if convert_matrix and not keeps_source_tags() else []
+    if convert_matrix and source is None and STATE.alpha_line is None:
+        # the BT.2020 / HDR line of an RGB source (--codec prores included: that line tags it too)
+        fix = hdr_rgb_matrix_args(meta) or fix
     if STATE.codec:
         return encoder_args(STATE.codec, crf, preset, meta) + fix
     if not v.get("bt2020_or_hdr"):
         return x264_args(crf, preset) + fix
-    return _maybe_hw("hevc", crf, meta, True, _x265_hdr_default(v, crf, preset))
+    return _maybe_hw("hevc", crf, meta, True, _x265_hdr_default(v, crf, preset)) + fix
+
+
+def line_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The conversion video_args(meta)'s line ends with for this source, as a filter, or None: for
+    a tool that needs it inside a graph of its own before run() folds it in (stabilize.py's pass
+    1, fit.py's picture measurement). bt709_matrix_filter() on a line tagged BT.709,
+    hdr_rgb_matrix_filter() on a BT.2020 / HDR line; nothing on an alpha line, and nothing for an
+    SDR source on --codec prores."""
+    if STATE.alpha_line is not None:
+        return None
+    return hdr_rgb_matrix_filter(meta) or (None if keeps_source_tags() else bt709_matrix_filter(meta))
 
 
 def matrix_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:
     """For a tool that mixes several sources in one graph and encodes it through
     video_args(line_meta, convert_matrix=False): the conversion one source's own chain starts
     with ("<filter>," -- bt709_matrix_filter), or "" when that source needs none or the line does
-    not tag BT.709 (an HDR/BT.2020 line keeps its tags, --codec prores keeps the source's)."""
+    not tag BT.709 (an HDR/BT.2020 line keeps its tags, --codec prores keeps the source's). On a
+    BT.2020 / HDR line an RGB source that probes BT.2020 or HDR itself is made YUV with the matrix
+    that line tags (hdr_rgb_matrix_filter, #544)."""
+    if ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr") and STATE.alpha_line is None:
+        f = hdr_rgb_matrix_filter(meta, line_meta)
+        return f + "," if f else ""
     if keeps_source_tags() or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
         return ""
     f = bt709_matrix_filter(meta)
@@ -1331,7 +1350,7 @@ def source_codec_video_args(meta: Optional[Dict[str, Any]], crf: int = 18, prese
 
 
 def _x265_hdr_default(v: Dict[str, Any], crf: int, preset: str) -> List[str]:
-    cs = v.get("color_space") or "bt2020nc"
+    cs = hdr_line_matrix(v)
     prim = v.get("color_primaries") or "bt2020"
     trc = source_transfer(v)
     x265 = f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}:range=limited:hdr10-opt=1{hdr10_x265_params(v)}" if trc == "smpte2084" else f"log-level=error:colorprim={prim}:transfer={trc}:colormatrix={cs}"

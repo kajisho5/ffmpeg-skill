@@ -106,6 +106,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.9.2 — audio-only output extensions, and a still given to export or join (#517, #531)](#after-392--audio-only-output-extensions-and-a-still-given-to-export-or-join-517-531)
 - [After 3.9.3 — the timeline of several clips takes its size from fit (#526)](#after-393--the-timeline-of-several-clips-takes-its-size-from-fit-526)
 - [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
+- [After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)](#after-3101--an-hdr-or-bt2020-rgb-source-is-made-yuv-with-the-matrix-its-line-tags-544)
 <!-- contents:end -->
 
 ## Time limits
@@ -5965,3 +5966,100 @@ before it was changed. Five classes are changed, two are left for a decision.
   drawtext, so it was not done; that needs an FFmpeg 9 run and a decision. The test is not
   loosened: one rise and one fall, which a first frame brighter than the next fails. Code:
   `graphics.main()` (`fade_a`).
+## After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)
+
+- **The class: an RGB source is converted to YUV with FFmpeg's default matrix under a tag that
+  names another.** SDR RGB sources are converted to BT.709 explicitly
+  (`bt709_matrix_filter()`, after 2.10.1), and measured again here they are right (C03028/30C050/2030C0/808080
+  in gbrp FFV1, tagged BT.709 or not, through `fit.py` and `crop.py`: C13028/30C150/1F30C0/808080
+  read by the bt709 tag). An RGB source that probes HDR or BT.2020 was left out of that
+  ("FFmpeg's own conversion makes its YUV, as before", #496; recorded as seen and not changed in
+  "After 3.8.23"), and the 10-bit line that keeps such a source's colour tagged
+  `v.color_space or "bt2020nc"`. Two things followed, both measured on FFmpeg 6.1.1 with a
+  160x120-per-patch gbrp10le FFV1 source of those four colours, BT.2020 primaries, PQ transfer:
+  - matrix tag `gbr` (what FFmpeg 6.1.1 writes into the FFV1 `.mkv` of an RGB filter graph
+    without being asked, and what PNG-in-MOV, qtrle, utvideo and libx264rgb copies of that file
+    probe as: the usual case; the untagged one needs `-colorspace unknown` to make): the line passed
+    `-colorspace gbr`, which no encoder option parses, and every re-encode failed inside ffmpeg
+    (`kind: ffmpeg`, "Nothing was written"): 21 rows of `tests/sweep.py` against a YUV PQ
+    baseline (`caption`, `crop`, `cut`, `cut --accurate`, `deinterlace`, `denoise`, `fit`,
+    `freeze`, `graphics`, `loop`, `overlay`, `pad`, `proxy`, `redact`, `reverse`, `silence`,
+    `speedramp`, `sphere`, `stabilize`, `straighten`, and `verify` through them), plus
+    `export.py --preset youtube-hdr`, `join.py`, `multicam.py`, `broll.py` and
+    `overlay.py --video` by hand;
+  - no matrix tag: the same tools completed and wrote BT.601 YUV tagged bt2020nc. Read by the
+    tag the patches were C53525/2BB14D/1F3BC8/808080 (up to 15 of 255 off; read as BT.601 they
+    were the source's), in every one of those tools: the sweep printed no differing row for
+    any of them (its rows are what a tool said), so each output was decoded and compared with the same tool's output from a YUV PQ
+    copy of the picture.
+  An RGB file tagged `bt2020nc` (a mislabelled one, made with `-colorspace bt2020nc`) was
+  right before: FFmpeg 6.1's scaler converts by the frame's own tag.
+- **Decided: the line names the matrix it tags.** `color.hdr_line_matrix()` is the matrix tag
+  of the 10-bit line: a YUV source's own, or bt2020nc without one, exactly as before; for an RGB
+  source, its tag when that names a matrix swscale can make (bt2020nc, bt709, the BT.601 names,
+  fcc, smpte240m: the frames FFmpeg 6.1 already converted by that tag), else bt2020nc.
+  `color.hdr_rgb_matrix_filter()` is the conversion
+  (`scale=out_color_matrix=bt2020:out_range=tv,format=yuv444p10le`: the matrix only, limited
+  range, 4:4:4 at the line's 10 bits, as `rgb_to_bt709_filter()` is 4:4:4 at 8), and it rides on
+  the encoder line the way the BT.709 one does: `video_args()` ends with it, `run()` folds it
+  in front of the tool's own graph (`fold_bt709_matrix()` recognises it), `matrix_chain()`
+  gives it to each RGB clip of a join, a multicam, a cutaway or a PiP on an HDR line (the
+  matrix is the line's, so an RGB clip beside a YUV bt2020nc one gets that), `export.py` adds
+  it to its `youtube-hdr` and `youtube-av1` lines, and `stabilize.py` and `fit.py`'s picture
+  measurement take it from `decision.line_matrix_filter()` instead of each asking
+  `bt709_matrix_filter()`. `--codec prores` on such a source gets it too: that line writes the
+  same three tags. Primaries and transfer are not touched. `bt709_matrix_filter()` still
+  returns nothing for an HDR or BT.2020 source (its test pins that), so no BT.709-tagged line
+  changed.
+- **Measured after, FFmpeg 6.1.1.** Both variants, read by the output's bt2020nc tag:
+  C03028/30C050/2030C0/808080 from `crop`, `fit --fps 30`, `denoise`, `stabilize`,
+  `export --preset youtube-hdr`, `join` (two RGB clips; an RGB and a YUV one, with and without a
+  fade), `multicam`, `broll` (RGB over RGB, RGB over YUV), `overlay --video` (RGB layer, RGB
+  main), `crop --codec hevc|av1|prores` and `export --preset youtube-av1` (its blue 2130C1). Every picture-writing row of
+  the sweep table against the YUV PQ copy: at most 3 of 255 apart (`sphere` 3, `stabilize` and
+  `proxy` 2, the rest 0 or 1), except `caption` (9, on the edge of the drawn text, where a
+  4:4:4 picture under libass differs from a 4:2:0 one; the patches are equal) and `export`
+  (below). HLG and BT.2020 SDR (`bt2020-10`) sources the same through `crop`. The bt2020nc-tagged
+  RGB file: the same four colours before and after. `tests/sweep.py` of either variant against
+  the YUV PQ copy now prints three rows, the stream copies below. FFmpeg 7, 8 and 9 were not run locally:
+  from 7.1 swscale and libavfilter negotiate the matrix from the frames' tags, which this
+  conversion sets where 6.1 only writes the pixels, and the SDR counterpart of the same shape
+  (`scale=out_color_matrix=bt709`) is what CI already runs there; that this one behaves the same
+  is reasoned, not measured.
+- **Seen and not changed** (each is its own decision, none is the 10-bit line):
+  - an 8-bit BT.709 line given an HDR or BT.2020 RGB source: `export.py`'s fixed presets (which
+    warn `colour_not_converted` and convert nothing, by decision) and `grid.py` (an SDR line
+    whatever its cells are). The RGB is made YUV by FFmpeg's default there, BT.601 under the
+    bt709 tag: `export --preset youtube` reads CC3D25/26AC4D/1C37C6/808080 where the same
+    preset on the YUV PQ copy reads C63828 for the red (BT.2020 samples under the bt709 tag,
+    the decided part). Converting it is `bt709_matrix_filter()` returning a filter for an HDR
+    RGB source, which
+    `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with` pins as None;
+    proposed, not done.
+  - an SDR RGB clip on an HDR line (`join.py HDR.mkv SDR_RGB.mkv`): still FFmpeg's conversion
+    (C53525 by the bt2020nc tag). Its primaries and transfer are not the line's either; a matrix
+    alone would not make it right.
+  - an alpha line (`--keep-alpha`, `--transparent`) and `export.py --preset prores` of such a
+    source write no matrix tag at all (and here no primaries or transfer either: ProRes 4444 of
+    the PQ fixture probes unknown/unknown/unknown, its YUV BT.601). Nothing disagrees with a tag
+    there, so it is not this class; that the HDR tags are lost is. #496's sentence for the alpha
+    line ("an HDR or BT.2020 one is not converted to BT.709: FFmpeg's own conversion makes its
+    YUV") still describes it.
+  - an RGB layer (a logo, an emoji, a box) on an HDR line: "Not converted ... an HDR line"
+    ("After 3.6.0"), unchanged.
+  - `audio.py`, `loudness.py` and `metadata.py` to `.mp4` stream-copy FFV1, which MP4 cannot
+    hold (`kind: ffmpeg`): the stream-copy class recorded in "After 3.8.23".
+  - `color.py --to-sdr` reads RGB and YUV PQ alike (D90000/00E300/0000FA/9A9A9A from both).
+- Code: `_common/color.py` (`hdr_line_matrix`, `hdr_rgb_matrix_filter`, `hdr_rgb_matrix_args`,
+  `_MATRIX_FILTER_RE`), `_common/decision.py` (`video_args`, `matrix_chain`,
+  `line_matrix_filter`, the three places the tag was built), `export.py`, `stabilize.py`,
+  `fit.py`. Tests: `test_an_hdr_or_bt2020_rgb_source_keeps_its_colours_on_the_hdr_line`
+  (tests/test_picture.py: five variants of the fixture, each asserted before the tool; the
+  colours of four patches read by the output's tag, tolerance 7 of 255 on the largest
+  error over the four patches, where the wrong matrix puts the green patch 15 and the blue 11 off and
+  the lossy 10-bit round trip is at most 2 on FFmpeg 6.1.1 and at most 5 on 7.1 (CI: every patch a
+  little dark there, the grey 128 read 126, a level and not a matrix; not run down, since 7.1 cannot
+  be run locally); run against 3.10.0's scripts it
+  fails 13 of its 15 rows, the two bt2020nc-tagged ones passing as they should),
+  `test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source` (tests/test_contract.py: the
+  helpers, every `--codec` line, the fold).
