@@ -27,13 +27,18 @@ Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだ
 
 Keep these five lines as the report itself. Include any decision the user needs to make. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
 
-For a standalone edit, ask once in the user's language after the five report lines. One option
-is “Would you like a preview of the edits and checks in one view?” In Japanese,
-「編集した箇所と確認結果を、プレビュー付きの一覧で見ますか？」. Wait for the user's answer before
-preparing additional preview files. The host owns the review view, any item numbering, and how it
-maps feedback to a new edit request. Use ffmpeg-skill to supply the media, measured results, and
-available preview files, and to execute the requested changes. Velisa and other callers that own
-the review present it through their own workflow.
+For a standalone edit, deliver the result and the five report lines first. When the host can
+present a review and it would help, offer it once in the user's language. In Japanese,
+「編集前と編集後を、音声波形付きのプレビューで見比べますか？」. Prepare the review only after
+the user asks for it or accepts the offer. If they already asked for it, proceed after the edit
+and report without a second prompt.
+
+Show the original and edited video side by side, with audio waveforms derived from the available
+tracks. Use a known source-to-output time mapping for synchronized playback and waveform seeking.
+When that mapping is unavailable, label and show the two clocks separately. The host owns the
+view, numbered edit items, and how it maps feedback to a new edit request. Use ffmpeg-skill to
+supply media, measured results, and available preview files, and to execute the requested
+changes. Velisa and other callers that own the review handle it through their own workflow.
 
 When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 
