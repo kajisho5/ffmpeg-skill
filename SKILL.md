@@ -8,7 +8,7 @@ description: 'Edit video and audio with local FFmpeg: cut, join, reframe, speed,
 ## Quick start
 
 Run `python3 <skill-dir>/scripts/<name>.py`; the table below routes requests, `--help` lists every flag.
-MCP `tools/list` shows the core 12; the other 30 of the 42 tools stay callable by name.
+MCP lists 12 by default. Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` for a smaller editing list. All 42 stay callable by name.
 
 Shared flags (the rest, codec defaults and `--hw`: `references/flags.md`):
 `--dry-run` (plan, write nothing), `--json` (output, probe, commands), `--json-brief` (status + `summary`),

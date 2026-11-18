@@ -1171,12 +1171,8 @@ def main() -> int:
                           "the first track, same as leaving it unset always did")
     src = ap.add_argument_group("subtitle source")
     src.add_argument("--srt", action=AppendPath, metavar="FILE[:LANG]",
-                     help="SRT file to burn, or (with --mode mux) to add as a soft subtitle track. Repeat it once "
-                          "per language to build a multi-track deliverable, each with an optional `:lang` suffix: "
-                          "`--srt en.srt:en --srt ja.srt:ja`. A single --srt with no suffix takes --language, as "
-                          "it always did. NOTE: .mp4/.mov hold several mov_text tracks but many players show only "
-                          "the first, and the format needs ISO-639-2 codes (`eng`, not `en`) -- this tool converts "
-                          "them; .mkv is the honest multi-track container and stores the code you give verbatim")
+                     help="SRT to burn or (with --mode mux) add as a subtitle track. Repeat FILE:LANG per language "
+                          "for muxing. A single untagged file uses --language. Prefer .mkv for multiple tracks.")
     src.add_argument("--ass", help="ASS file to burn (styles inside the file are used)")
     src.add_argument("--text", help="plain text cue file to convert into SRT (see format above)")
     src.add_argument("--transcribe", action="store_true", help="generate the SRT from the audio with a local speech-to-text engine if one is installed (parakeet-mlx / parakeet.cpp / whisper-cli / whisper / faster-whisper); never required")
@@ -1247,12 +1243,8 @@ def main() -> int:
                           "cue to cue reads as a mistake, so it is opt-in)")
     sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
     sty.add_argument("--wrap", choices=list(WRAP_MODES), default="phrase",
-                     help="how a cue too wide for the safe area is broken into lines: 'phrase' (default, 1.16) never "
-                          "breaks inside a word or on the wrong side of a hyphen, never leaves a lone digit, kana or "
-                          "punctuation on a line, prefers Japanese sentence ends and particles over a mid-word break, "
-                          "and never ends a line on an article or preposition; 'measured' is 1.15's width-only wrap, "
-                          "kept so an older split can be reproduced. Neither ever changes the number of lines, "
-                          "rewrites the text or shortens a cue")
+                     help="line breaking for wide cues: phrase-aware (phrase, default) or width-only (measured). "
+                          "Both preserve text, timing and line count.")
     anim = ap.add_argument_group("animation (generates ASS; needs --text or --srt input)")
     anim.add_argument("--animate", choices=["none", "fade", "pop", "slide"], default=None, help="per-cue entrance animation (default none, or brand caption.animate)")
     anim.add_argument("--karaoke", action="store_true", help="word-by-word highlight (fills from --color to --highlight-color across each cue)")

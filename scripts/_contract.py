@@ -1123,6 +1123,29 @@ def _version_line(binary: str) -> Optional[str]:
     return m.group(1) if m else (first[0] if first else "unknown")
 
 
+def _ffmpeg_license(exe: Optional[str]) -> Optional[str]:
+    """Read the selected executable's upstream -L notice without guessing from its version."""
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "-hide_banner", "-L"], capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=_DETECT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode:
+        return None
+    notice = " ".join((proc.stdout + "\n" + proc.stderr).split())
+    if "has nonfree parts compiled in." in notice:
+        return "nonfree"
+    match = re.search(r"GNU (Lesser )?General Public License as published by the Free Software Foundation; "
+                      r"either version (2\.1|2|3) of the License, or \(at your option\) any later version", notice)
+    if not match:
+        return None
+    family = "LGPL" if match[1] else "GPL"
+    version = match[2] if "." in match[2] else match[2] + ".0"
+    return f"{family}-{version}-or-later"
+
+
 # ----------------------------------------------------------------------------- FFmpeg security advisories
 # doctor's `ffmpeg_security`: a small, dated, hand-maintained table of high-severity FFmpeg CVEs and
 # the first upstream point release on each branch that carries the fix. ffmpeg-skill does not ship
@@ -1529,6 +1552,7 @@ def doctor() -> Dict[str, Any]:
         "ffmpeg": versions["ffmpeg"],
         "ffprobe": versions["ffprobe"],
         **exes,
+        "ffmpeg_license": _ffmpeg_license(exes.get("ffmpeg_path")),
         # non-fatal: never part of `ok`, `usable` or the exit code
         "ffmpeg_security": ffmpeg_security(versions, {b: exes.get(f"{b}_source") for b in versions}),
         "available": available,
@@ -2246,6 +2270,7 @@ def main() -> int:
         else:
             print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
+            print(f"FFmpeg build license {d['ffmpeg_license'] or 'unknown'}")
             for name in ("ffmpeg", "ffprobe"):
                 if d[f"{name}_source"] == "homebrew-ffmpeg-full":
                     print(f"{name} runs from {d[f'{name}_path']}: Homebrew's keg-only ffmpeg-full, used because the {name} on PATH is the lean formula (no drawtext/subtitles)")
