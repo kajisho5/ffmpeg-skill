@@ -465,8 +465,7 @@ class PictureTests(MediaFixtures):
                          ["A third line", "the tool times for me"])
 
     def test_caption_wraps_cjk_between_characters(self):
-        """Chinese has no spaces: the line breaks between any two characters, and every character
-        counts as a full em (Latin averages just over half)."""
+        """Unspaced Chinese wraps between available boundaries, at one em per ideograph."""
         import caption  # noqa: E402
         from _common import font_for_script  # noqa: E402
         if font_for_script("zh") is None:
@@ -487,6 +486,31 @@ class PictureTests(MediaFixtures):
         self.assertEqual("".join(lines), text, "no character is lost")
         self.assertIn("font:", proc.stderr, "a Chinese cue resolves a font by script")
         self.assertRegex(proc.stderr, r"cues: .*(wrapped|split)")
+
+    def test_chinese_phrase_preserves_words_in_written_srt_and_burn(self):
+        from _common import font_for_script
+        if font_for_script("zh") is None:
+            self.skipTest("this machine has no font covering zh")
+        cue = "我们一起来看看这个视频的效果吧"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            timed_text = root / "cue.txt"
+            source_srt = root / "source.srt"
+            timed_text.write_text(f"0:00-0:02 {cue}\n", encoding="utf-8")
+            source_srt.write_text(f"1\n00:00:00,000 --> 00:00:02,000\n{cue}\n", encoding="utf-8")
+            for flag, path in (("--text", timed_text), ("--srt", source_srt)):
+                with self.subTest(flag=flag):
+                    out = root / f"{path.stem}.mp4"
+                    written = root / f"{path.stem}_adjusted.srt" if flag == "--srt" else out.with_suffix(".srt")
+                    doc = json.loads(script("caption.py", self._small(), flag, path, "--lang", "zh",
+                                            "--size", "72", "--max-lines", "3",
+                                            "--fast", "-o", out, "--json").stdout)
+                    self.assertTrue(doc["verified"], doc.get("verification"))
+                    lines = [line for _, rows in self._srt_cues(written) for line in rows]
+                    self.assertGreater(len(lines), 1)
+                    self.assertEqual("".join(lines), cue)
+                    for word in ("看看", "视频", "效果"):
+                        self.assertTrue(any(word in line for line in lines), (word, lines))
 
     def test_caption_wrap_puts_mixed_script_text_back_exactly_as_written(self):
         """A wrap must never change the text: CJK gains no spaces, and the author's own spaces
@@ -5630,6 +5654,30 @@ class PhraseWrapTests(unittest.TestCase):
         # end to end, at every width that wraps the cue at all, in both modes
         self._assert_pair_never_torn("你先看看这个再说吧", "看", "zh", range(3, 13))
         self._assert_pair_never_torn("我们试试这个新办法吧", "试", "zh", range(3, 13))
+
+    def test_chinese_phrase_wrap_keeps_common_words_and_punctuation(self):
+        C = self.caption
+        cases = (
+            ("我们一起来看看这个视频的效果吧", ("看看", "视频", "效果"), (None, "zh-CN")),
+            ("你可以试试这个新的功能看看效果如何呢", ("试试", "功能", "看看", "效果"), (None, "zh-CN")),
+            ("我們來看看「視頻」的效果，試試新的功能吧！", ("看看", "視頻", "效果", "試試", "功能"), ("zh-TW",)),
+        )
+        for cue, words, langs in cases:
+            for lang in langs:
+                for width in range(6, 11):
+                    with self.subTest(cue=cue, lang=lang, width=width):
+                        wrapped, greedy, measured = C.wrap_variants(cue, width, lang=lang)
+                        self.assertEqual(wrapped, C.wrap_text(cue, width, lang=lang))
+                        self.assertEqual(measured, C.wrap_text(cue, width, mode="measured", lang=lang))
+                        self.assertEqual(len(wrapped), len(greedy))
+                        for lines in (wrapped, greedy):
+                            self.assertEqual("".join(lines), cue)
+                            self.assertTrue(all(C.text_width_em(line) <= width for line in lines), lines)
+                            for word in words:
+                                self.assertTrue(any(word in line for line in lines), (word, lines))
+                            for line in lines:
+                                self.assertNotIn(line[0], "，。！？、」", lines)
+                                self.assertNotIn(line[-1], "「", lines)
 
     def test_reduplication_merge_is_capped_at_two(self):
         """An uncapped merge made any run of one ideograph a single atom, so 哈哈哈哈哈哈 in a

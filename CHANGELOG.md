@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Keep common two-character words together in Chinese phrase wrapping (#569).
 
 ## 3.13.1
 
