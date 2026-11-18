@@ -1343,6 +1343,87 @@ class ContractTests(unittest.TestCase):
         kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
         self.assertNotIn("subtitle", kinds)
 
+    def _crop_fixture(self, name, size, graph, duration=4):
+        """A lavfi clip for the crop check: input 0 a black canvas of `size`, input 1 a white
+        60x60 box; `graph` places the box ([0] and [1] in, one picture out)."""
+        path = self.out(name)
+        sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "lavfi", "-i", f"color=c=black:s={size}:r=25:d={duration}",
+           "-f", "lavfi", "-i", "color=c=white:s=60x60:r=25",
+           "-filter_complex", graph, "-t", str(duration),
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path)
+        self.assertTrue(os.path.exists(path), path)
+        return path
+
+    def test_fit_crop_check_reports_motion_the_crop_cuts_away(self):
+        """A reader of 3.10.0 got a landscape clip centre-cropped to 9:16 with nothing saying
+        whether what moved survived. crop_check measures a luma motion proxy against the kept
+        window; a box moving at the left edge is review with a crop_content_off_centre warning
+        and an anchor near 0, which then keeps it. Centred: ok, no warning. Advisory: the file
+        is written either way."""
+        def crop_warnings(doc):
+            return [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
+                    if w["code"] == "crop_content_off_centre"]
+
+        left = self._crop_fixture("crop_left.mp4", "640x360", "[0][1]overlay=x='40+30*sin(2*PI*t)':y=150:shortest=1")
+        out = self.out("crop_left_fit.mp4")
+        doc = json.loads(tool("fit", left, "--aspect", "9:16", "--fit", "crop", "-o", out, "--json").stdout)
+        self.assertTrue(os.path.exists(out))
+        cc = doc["crop_check"]
+        self.assertEqual((cc["verdict"], cc["axis"], cc["basis"]), ("review", "x", "luma_motion_proxy"), cc)
+        self.assertGreater(cc["samples"], 0)
+        self.assertGreaterEqual(cc["motion_outside"], 0.5)
+        self.assertLessEqual(cc["suggested_anchor"], 0.15)
+        warned = crop_warnings(doc)
+        self.assertEqual(len(warned), 1, doc.get("diagnostics"))
+        self.assertEqual(warned[0]["axis"], "x")
+        self.assertEqual(warned[0]["suggested_anchor"], cc["suggested_anchor"])
+        self.assertIn("--crop-x", warned[0]["message"])
+        self.assertIn("--fit pad", warned[0]["message"])
+        # the anchor flag toward the box: kept, no warning
+        doc = json.loads(tool("fit", left, "--aspect", "9:16", "--fit", "crop", "--crop-x", f"{cc['suggested_anchor']:g}",
+                              "-o", self.out("crop_left_anchored.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertEqual(crop_warnings(doc), [])
+        # a centred box: ok, no warning
+        centre = self._crop_fixture("crop_centre.mp4", "640x360", "[0][1]overlay=x='290+30*sin(2*PI*t)':y=150:shortest=1")
+        doc = json.loads(tool("fit", centre, "--aspect", "9:16", "--fit", "crop", "-o", self.out("crop_centre_fit.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertEqual(crop_warnings(doc), [])
+
+    def test_fit_crop_check_y_axis_trim_range_and_no_crop(self):
+        """A portrait source cropped wider loses rows: a box at the bottom is review on the y
+        axis. Under --method trim only the kept range is sampled, so a box that is off-centre
+        only in the part the trim cuts away is not reported. --fit pad, and a crop with no
+        margin, write no crop_check at all."""
+        def codes(doc):
+            return [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings") or []]
+
+        portrait = self._crop_fixture("crop_portrait.mp4", "360x640", "[0][1]overlay=x=150:y='520+30*sin(2*PI*t)':shortest=1")
+        doc = json.loads(tool("fit", portrait, "--aspect", "16:9", "--fit", "crop", "-o", self.out("crop_portrait_fit.mp4"), "--json").stdout)
+        cc = doc["crop_check"]
+        self.assertEqual((cc["verdict"], cc["axis"]), ("review", "y"), cc)
+        self.assertGreaterEqual(cc["suggested_anchor"], 0.85)
+        self.assertIn("crop_content_off_centre", codes(doc))
+        warned = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "crop_content_off_centre"]
+        self.assertIn("--crop-y", warned[0]["message"])
+        # centred box for the first 4 s, left box after: a trim to 4 s keeps only the centred part
+        split = self._crop_fixture(
+            "crop_split.mp4", "640x360",
+            "[1]split[a][b];[0][a]overlay=x='290+30*sin(2*PI*t)':y=150:enable='lt(t,4)':shortest=1[m];"
+            "[m][b]overlay=x='40+30*sin(2*PI*t)':y=150:enable='gte(t,4)':shortest=1", duration=8)
+        doc = json.loads(tool("fit", split, "--duration", "4", "--method", "trim", "--aspect", "9:16", "--fit", "crop",
+                              "-o", self.out("crop_split_trim.mp4"), "--json").stdout)
+        self.assertEqual(doc["crop_check"]["verdict"], "ok", doc["crop_check"])
+        self.assertNotIn("crop_content_off_centre", codes(doc))
+        # --fit pad cuts nothing: no crop_check
+        doc = json.loads(tool("fit", portrait, "--aspect", "16:9", "--fit", "pad", "-o", self.out("crop_portrait_pad.mp4"), "--json").stdout)
+        self.assertIsNone(doc.get("crop_check"))
+        self.assertNotIn("crop_content_off_centre", codes(doc))
+        # a crop to the source's own aspect has no margin: nothing cut, no crop_check
+        doc = json.loads(tool("fit", split, "--aspect", "16:9", "--fit", "crop", "-o", self.out("crop_same_aspect.mp4"), "--json").stdout)
+        self.assertIsNone(doc.get("crop_check"))
+
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already
         written (this happened for real: #77's fix, PR #88, merged after the 0.12.0 section was
