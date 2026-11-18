@@ -11243,14 +11243,14 @@ class SharedCodeAudit465Tests(unittest.TestCase):
                              {"asset": "/e%d/1f601.png", "box": 32, "x": 0, "y": 0, "start": 0.0, "end": 1.0,
                               "fade_in": 0.2}]}
         _, inputs = _common.emoji_filter_chain(plan, "v", "out")
-        cmd = runner.guard_still_patterns(["ffmpeg", "-i", "in.mp4"] + [a for spec in inputs for a in spec] + ["out.mp4"])
+        cmd = runner.guard_input_formats(["ffmpeg", "-i", "in.mp4"] + [a for spec in inputs for a in spec] + ["out.mp4"])
         for asset in ("/e%d/1f600.png", "/e%d/1f601.png"):
             at = cmd.index(asset)
             self.assertEqual(cmd[at - 1], "-i")
             self.assertIn("-pattern_type", cmd[at - 6:at], cmd)
         guarded = ["ffmpeg", "-pattern_type", "none", "-i", "a%d.png", "out.mp4"]
-        self.assertEqual(runner.guard_still_patterns(guarded), guarded, "an input that has one keeps one")
-        self.assertEqual(runner.guard_still_patterns(["ffprobe", "-v", "error", "a%d.png"]),
+        self.assertEqual(runner.guard_input_formats(guarded), guarded, "an input that has one keeps one")
+        self.assertEqual(runner.guard_input_formats(["ffprobe", "-v", "error", "a%d.png"]),
                          ["ffprobe", "-v", "error", "-pattern_type", "none", "a%d.png"])
         # the real thing: grid.py with a still named st%d.png beside a decoy st1.png
         ffmpeg("-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "green.png"))
