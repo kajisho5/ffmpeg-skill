@@ -4718,8 +4718,11 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   `st%d.png` as a sequence and opened `st1.png`. An input that sets its own `-pattern_type` or `-f`
   is left alone (no tool here reads an image sequence through a pattern; `sequence.py` writes a
   concat list). The ffprobe stream checks inside `run()` and the frame readers of `_common.alpha` and
-  `_common.probe`, which start their own process, add it too. Code: `_common.runner.guard_still_patterns()`. Test:
+  `_common.probe`, which start their own process, add it too. Code: `_common.runner.guard_input_formats()`. Test:
   `test_a_percent_in_a_still_path_never_opens_another_file`.
+- **Read RIFF/WAVE inputs as WAV (#518).** FFmpeg 9.0.2 can misidentify ordinary
+  PCM audio as MPEG-TS. The same input-format helper now uses the file header
+  for probes, edits and measurements. Explicit input formats take precedence.
 - **Two paths are one file when they resolve alike or when the file is the same (device and
   inode)** (A5). `run()`'s output-is-input guard compared resolved strings, so a hard link to the
   input and, on a case-insensitive volume, the input's name in another case were written over.

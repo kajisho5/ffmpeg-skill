@@ -5,6 +5,23 @@
 ## Unreleased
 
 - Crop checks report sampled review times for inspecting discarded motion or detail (#570).
+- MCP can advertise a comma-separated selection via `FFMPEG_SKILL_MCP_TOOLS` (#573).
+
+## 3.12.2
+
+_Automated release: version and notes generated from pull requests merged since 3.12.1._
+
+- fix: select WAV from the RIFF input header (#591)
+- feat(doctor): report the FFmpeg build license (#603)
+- fix: bind parsed side inputs in saved plans (#601)
+
+Closes: #518, #564, #578
+
+## 3.12.1
+
+_Automated release: version and notes generated from pull requests merged since 3.12.0._
+
+- test: retain diagnostics for open-GOP cut failures (#593)
 
 ## 3.12.0
 

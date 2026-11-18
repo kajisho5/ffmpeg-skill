@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.12.0`) | any release |
+| `skill.version` | the npm / package.json version (`3.12.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.12.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.12.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -346,8 +346,9 @@ asks for the CPU and gets what ffmpeg says about it. What ran is in the result's
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "unbound_inputs", "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
 implies `--dry-run`, so the same execution rules apply; `inputs` covers the `-i` files of the
-planned commands, every existing file named in argv (a recipe, a still, an SRT) and the
-subtitle/LUT/font files a filter reads; `unbound_inputs` (absolute paths, additive to version 1)
+planned commands, existing file arguments and the media, text, JSON, subtitle, LUT or font
+inputs the tool registers as it reads them. Both `--flag FILE` and `--flag=FILE` bind the same
+registered input. `unbound_inputs` (absolute paths, additive to version 1)
 names the inputs that did not exist yet when the plan was made (an earlier step's output), which
 therefore carry no fingerprint. Tools that print their document without `--json`
 (`probe`, the analysis tools) still write the plan at exit; `verify.py` and `render.py`
@@ -580,6 +581,12 @@ keg-only `opt/ffmpeg-full/bin/<name>`, the tools run that one (#317), because `b
 ffmpeg-full` does not put it on PATH and the lean build has no drawtext/subtitles/zscale. Nothing
 else is substituted. `ffmpeg` and `ffprobe` (version strings) keep their meaning; the four keys are
 additive.
+
+`doctor` reports the selected FFmpeg executable's build license under `ffmpeg_license` in JSON
+and in the human-readable report. It reads the executable's `-L` notice locally with a 10-second
+timeout. The field is an SPDX identifier for a recognized GPL or LGPL notice, `"nonfree"` for
+FFmpeg's nonfree build notice, or `null` when the binary or its notice could not be read or
+recognized. The result is informational and leaves capability decisions and the exit code unchanged.
 
 `doctor`'s `ffmpeg_security` field compares the `ffmpeg` and `ffprobe` versions with a small table of
 high-severity FFmpeg CVEs and the first upstream release on each branch that carries the fix. The table is
@@ -1198,6 +1205,13 @@ most often across the corpus in `evals/agent_prompts*.json`. Every tool -- inclu
 contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
 return all 42, as every version before 1.18.3 did.
+
+Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` to advertise a named subset.
+The server trims whitespace, ignores duplicate names and preserves contract order.
+A blank value uses the default list. An unknown name or a nonblank list with no names
+returns a `tools/list` error naming the setting. The full-catalogue setting takes
+precedence. The same selection applies to `mcp/server.py --list`, which exits 2 for an
+invalid selection. `tools/call` and `prompts/list` keep their existing behavior.
 
 ### `prompts` capability: five workflow recipes
 

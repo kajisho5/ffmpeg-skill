@@ -373,6 +373,22 @@ A structured value is never read as an option: one that starts with `-` (overlay
 
 The server also advertises a `prompts` capability: five canned workflow recipes an agent can ask for by name instead of composing the individual tool calls itself — `reel`, `podcast`, `multicam`, `delivery_check`, `hdr`. `prompts/list` returns each one's name, description and arguments; `prompts/get {name, arguments}` fills the matching template and returns one text message naming the actual command lines to run and what to check afterward. These are recipes, not new tool calls — every command line a prompt names is one `tools/call` (or the CLI) can already run.
 
+For a small editing workflow, set the server's `env` to
+`{"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}`.
+This lists tools to inspect, cut, reframe, export and check a clip. Add `caption` for subtitles
+or use a recipe from `prompts/list`. Tool names are comma-separated and the response keeps
+contract order. `FFMPEG_SKILL_MCP_FULL=1` takes precedence and lists all tools. Unlisted tools
+remain callable by name. See the [named list contract](docs/contract.md#default-toolslist-surface-core-12-opt-in-for-all-42).
+
+| `tools/list` profile | Measured JSON-RPC response | Rough tokens at 4 bytes per token |
+| --- | ---: | ---: |
+| Default 12 | 71.0 kB | 18,000 |
+| Full 42 | 190.9 kB | 48,000 |
+| Five-tool editing list above | 24.0 kB | 6,000 |
+
+The byte counts include the JSON-RPC envelope and the final newline. Token counts
+depend on the client and tokenizer.
+
 ### Capability detection
 
 ```bash
@@ -726,3 +742,11 @@ If this skill saves you time, you can help keep it maintained through [GitHub Sp
 ## License
 
 [MIT](LICENSE)
+
+ffmpeg-skill runs your FFmpeg build as a separate executable. FFmpeg has its own license.
+Its LGPL builds can include encoders such as SVT-AV1 or VideoToolbox when available.
+Builds with GPL components such as libx264, libx265 or libvidstab use GPL terms.
+That affects the default x264/x265 encoding paths and the vid.stab filters used by
+`stabilize.py`. FFmpeg labels builds configured with `--enable-nonfree` as
+non-redistributable. `doctor` displays the license reported by the selected executable.
+See [FFmpeg's license and distribution information](https://ffmpeg.org/legal.html).
