@@ -179,22 +179,25 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
     --rotate/--flip filters `orient`) scaled to CROP_SAMPLE_LONG px on the long axis. Returns
     ([(first, second), ...], width, height), or None when no point gave two whole frames. A
     point that fails (past the end, a decode error) is left out; the others still count."""
-    if not (sw and sh) or not length or length <= 0:
+    if not (sw and sh) or length <= CROP_SAMPLE_GAP:
         return None
     if sw >= sh:
         w, h = CROP_SAMPLE_LONG, max(2, round(CROP_SAMPLE_LONG * sh / sw / 2) * 2)
     else:
         w, h = max(2, round(CROP_SAMPLE_LONG * sw / sh / 2) * 2), CROP_SAMPLE_LONG
     size = w * h
-    chain = ",".join([f"fps={1 / CROP_SAMPLE_GAP:g}"] + list(orient) + [f"scale={w}:{h}:flags=area", "format=gray"])
+    filters = [f"fps={1 / CROP_SAMPLE_GAP:g}"] + list(orient) + [f"scale={w}:{h}:flags=area", "format=gray"]
     last = start + max(0.0, length - CROP_SAMPLE_GAP - 0.1)  # room for the second frame
     frames = []
     for i in range(CROP_SAMPLES):
         t = min(start + length * (i + 0.5) / CROP_SAMPLES, last)
+        seek = f"{t:.6f}"
+        remaining = start + length - float(seek)
+        chain = ",".join([f"trim=end={remaining:.6f}"] + filters)
         cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-               "-ss", f"{t:.3f}", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
+               "-ss", seek, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
                "-vf", chain, "-frames:v", "2", "-f", "rawvideo", "-"]
-        proc = run_analysis(cmd, check=False, text=False)
+        proc = run_analysis(cmd, check=False, text=False, timeout_is_fatal=False)
         out = proc.stdout or b""
         if proc.returncode == 0 and len(out) == 2 * size:
             frames.append((out[:size], out[size:]))

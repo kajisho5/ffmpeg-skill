@@ -5597,7 +5597,7 @@ class PhraseWrapTests(unittest.TestCase):
 
 
 class FitCropLossTests(unittest.TestCase):
-    """crop_loss on synthetic grey bytes: pure, no ffmpeg. A 32x18 frame, a white box on black."""
+    """Crop measurements on a 32x18 grey frame and controlled decoder responses."""
     W, H = 32, 18
     WINDOW = (0.35, 0.65)  # a centred crop keeping 30%
 
@@ -5619,6 +5619,23 @@ class FitCropLossTests(unittest.TestCase):
 
     def moving(self, x0, x1, y0, y1, dx=1, dy=0, n=3):
         return [(self.frame(x0, x1, y0, y1), self.frame(x0 + dx, x1 + dx, y0 + dy, y1 + dy))] * n
+
+    def test_crop_check_does_not_decode_past_a_short_trim(self):
+        from unittest.mock import patch
+        with patch.object(self.fit, "run_analysis") as decode:
+            check = self.fit.check_crop("clip.mp4", [], 32, 18, ("x", *self.WINDOW), 1.0, 0.1)
+        decode.assert_not_called()
+        self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
+
+    def test_crop_check_timeout_is_advisory(self):
+        from unittest.mock import patch
+        from _common import runner
+        with patch.object(self.fit, "require_tool", return_value="ffmpeg"), \
+             patch.object(runner.subprocess, "run", side_effect=subprocess.TimeoutExpired("ffmpeg", 1)), \
+             patch.object(self.fit, "note") as note:
+            check = self.fit.check_crop("clip.mp4", [], 32, 18, ("x", *self.WINDOW), 0.0, 2.0)
+        self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
+        self.assertIn("timed out", note.call_args.args[0])
 
     def test_left_heavy_motion_is_review_anchor_near_0(self):
         c = self.fit.crop_loss(self.moving(2, 7, 6, 13), self.W, self.H, self.WINDOW, "x")

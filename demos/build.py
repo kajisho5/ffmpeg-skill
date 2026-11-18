@@ -1607,16 +1607,37 @@ def demo_filler_korean(ctx):
     return before, after
 
 
+def make_offcentre_motion(path):
+    ffmpeg("-f", "lavfi", "-i", "color=c=0x101014:s=960x540", "-f", "lavfi",
+           "-i", "color=c=0xff5533:s=90x90", "-filter_complex",
+           "[0:v][1:v]overlay=x='740+40*sin(2*PI*0.4*t)':y=225", "-t", "4",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+           str(path))
+
+
+def demo_fit_crop_check(ctx):
+    source = ctx.path("offcentre.mp4")
+    make_offcentre_motion(source)
+    before, after = ctx.path("centre.mp4"), ctx.path("after.mp4")
+    options = ("--aspect", "9:16", "--fit", "crop", "--preset", "veryfast", "--json")
+    centre = ctx.script("fit.py", source, *options, "-o", before, capture=True)
+    right = ctx.script("fit.py", source, *options, "--crop-x", "1", "-o", after, capture=True)
+    if not ctx.dry:
+        result = json.loads(centre)
+        warnings = result.get("diagnostics", {}).get("warnings", [])
+        if not any(w["code"] == "crop_content_off_centre" for w in warnings):
+            raise BuildError("fit.py did not warn about motion outside the centre crop")
+        if json.loads(right).get("crop_check", {}).get("verdict") != "ok":
+            raise BuildError("the right-anchored crop did not keep the moving block")
+    return before, after
+
+
 def demo_motion_centre(ctx):
     """cropdetect.py --motion-centre reports where the motion sits per second; it never picks a
     reframe. Left is a naive centre crop, which clips the moving subject sitting off to one
     side; right is a crop.py window placed on the measured centroid instead."""
     before = ctx.path("offcentre.mp4")
-    ffmpeg("-f", "lavfi", "-i", "color=c=0x101014:s=960x540", "-f", "lavfi",
-           "-i", "color=c=0xff5533:s=90x90", "-filter_complex",
-           "[0:v][1:v]overlay=x='740+40*sin(2*PI*0.4*t)':y=225", "-t", "4",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-           str(before))
+    make_offcentre_motion(before)
     out = ctx.script("cropdetect.py", before, "--motion-centre", "--json", capture=True)
     # Matches this fixture's own measured centroid (deterministic -- verified across reruns) so
     # _DryCtx's doc-generation pass (which never actually runs cropdetect.py) records the same
@@ -1715,6 +1736,9 @@ _ROWS = [
     ("reframe_crop", PICTURE, "16:9 to 9:16 by cropping",
      "The vertical frame is cut out of the centre of the wide one -- full height, sides lost.",
      demo_reframe_crop, "video", None),
+    ("fit_crop_check", PICTURE, "Check a vertical crop for lost motion",
+     "The centre crop reports crop_content_off_centre and suggests a shift right. The crop with --crop-x 1 keeps the moving block and reports crop_check.verdict: ok.",
+     demo_fit_crop_check, "video", None, ("CENTRE CROP", "RIGHT-ANCHORED CROP")),
     ("reframe_talk", PICTURE, "A talking head made vertical (AI-generated footage)",
      "The 9:16 frame is placed on the speaker with --crop-x 0.27 instead of the centre, where it would cut her face in half. The source is AI-generated footage, not a real person.",
      demo_reframe_talk, "video", None),

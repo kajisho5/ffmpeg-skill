@@ -191,6 +191,17 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit crop --
 
 **Look for:** The vertical frame is cut out of the centre of the wide one -- full height, sides lost.
 
+### Check a vertical crop for lost motion
+
+![Check a vertical crop for lost motion](demos/fit_crop_check.gif)
+
+```bash
+python3 scripts/fit.py demos/out/fit_crop_check_offcentre.mp4 --aspect 9:16 --fit crop --preset veryfast --json -o demos/out/fit_crop_check_centre.mp4
+python3 scripts/fit.py demos/out/fit_crop_check_offcentre.mp4 --aspect 9:16 --fit crop --preset veryfast --json --crop-x 1 -o demos/out/fit_crop_check_after.mp4
+```
+
+**Look for:** The centre crop reports crop_content_off_centre and suggests a shift right. The crop with --crop-x 1 keeps the moving block and reports crop_check.verdict: ok.
+
 ### A talking head made vertical (AI-generated footage)
 
 ![A talking head made vertical (AI-generated footage)](demos/reframe_talk.gif)
