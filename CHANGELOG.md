@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 3.13.2
+
+_Automated release: version and notes generated from pull requests merged since 3.13.1._
+
+- Document a full subtitled Reels edit from spoken footage (#616)
+- Check Whisper engine startup in doctor (#592)
+- Protect and bind resolved image sequence frames (#602)
+
+Closes: #563, #577, #607
+
 ## 3.13.1
 
 _Automated release: version and notes generated from pull requests merged since 3.13.0._
