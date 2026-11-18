@@ -838,6 +838,20 @@ def demo_tempo_exact_length(ctx):
     return before, after
 
 
+def demo_matroska_audio_cut(ctx):
+    before = FIX / "music.m4a"
+    after = ctx.path("after.mka")
+    raw = ctx.script("cut.py", before, "--start", "1", "--end", "4", "--accurate",
+                     "-o", after, "--json", capture=True)
+    if not ctx.dry:
+        report = json.loads(raw)
+        audio = report["probe"]["audio"]
+        if not report["verified"] or report["probe"]["video"] or audio["codec"] != "flac":
+            raise BuildError("the Matroska cut did not verify as FLAC audio")
+        ctx.note("verified FLAC audio in Matroska")
+    return before, after
+
+
 def demo_export_reels(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
@@ -1926,6 +1940,9 @@ _ROWS = [
     ("scenes_shots", PROJECTS, "Shots labelled static / pan / motion",
      "scenes.py --shots measures an optical-flow proxy per detected shot and reports a label for each -- a measurement, not an edit. The strip shows the three shots in the fixture with the labels actually returned.",
      demo_scenes_shots, "video", None),
+    ("matroska_audio_cut", AUDIO, "An accurate cut to Matroska audio",
+     "The left waveform shows the source. The right shows the selected three seconds, verified as FLAC audio in a .mka file.",
+     demo_matroska_audio_cut, "wave", None, ("SOURCE", "MATROSKA AUDIO")),
     ("silence_speech_aware", AUDIO, "Speech-aware silence removal keeps the breaths",
      "A 0.25 s breath sits inside a sentence and a 1 s pause sits between sentences. Left uses a --min-silence low enough to catch the breath too, so plain detection cuts both; right is --speech-aware at the ordinary --min-silence -- its finer 0.12 s floor still measures the breath, but the breath is shorter than --min-silence so it is kept, and only the real sentence-boundary pause is cut.",
      demo_silence_speech_aware, "wave", None, ("--MIN-SILENCE 0.2 (cuts the breath)", "--SPEECH-AWARE (breath kept)")),

@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Treat `.mka` as audio-only. Audio encodes use FLAC, and compatible cuts can copy the original audio codec (#539).
 
 ## 3.12.0
 

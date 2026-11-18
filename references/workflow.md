@@ -33,6 +33,9 @@ Ask a short question only when the answer changes the output materially and the 
 
 ## Audio-only files
 
+Use `.mka` for Matroska audio. A compatible `cut` stream copy keeps the audio codec,
+and `cut --accurate` writes FLAC. Use `.mkv` for a cut with picture.
+
 Audio is a first-class input: `probe`, `cut`, `silence`, `loudness`, `audio`, `sync`, `check --platform podcast`, `render --template podcast` take WAV, FLAC, MP3, M4A/AAC, OGG, Opus; output extension picks the format. Scripts needing a picture (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `look`; the contract's `video_required` lists the rest) refuse audio with "input has no video stream" — don't force a video wrapper. `scenes` takes an audio file as one scene (`--beats`, `--audio-peaks`, `--speech`, `--highlights`); its `--sheet` and `--shots` refuse one. Recipes: `references/gotchas.md#audio-only-files`.
 
 ## What this skill does and does not decide

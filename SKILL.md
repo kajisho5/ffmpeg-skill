@@ -18,7 +18,7 @@ Writing tools run nothing under `--dry-run`; the measuring tools (`probe`, `chec
 `scenes`, `cropdetect`, `report`, `silence`, `loudness`, `stabilize`, `overlay`, `metadata`, `cut`, `render`,
 `batch`) may still run ffmpeg/ffprobe without writing artifacts; `verify` ignores the flag. Per tool: `contract --json --tool NAME` `dry_run`.
 
-Audio-only files work in the audio tools; picture tools refuse them (`references/workflow.md#audio-only-files`).
+Audio tools accept audio-only files, including Matroska audio (`.mka`). Picture tools require video. See `references/workflow.md#audio-only-files`.
 
 ## Workflow (in this order)
 
