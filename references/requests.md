@@ -8,7 +8,7 @@ variant it does not show.
 |-----------|----|
 | "cut from 1:20 to 2:05", "trim the first 10 s" | `cut.py input.mp4 --start 1:20 --end 2:05` |
 | "keep only these parts", "remove the middle" | `cut.py input.mp4 --segments 0-1:00,1:30-2:00` or `--remove 1:00-1:30` |
-| "make it exactly 60 seconds" | `fit.py input.mp4 --duration 60` (speed) or `--method trim` |
+| "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
 | "cut this and make it HEVC / AV1 / ProRes" (output codec named) | `cut.py input.mp4 --start 0:10 --end 0:40 --codec hevc` (ProRes needs `-o NAME.mov`) |
 | "cut out the pauses", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
 | "cut the ums and uhs", "remove the filler words" | `silence.py input.mp4 --filler --words words.json` (measured word timings; `--transcribe` makes them) |

@@ -6,6 +6,31 @@
 
 (nothing yet)
 
+## 3.11.1
+
+_Automated release: version and notes generated from pull requests merged since 3.11.0._
+
+- test(export): seed the file size and loudness fixture (#587)
+
+## 3.11.0
+
+_Automated release: version and notes generated from pull requests merged since 3.10.2._
+
+### Added
+
+- `fit.py --duration` reports `large_speed_change` when the whole clip is retimed
+  by a factor above 1.15 or below 1/1.15. Duration examples choose a trim or a
+  speed change explicitly (#582).
+- feat(fit): a large retime is never silent (large_speed_change warning) (#584)
+- Build(deps): Bump sigstore/cosign-installer from 4.1.2 to 4.1.3 (#472)
+- Build(deps): Bump github/codeql-action/upload-sarif (#471)
+
+## 3.10.2
+
+_Automated release: version and notes generated from pull requests merged since 3.10.1._
+
+- fix(wrap): never break inside a reduplicated ideograph (看看, 试试) (#583)
+
 ## 3.10.1
 
 _Automated release: version and notes generated from pull requests merged since 3.10.0._

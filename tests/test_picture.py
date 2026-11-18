@@ -5596,6 +5596,136 @@ class PhraseWrapTests(unittest.TestCase):
         self.assertEqual(C.break_penalty("\u3042", "\u3063", "ja"), 1.0)  # small kana may not start a line
 
 
+    def _assert_pair_never_torn(self, text, char, lang, widths, modes=("phrase", "measured")):
+        """End to end: the text survives wrapping and no line ends with the first half of a
+        `char` pair while the second half opens the next line."""
+        C = self.caption
+        for max_em in widths:
+            for mode in modes:
+                lines = C.wrap_text(text, float(max_em), mode=mode, lang=lang)
+                self.assertEqual("".join(lines), text, (lines, max_em, mode, lang))
+                for a, b in zip(lines, lines[1:]):
+                    run = len(a) - len(a.rstrip(char))
+                    if run and b.startswith(char):
+                        # a break inside a run of `char` falls between pairs: an even count ends the line
+                        self.assertEqual(run % 2, 0, (lines, max_em, mode, lang))
+
+    def test_reduplicated_ideographs_are_never_split(self):
+        """A repeated ideograph is one word -- Chinese verb reduplication (看看 "have a look",
+        试试 "give it a try", 想想 "think it over") and words like 人人. A reader of the 3.10.0
+        release found 看|看 split across two lines of a burned-in Chinese caption: the pair
+        were two atoms at penalty 0.6 (two ideographs, nothing to say), so a width that
+        filled the first line exactly tore the word in half."""
+        C = self.caption
+        # the penalty table forbids the break itself, whatever language the cue declares
+        for pair in ("看看", "试试", "想想", "人人"):
+            self.assertEqual(C.break_penalty(pair[0], pair[1], "zh"), 1.0, pair)
+        self.assertEqual(C.break_penalty("看", "看", None), 1.0)
+        # two different ideographs keep their ordinary score
+        self.assertLess(C.break_penalty("看", "这", "zh"), 1.0)
+        # the atomiser keeps the pair together, as it already keeps a katakana run together
+        self.assertIn("想想", [a for a, _sp in C._atoms("我想想办法")])
+        self.assertIn("看看", [a for a, _sp in C._atoms("你先看看这个")])
+        self.assertIn("试试", [a for a, _sp in C._atoms("我们试试吧")])
+        # end to end, at every width that wraps the cue at all, in both modes
+        self._assert_pair_never_torn("你先看看这个再说吧", "看", "zh", range(3, 13))
+        self._assert_pair_never_torn("我们试试这个新办法吧", "试", "zh", range(3, 13))
+
+    def test_reduplication_merge_is_capped_at_two(self):
+        """An uncapped merge made any run of one ideograph a single atom, so 哈哈哈哈哈哈 in a
+        caption could not be wrapped except by a hard slice at the column edge. The merge
+        stops at two: a longer run is pairs, and a lone last character when it is odd."""
+        C = self.caption
+
+        def atoms(s):
+            return [a for a, _sp in C._atoms(s)]
+
+        self.assertEqual(atoms("人人人"), ["人人", "人"])
+        self.assertEqual(atoms("哈" * 8), ["哈哈"] * 4)
+        self.assertEqual(atoms("哈" * 9), ["哈哈"] * 4 + ["哈"])
+        self.assertEqual(atoms("哈" * 10), ["哈哈"] * 5)
+        # the break between two pairs is still scored as inside a word (a cost, not a wall)
+        self.assertEqual(C.break_penalty("哈", "哈", "zh"), 1.0)
+
+    def test_long_run_of_one_ideograph_still_wraps(self):
+        """8-10 identical ideographs at narrow widths: wrap_text returns (terminates), keeps
+        the text, and breaks only between pair atoms. Every line but the last holds an even
+        count; a run kept as one atom would be hard-sliced at 3 or 5 em into odd lines."""
+        C = self.caption
+        for n in (8, 9, 10):
+            text = "哈" * n
+            for max_em in (3.0, 5.0):
+                for mode in ("phrase", "measured"):
+                    lines = C.wrap_text(text, max_em, mode=mode, lang="zh")
+                    self.assertEqual("".join(lines), text, (n, max_em, mode))
+                    self.assertGreater(len(lines), 1, (lines, n, max_em, mode))
+                    for line in lines[:-1]:
+                        self.assertEqual(len(line) % 2, 0, (lines, n, max_em, mode))
+
+    def test_three_run_is_a_pair_and_one(self):
+        """人人人: the cap makes it 人人 + 人, so the only break inside the run is after the pair."""
+        C = self.caption
+        self.assertEqual([a for a, _sp in C._atoms("大家人人人都有")].count("人人"), 1)
+        self._assert_pair_never_torn("大家人人人都有", "人", "zh", range(2, 9))
+
+    def test_reduplication_inside_brackets(self):
+        """A reduplicated pair inside brackets ("（看看）") is never torn.
+
+        Guarantees differ by mode, and the assertions are scoped to match:
+
+        - Both modes: the wrap is lossless (joined lines == input), and the
+          pair "看看" always sits intact on a single line.
+        - Phrase mode only: the brackets stay attached to the pair, so the
+          whole "（看看）" lands on one line and no line starts with a
+          closing bracket (break_penalty("看", "」", "zh") is 1.0, and
+          phrase mode honours kinsoku via _greedy_chunks).
+
+        Measured mode runs _greedy_chunks with kinsoku=False and is pinned
+        to 1.15's behaviour exactly: no one-character orphan line, a break
+        chosen only to minimise the widest line, and the greedy fill's line
+        count never changes. It protects the pair itself, but the brackets
+        can separate from it. Verified layouts for "他说（看看）这个吧":
+            phrase   max_em=4/5 -> ['他说', '（看看）', '这个吧']
+            measured max_em=4   -> ['他说（', '看看）这', '个吧']
+            measured max_em=5   -> ['他说（看看', '）这个吧']
+        So no bracket-attachment or line-start assertion is made for
+        measured mode. Do not "fix" that here without changing the
+        measured-mode contract.
+        """
+        C = self.caption
+        text = "他说（看看）这个吧"
+        # Breaking between 看 and a closing 」 is forbidden outright.
+        self.assertEqual(C.break_penalty("看", "」", "zh"), 1.0)
+        for max_em in (4, 5):
+            for mode in ("phrase", "measured"):
+                with self.subTest(mode=mode, max_em=max_em):
+                    lines = C.wrap_text(text, float(max_em), mode=mode, lang="zh")
+                    # Both modes: lossless, and the pair is never torn.
+                    self.assertEqual("".join(lines), text)
+                    self.assertTrue(
+                        any("看看" in line for line in lines),
+                        f"pair torn in {mode} mode: {lines!r}",
+                    )
+                    if mode == "phrase":
+                        self.assertTrue(
+                            any("（看看）" in line for line in lines),
+                            f"brackets split from pair in phrase mode: {lines!r}",
+                        )
+                        for line in lines:
+                            self.assertFalse(
+                                line.startswith("」"),
+                                f"line starts with 」 in phrase mode: {lines!r}",
+                            )
+
+    def test_reduplication_kept_whatever_the_cue_language(self):
+        """The cue's declared language does not change it: a Chinese line tagged ja, or with
+        no language at all, keeps 看看 together end to end."""
+        C = self.caption
+        for lang in (None, "ja"):
+            self.assertEqual(C.break_penalty("看", "看", lang), 1.0, lang)
+            self._assert_pair_never_torn("你先看看这个再说吧", "看", lang, range(3, 13))
+
+
 class FitSizeTests(unittest.TestCase):
     """1.17: the caption size is fitted to the cue before the cue is split (eval 17).
 
