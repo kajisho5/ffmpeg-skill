@@ -6,6 +6,7 @@ verification policy) holds when the tool actually runs.
     python3 tests/test_contract.py
 """
 import contextlib
+import importlib.metadata
 import io
 import json
 import os
@@ -7688,7 +7689,51 @@ class DoctorSpeechTests(unittest.TestCase):
         self.assertFalse(engine["usable"])
         self.assertIn("timed out", engine["detail"])
         self.assertEqual(run.call_args.args[0], [str(executable.absolute()), "--help"])
-        self.assertGreater(run.call_args.kwargs["timeout"], 0)
+        self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_whisper_cpp_probe_reports_a_loader_failure(self):
+        from _common import runner
+
+        executable = Path("tools", "bin", "whisper-cli")
+        failure = subprocess.CompletedProcess([], 1, "", "shared library unavailable")
+        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: str(executable) if name == "whisper-cli" else None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError), \
+                unittest.mock.patch("subprocess.run", return_value=failure) as run:
+            engine = _contract._whisper_engines()["whisper.cpp"]
+        self.assertEqual(engine["checked"], "cli_startup")
+        self.assertFalse(engine["usable"])
+        self.assertIn("shared library unavailable", engine["detail"])
+        self.assertEqual(run.call_args.args[0], [str(executable.absolute()), "--help"])
+
+    def test_unreadable_pyav_metadata_preserves_the_startup_error(self):
+        from _common import runner
+
+        def distribution(name):
+            if name == "av":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "faster_whisper" or None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=distribution), \
+                unittest.mock.patch.object(_contract, "_speech_startup_error", return_value="cannot import av"):
+            engine = _contract._whisper_engines()["faster-whisper"]
+        self.assertEqual(engine["detail"], "cannot import av")
+        self.assertIsNone(engine["av_version"])
+
+    def test_whisper_module_alone_is_not_the_openai_whisper_distribution(self):
+        from _common import runner
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "whisper" or None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
+            self.assertNotIn("openai-whisper", _contract._whisper_engines())
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("importlib.metadata.version", return_value="20250625"):
+            self.assertIn("not found on PATH", _contract._whisper_engines()["openai-whisper"]["detail"])
 
     def test_faster_whisper_import_does_not_create_a_model(self):
         from _common import runner

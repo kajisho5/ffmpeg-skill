@@ -1286,24 +1286,33 @@ def _speech_startup_error(command: List[str]) -> Optional[str]:
     return shown(lines[-1][:300]) if lines else f"startup check exited {proc.returncode}"
 
 
+def _speech_package_version(name: str) -> Optional[str]:
+    try:
+        return importlib.metadata.version(name)
+    except (importlib.metadata.PackageNotFoundError, OSError, UnicodeError):
+        return None
+
+
 def _whisper_engines() -> Dict[str, Dict[str, Any]]:
     """Check the entry points transcription uses, without opening media or loading models."""
     from _common.asr import _whisper_cpp_cli
     from _common.runner import SafeShutil, safe_which
 
     engines: Dict[str, Dict[str, Any]] = {}
-    if _whisper_cpp_cli(SafeShutil(shutil)):
-        engines["whisper.cpp"] = {"usable": True, "checked": "executable"}
+    cpp = _whisper_cpp_cli(SafeShutil(shutil))
+    if cpp:
+        error = _speech_startup_error([str(Path(cpp).absolute()), "--help"])
+        engines["whisper.cpp"] = {"usable": error is None, "checked": "cli_startup"}
+        if error:
+            engines["whisper.cpp"].update(
+                detail=error, hint="Check the installation and shared libraries of the whisper.cpp command.",
+            )
     if importlib.util.find_spec("faster_whisper") is not None:
         error = _speech_startup_error([sys.executable, "-c", "from faster_whisper import WhisperModel"])
         engines["faster-whisper"] = {"usable": error is None, "checked": "import"}
         if error:
-            try:
-                av_version = importlib.metadata.version("av")
-            except importlib.metadata.PackageNotFoundError:
-                av_version = None
             engines["faster-whisper"].update(
-                detail=error, av_version=av_version,
+                detail=error, av_version=_speech_package_version("av"),
                 hint="Check that faster-whisper and PyAV are compatible in the Python environment running doctor.",
             )
     whisper = safe_which("whisper")
@@ -1315,7 +1324,7 @@ def _whisper_engines() -> Dict[str, Dict[str, Any]]:
             engines["openai-whisper"].update(
                 detail=error, hint="Check the openai-whisper installation in the environment that provides the whisper command.",
             )
-    elif importlib.util.find_spec("whisper") is not None:
+    elif _speech_package_version("openai-whisper") is not None:
         engines["openai-whisper"] = {
             "usable": False, "detail": "whisper command not found on PATH",
             "hint": "Make the openai-whisper command available on PATH.",
