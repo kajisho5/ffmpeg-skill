@@ -222,7 +222,18 @@ def _atoms(line: str) -> "List[Tuple[str, bool]]":
             if word:
                 out.append((word, spaced))
                 word = ""
-            if out and not pending and _is_katakana_run(ch) and _is_katakana_run(out[-1][0][-1]):
+            if (out and not pending and _is_ideograph(ch) and out[-1][0][-1:] == ch
+                    and out[-1][0][-2:-1] != ch):
+                # a repeated ideograph is one word -- Chinese verb reduplication (看看 "have a look",
+                # 试试 "give it a try", 想想 "think it over") and words like 人人: the pair is one atom,
+                # as a katakana run already is (a reader of 3.10.0 saw 看|看 split across two lines).
+                # The merge is capped at TWO characters: an uncapped run (哈哈哈哈哈哈 in a caption) was
+                # one unbreakable atom, hard-sliced at the column edge. A longer run is pairs (哈哈|哈哈|哈),
+                # and break_penalty still scores a break between them PENALTY_FORBIDDEN, so it is a cost
+                # the wrapper may pay, not a wall. Compared on the atom's tail, so an opening bracket the
+                # pair carries (（看 + 看) still merges, and a closing mark between the two (「看」看) does not
+                out[-1] = (out[-1][0] + ch, out[-1][1])
+            elif out and not pending and _is_katakana_run(ch) and _is_katakana_run(out[-1][0][-1]):
                 # a katakana word (タイミング, コンピューター) is one atom: eval 17 saw タイ|ミング
                 out[-1] = (out[-1][0] + ch, out[-1][1])
             elif out and (attach_next or _is_mark(ch)):
@@ -435,6 +446,12 @@ def break_penalty(prev_char: str, next_char: str, lang: "Optional[str]" = None,
             if script not in ("ja", "zh"):
                 script = char_script(prev_char)
     if next_char in JA_NO_LINE_START or prev_char in JA_NO_LINE_END or _is_mark(next_char):
+        return PENALTY_FORBIDDEN
+    if prev_char == next_char and _is_ideograph(prev_char):
+        # a repeated ideograph is one word (reduplication: 看看, 试试, 想想): a break inside it is a
+        # break inside a word, whatever language the cue declares. The atomiser keeps a pair
+        # together (capped at two); this scores a break between the pairs of a longer run, and
+        # covers callers that score a break directly
         return PENALTY_FORBIDDEN
     if script not in ("ja", "zh"):
         return PENALTY_NEUTRAL
