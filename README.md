@@ -479,8 +479,8 @@ It cannot tell you whether the result looks or sounds right, and the result says
 
 `check.py --content` measures black frames, freezes, flashes, silence and audio dropouts where
 the relevant stream exists. Delivery templates run those checks on the written file by default
-and include the rows in `check.checks` when the render reaches its check stage. This adds
-decode time. For an intentional exception,
+and include the rows in `check.checks` when a real render reaches its check stage. A dry run
+records `check_dry_run` and leaves `check` null. A real check adds decode time. For an intentional exception,
 fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}`
 in the project before rendering. After a failed check, choose a new output or pass
 `--overwrite` to intentionally replace the retained file. JSON `commands` records
