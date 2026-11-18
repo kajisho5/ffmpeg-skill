@@ -6,6 +6,29 @@
 
 (nothing yet)
 
+## 3.12.0
+
+_Automated release: version and notes generated from pull requests merged since 3.11.3._
+
+### Added
+
+- A completed `fit.py --fit crop` can report `crop_check`, an advisory measurement
+  of discarded luma motion or detail with a suggested crop anchor (#570).
+- feat(fit): report what a crop cuts away (#585)
+- fix: refuse picture deliveries under audio-only filenames (#594)
+- fix(render): apply crop to each clip before joining (#590)
+
+Closes: #551, #552
+
+## 3.11.3
+
+_Automated release: version and notes generated from pull requests merged since 3.11.2._
+
+- docs: explain execution guards up front (#586)
+- fix(cut): verify the total duration of copied segments (#589)
+
+Closes: #557, #571
+
 ## 3.11.2
 
 _Automated release: version and notes generated from pull requests merged since 3.11.1._
