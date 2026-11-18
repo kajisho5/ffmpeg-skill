@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
+from _common.color import hdr_rgb_matrix_args
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, warn
@@ -734,6 +735,10 @@ def main() -> int:
             # SDR hevc/av1 line's own): a BT.601 source's pixels are converted to match, in front
             # of the -vf above (run() folds the two); an untagged, BT.709 or HDR source adds nothing
             cmd += bt709_matrix_args(meta)
+        if p.get("codec"):
+            # encoder_args()' line for a BT.2020 / HDR source tags that source's matrix: an RGB
+            # one is made YUV with it, not with FFmpeg's BT.601 default (#544)
+            cmd += hdr_rgb_matrix_args(meta)
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]
     if args.repair:
