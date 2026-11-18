@@ -6,6 +6,9 @@
 
 ### Added
 
+- `fit.py --duration` reports `large_speed_change` when the whole clip is retimed
+  by a factor above 1.15 or below 1/1.15. Duration examples choose a trim or a
+  speed change explicitly (#582).
 - A completed `fit.py --fit crop` can report `crop_check`, an advisory measurement
   of discarded luma motion or detail with a suggested crop anchor (#570).
 

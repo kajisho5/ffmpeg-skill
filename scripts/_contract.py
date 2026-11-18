@@ -491,6 +491,7 @@ DIAGNOSTIC_CODES = {
     # encoder decisions
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),
+    "large_speed_change": ("warnings", "fit.py --method speed: the whole picture and sound were retimed by a factor beyond 1.15x in either direction to reach --duration, and nothing was cut. A large retime is easy to ask for by accident -- speed is the default method -- when a cut was wanted, so it is never silent; {factor, threshold, source_duration, target_duration}"),
     # fonts and text
     "emoji_not_drawn": ("warnings", "caption.py / graphics.py --emoji auto: no glyph, colour path or PNG asset draws these emoji here (doctor fonts.emoji mode none), so they were left out of the drawn text; also graphics.py --text-render drawtext, which has no font fallback; {count, reason}"),
     "emoji_mono_drawn_in_colour": ("warnings", "caption.py / graphics.py --emoji mono on a build whose libass draws the emoji face in colour: nothing makes the glyph monochrome, so the result's emoji.mode is color (graphics.py --text-render drawtext draws none: mode none, emoji_not_drawn)"),

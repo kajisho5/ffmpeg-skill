@@ -122,9 +122,9 @@ Already installed? re-run `npx ffmpeg-skill` to refresh `~/.claude/skills/ffmpeg
 
 Then talk to your agent:
 
-> "Take `interview.mp4`, keep 0:45–3:10 and 5:00–6:30, and make it exactly 60 seconds for Reels."
+> "Take `interview.mp4`, keep 0:45–1:20 and 5:00–5:25, and make it a 60-second Reel."
 
-The agent runs `probe.py`, `cut.py --segments 0:45-3:10,5:00-6:30`, `fit.py --duration 60 --aspect 9:16 --fit crop`, `export.py --preset reels`, `check.py --platform reels` and `look.py`, then reports "final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo" with the contact sheet it inspected.
+The agent runs `probe.py`, `cut.py --segments 0:45-1:20,5:00-5:25 --accurate`, `fit.py --aspect 9:16 --fit crop`, `export.py --preset reels`, `check.py --platform reels` and `look.py`, then reports "final.mp4: 60.00 s, 1080×1920, 30 fps, AAC stereo" with the contact sheet it inspected.
 
 ### Deliver to a platform
 
@@ -154,7 +154,7 @@ The tools also work on their own, from any shell:
 ```bash
 S=~/.claude/skills/ffmpeg-skill/scripts
 python3 $S/probe.py input.mp4 --compact
-python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run    # print the plan, run nothing
+python3 $S/fit.py input.mp4 --duration 60 --method trim --aspect 9:16 --dry-run    # plan a trim and reframe
 python3 $S/export.py input.mp4 --preset reels --json                 # structured result with a probe of the output
 ```
 

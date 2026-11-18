@@ -313,7 +313,8 @@ fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
-`speed` retimes video and audio together (pitch-preserving `atempo`); it
+`speed` retimes video and audio together (pitch-preserving `atempo`). It
+reports `large_speed_change` for factors above 1.15 or below 1/1.15, and
 refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
 (frame blending, fast) or `--smooth interpolate` (motion-compensated
 `minterpolate`, fluid but roughly 10-20x slower than realtime; its frames are

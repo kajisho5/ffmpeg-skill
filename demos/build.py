@@ -758,8 +758,12 @@ def demo_reframe_pad(ctx):
 def demo_speed_up(ctx):
     before = FIX / "motion.mp4"
     after = ctx.path("after.mp4")
-    ctx.script("fit.py", before, "--duration", "4", "--method", "speed", "--preset", "veryfast",
-               "-o", after)
+    raw = ctx.script("fit.py", before, "--duration", "4", "--method", "speed", "--preset", "veryfast",
+                     "--json", "-o", after, capture=True)
+    if not ctx.dry:
+        warnings = json.loads(raw).get("diagnostics", {}).get("warnings", [])
+        if not any(w["code"] == "large_speed_change" for w in warnings):
+            raise BuildError("fit.py did not report the 2x retime as large_speed_change")
     return before, after
 
 
@@ -1752,7 +1756,7 @@ _ROWS = [
      "Nothing is lost: the wide frame is kept whole and the gap above and below is filled with a blurred copy.",
      demo_reframe_pad, "video", None),
     ("speed_up", PICTURE, "Speed change to hit a duration",
-     "An 8 s clip retimed to land exactly on 4 s; audio is pitch-corrected rather than chipmunked.",
+     "An 8 s clip retimed to 4 s with pitch-corrected audio. The JSON result reports large_speed_change with a factor of 2.",
      demo_speed_up, "video", None),
     ("reverse", PICTURE, "Reverse",
      "The life pattern runs backwards -- cells un-die; the audio is reversed with it.",
