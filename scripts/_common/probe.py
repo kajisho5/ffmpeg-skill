@@ -215,23 +215,6 @@ def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
     return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
 
 
-def riff_wave_args(path: str) -> List[str]:
-    """`-f wav` for a file that opens with a RIFF/WAVE header. FFmpeg 9.0.2 scores its MPEG-TS
-    probe above the WAV one when the PCM happens to hold 0x47 at a transport packet's spacing (a
-    steady tone can): ffprobe then reads a file this skill has just written as a broken transport
-    stream and fails with "End of file". The header says what the file is, so the probe is told.
-    Measured on 9.0.2 (CI): the same file fails unforced and reads with `-f wav`; 6.1 to 8.0 read
-    it either way."""
-    if not os.path.isfile(path):  # a pipe or a device is never opened here: the open would block
-        return []
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(12)
-    except OSError:
-        return []
-    return ["-f", "wav"] if head[:4] == b"RIFF" and head[8:12] == b"WAVE" else []
-
-
 def probe(path: str, role: str = "input") -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -258,7 +241,7 @@ def probe(path: str, role: str = "input") -> Dict[str, Any]:
         die(f"input not found: {path}")
     ffprobe = require_tool("ffprobe")
     proc = run(
-        [ffprobe, "-v", "error", *still_input_args(path), *riff_wave_args(path),
+        [ffprobe, "-v", "error",
          "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
         quiet=True,
         check=False,
@@ -1486,8 +1469,8 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
            "-filter_complex", graph, "-map", "[o]", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     # read frame by frame as ffmpeg writes them: 1728 bytes a frame is 187 MB for an hour at
     # 30 fps, and only the frames with a changed tile are kept. Same wall-clock limit as run_analysis()
-    cmd = _runner.guard_still_patterns(cmd)  # a still named with a % is that one file (#465 A7)
     _runner._refuse_url_media(cmd)
+    cmd = _runner.guard_input_formats(cmd)
     limit = _runner._limit_for(cmd)
     size, tiles = gw * gh * 3, gw * gh
     changed: Dict[int, int] = {}

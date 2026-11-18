@@ -1300,7 +1300,7 @@ class Audit459AudioTests(MediaFixtures):
         run failed its own output check with "End of file". A file that opens with a RIFF/WAVE
         header is probed with -f wav; nothing else is."""
         sys.path.insert(0, str(SCRIPTS))
-        from _common.probe import probe, riff_wave_args
+        from _common.runner import guard_input_formats, riff_wave_args
         self.assertEqual(riff_wave_args(str(self.voice)), ["-f", "wav"])
         self.assertEqual(riff_wave_args(str(self.src)), [])
         self.assertEqual(riff_wave_args(str(OUT / "a459_absent.wav")), [])
@@ -1314,6 +1314,33 @@ class Audit459AudioTests(MediaFixtures):
         named.write_bytes(self.voice.read_bytes())
         self.assertEqual(riff_wave_args(str(named)), ["-f", "wav"])
         self.assertEqual(probe(str(named))["audio"]["codec"], "pcm_s16le")
+        explicit = ["-f", "wav", "-i", str(self.bed)]
+        output = ["-f", "null", "-"]
+        cmd = ["ffmpeg", "-i", str(named), *explicit, *output]
+        self.assertEqual(guard_input_formats(cmd),
+                         ["ffmpeg", "-f", "wav", "-i", str(named), *explicit, *output])
+        self.assertEqual(guard_input_formats(["ffprobe", "-v", "error", "-i", str(named)]),
+                         ["ffprobe", "-v", "error", "-f", "wav", "-i", str(named)])
+
+    def test_wave_format_reaches_editing_and_measurement_inputs(self):
+        mix = OUT / "a459_wave_input.wav"
+        script("audio.py", self.voice, "--music", self.bed, "--music-volume", "-3", "--limit",
+               "--limit-ceiling", "-6", "-o", mix)
+        self.assertEqual(probe(str(mix))["audio"]["codec"], "pcm_s16le")
+
+        out = OUT / "a459_wave_cut.wav"
+        plan = json.loads(script("cut.py", mix, "--start", "0", "--end", "2", "--accurate",
+                                 "-o", out, "--dry-run", "--json").stdout)
+        self.assertTrue(any(["-f", "wav", "-i", str(mix)] == argv[i - 2:i + 2]
+                            for argv in map(shlex.split, plan["commands"])
+                            for i, arg in enumerate(argv) if arg == "-i"))
+        written = json.loads(script("cut.py", mix, "--start", "0", "--end", "2", "--accurate",
+                                    "-o", out, "--json").stdout)
+        self.assertTrue(written["verified"], written["verification"])
+        self.assertAlmostEqual(written["probe"]["duration"], 2.0, places=3)
+        measured = json.loads(script("loudness.py", mix, "--measure-only", "--json").stdout)
+        self.assertIsNotNone(measured["measured"]["input_i"])
+        self.assertIn("-f wav -i", measured["commands"][0])
 
     @staticmethod
     def _db(value):
