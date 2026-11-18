@@ -2428,13 +2428,15 @@ for a source with no duration, and when the budget leaves under 100 kb/s for the
 Scales into the preset frame (pad by default), tags BT.709 (a BT.601-matrix or RGB source is converted to it, as by every re-encode), sets `+faststart`,
 trims to the table's platform maximums (Reels 90 s, X 140 s; the table's as of its date, and
 platforms change them) unless `--allow-long`, and says
-so: `trimmed: {from, to}` and a `notes` line. It
-does not touch levels: for youtube / youtube4k / reels / x the written file is
-measured and the result's `loudness` (and a `notes` line) says when it is
-outside the platform's LUFS / true-peak spec, naming the `loudness.py` call
-that fixes it -- or pass `--normalize`, which runs that call on the written
-file itself (audio re-encoded, video copied; `loudness.normalized: true`) so a
-platform export is one command instead of export, loudness, export again. A
+so: `trimmed: {from, to}` and a `notes` line. For platform presets
+the written file's loudness is measured against the platform's LUFS / true-peak
+spec; when measured, non-silent audio misses the spec, normalization runs by
+default (audio re-encoded, video copied; `loudness.normalized: true`) so a
+platform export is one command instead of export, loudness, export again. Pass
+`--no-normalize` to skip normalization and report the un-normalized levels
+instead (the result's `loudness` and a `notes` line name the `loudness.py` call
+that fixes it). `--normalize` explicitly requests the same behaviour as the
+default. A
 measurement that cannot be read is `loudness.measured: false` (values null) with
 a failing `{step: loudness, ok: false, reason: not_measured}` and a
 `loudness_not_measured` warning, so the export is `verified: false` rather than

@@ -5965,6 +5965,8 @@ before it was changed. Five classes are changed, two are left for a decision.
   deliveries. Previously, `--normalize` was opt-in, so a plain `export.py in.mp4 --preset reels`
   would measure the loudness against the platform spec, note the shortfall, and deliver quiet audio.
   `render.py` already enabled `--normalize` by default for platform presets in project templates;
-  making it the default for `export.py` directly eliminates quiet deliveries while `--no-normalize`
+  making it the default for `export.py` attempts normalization when measured, non-silent audio
+  misses the platform's spec. If normalization still misses the target, the result reports
+  `loudness.ok: false` and the caller inspects the returned result; `--no-normalize`
   allows explicitly skipping the pass. Tests: `test_export_normalize_meets_the_platform_loudness_in_one_call`,
   `test_export_platform_preset_normalizes_quiet_audio_by_default`.

@@ -7,8 +7,9 @@
 ### Changed
 
 - **`export.py` platform presets normalise loudness by default (#579).** Platform presets
-  (`youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `x`, `linkedin`, `facebook`) now run loudness
-  normalization by default whenever the written output misses the platform's loudness spec.
+  (`youtube`, `youtube4k`, `youtube-hdr`, `youtube-av1`, `reels`, `tiktok`, `shorts`, `x`,
+  `linkedin`, `facebook`) now attempt loudness normalization by default whenever measured,
+  non-silent audio misses the platform's loudness spec.
   `--no-normalize` explicitly opts out and reports the un-normalized loudness. `render.py`
   forwards `--no-normalize` when `"normalize": false` is set in the project definition.
 

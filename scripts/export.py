@@ -30,7 +30,7 @@ Presets:
 Examples:
   python3 export.py final.mp4 --preset youtube
   python3 export.py final.mp4 --preset reels --fit crop
-  python3 export.py final.mp4 --preset reels --normalize   # meet the platform's loudness in the same call
+  python3 export.py final.mp4 --preset reels --no-normalize   # skip loudness normalization for this export
   python3 export.py final.mp4 --preset prores -o master.mov
   python3 export.py final.mp4 --preset dnxhr-hq -o master.mov
   python3 export.py final.mp4 --preset copy -o delivered.mp4

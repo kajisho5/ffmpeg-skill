@@ -2223,9 +2223,12 @@ def main() -> int:
             normalize = True
             warn(f"export: --normalize on by default for the {ex['preset']} preset (set \"normalize\": false to skip)",
                  "normalize_on_by_default", preset=ex["preset"])
+        elif normalize is None and ex["preset"] in PLATFORM_OF and proj.get("loudness"):
+            # a loudness stage already set the level; export's default must not re-normalise it
+            normalize = False
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
-        elif normalize is False:
+        elif normalize is False and ex["preset"] in PLATFORM_OF:
             argv += ["--no-normalize"]
         sh("export.py", *argv, stage="export")
         stages_done.append("export")
