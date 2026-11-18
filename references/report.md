@@ -38,9 +38,8 @@ lacks a review view, explain the limitation and share any supported previews the
 Where the host supports side-by-side playback, show the original and edited video when both
 have picture. For an audio-only edit, provide playback for the available audio. Where the
 host supports waveforms, draw them from the available audio, including a flat waveform for a
-silent track. Use a known source-to-output time mapping for synchronized playback and waveform
-seeking.
-When that mapping is unavailable, label and show the two clocks separately. The host owns the
+silent track. Synchronize playback and waveform seeking when the host can do so using a known
+source-to-output time mapping. Otherwise, label and show the two clocks separately. The host owns the
 view, numbered edit items, and how it maps feedback to a new edit request. Use ffmpeg-skill to
 supply media, measured results, and available preview files, and to execute the requested
 changes. Velisa and other callers that own the review handle it through their own workflow.
