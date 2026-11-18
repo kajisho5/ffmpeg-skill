@@ -20,6 +20,7 @@ this document changes; the skill version comes from package.json.
 """
 import argparse
 import functools
+import importlib.metadata
 import importlib.util
 import json
 import platform
@@ -1297,11 +1298,67 @@ def _exe_report() -> Dict[str, Any]:
     return out
 
 
-def _whisper_available() -> bool:
-    from _common.runner import safe_which
-    if safe_which("whisper-cli") or safe_which("whisper-cpp") or safe_which("whisper"):
-        return True
-    return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
+def _speech_startup_error(command: List[str]) -> Optional[str]:
+    from _common.emit import shown
+
+    try:
+        proc = subprocess.run(command, cwd=HERE, capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"startup check timed out after {_DETECT_TIMEOUT} seconds"
+    except OSError as exc:
+        return f"startup check failed: {shown(exc)}"
+    if proc.returncode == 0:
+        return None
+    lines = (proc.stderr.strip() or proc.stdout.strip()).splitlines()
+    return shown(lines[-1][:300]) if lines else f"startup check exited {proc.returncode}"
+
+
+def _speech_package_version(name: str) -> Optional[str]:
+    try:
+        return importlib.metadata.version(name)
+    except (importlib.metadata.PackageNotFoundError, KeyError, OSError, UnicodeError):
+        return None
+
+
+def _whisper_engines() -> Dict[str, Dict[str, Any]]:
+    """Check the entry points transcription uses, without opening media or loading models."""
+    from _common.asr import _whisper_cpp_cli
+    from _common.runner import SafeShutil, safe_which
+
+    engines: Dict[str, Dict[str, Any]] = {}
+    cpp = _whisper_cpp_cli(SafeShutil(shutil))
+    if cpp:
+        error = _speech_startup_error([str(Path(cpp).absolute()), "--help"])
+        engines["whisper.cpp"] = {"usable": error is None, "checked": "cli_startup"}
+        if error:
+            engines["whisper.cpp"].update(
+                detail=error, hint="Check the installation and shared libraries of the whisper.cpp command.",
+            )
+    if importlib.util.find_spec("faster_whisper") is not None:
+        error = _speech_startup_error([sys.executable, "-c", "from faster_whisper import WhisperModel"])
+        engines["faster-whisper"] = {"usable": error is None, "checked": "import",
+                                    "av_version": _speech_package_version("av")}
+        if error:
+            engines["faster-whisper"].update(
+                detail=error,
+                hint="Check that faster-whisper and PyAV are compatible in the Python environment running doctor.",
+            )
+    whisper = safe_which("whisper")
+    if whisper:
+        # The startup check changes cwd. Resolve a relative PATH entry against the caller's cwd.
+        error = _speech_startup_error([str(Path(whisper).absolute()), "--help"])
+        engines["openai-whisper"] = {"usable": error is None, "checked": "cli_startup"}
+        if error:
+            engines["openai-whisper"].update(
+                detail=error, hint="Check the openai-whisper installation in the environment that provides the whisper command.",
+            )
+    elif _speech_package_version("openai-whisper") is not None:
+        engines["openai-whisper"] = {
+            "usable": False, "detail": "whisper command not found on PATH",
+            "hint": "Make the openai-whisper command available on PATH.",
+        }
+    return engines
 
 
 def _parakeet_available() -> bool:
@@ -1483,6 +1540,7 @@ def doctor() -> Dict[str, Any]:
     covered = _covered_by_videotoolbox(listings["encoders"])
     drawtext_probe: Optional[Dict[str, Any]] = None
     drawtext_crashed = False  # listed but crashed (#100), as opposed to absent from the build
+    speech_engines = _whisper_engines()
 
     def _from(kind: str, name: str) -> str:
         lst = listings[kind]
@@ -1526,7 +1584,7 @@ def doctor() -> Dict[str, Any]:
         elif cap.startswith("bsf:"):
             state[cap] = _from("bsfs", cap[4:])
         elif cap == "external:whisper":
-            state[cap] = "available" if _whisper_available() else "missing"
+            state[cap] = "available" if any(engine["usable"] for engine in speech_engines.values()) else "missing"
         elif cap == "external:parakeet":
             state[cap] = "available" if _parakeet_available() else "missing"
         else:
@@ -1574,6 +1632,7 @@ def doctor() -> Dict[str, Any]:
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
         "hw": _hw_default(),
         "fonts": _fonts_capability(probe=True),
+        "speech_engines": speech_engines,
     }
 
 
@@ -2289,6 +2348,10 @@ def main() -> int:
             print(head)
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
+            for name, engine in d["speech_engines"].items():
+                if not engine["usable"]:
+                    av = f" (PyAV {engine['av_version']})" if engine.get("av_version") else ""
+                    print(f"{name}{av}: {engine['detail']}. {engine['hint']}", file=sys.stderr)
             if d["unknown"]:
                 print(f"unknown (detection failed, not proven missing): {', '.join(d['unknown'])}")
             for cap, alt in sorted(d["covered_by"].items()):
