@@ -25,7 +25,9 @@ Look: final_sheet.png（字幕はセーフエリア内、ロゴは右上）
 Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだったのでステレオにした
 ```
 
-Keep it to those five lines plus anything the user must decide. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
+Keep these five lines as the report itself. Include any decision the user needs to make. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
+
+After handing the finished edit directly to a standalone user, you may offer a review view if it would help them inspect several changes or check picture or sound. Ask once, in the user's language, after the five lines. For example, “Would you like a preview of the edits and checks in one view?” In Japanese, 「編集した箇所と確認結果を、プレビュー付きの一覧で見ますか？」. Wait for the user's answer before building any additional view. The offer applies only when this skill is handling the standalone request and presenting the result itself. Omit it when a calling app or skill handles the review, including Velisa.
 
 When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 
