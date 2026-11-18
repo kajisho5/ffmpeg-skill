@@ -342,8 +342,9 @@ frame's area), `scale` (its width over the source's) and, for `--fit crop`, the 
 pixels `cropped` on each side. It is measured by running the frame's own filters on a
 uniform frame (no decode of the source), so a 202x360 frame holding a 202x114 picture is told
 apart from a full-frame crop without a contact sheet; `subject_framing` stays unverified.
-After a crop with a discarded margin, `crop_check` samples luma motion and detail
-inside the kept source time range. A `crop_content_off_centre` warning may suggest
+After a crop with a discarded margin, `crop_check` samples the kept source time
+range and checks where luma motion falls. It uses edge detail when motion falls
+below its measurement threshold. A `crop_content_off_centre` warning may suggest
 `--crop-x` or `--crop-y`. An unavailable measurement reports `unmeasured`.
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 
