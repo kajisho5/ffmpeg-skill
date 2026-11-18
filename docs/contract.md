@@ -361,7 +361,16 @@ tool, a vanished `cwd` or a malformed `argv` is refused the same way under its o
 runs the tool with the planned `argv`, then the verify steps (a `check` step may also carry
 `"content": true`, added by hand, for `check.py --content`), and reports `plan`, `plan_sha256`,
 `tool`, `tool_result`, `check` and `unbound_inputs` (each one also a `diagnostics.warnings` entry:
-nothing checked that file). `plan_version` is bumped when the document's shape changes.
+nothing checked that file). `plan_version` is bumped when the execution document's shape changes.
+
+With `fit.py --duration`, dry-run JSON, saved plans and completed results include a `timing`
+object with `method`, `source_duration`, `target_duration`, `speed_factor` and `retimed`. Durations
+are in seconds. The speed factor is the computed source/target ratio for `speed`, and 1 for
+`trim`. `retimed` says whether the command includes a speed change. A ratio within 0.0001 of 1
+leaves the speed unchanged. A dry run without a usable input length reports a null source
+duration, factor and retime decision for `speed`. Saving a plan checks that its input still
+matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
+the output duration separately.
 
 ### Repeatability
 
