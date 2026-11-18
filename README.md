@@ -52,6 +52,10 @@ Left half is the input, right half is what the command produced. **[Every before
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
+- **Protect your source files.** A destination that matches a declared input is refused. Direct edits require `--overwrite` to replace an existing output. A `batch --watch` job can replace an unchanged file it delivered on an earlier pass. The `-y` in the dry-run command takes effect only after the tool checks the destination.
+- **Call typed tools.** The agent supplies named options such as `--aspect 9:16` and `--fit pad`. The tool builds the FFmpeg command and filter graph.
+- **Verify the edit.** The tools probe the source and the written file, so the agent can check the actual duration, frame size and audio before reporting success.
+
 > **SPEC** (Self-Producing Execution Contract): each tool's `input_schema` — the part of its
 > contract and MCP tool definition that has to track the CLI flag-for-flag — is never
 > hand-authored beside the code. It is derived, at run time, from the same `argparse` parser that
@@ -416,6 +420,13 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 ### Can I pass raw ffmpeg arguments, or a filter_complex?
 
 Each operation is a script whose flags are its argparse parser, and that parser is what `contract --json` and the MCP `inputSchema` are built from. CI fails the build when those drift from the scripts. A caller-supplied filter graph, `-vf` string, or other ffmpeg option is not an argument any script accepts. `doctor` reads `ffmpeg -filters` (and `-encoders`, `-bsfs`) and reports a filter a tool needs before a job runs into it. MCP does accept an `argv` array, and that array is the named script's own CLI flags, still bound to that script: the script's flags, never an ffmpeg command line and never a shell.
+
+### What if I need an option no tool exposes?
+
+For immediate use, run FFmpeg directly outside the skill. To request support in
+the skill, open an issue with the FFmpeg option, the kind of footage it applies
+to, and the result you need. New options are added as typed flags with tests
+and appear in the CLI and MCP schemas through the same contract.
 
 ### Why 42 tools? Isn't that overkill?
 
