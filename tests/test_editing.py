@@ -3093,13 +3093,19 @@ class EditingTests(MediaFixtures):
         with tempfile.TemporaryDirectory(dir=OUT) as directory:
             manifest = Path(directory, "parts.txt")
             literal = Path(directory, "file\ttake.wav")
-            exists = os.path.exists
             # A literal tab is a valid filename character on POSIX.
+            manifest.write_text("file\ttake.wav\n", encoding="utf-8")
+            take = Path(directory, "take.wav")
+            take.touch()
+            # Mock the literal path as a directory on Windows, where tabs are forbidden in names.
+            exists = os.path.exists
             with mock.patch("join.os.path.exists", side_effect=lambda path: Path(path) == literal or exists(path)):
-                manifest.write_text("file\ttake.wav\n", encoding="utf-8")
+                self.assertEqual(read_list(str(manifest)), [str(take)])
+            isfile = os.path.isfile
+            with mock.patch("join.os.path.isfile", side_effect=lambda path: Path(path) == literal or isfile(path)):
                 self.assertEqual(read_list(str(manifest)), [str(literal)])
                 manifest.write_text("ffconcat version 1.0\nfile\ttake.wav\n", encoding="utf-8")
-                self.assertEqual(read_list(str(manifest)), [str(Path(directory, "take.wav"))])
+                self.assertEqual(read_list(str(manifest)), [str(take)])
 
     def test_join_list_checks_every_segment_before_joining(self):
         """Reported by a user generating shorts on a VPS: TTS writes one audio file per line,

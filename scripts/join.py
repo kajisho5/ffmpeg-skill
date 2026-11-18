@@ -309,7 +309,7 @@ def read_list(path: str) -> List[str]:
         if not line or line.startswith("#"):
             continue
         # In a plain list an existing POSIX filename can contain a literal tab.
-        tab_directive = line.startswith("file\t") and (ffconcat or not os.path.exists(os.path.join(base, line)))
+        tab_directive = line.startswith("file\t") and (ffconcat or not os.path.isfile(os.path.join(base, line)))
         if line.startswith("file ") or tab_directive:
             line = line[5:].strip()
             if len(line) >= 2 and line[0] == line[-1] and line[0] in "'\"":
