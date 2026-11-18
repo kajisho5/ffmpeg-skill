@@ -1974,19 +1974,35 @@ def main() -> int:
         return 0
 
     # ---- join
+    join_crop_size = None
     if len(parts) > 1:
         current = str(work / f"joined{mid}")
         argv = list(parts) + ["-o", current, "--transition", trans.get("type", "fade"), "--duration", str(trans.get("duration", 0.5))]
+        own_fit = proj.get("fit") if isinstance(proj.get("fit"), dict) else {}
+        geometry = {**frame, **{k: v for k, v in own_fit.items() if v is not None}}
         jw, jh = frame.get("width"), frame.get("height")
-        if bool(jw) != bool(jh):
+        if geometry.get("fit") == "crop":
+            # Crop each source into the delivery frame before it can acquire bars in the join.
+            # Size it from the same source and effective frame as the exported timeline.
+            aspect = geometry.get("aspect")
+            ratio = aspect_ratio(str(aspect)) if aspect else None
+            width, height = geometry.get("width"), geometry.get("height")
+            if (not aspect or ratio is not None) and all(
+                    side is None or (str(side).isdecimal() and int(side) > 0) for side in (width, height)):
+                fw, fh = display_size(probe(rel(clips[0]["src"])).get("video") or {})
+                if fw and fh:
+                    size = frame_size(ratio, int(width) if width else None, int(height) if height else None, fw, fh)
+                    if min(size) > 0:
+                        join_crop_size = jw, jh = size
+                        argv += ["--fit", "crop"]
+        if join_crop_size is None and bool(jw) != bool(jh):
             # the fit object's own value for that side wins (#526), so the join is sized from it:
             # frame {width 100} with fit {width 200} joined at 100x76 and was then fitted to
             # 200x152 (from the rounded canvas) against a 200x150 sequence (from the clip)
-            own = (proj.get("fit") or {}) if isinstance(proj.get("fit"), dict) else {}
-            if jw and own.get("width") is not None and own.get("height") is None:
-                jw = own["width"]
-            elif jh and own.get("height") is not None and own.get("width") is None:
-                jh = own["height"]
+            if jw and own_fit.get("width") is not None and own_fit.get("height") is None:
+                jw = own_fit["width"]
+            elif jh and own_fit.get("height") is not None and own_fit.get("width") is None:
+                jh = own_fit["height"]
         side = jw or jh
         if bool(jw) != bool(jh) and str(side).isdigit():
             # one side: the other follows the first clip's displayed aspect, rounded to even as
@@ -2004,7 +2020,6 @@ def main() -> int:
         # frame's and conformed again by fit.py, each clip was rounded twice: two 0.7 s clips
         # under frame 25 fps with fit 24 fps rendered 35 frames against a 34-frame sequence,
         # which rounds each clip once, at the delivered rate
-        own_fit = proj.get("fit") if isinstance(proj.get("fit"), dict) else {}
         join_fps = own_fit.get("fps") or frame.get("fps")
         if join_fps:
             argv += option_args("--fps", join_fps)
@@ -2053,6 +2068,9 @@ def main() -> int:
                 fit.setdefault(key, frame[key])
     if frame.get("fps") and len(parts) == 1:  # several clips: join.py has conformed them to it
         fit.setdefault("fps", frame["fps"])
+    if join_crop_size is not None:
+        # Reuse the rounded canvas instead of deriving its second side from the joined file.
+        fit["width"], fit["height"] = join_crop_size
     if fit:
         nxt = str(work / f"fit{mid}")
         argv = [current, "-o", nxt]
