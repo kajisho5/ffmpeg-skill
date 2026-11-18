@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Label platform-export loudness measurements with their correction status (#609).
+
 ### Fixed
 
 - **An HDR or BT.2020 RGB source is re-encoded with the matrix its output is tagged with (#544).**

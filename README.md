@@ -477,6 +477,24 @@ Every command a tool records as run is in its `--json` `commands` (`batch.py` li
 
 It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
 
+### How do I finish a vertical crop for Reels?
+
+On a 1920×1080 source, the first command below centre-crops to **608×1080**.
+The Reels preset scales it to the **1080×1920** delivery frame and applies audio
+correction if required. To do the whole delivery in one project, use `render.py --template reels`.
+
+```bash
+python3 scripts/fit.py source.mp4 --aspect 9:16 --fit crop -o vertical.mp4
+python3 scripts/export.py vertical.mp4 --preset reels --normalize -o reels.mp4
+python3 scripts/check.py reels.mp4 --platform reels
+```
+
+When an export returns a `loudness` block, `lufs` is the reading from the written
+file. `loudness.normalized` records whether export applied correction, and
+`loudness.ok` records whether the final reading meets the target. If the measured
+file misses the target and no correction ran, use `export.py --normalize` or
+the recommended `loudness.py` command in the warning.
+
 ### Are silence removal and captions stable?
 
 They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.

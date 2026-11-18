@@ -153,7 +153,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
-| "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` |
+| "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` (platform-sized export; 9:16 alone specifies shape) |
 | "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
 | "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
 | "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |

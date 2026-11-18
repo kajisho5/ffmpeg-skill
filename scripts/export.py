@@ -307,7 +307,7 @@ def _loudness_unmeasured(extra: Dict[str, object], notes: List[str], platform: s
     reason = "not_measured"
     extra["loudness"] = {"lufs": None, "tp": tp, "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": None,
                          "measured": False, "reason": reason, **({"too_short": True} if tp is not None else {}),
-                         **({"normalized": True} if normalized else {})}
+                         "normalized": normalized}
     extra["verification"] = [{"step": "loudness", "ok": False, "platform": platform, "reason": reason}]
     why = ("the audio is shorter than one 400 ms loudness block, so it has a true peak but no integrated loudness"
            if tp is not None else "ffmpeg's loudnorm output did not parse")
@@ -812,7 +812,8 @@ def main() -> int:
             _loudness_unmeasured(extra, notes, platform, spec)
         if m:
             ok = abs(m["lufs"] - spec["lufs"]) <= spec["lufs_tol"] and m["tp"] <= spec["tp"] + TP_TOLERANCE_DB
-            extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"], "target_tp": spec["tp"], "ok": ok}
+            extra["loudness"] = {"lufs": m["lufs"], "tp": m["tp"], "target_lufs": spec["lufs"],
+                                 "target_tp": spec["tp"], "ok": ok, "normalized": False}
             extra["verification"] = [_loudness_step(ok, platform, spec, m)]
             if not math.isfinite(m["lufs"]):
                 # a silent output measures -inf LUFS: no gain reaches the target, so recommending
@@ -870,6 +871,10 @@ def main() -> int:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
                              f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize")
                 warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=False)
+        if m and math.isfinite(m["lufs"]):
+            correction = "after correction" if extra["loudness"]["normalized"] else "without export correction"
+            info(f"loudness measured {correction}: {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP "
+                 f"(target {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP)")
     elif platform and not has_audio and not STATE.dry_run:
         record_skip(f"no loudness check against {platform}'s spec: the source has no audio, so the export has none",
                     "loudness_no_audio", platform=platform)

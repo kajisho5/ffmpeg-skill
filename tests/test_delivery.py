@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from pathlib import Path
@@ -1117,6 +1118,7 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual(d["status"], "completed")
         self.assertTrue(d["loudness"]["ok"], d["loudness"])
         self.assertTrue(d["loudness"]["normalized"])
+        self.assertIn("loudness measured after correction", proc.stderr)
         self.assertTrue(d["verified"])
         self.assertAlmostEqual(d["loudness"]["lufs"], -14.0, delta=1.0)
         self.assertFalse((OUT / "export_normalize_loudnorm.mp4").exists())
@@ -1138,8 +1140,28 @@ class DeliveryTests(MediaFixtures):
         proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertFalse(d["loudness"]["ok"])
-        self.assertNotIn("normalized", d["loudness"])
+        self.assertIs(d["loudness"]["normalized"], False)
+        self.assertIn("loudness measured without export correction", proc.stderr)
         self.assertIn("--normalize", " ".join(d["notes"]))
+
+    def test_vertical_crop_and_reels_export_report_distinct_sizes_and_loudness(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            folder = Path(tmp)
+            source, vertical, delivery = [folder / n for n in ("source.mp4", "vertical.mp4", "reels.mp4")]
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10",
+               "-f", "lavfi", "-i", "sine=r=48000", "-af", "volume=0.25", "-t", "2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", source)
+            crop = json.loads(script("fit.py", source, "--aspect", "9:16", "--fit", "crop", "--fast",
+                                     "-o", vertical, "--json").stdout)
+            self.assertEqual((crop["probe"]["video"]["width"], crop["probe"]["video"]["height"]), (608, 1080))
+            cli = ("export.py", vertical, "--preset", "reels", "--fast", "-o", delivery, "--json")
+            measured = json.loads(script(*cli).stdout)
+            self.assertEqual((measured["probe"]["video"]["width"], measured["probe"]["video"]["height"]), (1080, 1920))
+            self.assertIs(measured["loudness"]["normalized"], False)
+            self.assertFalse(measured["loudness"]["ok"])
+            corrected = json.loads(script(*cli, "--normalize").stdout)
+            self.assertIs(corrected["loudness"]["normalized"], True)
+            self.assertTrue(corrected["loudness"]["ok"])
 
     def test_every_delivery_template_renders_and_passes_its_own_check(self):
         """1.14: `render.py --template NAME INPUT` is the one command a delivery request becomes,
