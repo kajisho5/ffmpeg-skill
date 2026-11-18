@@ -1210,13 +1210,21 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         if same_file(written, path):
             refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
                    "give the plan its own path", output=path, other=written)
+    try:
+        fingerprints = [fingerprint(p) for p in plan_inputs]
+    except OSError as exc:
+        die(f"cannot fingerprint a plan input: {exc}", kind="input", ctx=ctx)
+    by_path = {entry["path"]: entry for entry in fingerprints}
+    for source, expected in ctx.measured_plan_inputs.items():
+        if by_path.get(source) != expected:
+            die(f"plan input {source!r} changed since measurement; make a new plan", kind="input", ctx=ctx)
     doc = {
         "plan_version": PLAN_VERSION,
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": tool,
         "argv": cleaned,
         "cwd": os.getcwd(),
-        "inputs": [fingerprint(p) for p in plan_inputs],
+        "inputs": fingerprints,
         # inputs that did not exist yet, so carry no fingerprint (render.py reports them on execution)
         "unbound_inputs": _plan_unbound_inputs(ctx.commands, ctx),
         "commands": list(ctx.commands),

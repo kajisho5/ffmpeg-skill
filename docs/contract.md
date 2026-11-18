@@ -363,10 +363,13 @@ runs the tool with the planned `argv`, then the verify steps (a `check` step may
 nothing checked that file). `plan_version` is bumped when the execution document's shape changes.
 
 With `fit.py --duration`, dry-run JSON, saved plans and completed results include a `timing`
-object with `method`, `source_duration`, `target_duration` and `speed_factor`. Durations are in
-seconds. The speed factor is source divided by target for `speed`, and 1 for `trim`. A dry run
-without a usable input length has a null source duration and a null factor for `speed`.
-Plan execution uses `argv` and measures the output duration separately.
+object with `method`, `source_duration`, `target_duration`, `speed_factor` and `retimed`. Durations
+are in seconds. The speed factor is the computed source/target ratio for `speed`, and 1 for
+`trim`. `retimed` says whether the command includes a speed change. A ratio within 0.0001 of 1
+leaves the speed unchanged. A dry run without a usable input length reports a null source
+duration, factor and retime decision for `speed`. Saving a plan checks that its input still
+matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
+the output duration separately.
 
 ### Repeatability
 

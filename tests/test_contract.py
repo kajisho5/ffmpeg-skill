@@ -1381,6 +1381,7 @@ class ContractTests(unittest.TestCase):
         self.assertAlmostEqual(timing["source_duration"], 6.0, delta=0.025)
         self.assertEqual(timing["target_duration"], 5.8)
         self.assertAlmostEqual(timing["speed_factor"], timing["source_duration"] / 5.8)
+        self.assertTrue(timing["retimed"])
         self.assertEqual(json.loads(plan.read_text(encoding="utf-8"))["timing"], timing)
         self.assertFalse(output.exists())
         real = json.loads(tool("fit", *args).stdout)
@@ -1397,8 +1398,43 @@ class ContractTests(unittest.TestCase):
                 doc = json.loads(tool("fit", pending, "--duration", "2", "--method", method,
                                       "-o", output, "--dry-run", "--json-brief").stdout)
                 self.assertEqual(doc["timing"], {"method": method, "source_duration": None,
-                                                 "target_duration": 2.0, "speed_factor": factor})
+                                                 "target_duration": 2.0, "speed_factor": factor,
+                                                 "retimed": None if method == "speed" else False})
                 self.assertFalse(doc["verified"])
+
+    def test_fit_reports_that_a_near_unit_ratio_does_not_retime(self):
+        doc = json.loads(tool("fit", self.src, "--duration", "5.9997", "--dry-run", "--json",
+                              "-o", self.out("near_unit.mp4")).stdout)
+        self.assertGreater(doc["timing"]["speed_factor"], 1.0)
+        self.assertFalse(doc["timing"]["retimed"])
+        self.assertFalse(any("setpts=" in cmd or "atempo=" in cmd for cmd in doc["commands"]))
+
+    def test_fit_refuses_a_saved_timing_plan_if_its_measured_input_changes(self):
+        source, plan = self.out("fit_moving.mp4"), self.out("fit_moving.json")
+        shutil.copyfile(self.src, source)
+        code = """
+import shutil
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+import fit
+replacement = sys.argv.pop(1)
+sys.argv[0] = "fit.py"
+real_probe = fit.probe
+def probe_then_replace(path, role="input"):
+    measured = real_probe(path, role)
+    if role == "input":
+        shutil.copyfile(replacement, path)
+    return measured
+fit.probe = probe_then_replace
+sys.exit(fit.main())
+"""
+        proc = sh(sys.executable, "-c", code, SCRIPTS, self.vfr, source, "--duration", "5.8",
+                  "--plan", plan, "--json", "-o", self.out("fit_moving_out.mp4"), check=False)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("changed", doc["error"]["message"])
+        self.assertFalse(plan.exists())
     def _crop_fixture(self, name, size, graph, duration=4):
         """A lavfi clip for the crop check: input 0 a black canvas of `size`, input 1 a white
         60x60 box; `graph` places the box ([0] and [1] in, one picture out)."""
