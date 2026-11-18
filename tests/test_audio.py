@@ -1323,22 +1323,35 @@ class Audit459AudioTests(MediaFixtures):
                          ["ffprobe", "-v", "error", "-f", "wav", "-i", str(named)])
 
     def test_wave_format_reaches_editing_and_measurement_inputs(self):
-        mix = OUT / "a459_wave_input.wav"
-        script("audio.py", self.voice, "--music", self.bed, "--music-volume", "-3", "--limit",
-               "--limit-ceiling", "-6", "-o", mix)
-        self.assertEqual(probe(str(mix))["audio"]["codec"], "pcm_s16le")
+        import wave
+
+        source = OUT / "a459_wave_input.wav"
+        pcm = bytearray(3 * self.RATE * 2)
+        # A normal PCM WAV whose sample bytes repeat at the MPEG-TS packet interval.
+        for packet, offset in enumerate(range(0, len(pcm) - 4, 188)):
+            pcm[offset:offset + 4] = bytes((0x47, 0, 0, 0x10 + packet % 16))
+        with wave.open(str(source), "wb") as wav:
+            wav.setparams((1, 2, self.RATE, 0, "NONE", "not compressed"))
+            wav.writeframes(pcm)
+        version = sh("ffprobe", "-version").stdout.splitlines()[0].split()[2]
+        if version == "9.0.2" or version.startswith("9.0.2-"):
+            auto = subprocess.run(["ffprobe", "-v", "debug", str(source)], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace")
+            self.assertNotEqual(auto.returncode, 0, auto.stderr)
+            self.assertIn("Format mpegts probed", auto.stderr)
+        self.assertEqual(probe(str(source))["audio"]["codec"], "pcm_s16le")
 
         out = OUT / "a459_wave_cut.wav"
-        plan = json.loads(script("cut.py", mix, "--start", "0", "--end", "2", "--accurate",
+        plan = json.loads(script("cut.py", source, "--start", "0", "--end", "2", "--accurate",
                                  "-o", out, "--dry-run", "--json").stdout)
-        self.assertTrue(any(["-f", "wav", "-i", str(mix)] == argv[i - 2:i + 2]
+        self.assertTrue(any(["-f", "wav", "-i", str(source)] == argv[i - 2:i + 2]
                             for argv in map(shlex.split, plan["commands"])
                             for i, arg in enumerate(argv) if arg == "-i"))
-        written = json.loads(script("cut.py", mix, "--start", "0", "--end", "2", "--accurate",
+        written = json.loads(script("cut.py", source, "--start", "0", "--end", "2", "--accurate",
                                     "-o", out, "--json").stdout)
         self.assertTrue(written["verified"], written["verification"])
         self.assertAlmostEqual(written["probe"]["duration"], 2.0, places=3)
-        measured = json.loads(script("loudness.py", mix, "--measure-only", "--json").stdout)
+        measured = json.loads(script("loudness.py", source, "--measure-only", "--json").stdout)
         self.assertIsNotNone(measured["measured"]["input_i"])
         self.assertIn("-f wav -i", measured["commands"][0])
 
