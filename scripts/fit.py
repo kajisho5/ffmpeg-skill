@@ -3,7 +3,11 @@
 
 Duration: --duration N with --method speed (retime video+audio, pitch-preserving
 via atempo chaining) or --method trim (keep the first N seconds, or a centred
-window with --from-center). Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
+window with --from-center). Speed is the default method, but a retime beyond
+1.15x in either direction is never silent: the result's diagnostics carry a
+large_speed_change warning with the factor, because retiming the whole clip is
+easy to ask for by accident when what was wanted was a cut.
+Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
 --fit pad (letterbox/pillarbox with --pad-color, default black, or --pad-fill blur\nfor a blurred copy of the frame behind the picture), --fit crop, or --fit blur\n(the whole picture centred on a blurred, darkened copy of itself -- nothing\ncropped, no black bars).
 --width and/or --height set the output size: give one and the other follows
 the aspect (source aspect if --aspect is not also given); give both for an
@@ -21,8 +25,8 @@ a decimal in between) rather than accepting the default silently when the
 subject isn't centred; --fit pad never loses anything if you don't know yet.
 
 Examples:
-  python3 fit.py input.mp4 --duration 60                    # speed up/down to exactly 60s
-  python3 fit.py input.mp4 --duration 30 --method trim
+  python3 fit.py input.mp4 --duration 60 --method trim      # keep the first 60s
+  python3 fit.py input.mp4 --duration 30 --method speed     # retime the whole clip to exactly 30s
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --width 1080
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --pad-fill blur   # the phone-editor look: blurred frame behind the bars
   python3 fit.py input.mp4 --aspect 9:16 --fit blur                  # same look in one word (blurred + darkened fill)
@@ -43,8 +47,12 @@ from _common.runner import require_tool, run_analysis
 from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, keeps_source_tags, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
-from _common.emit import input_length, refuse_still
+from _common.emit import input_length, refuse_still, warn
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
+SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
+# reported in the result's diagnostics (large_speed_change): the whole picture and sound
+# sped up or slowed down by more than 15% is easy to ask for by accident -- speed is the
+# default method -- when what was wanted was a cut, so it is never silent
 
 
 def parse_aspect(value: str) -> Fraction:
@@ -165,7 +173,7 @@ def main() -> int:
                           "the first track, same as leaving it unset always did")
     d = ap.add_argument_group("duration")
     d.add_argument("--duration", help="target duration (seconds or mm:ss)")
-    d.add_argument("--method", choices=["speed", "trim"], default="speed", help="how to reach the duration (default speed)")
+    d.add_argument("--method", choices=["speed", "trim"], default="speed", help="how to reach the duration (default speed; a retime beyond 1.15x in either direction is reported as a large_speed_change warning in the result)")
     d.add_argument("--from-center", action="store_true", help="with --method trim, keep the middle instead of the start")
     d.add_argument("--max-speed", type=float, default=4.0, help="refuse speed factors above this (default 4x)")
     d.add_argument("--smooth", choices=["none", "blend", "interpolate"], default="none",
@@ -270,6 +278,14 @@ def main() -> int:
             factor = src_dur / target  # >1 = speed up
             if factor > args.max_speed or factor < 1 / args.max_speed:
                 die(f"required speed factor {factor:.2f}x exceeds --max-speed {args.max_speed}x; use --method trim or raise the limit")
+            if factor > SPEED_WARN_FACTOR or factor < 1 / SPEED_WARN_FACTOR:
+                warn(f"speed {factor:.2f}x: the whole picture and sound are retimed to reach "
+                     f"{target:.2f}s and nothing is cut; a retime beyond {SPEED_WARN_FACTOR:g}x "
+                     "is reported because it is easy to ask for by accident (speed is the "
+                     "default --method) when a cut was wanted -- if it was, use --method trim "
+                     "or cut first (silence.py removes dead air)",
+                     "large_speed_change", factor=round(factor, 3), threshold=SPEED_WARN_FACTOR,
+                     source_duration=round(src_dur, 3), target_duration=round(target, 3))
             if abs(factor - 1.0) > 1e-4:
                 vf.append(f"setpts={1/factor:.8f}*PTS")
                 src_fps = meta["video"].get("fps") or 30.0

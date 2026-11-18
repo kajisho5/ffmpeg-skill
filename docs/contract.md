@@ -984,6 +984,11 @@ strings. `retryable` is currently always `false`: none of the kinds are distingu
 today from a deterministic failure that would fail identically on a blind retry, so nothing
 here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
+`fit.py --method speed` reports `large_speed_change` in `diagnostics.warnings`
+for speed factors above 1.15 or below 1/1.15, including in a dry run. The
+warning carries `factor`, `threshold`, `source_duration` and `target_duration`
+(durations in seconds).
+
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,

@@ -1343,6 +1343,35 @@ class ContractTests(unittest.TestCase):
         kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
         self.assertNotIn("subtitle", kinds)
 
+    def test_fit_large_speed_change_is_reported_in_the_result(self):
+        """A reader of 3.10.0 asked for a 103.8s clip as a 60s vertical and got the whole
+        clip retimed to 1.73x with nothing in the result saying so: --duration alone
+        defaults to --method speed, and the only trace was a stderr line. A retime beyond
+        1.15x in either direction now lands in diagnostics.warnings as
+        large_speed_change with the factor, so a caller reading the JSON can see (and
+        question) what happened; a small retime and a trim to the same target stay quiet."""
+        def codes(doc):
+            return [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings") or []]
+
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("warn_fit.mkv"), "--json").stdout)
+        large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
+                 if w["code"] == "large_speed_change"]
+        self.assertEqual(len(large), 1, doc.get("diagnostics"))
+        self.assertAlmostEqual(large[0]["factor"], 3.0, delta=0.05)  # the 6s fixture at 2s
+        self.assertEqual(large[0]["threshold"], 1.15)
+        # the same size of change downwards (6s stretched to 12s, 0.5x) is reported too
+        doc = json.loads(tool("fit", self.subbed, "--duration", "12", "-o", self.out("slow_fit.mkv"), "--json").stdout)
+        large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
+                 if w["code"] == "large_speed_change"]
+        self.assertEqual(len(large), 1, doc.get("diagnostics"))
+        self.assertAlmostEqual(large[0]["factor"], 0.5, delta=0.03)
+        # a small retime (6s -> 5.5s, 1.09x) is not reported
+        doc = json.loads(tool("fit", self.subbed, "--duration", "5.5", "-o", self.out("small_fit.mkv"), "--json").stdout)
+        self.assertNotIn("large_speed_change", codes(doc))
+        # and neither is a trim to the reported case's target: nothing was retimed
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "-o", self.out("trim_fit.mkv"), "--json").stdout)
+        self.assertNotIn("large_speed_change", codes(doc))
+
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already
         written (this happened for real: #77's fix, PR #88, merged after the 0.12.0 section was
