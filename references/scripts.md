@@ -2377,8 +2377,9 @@ requested lufs / tp / lra.
 
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). An audio output of a source whose sound starts after its picture
-holds that lead as silence, so the sound keeps its place (as in `audio.py` and `cut.py --accurate`). Video and any subtitle/data track are
-stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in
+holds that lead as silence, so the sound keeps its place (as in `audio.py` and `cut.py --accurate`). A video output
+stream-copies the picture and carries subtitle/data tracks where supported (`dropped_non_av_streams` reports a track the container refused).
+Audio-only outputs such as `.mka` keep the sound. Audio becomes AAC in
 video containers or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac/.mka → FLAC, .mp3).
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to

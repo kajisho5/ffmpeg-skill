@@ -71,7 +71,7 @@ AUDIO_OUT = [
     {"capability": "encoder:libmp3lame", "when": "output extension is .mp3"},
     {"capability": "encoder:libopus", "when": "output extension is .opus"},
     {"capability": "encoder:libvorbis", "when": "output extension is .ogg"},
-    {"capability": "encoder:flac", "when": "output extension is .flac or .mka"},
+    {"capability": "encoder:flac", "when": "encoding audio for a .flac or .mka output"},
 ]
 
 TOOL_META: Dict[str, Dict[str, Any]] = {
@@ -177,7 +177,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                         {"capability": "filter:atempo", "when": "--tempo"},
                                         {"capability": AAC, "when": "output extension isn't .wav/.aif/.aiff/.caf/.mp3/.opus/.ogg/.flac/.mka (audio_codec_for()'s default)"}] + AUDIO_OUT,
                   video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video stream-copied)"],
+    "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video copied when the output keeps picture, audio extracted for an audio-only extension)"],
                      required=FF + ["filter:loudnorm"], optional=[{"capability": AAC, "when": "output extension isn't .wav/.aif/.aiff/.caf/.mp3/.opus/.ogg/.flac/.mka (audio_codec_for()'s default)"}] + AUDIO_OUT,
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],

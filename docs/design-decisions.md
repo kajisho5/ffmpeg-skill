@@ -5907,9 +5907,9 @@ before it was changed. Five classes are changed, two are left for a decision.
 - **Matroska audio uses `.mka`** (item 7). Before this decision, a cut to `.mka` planned
   to keep picture. FFmpeg's default stream selection kept only sound, so `stream_lost` triggered
   a re-encode that explicitly mapped picture into the `.mka`. The audio extension table now
-  treats `.mka` as sound-only. A cut tries to copy compatible audio packets. It encodes FLAC
-  with `--accurate` or when a copy fails, loses a stream, or misses the length tolerance.
-  Use `.mkv` to keep the picture.
+  treats `.mka` as sound-only. Every re-encoded `.mka` cut uses FLAC. Copy mode can retry
+  after a recoverable muxing error, a missing stream, or a missed length tolerance. A terminal
+  failure such as a full disk stops the run. Use `.mkv` to keep the picture.
 - **What the review of #554 found in the five changes above, each measured on FFmpeg 6.1.1 first.**
   `waveform.py`'s older refusal of an audio extension had no `reason` while README named
   `output_extension_audio_only` for every picture tool; it gives that reason now, from its own
