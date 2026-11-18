@@ -1624,9 +1624,8 @@ def main() -> int:
                     help="start at this stage, taking every earlier one from --cache; refuses if "
                          "one of them is not there")
     ap.add_argument("--export-timeline", metavar="FILE",
-                    help="write the project's cut as an editor timeline instead of rendering it: .fcpxml (Final Cut, "
-                         "Resolve), .edl (CMX 3600: Premiere, Resolve, Avid) or .otio (OpenTimelineIO); clips, speed, "
-                         "transitions, the music bed and chapter markers carry over, everything else is listed as not exported")
+                    help="export an editor timeline (.fcpxml, .edl or .otio) without rendering media. "
+                         "The result lists the project elements omitted by the format.")
     ap.add_argument("--audit-log", metavar="FILE",
                     help="append the audit records of this run (a refused plan, a lock taken over, ...) to FILE as JSON lines; "
                          "default for a refused plan: <plan>.audit.jsonl next to it. A record that cannot be written is a "

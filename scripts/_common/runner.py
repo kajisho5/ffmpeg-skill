@@ -364,7 +364,8 @@ class Context:
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries",
-                 "_stream_copy_outputs", "_encoded_media", "plan_generated_inputs", "sequence_frames_sha256")
+                 "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
+                 "sequence_frames_sha256")
 
     def __init__(self) -> None:
         self.reset()
@@ -399,6 +400,7 @@ class Context:
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
         self.plan_generated_inputs: set[str] = set()  # temporary inputs reconstructed by the tool
         self.sequence_frames_sha256: Optional[str] = None
+        self.measured_plan_inputs: Dict[str, Dict[str, Any]] = {}  # fingerprints taken before plan measurements
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
         self.alpha_line: Optional[str] = None        # --keep-alpha / --transparent: the alpha line written (_common.alpha.ALPHA_CODECS)
         self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply
@@ -1232,7 +1234,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
         if not os.path.isfile(path):
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
-                     "-show_entries", "stream=index", "-of", "csv=p=0", *still_input_args(path), path]
+                     "-show_entries", "stream=index", "-of", "csv=p=0", *input_format_args(path), path]
         limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
@@ -2462,16 +2464,14 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     """
     ctx = ctx or STATE
     is_ffmpeg = _is_ffmpeg(cmd)
-    cmd = guard_still_patterns(cmd)  # before it is checked, recorded or run
-    if not is_ffmpeg:
-        _refuse_url_media(cmd)  # ffprobe reads a URL or a playlist as readily as ffmpeg does
+    _refuse_url_media(cmd)  # check the caller's formats before the runner adds input options
+    cmd = guard_input_formats(cmd)
     if is_ffmpeg:
         # an encoder line that converts a BT.601 source to the BT.709 it is tagged with carries
         # that conversion as a -vf; it joins the tool's own graph here, before anything records
         # or runs the command (color.py imports this module, hence the late import)
         from _common.color import fold_bt709_matrix
         cmd = fold_bt709_matrix(cmd)
-        _refuse_url_media(cmd)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_output_extension(cmd)
@@ -2633,8 +2633,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
     lists the command in the --json `commands` like run() does. With
     timeout_is_fatal=False, raise TimeoutExpired so advisory callers can report a missing measurement."""
-    cmd = guard_still_patterns(cmd)
     _refuse_url_media(cmd)
+    cmd = guard_input_formats(cmd)
     if record:
         STATE.commands.append(_cmdline(cmd))
     limit = _limit_for(cmd)
@@ -2841,7 +2841,7 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     if not src or not os.path.isfile(src):
         return True
     try:
-        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *still_input_args(src), src],
+        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                              timeout=_probe_limit()).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -2882,7 +2882,7 @@ def carried_stream_maps(src: Optional[str], output: str, *, chapters: bool = Tru
         return []
     try:
         out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries",
-                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *still_input_args(src), src],
+                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *input_format_args(src), src],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                              errors="replace", timeout=_probe_limit()).stdout
         doc = json.loads(out or "{}")
@@ -2973,7 +2973,7 @@ def subtitle_codec_args(src: Optional[str], output: str) -> List[str]:
         return args
     try:
         out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-select_streams", "s", "-show_entries",
-                              "stream=codec_name", "-of", "csv=p=0", *still_input_args(src), src],
+                              "stream=codec_name", "-of", "csv=p=0", *input_format_args(src), src],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                              errors="replace", timeout=_probe_limit()).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -2994,7 +2994,7 @@ def _non_av_kinds(src: Optional[str]) -> Optional[Dict[str, int]]:
         return None
     try:
         proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
-                               *still_input_args(src), src], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                               *input_format_args(src), src], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                               encoding="utf-8", errors="replace", timeout=_probe_limit())
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -3302,21 +3302,36 @@ def still_input_args(path: str) -> List[str]:
     return ["-pattern_type", "none"] if "%" in p and os.path.splitext(p)[1].lower() in _IMAGE2_EXT else []
 
 
-def guard_still_patterns(cmd: Sequence[str]) -> List[str]:
-    """`cmd` with still_input_args() in front of every input that needs it and has neither its
-    own `-pattern_type` nor a forced `-f`: each `-i` of an ffmpeg command, the last argument of an
-    ffprobe one. run() and run_analysis() apply it to every command (A7, #465): the emoji overlay
-    PNGs, grid.py's and broll.py's stills and join.py's had no guard, so `%d` in such a path made
-    image2 open a different file. Every other command is returned as it is."""
+def riff_wave_args(path: str) -> List[str]:
+    """Select WAV from its RIFF/WAVE header (#518). FFmpeg 9.0.2 can otherwise
+    mistake ordinary PCM for MPEG-TS."""
+    if looks_like_url(path) or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return []
+    return ["-f", "wav"] if head[:4] == b"RIFF" and head[8:12] == b"WAVE" else []
+
+
+def input_format_args(path: str) -> List[str]:
+    return riff_wave_args(path) or still_input_args(path)
+
+
+def guard_input_formats(cmd: Sequence[str]) -> List[str]:
+    """Use literal still paths and RIFF/WAVE headers for implicit inputs.
+
+    FFmpeg input options belong to each `-i`. The ffprobe calls without `-i`
+    put the input path last. Keep any explicitly selected input format.
+    """
     cmd = [str(a) for a in cmd]
     base = os.path.basename(cmd[0]) if cmd else ""
-    if not any("%" in a for a in cmd[1:]):
+    if base.startswith("ffprobe") and "-i" not in cmd[1:-1]:
+        if "-pattern_type" not in cmd[:-1] and "-f" not in cmd[:-1]:
+            return cmd[:-1] + input_format_args(cmd[-1]) + cmd[-1:]
         return cmd
-    if base.startswith("ffprobe"):
-        if still_input_args(cmd[-1]) and "-pattern_type" not in cmd and "-f" not in cmd[:-1]:
-            return cmd[:-1] + still_input_args(cmd[-1]) + cmd[-1:]
-        return cmd
-    if not base.startswith("ffmpeg"):
+    if not base.startswith(("ffmpeg", "ffprobe")):
         return cmd
     out: List[str] = []
     since = 0  # where the current input's options start in `out`
@@ -3325,8 +3340,8 @@ def guard_still_patterns(cmd: Sequence[str]) -> List[str]:
         a = cmd[i]
         if a == "-i" and i + 1 < len(cmd):
             opts = out[since:]
-            if still_input_args(cmd[i + 1]) and "-pattern_type" not in opts and "-f" not in opts:
-                out += still_input_args(cmd[i + 1])
+            if "-pattern_type" not in opts and "-f" not in opts:
+                out += input_format_args(cmd[i + 1])
             out += [a, cmd[i + 1]]
             since = len(out)
             i += 2

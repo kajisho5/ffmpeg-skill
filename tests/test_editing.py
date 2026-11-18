@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -3065,6 +3066,46 @@ class EditingTests(MediaFixtures):
                          "an HDR source must not be dimmed by an SDR-shaped eq")
         self.assertIn("not the -15% dim it is on SDR", hdr_proc.stderr)
         self.assertNotIn("-15%%", hdr_proc.stderr)
+
+    def test_join_list_accepts_tabs_after_the_file_directive(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as directory:
+            d = Path(directory)
+            files = ("\u58f0 1.wav", "\u58f0 2.wav")
+            for filename in files:
+                sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", d / filename)
+            manifest = d / "parts.ffconcat"
+            manifest.write_text(f"ffconcat version 1.0\nfile\t'{files[0]}'\nfile \t'{files[1]}'\n", encoding="utf-8")
+            native = d / "native.wav"
+            sh("ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", manifest, "-c", "copy", native)
+            out = d / "joined.wav"
+            argv = ("join.py", "--list", manifest, "--transition", "none", "-o", out, "--json")
+            dry = json.loads(script(*argv, "--dry-run").stdout)
+            self.assertEqual(dry["clips"], 2)
+            self.assertFalse(out.exists())
+            report = json.loads(script(*argv).stdout)
+            self.assertEqual((report["clips"], report["verified"]), (2, True))
+            self.assertAlmostEqual(report["probe"]["duration"], probe(str(native))["duration"], delta=0.01)
+
+    def test_join_list_keeps_an_existing_tabbed_filename_without_a_header(self):
+        from unittest import mock
+        from join import read_list
+
+        with tempfile.TemporaryDirectory(dir=OUT) as directory:
+            manifest = Path(directory, "parts.txt")
+            literal = Path(directory, "file\ttake.wav")
+            # A literal tab is a valid filename character on POSIX.
+            manifest.write_text("file\ttake.wav\n", encoding="utf-8")
+            take = Path(directory, "take.wav")
+            take.touch()
+            # Mock the literal path as a directory on Windows, where tabs are forbidden in names.
+            exists = os.path.exists
+            with mock.patch("join.os.path.exists", side_effect=lambda path: Path(path) == literal or exists(path)):
+                self.assertEqual(read_list(str(manifest)), [str(take)])
+            isfile = os.path.isfile
+            with mock.patch("join.os.path.isfile", side_effect=lambda path: Path(path) == literal or isfile(path)):
+                self.assertEqual(read_list(str(manifest)), [str(literal)])
+                manifest.write_text("ffconcat version 1.0\nfile\ttake.wav\n", encoding="utf-8")
+                self.assertEqual(read_list(str(manifest)), [str(take)])
 
     def test_join_list_checks_every_segment_before_joining(self):
         """Reported by a user generating shorts on a VPS: TTS writes one audio file per line,

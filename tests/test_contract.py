@@ -40,6 +40,9 @@ from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
 for _k in (HW_ENV, HW_FORCED_ENV):
     os.environ.pop(_k, None)
 
+for _k in ("FFMPEG_SKILL_MCP_FULL", "FFMPEG_SKILL_MCP_TOOLS"):
+    os.environ.pop(_k, None)
+
 # The host's own speech defaults must not reach the suite either: FFMPEG_SKILL_ASR_ENGINE,
 # FFMPEG_SKILL_ASR_MODEL or a PARAKEET_* setting would change which speech engine or model a
 # --transcribe test drives, or where parakeet-mlx writes. Tests that exercise those opt in with an
@@ -1372,6 +1375,69 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "-o", self.out("trim_fit.mkv"), "--json").stdout)
         self.assertNotIn("large_speed_change", codes(doc))
 
+    def test_fit_reports_timing_in_dry_run_saved_plan_and_result(self):
+        output, plan = self.out("fit_timing.mp4"), self.out("fit_timing.json")
+        args = (self.src, "--duration", "5.8", "-o", output, "--fast", "--json")
+        dry = json.loads(tool("fit", *args, "--plan", plan).stdout)
+        timing = dry["timing"]
+        self.assertEqual(timing["method"], "speed")
+        self.assertAlmostEqual(timing["source_duration"], 6.0, delta=0.025)
+        self.assertEqual(timing["target_duration"], 5.8)
+        self.assertAlmostEqual(timing["speed_factor"], timing["source_duration"] / 5.8)
+        self.assertTrue(timing["retimed"])
+        self.assertEqual(json.loads(plan.read_text(encoding="utf-8"))["timing"], timing)
+        self.assertFalse(output.exists())
+        real = json.loads(tool("fit", *args).stdout)
+        self.assertEqual(real["timing"], timing)
+        self.assertTrue(real["verified"])
+        replayed = json.loads(tool("render", plan, "--overwrite", "--json").stdout)
+        self.assertEqual(replayed["tool_result"]["timing"], timing)
+
+    def test_fit_timing_distinguishes_trim_from_a_pending_retime(self):
+        pending = self.out("fit_input_not_generated.mp4")
+        output = self.out("fit_plan_only.mp4")
+        for method, factor in (("speed", None), ("trim", 1.0)):
+            with self.subTest(method=method):
+                doc = json.loads(tool("fit", pending, "--duration", "2", "--method", method,
+                                      "-o", output, "--dry-run", "--json-brief").stdout)
+                self.assertEqual(doc["timing"], {"method": method, "source_duration": None,
+                                                 "target_duration": 2.0, "speed_factor": factor,
+                                                 "retimed": None if method == "speed" else False})
+                self.assertFalse(doc["verified"])
+
+    def test_fit_reports_that_a_near_unit_ratio_does_not_retime(self):
+        doc = json.loads(tool("fit", self.src, "--duration", "5.9997", "--dry-run", "--json",
+                              "-o", self.out("near_unit.mp4")).stdout)
+        self.assertGreater(doc["timing"]["speed_factor"], 1.0)
+        self.assertFalse(doc["timing"]["retimed"])
+        self.assertFalse(any("setpts=" in cmd or "atempo=" in cmd for cmd in doc["commands"]))
+
+    def test_fit_refuses_a_saved_timing_plan_if_its_measured_input_changes(self):
+        source, plan = self.out("fit_moving.mp4"), self.out("fit_moving.json")
+        shutil.copyfile(self.src, source)
+        code = """
+import shutil
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+import fit
+replacement = sys.argv.pop(1)
+sys.argv[0] = "fit.py"
+real_probe = fit.probe
+def probe_then_replace(path, role="input"):
+    measured = real_probe(path, role)
+    if role == "input":
+        shutil.copyfile(replacement, path)
+    return measured
+fit.probe = probe_then_replace
+sys.exit(fit.main())
+"""
+        proc = sh(sys.executable, "-c", code, SCRIPTS, self.vfr, source, "--duration", "5.8",
+                  "--plan", plan, "--json", "-o", self.out("fit_moving_out.mp4"), check=False)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["error"]["kind"], "input")
+        self.assertIn("changed", doc["error"]["message"])
+        self.assertFalse(plan.exists())
     def _crop_fixture(self, name, size, graph, duration=4):
         """A lavfi clip for the crop check: input 0 a black canvas of `size`, input 1 a white
         60x60 box; `graph` places the box ([0] and [1] in, one picture out)."""
@@ -2058,6 +2124,44 @@ class ContractTests(unittest.TestCase):
             self.assertEqual([t["name"] for t in resp["result"]["tools"]], expected_order, f"FFMPEG_SKILL_MCP_FULL={flag!r} still core 12")
         listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
         self.assertEqual(listed, expected_order)
+
+    def test_mcp_advertises_only_named_tools_and_keeps_unlisted_tools_callable(self):
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "probe", "arguments": {"argv": ["--help"]}}}
+        expected = [name for name in self.tools if name in {"join", "cut"}]
+        with unittest.mock.patch.dict(os.environ, {"FFMPEG_SKILL_MCP_TOOLS": "join, cut, join"}):
+            replies = {r["id"]: r for r in self._rpc([request, call])}
+            self.assertEqual([t["name"] for t in replies[1]["result"]["tools"]], expected)
+            self.assertIn("usage:", replies[2]["result"]["content"][0]["text"].lower())
+            listed = sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout
+            self.assertEqual([line.split()[0] for line in listed.splitlines()], expected)
+            full = self._rpc([request], full=True)[0]
+            self.assertEqual([t["name"] for t in full["result"]["tools"]], list(self.tools))
+
+    def test_mcp_reports_unknown_advertised_tool_names(self):
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        with unittest.mock.patch.dict(os.environ, {"FFMPEG_SKILL_MCP_TOOLS": "cut,wrong-tool"}):
+            result = self._rpc([request])[0]
+            self.assertEqual(result["error"]["code"], -32000)
+            self.assertIn("wrong-tool", result["error"]["message"])
+            proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--list", check=False)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("FFMPEG_SKILL_MCP_TOOLS", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_mcp_advertisement_payload_stays_within_documented_budgets(self):
+        profiles = (
+            ({}, 12, 73_000),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_000),
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
+        )
+        for env, count, limit in profiles:
+            with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
+                listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}],
+                                   full="FFMPEG_SKILL_MCP_FULL" in env)[0]
+                self.assertEqual(len(listed["result"]["tools"]), count)
+                self.assertLessEqual(len((json.dumps(listed) + "\n").encode("utf-8")), limit)
 
     def test_mcp_tool_descriptions_are_one_liners_with_the_structured_note_moved_to_initialize(self):
         """1.20.0 agent ergonomics: MCP_STRUCTURED_NOTE used to be appended to every one of the 42
@@ -7650,6 +7754,40 @@ class FfmpegSecurityTableTests(unittest.TestCase):
             self.assertNotRegex(src, rf"(?m)^\s*(import|from) {re.escape(mod)}\b", mod)
 
 
+class DoctorLicenseTests(unittest.TestCase):
+    def test_reports_the_license_from_the_selected_binary(self):
+        exe = str(Path("selected", "ffmpeg").absolute())
+        for name, version, expected in (
+            ("GNU General Public License", "2", "GPL-2.0-or-later"),
+            ("GNU General Public License", "3", "GPL-3.0-or-later"),
+            ("GNU Lesser General Public\nLicense", "2.1", "LGPL-2.1-or-later"),
+            ("GNU Lesser General Public License", "3", "LGPL-3.0-or-later"),
+        ):
+            with self.subTest(expected=expected):
+                text = (f"modify it under the terms of the {name}\n"
+                        f"as published by the Free Software Foundation; either version {version} of the License, or\n"
+                        "(at your option) any later version.")
+                proc = subprocess.CompletedProcess([], 0, text, "")
+                with unittest.mock.patch("subprocess.run", return_value=proc) as run:
+                    self.assertEqual(_contract._ffmpeg_license(exe), expected)
+                self.assertEqual(run.call_args.args[0], [exe, "-hide_banner", "-L"])
+                self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_unknown_or_failed_detection_does_not_guess_a_license(self):
+        self.assertIsNone(_contract._ffmpeg_license(None))
+        for result, expected in (
+            (subprocess.CompletedProcess([], 0, "This version of ffmpeg has nonfree parts compiled in.", ""), "nonfree"),
+            (subprocess.CompletedProcess([], 0, "wrapper: no build info", ""), None),
+            (subprocess.CompletedProcess([], 1, "This version of ffmpeg has nonfree parts compiled in.", ""), None),
+            (subprocess.TimeoutExpired("ffmpeg", 10), None),
+            (FileNotFoundError("binary disappeared"), None),
+        ):
+            with self.subTest(result=result):
+                kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+                with unittest.mock.patch("subprocess.run", **kwargs):
+                    self.assertEqual(_contract._ffmpeg_license("ffmpeg"), expected)
+
+
 @unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")
 class DoctorDetectionTests(unittest.TestCase):
     """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
@@ -10320,6 +10458,9 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         proj.write_text(json.dumps({"clips": [{"src": str(self.nolength), "speed": 2}]}), encoding="utf-8")
         doc, proc = self.doc("render", proj, "-o", "speed.mp4", "--dry-run")
         self.assertIn("speed_length_placeholder", [s["code"] for s in doc["diagnostics"]["skipped"]])
+        doc, _ = self.doc("fit", self.nolength, "--duration", "5", "-o", "speed.mp4", "--dry-run")
+        self.assertIsNone(doc["timing"]["speed_factor"])
+        self.assertIsNone(doc["timing"]["source_duration"])
 
     def test_loudness_too_short_is_not_silent(self):
         """A257: a clip shorter than one 400 ms gating block was called silent: loudness.py told the
@@ -11263,14 +11404,14 @@ class SharedCodeAudit465Tests(unittest.TestCase):
                              {"asset": "/e%d/1f601.png", "box": 32, "x": 0, "y": 0, "start": 0.0, "end": 1.0,
                               "fade_in": 0.2}]}
         _, inputs = _common.emoji_filter_chain(plan, "v", "out")
-        cmd = runner.guard_still_patterns(["ffmpeg", "-i", "in.mp4"] + [a for spec in inputs for a in spec] + ["out.mp4"])
+        cmd = runner.guard_input_formats(["ffmpeg", "-i", "in.mp4"] + [a for spec in inputs for a in spec] + ["out.mp4"])
         for asset in ("/e%d/1f600.png", "/e%d/1f601.png"):
             at = cmd.index(asset)
             self.assertEqual(cmd[at - 1], "-i")
             self.assertIn("-pattern_type", cmd[at - 6:at], cmd)
         guarded = ["ffmpeg", "-pattern_type", "none", "-i", "a%d.png", "out.mp4"]
-        self.assertEqual(runner.guard_still_patterns(guarded), guarded, "an input that has one keeps one")
-        self.assertEqual(runner.guard_still_patterns(["ffprobe", "-v", "error", "a%d.png"]),
+        self.assertEqual(runner.guard_input_formats(guarded), guarded, "an input that has one keeps one")
+        self.assertEqual(runner.guard_input_formats(["ffprobe", "-v", "error", "a%d.png"]),
                          ["ffprobe", "-v", "error", "-pattern_type", "none", "a%d.png"])
         # the real thing: grid.py with a still named st%d.png beside a decoy st1.png
         ffmpeg("-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "green.png"))

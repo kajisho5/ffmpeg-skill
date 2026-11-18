@@ -44,6 +44,7 @@ Examples:
   python3 fit.py input.mp4 --flip h                              # mirror horizontally
 """
 import argparse
+import os
 import sys
 from fractions import Fraction
 from typing import Any, List, Optional
@@ -54,6 +55,7 @@ from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, keeps_source_t
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length, refuse_still, warn
+from _common.probe import fingerprint
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
 # reported in the result's diagnostics (large_speed_change): the whole picture and sound
@@ -389,6 +391,12 @@ def main() -> int:
     if args.pad_blur <= 0:
         die(f"--pad-blur must be > 0, got {args.pad_blur}")
 
+    if STATE.plan and args.duration and os.path.isfile(args.input):
+        try:
+            source = fingerprint(args.input)
+        except OSError as exc:
+            die(f"cannot fingerprint the source for the duration plan: {exc}", kind="input")
+        STATE.measured_plan_inputs[source["path"]] = source
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
@@ -409,6 +417,8 @@ def main() -> int:
     pre_input: List[str] = []
     post: List[str] = []
     factor = 1.0
+    retimed = False
+    extra = {}
     tc_first = None  # seconds from the source's first frame to the output's, when a trim moves it
     regridded = False  # a speed change already put the picture on the delivered grid
     out_seek = 0.0  # the output-side -ss a --method trim drops its seek margin with
@@ -434,10 +444,9 @@ def main() -> int:
             die("target duration must be > 0")
         # speed refused it as "0.00x", and trim wrote one frame as verified (#531)
         refuse_still(meta, args.input, "--duration retimes or trims the input's length, and a still has none")
-        # speed and trim are both computed from the source's length: one that states none is refused
-        # (#491). Not under --dry-run, where render.py plans a clip's speed stage on the source in
-        # place of a cut that does not exist yet and records the stand-in itself (A97)
+        # A dry run can plan the command even when the source's usable length is unknown.
         src_dur = (meta.get("duration") or 0.0) if STATE.dry_run else input_length(meta)
+        length_unknown = STATE.dry_run and src_dur <= 0
         # The output's -t is all that ends the kept track where the source's sound runs on past
         # the target (a trim; a speed change too small to retime), so it is written to the sample
         # of that track's rate, not to the millisecond: `-t 1.234` wrote 59244 samples (48 kHz)
@@ -445,9 +454,7 @@ def main() -> int:
         # run's pending input, has no rate and keeps the millisecond.
         rate = (audio_streams[args.audio_stream].get("sample_rate") if has_audio and audio_streams else None)
         if args.method == "speed":
-            if src_dur <= 0 and STATE.dry_run:
-                src_dur = target  # planning against an intermediate that does not exist yet
-            factor = src_dur / target  # >1 = speed up
+            factor = 1.0 if length_unknown else src_dur / target  # >1 = speed up
             if factor > args.max_speed or factor < 1 / args.max_speed:
                 die(f"required speed factor {factor:.2f}x exceeds --max-speed {args.max_speed}x; use --method trim or raise the limit")
             if factor > SPEED_WARN_FACTOR or factor < 1 / SPEED_WARN_FACTOR:
@@ -458,7 +465,8 @@ def main() -> int:
                      "or cut first (silence.py removes dead air)",
                      "large_speed_change", factor=round(factor, 3), threshold=SPEED_WARN_FACTOR,
                      source_duration=round(src_dur, 3), target_duration=round(target, 3))
-            if abs(factor - 1.0) > 1e-4:
+            retimed = abs(factor - 1.0) > 1e-4
+            if retimed:
                 vf.append(f"setpts={1/factor:.8f}*PTS")
                 src_fps = meta["video"].get("fps") or 30.0
                 if factor < 1.0 and args.smooth == "interpolate":
@@ -488,7 +496,6 @@ def main() -> int:
             # the -t ends it to the sample. A picture without sound that is not retimed either is
             # a trim, counted in frames; one that is retimed, or regridded by --fps, keeps the
             # millisecond
-            retimed = abs(factor - 1.0) > 1e-4
             post += ["-t", f"{target:.3f}" if af else length_output_t(target, rate, runs_on=True) if rate
                      else f"{target:.3f}" if retimed or args.fps or has_audio else picture_output_t(target, meta)]
             STATE.duration_hint = target
@@ -516,8 +523,16 @@ def main() -> int:
                 # timecode is that frame's, not the source's first frame's
                 v0, rate = stream_starts(meta)[0], frame_rate(meta)
                 tc_first = grid_at_or_after(max(round(start, 3), v0), v0, rate) - v0
-            else:
+            elif not length_unknown:
                 info(f"source ({src_dur:.2f}s) is already shorter than {target:.2f}s; trim does nothing")
+        speed_unknown = length_unknown and args.method == "speed"
+        extra["timing"] = {
+            "method": args.method,
+            "source_duration": None if length_unknown else src_dur,
+            "target_duration": target,
+            "speed_factor": None if speed_unknown else factor,
+            "retimed": None if speed_unknown else retimed,
+        }
 
     # ---- the output's rate: after any retiming, ahead of the frame's own filters. --fit blur and
     # --pad-fill blur are a split/overlay graph, and FFmpeg 6.1's overlay ends its output at its
@@ -626,7 +641,7 @@ def main() -> int:
     else:
         cmd += ["-an"]
     cmd += post
-    if abs(factor - 1.0) > 1e-4 or "-ss" in pre_input:
+    if retimed or "-ss" in pre_input:
         # A subtitle/data stream stream-copied by run_keeping_subtitles keeps the source's
         # original timestamps; --method speed retimes video (setpts) and audio (atempo) but has
         # no equivalent way to retime a copied subtitle track, so it would desync from the
@@ -640,10 +655,9 @@ def main() -> int:
 
     result = probe(output, role="output")
     msg = f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})"
-    if abs(factor - 1.0) > 1e-4:
+    if retimed:
         msg += f", speed {factor:.3f}x"
     info(msg)
-    extra = {}
     if geometry and not STATE.dry_run:
         extra["picture"] = measure_picture(geometry, meta, sw, sh, result["video"], sized=bool(args.width or args.height))
     if crop_window and not STATE.dry_run:
