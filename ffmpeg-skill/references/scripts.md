@@ -543,8 +543,8 @@ run time. The frames keep their times, so the source's subtitle track is kept
 as `crop.py` keeps it (`dropped_non_av_streams` says when it could not be).
 vid.stab aborts on an RGB picture, so an RGB source (a PNG, a qtrle or
 PNG-in-MOV clip) is stabilized as a YUV 4:4:4 copy (converted to BT.709 as every SDR RGB
-re-encode is; FFmpeg's own conversion on a `--codec prores` line and for an HDR or
-BT.2020 RGB source, as every tool's), with a note; the
+re-encode is, or, for an HDR or BT.2020 RGB source, with the matrix its 10-bit line tags;
+FFmpeg's own conversion for an SDR source on a `--codec prores` line), with a note; the
 output's pixel format is the encoder line's (`probe.video.pix_fmt`).
 
 ### sequence.py — numbered/globbed image sequence to video
