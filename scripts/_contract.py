@@ -454,7 +454,8 @@ ERROR_REASONS = {
     "output_locked": "another run holds the output's lock, or is taking a stale one over (why: takeover_in_progress), or a stale lock cannot be taken over safely because the filesystem gives no OS file lock (why: takeover_unavailable: delete it by hand); details: {lock, output, pid, pid_alive, deadline, why}",
     "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed, or the ordered sequence differs; details: {plan, plan_sha256, checked_at, "
                            "inputs: [{path, status: unchanged|changed|missing, expected: {size, sha256_head_tail}, actual: {size, "
-                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}; a sequence mismatch can instead "
+                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}; sequence rows include sha256_full "
+                           "when the plan records it. A sequence selection mismatch can instead "
                            "report {expected_frame_digest, actual_frame_digest}",
     "plan_version_unsupported": "render.py PLAN: plan_version is not one this version executes; details: {plan, plan_sha256, checked_at, plan_version, supported, audit_log}",
     "plan_unknown_tool": "render.py PLAN: the plan names no tool render.py can run; details: {plan, plan_sha256, checked_at, tool, audit_log}",

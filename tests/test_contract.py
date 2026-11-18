@@ -8895,6 +8895,75 @@ class SideFileGuardTests(unittest.TestCase):
                 self.assertTrue(result["verified"], result)
                 self.assertTrue(out.is_file())
 
+    def test_sequence_plan_rejects_a_middle_only_edit_to_a_large_frame(self):
+        frames = self.tmp / "large_frames"
+        frames.mkdir()
+        frame = frames / "frame.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(frame))
+        # A PNG decoder stops at IEND. The extra bytes exercise the middle of a large file.
+        with frame.open("ab") as out:
+            out.truncate(24 * 1024 * 1024)
+        plan, output = self.tmp / "large_plan.json", self.tmp / "large_sequence.mp4"
+        tool("sequence", "--dir", frames, "--pattern", "*.png", "-o", output, "--plan", plan, "--json")
+        saved = json.loads(plan.read_text(encoding="utf-8"))
+        with frame.open("r+b") as out:
+            out.seek(12 * 1024 * 1024)
+            out.write(b"x")
+        replay = self.failed(tool("render", plan, "--dry-run", "--json", check=False))
+        self.assertEqual(replay["reason"], "plan_inputs_changed")
+        self.assertEqual(replay["details"]["inputs"][0]["status"], "changed")
+        self.assertEqual(len(saved["inputs"][0]["sha256_full"]), 64)
+        self.assertFalse(output.exists())
+
+    def test_sequence_plan_refuses_a_nonregular_frame(self):
+        frames = self.tmp / "special_frames"
+        frames.mkdir()
+        (frames / "frame.png").mkdir()
+        plan = self.tmp / "special_plan.json"
+        args = ("sequence", "--dir", frames, "--pattern", "*.png", "-o", self.tmp / "special.mp4",
+                "--plan", plan, "--json")
+        err = self.failed(tool(*args, check=False))
+        self.assertEqual(err["reason"], "media_path_not_a_file")
+        self.assertFalse(plan.exists())
+        if hasattr(os, "mkfifo"):
+            fifo = frames / "frame_fifo.png"
+            os.mkfifo(fifo)
+            cp = subprocess.run([sys.executable, str(SCRIPTS / "sequence.py"), "--dir", str(frames),
+                                 "--pattern", fifo.name, "-o", str(self.tmp / "fifo.mp4"),
+                                 "--plan", str(plan), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(self.failed(cp)["reason"], "media_path_not_a_file")
+            self.assertFalse(plan.exists())
+
+    def test_sequence_refuses_to_save_a_plan_when_a_frame_changes_during_measurement(self):
+        frames = self.tmp / "moving_frames"
+        frames.mkdir()
+        frame = frames / "frame.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(frame))
+        plan = self.tmp / "moving_plan.json"
+        code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv.pop(1))
+import sequence
+frame = Path(sys.argv.pop(1))
+sys.argv[0] = "sequence.py"
+check = sequence.undecodable_frames
+def check_then_change(*args):
+    result = check(*args)
+    with frame.open("ab") as out:
+        out.write(b"changed")
+    return result
+sequence.undecodable_frames = check_then_change
+sys.exit(sequence.main())
+"""
+        cp = sh(sys.executable, "-c", code, SCRIPTS, frame, "--dir", frames, "--pattern", "*.png",
+                "-o", self.tmp / "moving.mp4", "--plan", plan, "--json", check=False)
+        error = self.failed(cp)
+        self.assertEqual(error["kind"], "input")
+        self.assertIn("changed since measurement", error["message"])
+        self.assertFalse(plan.exists())
+
     def test_plan_binds_brand_json_and_ignores_path_shaped_title_text(self):
         brand = self.tmp / "actual_brand.json"
         brand.write_text("{}", encoding="utf-8")

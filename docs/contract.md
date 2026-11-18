@@ -372,8 +372,9 @@ duration, factor and retime decision for `speed`. Saving a plan checks that its 
 matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
 the output duration separately.
 
-New `sequence` plans fingerprint the selected frame files in `inputs`. The additive
-`sequence_frames_sha256` field binds their order and contents. Replay, including replay with
+New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
+in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
+The tool checks the same fingerprints again before saving the plan. Replay, including replay with
 `--dry-run`, refuses a changed selection as `plan_inputs_changed`. For printf patterns the
 selection ends at the first gap. Older plans without the field still run and warn
 with `plan_sequence_unbound`; regenerate the plan to check the selection.

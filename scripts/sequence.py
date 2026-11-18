@@ -138,11 +138,11 @@ def frame_paths(directory: Path, pattern: str, start: int) -> "tuple[list[Path],
     return frames, i
 
 
-def frame_digest(paths: list[Path]) -> str:
-    """Fingerprint contents and order with a compact value for replay's child environment."""
+def frame_digest(records: list[dict]) -> str:
+    """Bind exact frame fingerprints in order with a compact value for the replay child."""
     digest = hashlib.sha256()
-    for frame in paths:
-        digest.update(json.dumps(fingerprint(str(frame)), sort_keys=True).encode("ascii") + b"\n")
+    for frame in records:
+        digest.update(json.dumps(frame, sort_keys=True).encode("ascii") + b"\n")
     return digest.hexdigest()
 
 
@@ -151,7 +151,8 @@ def replay_frame_digest(argv: list[str]) -> "str | None":
     try:
         args = argument_parser().parse_args(argv)
         frames, _ = frame_paths(Path(args.dir), args.pattern, args.start_number)
-        return frame_digest([f.resolve(strict=True) for f in frames])
+        paths = [f.resolve(strict=True) for f in frames]
+        return frame_digest([fingerprint(str(f), complete=True) for f in paths])
     except (OSError, RuntimeError, TypeError, ValueError, SystemExit):
         return None
 
@@ -179,7 +180,12 @@ def main() -> int:
     try:
         frames, next_index = frame_paths(directory, args.pattern, args.start_number)
         resolved = [f.resolve(strict=True) for f in frames]
-        digest = frame_digest(resolved) if STATE.plan or expected else None
+        for frame in resolved:
+            if not frame.is_file():
+                reason = "plan_inputs_changed" if expected else "media_path_not_a_file"
+                refuse("input", reason, f"{str(frame)!r} is not a regular image file", path=str(frame))
+        records = [fingerprint(str(f), complete=True) for f in resolved] if STATE.plan or expected else []
+        digest = frame_digest(records) if STATE.plan or expected else None
     except (OSError, RuntimeError) as exc:
         if expected:
             refuse("input", "plan_inputs_changed", f"could not read the planned sequence: {exc}")
@@ -216,6 +222,7 @@ def main() -> int:
         refuse_output_is_input(STATE.plan, *sources)
         for frame in resolved:
             register_plan_input(frame)
+        STATE.measured_plan_inputs.update((record["path"], record) for record in records)
         STATE.sequence_frames_sha256 = digest
 
     frame_meta = probe(str(resolved[0]))

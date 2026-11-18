@@ -1191,22 +1191,24 @@ def _reject_plan(path: str, plan_sha256: Optional[str], reason: str, msg: str, *
 
 def plan_input_status(inputs: Sequence[Any]) -> List[Dict[str, Any]]:
     """Each fingerprinted plan input against the file as it is now: {path, status: unchanged |
-    changed | missing, expected: {size, sha256_head_tail}, actual: {size, sha256_head_tail} or
-    "missing"}."""
+    changed | missing, expected: {size, sha256_head_tail[, sha256_full]}, actual: the same keys
+    or "missing"}."""
     rows: List[Dict[str, Any]] = []
     for inp in inputs:
         inp = inp if isinstance(inp, dict) else {"path": inp}
         p = inp.get("path")
         expected = {"size": inp.get("size"), "sha256_head_tail": inp.get("sha256_head_tail")}
+        if "sha256_full" in inp:
+            expected["sha256_full"] = inp["sha256_full"]
         if not p or not os.path.isfile(str(p)):
             rows.append({"path": p, "status": "missing", "expected": expected, "actual": "missing"})
             continue
         try:
-            now = fingerprint(str(p))
+            now = fingerprint(str(p), complete=True) if "sha256_full" in expected else fingerprint(str(p))
         except OSError:
             rows.append({"path": p, "status": "missing", "expected": expected, "actual": "missing"})
             continue
-        actual = {"size": now["size"], "sha256_head_tail": now["sha256_head_tail"]}
+        actual = {key: now[key] for key in expected}
         rows.append({"path": p, "status": "unchanged" if actual == expected else "changed", "expected": expected, "actual": actual})
     return rows
 

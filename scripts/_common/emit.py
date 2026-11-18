@@ -1213,7 +1213,9 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
             refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
                    "give the plan its own path", output=path, other=written)
     try:
-        fingerprints = [fingerprint(p) for p in plan_inputs]
+        fingerprints = [fingerprint(p, complete=True)
+                        if "sha256_full" in ctx.measured_plan_inputs.get(os.path.abspath(p), {})
+                        else fingerprint(p) for p in plan_inputs]
     except OSError as exc:
         die(f"cannot fingerprint a plan input: {exc}", kind="input", ctx=ctx)
     by_path = {entry["path"]: entry for entry in fingerprints}
