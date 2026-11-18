@@ -52,7 +52,7 @@ Left half is the input, right half is what the command produced. **[Every before
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
-- **Protect your source files.** A destination that matches a declared input is refused. An existing output requires `--overwrite`. The `-y` printed by `--dry-run` belongs to the underlying command, which runs only after the tool checks the destination.
+- **Protect your source files.** A destination that matches a declared input is refused. Direct edits require `--overwrite` to replace an existing output. A `batch --watch` job can replace an unchanged file it delivered on an earlier pass. The `-y` in the dry-run command takes effect only after the tool checks the destination.
 - **Call typed tools.** The agent supplies named options such as `--aspect 9:16` and `--fit pad`. The tool builds the FFmpeg command and filter graph.
 - **Verify the edit.** The tools probe the source and the written file, so the agent can check the actual duration, frame size and audio before reporting success.
 
@@ -423,9 +423,10 @@ Each operation is a script whose flags are its argparse parser, and that parser 
 
 ### What if I need an option no tool exposes?
 
-Open an issue with the FFmpeg option, the kind of footage it applies to, and the
-result you need. New options are added as typed flags with tests and appear in
-the CLI and MCP schemas through the same contract.
+For immediate use, run FFmpeg directly outside the skill. To request support in
+the skill, open an issue with the FFmpeg option, the kind of footage it applies
+to, and the result you need. New options are added as typed flags with tests
+and appear in the CLI and MCP schemas through the same contract.
 
 ### Why 42 tools? Isn't that overkill?
 
