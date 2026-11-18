@@ -3109,6 +3109,41 @@ class Issue458Tests(MediaFixtures):
             shutil.rmtree(work)
 
     # ------------------------------------------------------------------- output name or container
+    def test_export_copy_and_gif_refuse_audio_filenames(self):
+        out = self.d / "export_as_audio.m4a"
+        project = self._project("export_copy_as_audio.json", {
+            "output": str(out), "clips": [{"src": str(self.clip)}], "export": {"preset": "copy"},
+        })
+        commands = (("export.py", self.clip, "--preset", "copy", "-o", out),
+                    ("export.py", self.clip, "--preset", "gif", "-o", out), ("render.py", project))
+        for command in commands:
+            for mode in (("--dry-run",), ()):
+                with self.subTest(command=command, dry_run=bool(mode)):
+                    rc, doc = self._run(*command, *mode)
+                    self.assertRefused(rc, doc, unwritten=[out])
+                    self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc)
+                    self.assertEqual(doc.get("commands", []), [])
+
+    def test_render_copy_refuses_a_picture_delivered_as_audio(self):
+        out = self.d / "picture_as_audio.m4a"
+        project = self._project("picture_as_audio.json", {"output": str(out), "clips": [{"src": str(self.clip)}]})
+        for mode in (("--dry-run",), ()):
+            with self.subTest(dry_run=bool(mode)):
+                rc, doc = self._run("render.py", project, *mode)
+                self.assertRefused(rc, doc, unwritten=[out])
+                self.assertEqual(doc["error"]["reason"], "output_extension_audio_only", doc)
+                self.assertEqual(doc.get("commands", []), [])
+
+        # A real MPEG-4 audio source can still be copied under the audio-only extension.
+        source = self.d / "sound_only.mp4"
+        out = self.d / "sound_only.m4a"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.clip, "-vn", "-c:a", "copy", source)
+        audio_project = self._project("audio_copy.json", {"output": str(out), "clips": [{"src": str(source)}]})
+        for mode in (("--dry-run",), ()):
+            rc, doc = self._run("render.py", audio_project, *mode)
+            self.assertEqual((rc, doc["status"]), (0, "completed"), doc)
+        self.assertEqual(out.read_bytes(), source.read_bytes())
+
     def test_an_output_is_named_for_the_container_it_holds(self):
         with self.subTest("A84: no export stage, a .webm name"):
             out = self.d / "a84.webm"
