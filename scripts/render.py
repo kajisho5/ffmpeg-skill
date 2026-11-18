@@ -78,6 +78,7 @@ from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio
 from _common.runner import HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
+from _common.probe import AUDIO_MEDIA_EXT
 import subprocess
 from _contract import CONTRACT_VERSION
 from batch import file_key
@@ -2230,6 +2231,18 @@ def main() -> int:
     else:
         if stages_done != ["clips"]:
             refuse_unwritten_output(output)  # a stage's file, not the WMA source itself (#517)
+        # A container match alone lets an MPEG-4 picture be delivered under a .m4a name.
+        # In a dry run only an original input is evidence of what the copy will contain.
+        out_ext = Path(output).suffix.lower()
+        is_original = c_only is not None and current == rel(c_only["src"])
+        if out_ext in AUDIO_MEDIA_EXT and (is_original or not STATE.dry_run):
+            video = probe(current).get("video")
+            if video:
+                refuse("input", "output_extension_audio_only",
+                       f"output {output!r}: {out_ext} holds sound only, and this render would copy "
+                       f"the picture ({video.get('codec')}) from {current}",
+                       hint="name a video file of the source's container, or extract the sound with cut.py or audio.py",
+                       output=output, extension=out_ext, encoders=[])
         refuse_copied_container(Path(current).suffix.lower(), output)  # what the copy really is (A84)
         if not STATE.dry_run:
             place_output(current, output)
