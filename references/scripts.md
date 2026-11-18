@@ -1770,6 +1770,8 @@ Run this first when a user hands over footage from a device you have not
 seen before, and fix or report what fails.
 
 ### look.py — see the result
+
+`--waveform --at T [--at U] --window 2` draws PNG windows of the first audio track, with channels in separate lanes and a red cut marker. The total window is at most 60 seconds and clips to the audio stream bounds; width is 320–4096 px. It needs a known audio duration. `waveforms` records each path, marked time, start/end, marker pixel, dimensions and audio stream index. An explicit single `.png` output is used verbatim; multiple points use indexed names. `--no-timecode` omits labels. Video-only flags (`--compare`, `--tiles`, `--safe`, `--guides`, `--ink`) are refused in this mode. No word detection or cut judgement.
 ```
 look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes (-o basename -> basename_sheet.png)
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png

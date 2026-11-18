@@ -219,7 +219,7 @@ These are the rules the skill file gives the agent and the code enforces.
 |---|---|
 | `probe.py` | Duration, fps (+ VFR detection), resolution, codecs, bit depth, HDR format incl. Dolby Vision (`hdr` for a real PQ/HLG/DV transfer only, `bt2020_or_hdr` also for BT.2020 SDR), colour space, rotation, every audio stream; `--analyze` flags Log footage |
 | `scenes.py` | Scene changes, audio peaks, highlight proposals (`--rank-by audio` loudest, or `--rank-by duration` longest — both proxies, not "best") and a per-scene sheet; cut list for `cut.py --segments`; `--beats` measures the music's beat grid (tempo, beat times, confidence); `--shots` classifies each shot static/pan/motion by measured optical flow; `--audio-peaks` lists per-second dBFS; `--speech` reports a speech-vs-music ratio, not a classification |
-| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG so the agent can see what it made; `--safe NAME` shades the zones a platform's own UI covers; `--guides title,action,4:3` outlines the broadcast safe areas (on the PNG only) |
+| `look.py` | Contact sheet, single frames, side-by-side comparison as PNG; `--waveform --at T --window 2` draws the first audio track around a cut with a red marker and time bounds; `--safe NAME` shades the zones a platform's own UI covers; `--guides title,action,4:3` outlines the broadcast safe areas (on the PNG only) |
 
 **Editing**
 
@@ -349,7 +349,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `supports_dry_run`, `supports_json`, `supports_json_brief` | measured by the tests, not declared |
 | `verification` | which tools to run on the output afterwards (`probe`, `check`, `look`) |
 | `requires_visual_verification` | the picture changed; inspect the contact sheet |
-| `audio_only`, `video_required` | whether an audio-only input is accepted or refused |
+| `audio_only`, `video_required` | whether an audio-only input is accepted or refused (`look`: with `--waveform`) |
 | `mutates_input` | always `false` |
 | `idempotency_hint` | `bit_exact`, `content_equivalent`, `cached` or `environment_dependent` |
 
@@ -408,6 +408,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Emoji in captions and titles (1.15).** `caption.py`/`graphics.py --emoji-assets DIR` composites a PNG per emoji (Twemoji naming, `1f389.png`, or Noto's `emoji_u1f389.png`) on top of the text, because drawtext cannot load a colour emoji font at all and an installed one does not prove libass will draw it in colour — `doctor --json`'s `fonts.emoji` answers that from a render probe. Without assets the result's `emoji.mode` says which of three things happened: `color` when this build's libass draws the colour glyph (also for `--emoji mono` on such a build, with a warning), `mono` when it draws a monochrome one, and `none` when the emoji are left out of the text: with an `emoji_not_drawn` warning when that happened because nothing here draws the glyph, and with only an info line when `--emoji none` asked for it (and a `graphics.py` title that is nothing but emoji is refused). Nothing is ever downloaded.
 - **Indic and Thai text shaped correctly in titles and lower-thirds (1.15).** `graphics.py` renders Devanagari, Bengali, Tamil, Thai and Lao through libass automatically (`text_renderer: "ass"`), because drawtext never reorders matras or re-clusters marks; Arabic and Hebrew were already correct on a fribidi build. `--text-render drawtext` with such a script is refused, never rendered wrongly.
 - **Non-Latin text picks a font by script (1.12).** Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari, Thai, Cyrillic and Greek cues, titles and overlays resolve a font file that covers them automatically, and a machine with no such font fails the job (`kind: input`) instead of rendering boxes. `doctor --json`'s `fonts.scripts` says which languages this machine can render; `--lang ja|ko` disambiguates Han-only text, and `--lang zh-TW` (or `zh-HK`, `zh-Hant`) picks a Traditional Chinese face (2.19); an explicit `--font`/`--font-file` is always kept.
+- `look --waveform` plots the first audio stream, requires `--at`, and clips its 2-second window to that stream. Repeat `--at` for multiple PNGs; `--window` accepts up to 60 seconds. It does not detect words or decide whether a cut is acceptable.
 - **Silence detection finds nothing?** The default threshold is −35 dBFS. The tool prints a hint with the track's measured level; raise the threshold (`silence.py --threshold -25`) or shorten `--min-silence`.
 - **Sync results carry a confidence.** Below 0.3, or an offset near the edge of the analysis window, is probably wrong: enlarge `--analyze-seconds` or find a clap. Recordings over ten minutes from separate devices need `sync.py --fix-drift`.
 - **Outputs are never overwritten silently.** An existing output path is refused (`kind: input`, `error.reason: output_exists`, before anything runs); pass `--overwrite` where a replacement is intended.

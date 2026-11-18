@@ -803,6 +803,17 @@ python3 scripts/look.py demos/out/fixtures/mandel.mp4 --tiles 4x3 --width 960 -o
 
 **Look for:** Twelve timecoded frames in one PNG: the fastest way to confirm an edit landed where it should.
 
+### Inspect audio around a cut
+
+![Inspect audio around a cut](demos/waveform_window.gif)
+
+```bash
+python3 scripts/waveform.py demos/out/waveform_window_voice.flac --width 960 --height 320 --fps 10 --preset veryfast -o demos/out/waveform_window_before.mp4
+python3 scripts/look.py demos/out/waveform_window_voice.flac --waveform --at 0.5 --window 1 --width 960 -o demos/out/waveform_window_cut.png
+```
+
+**Look for:** Left is a waveform video. Right is a still of the first second, with the requested 0.5 s cut marked in red and the window bounds labelled. The picture supports review; it does not judge the cut.
+
 ### Scene detection into a highlight reel
 
 ![Scene detection into a highlight reel](demos/scenes_highlights.gif)

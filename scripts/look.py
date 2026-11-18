@@ -9,6 +9,7 @@ Examples:
   python3 look.py before.mp4 --compare after.mp4 --at 4   # side-by-side frame
   python3 look.py reel.mp4 --safe tiktok --at 3          # shade what TikTok's own UI covers
   python3 look.py show.mp4 --guides title,action,4:3 --at 10   # broadcast safe-area outlines
+  python3 look.py edited.flac --waveform --at 2.5 --window 2  # audio around a cut, marked in red
 Then view the PNG (Read tool / image viewer) and verify before reporting.
 """
 import argparse
@@ -25,7 +26,8 @@ from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter, bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402
 from _common.probe import PROBED_VIDEO, display_size, is_still_input, square_pixels, square_pixels_note  # noqa: E402
-from _common.emit import input_length  # noqa: E402
+from _common.emit import input_length, own_end  # noqa: E402
+from _common import guard_sidecar, require_filter  # noqa: E402
 
 # --guides: broadcast safe areas as outlines, in fractions of the frame (a tile as much as a frame).
 # Action and title safe are SMPTE ST 2046-1's 93 % and 90 % of a 16:9 picture; the 4:3 centre cut
@@ -217,11 +219,81 @@ def display_conversion(meta: dict, what: str = "source") -> str:
     return hdr_to_sdr_chain({"video": dict(v, color_transfer=v.get("color_transfer") or "arib-std-b67")}, "hable")
 
 
+def waveform_windows(args, meta: dict, font_prefix: str, tiles_given: bool) -> int:
+    """Draw bounded windows of the first audio track, without judging the cut."""
+    if not args.at:
+        die("--waveform needs --at (repeat it for several cut points)")
+    incompatible = {"--compare": args.compare is not None, "--tiles": tiles_given,
+                    "--safe": args.safe is not None, "--guides": args.guides is not None, "--ink": args.ink}
+    given = [flag for flag, present in incompatible.items() if present]
+    if given:
+        die("--waveform cannot be combined with " + ", ".join(given))
+    if not 320 <= args.width <= 4096:
+        die("--waveform --width must be between 320 and 4096 px")
+    window = args.window if args.window is not None else 2.0
+    if not 0 < window <= 60:
+        die("--window must be greater than 0 and at most 60 seconds")
+    audio = meta.get("audio")
+    if not audio:
+        die("--waveform needs an audio stream")
+    origin = meta.get("start_time") or 0.0
+    audio_origin = audio.get("start_time") if audio.get("start_time") is not None else origin
+    audio_end = own_end(dict(audio, start_time=audio_origin))
+    if audio_end is None:
+        die("the first audio stream's duration could not be read; a waveform window needs a known audio duration")
+    # All times are on the file's playback timeline. A delayed audio stream does
+    # not start at zero, and the container can extend past the sound's own end.
+    audio_start = max(0.0, audio_origin - origin)
+    audio_end -= origin
+    if audio_end <= audio_start:
+        die("the first audio stream has no positive playback duration")
+    require_filter("showwavespic", "--waveform draws a still audio waveform")
+    require_filter("drawbox", "--waveform marks the requested cut time")
+    if args.output and Path(args.output).suffix and Path(args.output).suffix.lower() != ".png":
+        die("--waveform writes PNG images; use a .png output or a basename")
+    outdir = Path(args.output).parent if args.output else Path(args.input).parent
+    stem = Path(args.output or args.input).stem
+    height = 320
+    entries = []
+    for index, t in enumerate(args.at):
+        sec = time_arg(t, "--at", (meta.get("video") or {}).get("fps"))
+        if not audio_start <= sec <= audio_end:
+            die(f"--at {t} is outside the first audio stream ({audio_start:.3f}..{audio_end:.3f}s)")
+        start, end = max(audio_start, sec - window / 2), min(audio_end, sec + window / 2)
+        marker = min(args.width - 2, int(round((sec - start) / (end - start) * (args.width - 1))))
+        output = (args.output if args.output and len(args.at) == 1 and Path(args.output).suffix
+                  else str(outdir / f"{stem}_waveform_{index}_{sec:.3f}s.png"))
+        entries.append({"path": output, "time": sec, "start": start, "end": end,
+                        "marker_x": marker, "width": args.width, "height": height, "audio_stream": 0})
+    # Validate every destination before writing the first image, including repeated times.
+    for index, entry in enumerate(entries):
+        guard_sidecar(entry["path"], args.input, siblings=[e["path"] for e in entries[:index]])
+    for entry in entries:
+        graph = (f"[0:a:0]asetpts=PTS-STARTPTS,showwavespic=s={args.width}x{height}:"
+                 f"split_channels=1:colors=cyan:filter=peak,format=rgb24,"
+                 f"drawbox=x={entry['marker_x']}:y=0:w=2:h=ih:color=red:t=fill")
+        if not args.no_timecode:
+            label = f"{entry['start']:.3f}s  |  cut {entry['time']:.3f}s  |  {entry['end']:.3f}s"
+            graph += f",drawtext=text='{escape_drawtext(label)}':{font_prefix}fontcolor=white:fontsize={max(10, args.width // 64)}:x=8:y=8:box=1:boxcolor=black@0.7"
+        graph += "[out]"
+        run(ffmpeg_base() + ["-ss", f"{entry['start']:.9f}", "-t", f"{entry['end'] - entry['start']:.9f}",
+                             "-i", args.input, "-filter_complex", graph, "-map", "[out]",
+                             "-frames:v", "1", "-update", "1", entry["path"]])
+    outputs = [entry["path"] for entry in entries]
+    emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs, waveforms=entries)
+    if len(outputs) > 1 and not args.json:
+        for output in outputs:
+            print(output)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output PNG (contact sheet / compare) or basename for --at frames")
     ap.add_argument("--at", action="append", help="time of a frame to extract (repeatable)")
+    ap.add_argument("--waveform", action="store_true", help="draw a PNG of the first audio track around each --at, with the cut marked in red")
+    ap.add_argument("--window", type=float, help="--waveform only: total window in seconds, clipped to the audio bounds (default 2, maximum 60)")
     ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS (default 4x3)")
     ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
@@ -236,11 +308,18 @@ def main() -> int:
                                                  "ink_fraction, row_bands per tile for a contact sheet) instead of "
                                                  "just eyeballing it -- a pixel-only signal, not a legibility judgement")
     add_common(ap)
-    args = ap.parse_args()
+    # A prefilled namespace distinguishes an explicit --tiles (including abbreviations)
+    # from its default, while keeping that default in the generated contract.
+    args = ap.parse_args(namespace=argparse.Namespace(tiles=None))
+    tiles_given = args.tiles is not None
+    if not tiles_given:
+        args.tiles = ap.get_default("tiles")
     apply_common(args)
 
     meta = probe(args.input)
-    if not meta.get("video"):
+    if args.window is not None and not args.waveform:
+        die("--window requires --waveform")
+    if not args.waveform and not meta.get("video"):
         die("input has no video stream")
     if args.width < 2:
         # a width of 0 or below wrote a sheet two pixels a tile, or a still at the source's size
@@ -265,6 +344,8 @@ def main() -> int:
         default_font = default_font_file("DejaVu Sans")
         font_prefix = f"{drawtext_fontfile(default_font)}:" if default_font else ""
         tc = "," + timecode_filter(font_prefix)
+    if args.waveform:
+        return waveform_windows(args, meta, font_prefix, tiles_given)
     # --safe: the platform's occluded zones, drawn as shaded boxes in fractions of the frame so
     # the same filter is right at any scale (a tile of a contact sheet as much as a full frame).
     safe_filter = ""

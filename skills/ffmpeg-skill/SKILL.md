@@ -187,7 +187,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` |
 | "three cameras, cut between them" | `multicam.py a.mp4 b.mp4 c.mp4 --switch energy` |
 | "what's in this file", "is it Log?" | `probe.py in.mp4` (`--analyze`) |
-| "show me what it looks like", "title safe" | `look.py out.mp4 --tiles 3x2`, then view the PNG (`--at T --guides title,action`) |
+| "inspect the picture or a cut in the sound" | `look.py out.mp4 --tiles 3x2`; audio: `look.py edited.wav --waveform --at T --window 2`. View the PNG. |
 | "static vs moving shots", "speech or music" | `scenes.py in.mp4 --shots` (`--audio-peaks`, `--speech`) |
 | "where does the subject move" | `cropdetect.py in.mp4 --motion-centre` |
 | "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |

@@ -906,6 +906,20 @@ def demo_contact_sheet(ctx):
     return before, after
 
 
+def demo_waveform_window(ctx):
+    source = ctx.path("voice.flac")
+    ffmpeg("-f", "lavfi", "-i", f"aevalsrc='{SPEECH}':s=48000", "-t", "4", str(source))
+    before, after = ctx.path("before.mp4"), ctx.path("after.mp4")
+    ctx.script("waveform.py", source, "--width", "960", "--height", "320", "--fps", "10",
+               "--preset", "veryfast", "-o", before)
+    sheet = ctx.path("cut.png")
+    ctx.script("look.py", source, "--waveform", "--at", "0.5", "--window", "1",
+               "--width", "960", "-o", sheet)
+    ffmpeg("-loop", "1", "-t", "4", "-i", str(sheet), "-vf", "format=yuv420p", "-r", "10",
+           "-c:v", "libx264", "-preset", "veryfast", str(after))
+    return before, after
+
+
 def demo_cut_accurate(ctx):
     """Two cuts of the same request: the lossless one snaps to the nearest keyframe, the
     accurate one re-encodes and lands on the asked-for frame."""
@@ -1807,6 +1821,9 @@ _ROWS = [
     ("contact_sheet", PROJECTS, "Contact sheet",
      "Twelve timecoded frames in one PNG: the fastest way to confirm an edit landed where it should.",
      demo_contact_sheet, "video", None),
+    ("waveform_window", PROJECTS, "Inspect audio around a cut",
+     "Left is a waveform video. Right is a still of the first second, with the requested 0.5 s cut marked in red and the window bounds labelled. The picture supports review; it does not judge the cut.",
+     demo_waveform_window, "video", None, ("VISUALISATION VIDEO", "CUT WINDOW")),
 
     ("cut_accurate", PICTURE, "Lossless cut vs. accurate cut",
      "Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.",

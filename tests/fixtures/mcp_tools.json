@@ -676,7 +676,9 @@
    "safe",
    "tiles",
    "timeout",
-   "width"
+   "waveform",
+   "width",
+   "window"
   ],
   "required": []
  },

@@ -220,10 +220,10 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                    required=FF + ["filter:scdet"], optional=[{"capability": "filter:drawtext", "when": "--sheet"}, {"capability": "filter:tile", "when": "--sheet"},
                                                             {"capability": "ffmpeg", "when": "--beats (one audio decode for the onset pass)"}],
                    video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
-    "look": dict(role="verification", inputs=["video artifact"], outputs=["PNG contact sheet / frames / side-by-side"],
+    "look": dict(role="verification", inputs=["video artifact; audio or video with --waveform"], outputs=["PNG contact sheet / frames / side-by-side / marked audio windows"],
                  required=FF + ["filter:tile"], optional=[{"capability": "filter:drawtext", "when": "timecode stamps (default; without drawtext the sheet is drawn without them, fallback look_no_drawtext)"},
-                                                          {"capability": "filter:drawbox", "when": "--safe NAME (the platform's occluded zones)"}, {"capability": "filter:zscale", "when": "HDR source"}, {"capability": "filter:tonemap", "when": "HDR source"}],
-                 video_required=True, audio_only=False, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
+                                                          {"capability": "filter:drawbox", "when": "--safe NAME or --waveform"}, {"capability": "filter:showwavespic", "when": "--waveform"}, {"capability": "filter:zscale", "when": "HDR source"}, {"capability": "filter:tonemap", "when": "HDR source"}],
+                 video_required=False, audio_only=True, visual=False, verify=[], produces_artifact=True, idempotency="bit_exact", deterministic=True),
     "render": dict(role="execution", inputs=["project.json (clips, transitions, captions, overlays, audio, loudness, export, check)", "media asset plus --template NAME (a shipped delivery template)"], outputs=["final video artifact", "one artifact per destination plus a pack table (--template all)", "work directory of stage outputs (--keep / --work)", "editor timeline (.fcpxml / .edl / .otio) instead of a render (--export-timeline)"],
                    required=FF, optional=[{"capability": "delegated", "when": "each stage (and each destination of --template) runs cut / join / fit / caption / graphics / overlay / audio / loudness / export / check with their capabilities"}],
                    video_required=False, audio_only=True, visual=True, verify=["probe", "check", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
@@ -780,6 +780,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "drift_skipped_reason": {"type": ["string", "null"], "enum": ["too_short", "low_confidence", None], "description": "--fix-drift, one SOURCE: why the drift correction was not applied (too_short: no tail window far enough from the head; low_confidence: the tail did not correlate), null when it was; also a diagnostics.skipped entry, drift_correction_skipped"}}
     elif name == "look":
         extra = {"outputs": {"type": "array", "items": {"type": "string"}},
+                 "waveforms": {"type": "array", "description": "--waveform only: one entry per PNG, {path, time, start, end, marker_x, width, height, audio_stream: 0}; seconds are on the input playback timeline, start/end clipped to the first audio stream. Under --dry-run these describe planned images."},
                  "guides": {"type": "array", "description": "--guides only: each outline drawn on the PNG, {guide: action|title, fraction (0.93 / 0.90 of the frame, SMPTE ST 2046-1), of: frame} or {guide: 4:3, window, action: 0.90, title: 0.80}; drawn on the preview only"}}
     elif name == "render":
         extra = {"stages": {"type": "array", "items": {"type": "string"}}, "check": {"type": ["object", "null"], "description": "check.py's document for a \"check\" stage with a platform, \"content\": true, or both; when check.py printed none, a failure document with error.reason check_output_unparsed"},

@@ -1202,6 +1202,77 @@ class AnalysisTests(MediaFixtures):
                 self.assertGreater(png_size(OUT / name)[0], 0)
         self.assertFalse(stem.exists())
 
+    def test_look_waveform_window_and_marker_match_the_samples(self):
+        source, output = OUT / "window-tone.flac", OUT / "window-tone.png"
+        sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+           "aevalsrc='0.6*sin(2*PI*440*t)*between(t\\,0.5\\,1.5)':s=8000:d=2", source)
+        original = source.read_bytes()
+        doc = json.loads(script("look.py", source, "--waveform", "--at", "1", "--window", "2",
+                                "--width", "640", "--no-timecode", "--json", "-o", output).stdout)
+        entry = doc["waveforms"][0]
+        self.assertEqual((entry["start"], entry["end"], entry["time"], entry["marker_x"]), (0, 2, 1, 320))
+        self.assertEqual(png_size(output), (640, 320))
+        pixels = subprocess.run(["ffmpeg", "-v", "error", "-i", str(output), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                capture_output=True, check=True).stdout
+        def pixel(x, y):
+            offset = (y * 640 + x) * 3
+            return tuple(pixels[offset:offset + 3])
+        self.assertEqual(pixel(80, 80), (0, 0, 0), "the first quarter contains silence")
+        self.assertEqual(pixel(200, 80), (0, 255, 255), "the middle half contains the tone")
+        self.assertEqual(pixel(entry["marker_x"], 280), (255, 0, 0), "the cut marker is in the declared column")
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_look_waveform_clips_edges_and_keeps_repeated_points(self):
+        doc = json.loads(script("look.py", self.mic, "--waveform", "--at", "0", "--at", "0",
+                                "--width", "640", "--no-timecode", "--json", "-o", OUT / "edge-wave").stdout)
+        self.assertEqual(len(set(doc["outputs"])), 2)
+        for row in doc["waveforms"]:
+            self.assertEqual((row["start"], row["end"], row["marker_x"]), (0, 1, 0))
+            self.assertEqual(png_size(row["path"]), (640, 320))
+        dry = OUT / "waveform-dry.png"
+        dry.unlink(missing_ok=True)
+        result = json.loads(script("look.py", self.mic, "--waveform", "--at", "1", "--dry-run",
+                                   "--no-timecode", "--json", "-o", dry).stdout)
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(dry.exists())
+        self.assertEqual(result["waveforms"][0]["time"], 1)
+
+    def test_look_waveform_uses_the_audio_timeline_not_the_longer_video(self):
+        source = OUT / "short-delayed-audio.mkv"
+        sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=s=32x32:d=4",
+           "-itsoffset", "1", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+           "-map", "0:v", "-map", "1:a", "-c:v", "ffv1", "-c:a", "flac", source)
+        doc = json.loads(script("look.py", source, "--waveform", "--at", "2", "--window", "4",
+                                "--no-timecode", "--json", "-o", OUT / "delayed-wave.png").stdout)
+        row = doc["waveforms"][0]
+        self.assertEqual((row["start"], row["end"], row["time"]), (1, 3, 2))
+        result = script("look.py", source, "--waveform", "--at", "3.5", "--json", expect_fail=True)
+        self.assertEqual(json.loads(result.stdout)["error"]["kind"], "input")
+
+    def test_look_waveform_validates_the_whole_request_before_writing(self):
+        out = OUT / "invalid-wave.png"
+        out.unlink(missing_ok=True)
+        cases = [("--window", "0"), ("--window", "61"), ("--window", "nan"),
+                 ("--width", "100"), ("--tiles", "4x3"), ("--til", "4x3"),
+                 ("--comp", str(self.src)), ("--at", "999")]
+        for flags in cases:
+            with self.subTest(flags=flags):
+                result = script("look.py", self.mic, "--waveform", "--at", "1", *flags,
+                                "--json", "-o", out, expect_fail=True)
+                self.assertEqual(json.loads(result.stdout)["error"]["kind"], "input")
+                self.assertFalse(out.exists())
+        result = script("look.py", self.mic, "--window", "2", "--json", expect_fail=True)
+        self.assertIn("requires --waveform", json.loads(result.stdout)["error"]["message"])
+        stem = OUT / "guarded-wave"
+        first, second = OUT / "guarded-wave_waveform_0_1.000s.png", OUT / "guarded-wave_waveform_1_1.000s.png"
+        first.unlink(missing_ok=True)
+        second.write_bytes(b"keep this output")
+        result = sh(sys.executable, SCRIPTS / "look.py", self.mic, "--waveform", "--at", "1", "--at", "1",
+                    "--json", "-o", stem, expect_fail=True)
+        self.assertEqual(json.loads(result.stdout)["error"]["reason"], "output_exists")
+        self.assertFalse(first.exists())
+        self.assertEqual(second.read_bytes(), b"keep this output")
+
     def test_verify_disambiguates_same_named_files_from_different_folders(self):
         """Every file's outputs share one flat --out directory keyed only on stem = outdir /
         f.stem -- two files with the same basename from different subfolders (entirely normal for

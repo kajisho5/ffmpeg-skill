@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- `look.py --waveform --at T --window 2` draws a still of the first audio track around a cut, with a red marker, time bounds and structured window metadata (#450).
 
 ## 3.12.1
 
