@@ -7444,6 +7444,60 @@ class FfmpegSecurityTableTests(unittest.TestCase):
             self.assertNotRegex(src, rf"(?m)^\s*(import|from) {re.escape(mod)}\b", mod)
 
 
+class DoctorSpeechTests(unittest.TestCase):
+    def test_broken_faster_whisper_is_optional_and_reports_the_import_error(self):
+        from _common import runner
+
+        real_which = runner.safe_which
+
+        def which(name, *args):
+            if name in {"whisper-cli", "whisper-cpp", "whisper", "main"}:
+                return None
+            return real_which(name, *args)
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "faster_whisper.py").write_text(
+                "raise ImportError('mock PyAV ABI mismatch')\n", encoding="utf-8"
+            )
+            with unittest.mock.patch.object(runner, "safe_which", side_effect=which), \
+                    unittest.mock.patch.dict(os.environ, {"PYTHONPATH": directory}), \
+                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]), \
+                    unittest.mock.patch("importlib.metadata.version", return_value="17.0.0"):
+                report = _contract.doctor()
+        self.assertIn("external:whisper", report["missing_optional"])
+        self.assertNotIn("external:whisper", report["available"])
+        engine = report["speech_engines"]["faster-whisper"]
+        self.assertFalse(engine["usable"])
+        self.assertEqual(engine["av_version"], "17.0.0")
+        self.assertIn("mock PyAV ABI mismatch", engine["detail"])
+
+    def test_whisper_cli_probe_is_bounded(self):
+        from _common import runner
+
+        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: "whisper.exe" if name == "whisper" else None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 10)) as run:
+            engine = _contract._whisper_engines()["openai-whisper"]
+        self.assertFalse(engine["usable"])
+        self.assertIn("timed out", engine["detail"])
+        self.assertEqual(run.call_args.args[0], ["whisper.exe", "--help"])
+        self.assertGreater(run.call_args.kwargs["timeout"], 0)
+
+    def test_faster_whisper_import_does_not_create_a_model(self):
+        from _common import runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "faster_whisper.py").write_text(
+                "class WhisperModel:\n    def __init__(self):\n        raise RuntimeError('model initialized')\n",
+                encoding="utf-8",
+            )
+            with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                    unittest.mock.patch.dict(os.environ, {"PYTHONPATH": directory}), \
+                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]):
+                engine = _contract._whisper_engines()["faster-whisper"]
+        self.assertEqual(engine, {"usable": True, "checked": "import"})
+
+
 @unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")
 class DoctorDetectionTests(unittest.TestCase):
     """Capability detection reads every `ffmpeg -filters` layout and never confuses "unreadable" with "absent".
