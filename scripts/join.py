@@ -307,7 +307,7 @@ def read_list(path: str) -> List[str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if line.startswith("file "):
+        if line.startswith(("file ", "file\t")):
             line = line[5:].strip()
             if len(line) >= 2 and line[0] == line[-1] and line[0] in "'\"":
                 line = line[1:-1].replace("'\\''", "'")

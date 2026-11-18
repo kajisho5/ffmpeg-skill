@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -3065,6 +3066,25 @@ class EditingTests(MediaFixtures):
                          "an HDR source must not be dimmed by an SDR-shaped eq")
         self.assertIn("not the -15% dim it is on SDR", hdr_proc.stderr)
         self.assertNotIn("-15%%", hdr_proc.stderr)
+
+    def test_join_list_accepts_tabs_after_the_file_directive(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as directory:
+            d = Path(directory)
+            files = ("\u58f0 1.wav", "\u58f0 2.wav")
+            for filename in files:
+                sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", d / filename)
+            manifest = d / "parts.ffconcat"
+            manifest.write_text(f"ffconcat version 1.0\nfile\t'{files[0]}'\nfile \t'{files[1]}'\n", encoding="utf-8")
+            native = d / "native.wav"
+            sh("ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", manifest, "-c", "copy", native)
+            out = d / "joined.wav"
+            argv = ("join.py", "--list", manifest, "--transition", "none", "-o", out, "--json")
+            dry = json.loads(script(*argv, "--dry-run").stdout)
+            self.assertEqual(dry["clips"], 2)
+            self.assertFalse(out.exists())
+            report = json.loads(script(*argv).stdout)
+            self.assertEqual((report["clips"], report["verified"]), (2, True))
+            self.assertAlmostEqual(report["probe"]["duration"], probe(str(native))["duration"], delta=0.01)
 
     def test_join_list_checks_every_segment_before_joining(self):
         """Reported by a user generating shorts on a VPS: TTS writes one audio file per line,
