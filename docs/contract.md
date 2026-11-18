@@ -488,6 +488,11 @@ A project may now carry `"template"` (the name it was filled from) and `"frame":
 
 ## Capabilities
 
+`doctor --json` reports `fonts.scripts.vi` separately for Vietnamese. Its
+`available`/ `missing`/ `unknown` status reflects a fontconfig Vietnamese
+coverage match or a known Windows font. Caption font selection uses that lookup
+for Latin cues marked `--lang vi` or containing common Vietnamese diacritics.
+
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `decoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)

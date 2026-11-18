@@ -9,6 +9,7 @@ import platform
 import re
 import struct
 import subprocess
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, info, record_fallback, warn
@@ -162,7 +163,7 @@ def record_font_choice(choice: "Dict[str, object]") -> "Dict[str, object]":
 # A65 (#457): gu, pa, te, kn, ml, si, km and my were in SHAPING_SCRIPTS but had no range
 # below, so their text was detected as Latin, drawn in the Latin font and reported verified.
 SCRIPTS = ("ja", "zh", "ko", "ar", "he", "hi", "bn", "pa", "gu", "ta", "te", "kn", "ml", "si", "th", "lo",
-           "km", "my", "ru", "el", "latin")
+           "km", "my", "ru", "el", "vi", "latin")
 
 
 LANGUAGE_NAMES = {
@@ -171,14 +172,14 @@ LANGUAGE_NAMES = {
     "el": "Greek", "latin": "Latin", "bn": "Bengali", "ta": "Tamil", "lo": "Lao",
     "pa": "Gurmukhi (Punjabi)", "gu": "Gujarati", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
     "si": "Sinhala", "km": "Khmer", "my": "Myanmar (Burmese)",
-    "zh-hant": "Traditional Chinese",
+    "zh-hant": "Traditional Chinese", "vi": "Vietnamese",
 }
 
 
 # fontconfig's own :lang= codes for each script we detect (zh uses zh-cn, the Simplified subset
 # every CJK font that claims zh carries; the rest are the plain two-letter codes).
 FC_LANG = {"ja": "ja", "zh": "zh-cn", "ko": "ko", "ar": "ar", "he": "he", "hi": "hi", "th": "th", "ru": "ru", "el": "el",
-           "bn": "bn", "ta": "ta", "lo": "lo", "zh-hant": "zh-tw",
+           "bn": "bn", "ta": "ta", "lo": "lo", "zh-hant": "zh-tw", "vi": "vi",
            "pa": "pa", "gu": "gu", "te": "te", "kn": "kn", "ml": "ml", "si": "si", "km": "km", "my": "my"}
 
 
@@ -208,6 +209,7 @@ PREFERRED_FAMILIES = {
     "my": ["Noto Sans Myanmar", "Noto Serif Myanmar", "Padauk", "Myanmar Text"],
     "ru": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
     "el": ["Noto Sans", "DejaVu Sans", "Liberation Sans", "FreeSans", "FreeSerif"],
+    "vi": ["Noto Sans", "DejaVu Sans", "Arial", "Liberation Sans"],
 }
 
 
@@ -233,6 +235,7 @@ WINDOWS_FONTS = {
     "my": [("mmrtext.ttf", "Myanmar Text")],
     "ru": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
     "el": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI")],
+    "vi": [("arial.ttf", "Arial"), ("segoeui.ttf", "Segoe UI"), ("DejaVuSans.ttf", "DejaVu Sans")],
 }
 
 
@@ -450,9 +453,14 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
         return None
     if platform.system() == "Windows":
         fonts = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
-        for name, family in WINDOWS_FONTS.get(script, []):
+        entries = WINDOWS_FONTS.get(script, [])
+        if script == "vi" and family_hint:
+            entries = sorted(entries, key=lambda entry: entry[1].casefold() != family_hint.casefold())
+        for name, family in entries:
             if (fonts / name).exists():
                 return str(fonts / name), family
+        if script == "vi":
+            return FC_UNKNOWN  # no known system face; custom Windows fonts have not been measured
         return None
     preferred = list(PREFERRED_FAMILIES.get(script, []))
     if family_hint:
@@ -465,6 +473,8 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
     scored = []
     for path, families in candidates:
         joined = " ".join(families).lower()
+        if script == "vi" and "unifont" in joined:
+            continue
         stem = Path(path).stem.lower()
         # "Unifont Sample" is fontconfig's tofu-with-hex-digits fallback: it "covers" every script
         # by drawing the code point, which is exactly the unreadable result this feature exists to
@@ -480,6 +490,8 @@ def _script_font_uncached(script: str, family_hint: "Optional[str]" = None):
                       families[0])
         scored.append((last_resort, rank, mono, styled, path, family))
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
+    if not scored:
+        return None
     best = scored[0]
     return best[4], best[5]
 
@@ -730,16 +742,27 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     warning (`font_coverage_unverified`) says the coverage could not be verified.
     """
     script = detect_script(text or "", lang)
+    key = font_key(script, lang)
     if script == "latin":
+        tag = (lang or "").strip().lower().replace("_", "-").split("-", 1)[0]
+        marked = re.search(r"[\u01a0\u01a1\u01af\u01b0\u1ea0-\u1ef9]", unicodedata.normalize("NFC", text or ""))
+        if tag == "vi" or marked:
+            key = "vi"
+    if key == "latin":
         return script, None, None
     if font_file:
         return script, None, None
-    key = font_key(script, lang)
+    diagnostic_script = key if key == "vi" else script
     if font_explicit and font:
-        if not font_covers_script(font, key):
+        known = _script_font_entry(key, font) if key == "vi" and platform.system() == "Windows" else None
+        known_family = known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold()
+        if key == "vi" and not _safe_which("fc-list") and not known_family:
+            warn(f"font: could not verify Vietnamese coverage for '{font}'. Check the burned accents or "
+                 f"{FONT_FLAG_HINT}.", "font_coverage_unverified", script=key)
+        elif not font_covers_script(font, key):
             warn(f"font: '{font}' does not cover {LANGUAGE_NAMES[key]} text on this machine; keeping it as asked "
                  f"(drop --font, or {FONT_FLAG_HINT}, to pick one by script automatically)", "font_lacks_script",
-                 font=font, script=script)
+                 font=font, script=diagnostic_script)
         return script, None, None
     if fonts_dir:
         covered = fonts_dir_covers_script(fonts_dir, key)
@@ -747,13 +770,14 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
             return script, None, None
         if covered is None:
             warn(f"font: could not verify that {fonts_dir} covers {LANGUAGE_NAMES[key]} text "
-                 "(no fc-scan on this machine); using it as given", "font_coverage_unverified", fonts_dir=fonts_dir, script=script)
+                 "(no fc-scan on this machine); using it as given", "font_coverage_unverified", fonts_dir=fonts_dir,
+                 script=diagnostic_script)
             return script, None, None
         record_fallback(f"font: no face in {fonts_dir} covers {LANGUAGE_NAMES[key]} text; "
                         "picking one by script instead (the directory is still searched first)", "fonts_dir_lacks_script",
-                        fonts_dir=fonts_dir, script=script)
+                        fonts_dir=fonts_dir, script=diagnostic_script)
     entry = _script_font_entry(key)
-    if key != script and (not entry or (entry is not FC_UNKNOWN and _is_last_resort(entry))):
+    if key == "zh-hant" and (not entry or (entry is not FC_UNKNOWN and _is_last_resort(entry))):
         # no Traditional face (Unifont's code-point boxes are none): the Simplified one still
         # has the characters, in the other form
         simplified = _script_font_entry(script)
@@ -766,7 +790,7 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     if entry is FC_UNKNOWN:
         warn(f"font: could not verify that this machine can render {LANGUAGE_NAMES[key]} text "
              "(no working fontconfig); rendering with the font as given -- "
-             "doctor --json .fonts.scripts reports what is known", "font_coverage_unverified", script=script)
+             "doctor --json .fonts.scripts reports what is known", "font_coverage_unverified", script=diagnostic_script)
         return script, None, None
     if not entry:
         die(f"no installed font covers {LANGUAGE_NAMES[key]} text on this machine — {FONT_INSTALL_HINT}", kind="input")

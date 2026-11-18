@@ -4001,6 +4001,48 @@ class ColourAuditGTests(unittest.TestCase):
 class ScriptFontTests(unittest.TestCase):
     """1.12: which script text is written in, and a font file that actually covers it."""
 
+    def test_vietnamese_font_coverage_checks_decomposed_text_and_explicit_language(self):
+        import unicodedata
+        from _common import fonts
+
+        entry = ("/test/vi.ttf", "Test Vietnamese")
+        cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None), ("Xin chao", "vi-VN"))
+        with unittest.mock.patch.object(fonts, "_script_font_entry", return_value=entry) as resolve:
+            for sample, lang in cases:
+                with self.subTest(sample=sample, lang=lang):
+                    self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", *entry))
+                    resolve.assert_called_with("vi")
+        with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-list"), \
+             unittest.mock.patch.object(fonts, "font_covers_script", return_value=False) as covers, \
+             unittest.mock.patch.object(fonts, "warn") as warn:
+            fonts.script_font_for_text("Tiếng Việt", font="Narrow Font", font_explicit=True)
+            covers.assert_called_once_with("Narrow Font", "vi")
+            self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), ("font_lacks_script", "vi"))
+
+    def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
+        family = font_family_for_script("vi")
+        if not family:
+            self.skipTest("no known Vietnamese-capable font")
+        OUT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=OUT) as work:
+            d = Path(work)
+            source = tiny_clip(d / "blank.mp4", "color=black:s=480x270:r=10", seconds=2)
+            cue = "Tiếng Việt: ă ơ ư ạ ẫ ữ"
+            srt = d / "vi.srt"
+            srt.write_text(f"1\n00:00:00,000 --> 00:00:01,900\n{cue}\n", encoding="utf-8")
+            for name, flags in (("default", ()), ("explicit", ("--font", family, "--lang", "vi"))):
+                with self.subTest(name=name):
+                    out, ass = d / f"{name}.mp4", d / f"{name}.ass"
+                    result = json.loads(script("caption.py", source, "--srt", srt, "--animate", "fade",
+                                               "--write-ass", ass, "-o", out, "--json", *flags).stdout)
+                    self.assertTrue(result["verified"])
+                    self.assertEqual(result["caption"]["cues_burned"], 1)
+                    self.assertEqual(result["font_used"]["family"], family)
+                    if name == "default":
+                        self.assertEqual(result["font_used"]["how"], "script")
+                    self.assertIn(cue, ass.read_text(encoding="utf-8").replace(r"\N", " "))
+                    self.assertGreater(_frame_ink(out), _frame_ink(source))
+
     def test_detect_script_reads_the_characters_not_the_locale(self):
         cases = {
             "こんにちは世界": "ja",          # kana + han -> Japanese

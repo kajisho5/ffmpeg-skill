@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Check Vietnamese font coverage separately and use it for tone-marked captions (#608).
 
 ## 3.13.1
 
