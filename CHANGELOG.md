@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- MCP can advertise a comma-separated selection via `FFMPEG_SKILL_MCP_TOOLS` (#573).
 
 ## 3.12.2
 
