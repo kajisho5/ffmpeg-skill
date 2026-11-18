@@ -1095,8 +1095,9 @@ class DeliveryTests(MediaFixtures):
         re-encoded it at loudness.py's 192k, so the file missed the limit it had been encoded to
         meet. The written file's size and its sound's bitrate are measured."""
         src = OUT / "export_maxmb_noisy.mp4"
+        # A fixed waveform keeps AAC true-peak overshoot reproducible across runs (#555).
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=6",
-           "-f", "lavfi", "-i", "anoisesrc=d=6:a=0.05", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+           "-f", "lavfi", "-i", "anoisesrc=d=6:a=0.05:seed=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "256k", "-shortest", src)
         out = OUT / "export_maxmb_normalize.mp4"
         doc = json.loads(script("export.py", src, "--preset", "reels", "--max-mb", "1", "--normalize", "--json", "-o", out).stdout)
