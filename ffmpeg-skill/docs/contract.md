@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.11.1`) | any release |
+| `skill.version` | the npm / package.json version (`3.11.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.11.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.11.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -699,6 +699,17 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 `ffmpeg` and `ffprobe`.
 
 ## JSON output
+
+The common result writer computes `verified` from the output probe or an equivalent
+artifact check and requires every verification step to pass. `lossless` is true
+only when a successful FFmpeg stream-copy write can be traced to the current
+output and the run recorded no re-encode. Stream copy can still trim the timeline,
+change metadata or drop tracks.
+
+Under `--dry-run`, both flags are false. Top-level output measurements such as
+`output_duration`, width and height are absent or null until measured. Timing
+targets such as `expected_duration` and measurements of existing inputs remain available.
+`probe.py` reports null for facts about a pending input.
 
 Non-finite numbers never reach a `--json` document (2.2.6): every tool prints through one
 writer that turns `-inf` / `inf` into the strings `"-inf"` / `"inf"` (the spelling
