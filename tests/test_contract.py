@@ -40,6 +40,9 @@ from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
 for _k in (HW_ENV, HW_FORCED_ENV):
     os.environ.pop(_k, None)
 
+for _k in ("FFMPEG_SKILL_MCP_FULL", "FFMPEG_SKILL_MCP_TOOLS"):
+    os.environ.pop(_k, None)
+
 # The host's own speech defaults must not reach the suite either: FFMPEG_SKILL_ASR_ENGINE,
 # FFMPEG_SKILL_ASR_MODEL or a PARAKEET_* setting would change which speech engine or model a
 # --transcribe test drives, or where parakeet-mlx writes. Tests that exercise those opt in with an
@@ -2058,6 +2061,44 @@ class ContractTests(unittest.TestCase):
             self.assertEqual([t["name"] for t in resp["result"]["tools"]], expected_order, f"FFMPEG_SKILL_MCP_FULL={flag!r} still core 12")
         listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout.splitlines() if l.strip()]
         self.assertEqual(listed, expected_order)
+
+    def test_mcp_advertises_only_named_tools_and_keeps_unlisted_tools_callable(self):
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "probe", "arguments": {"argv": ["--help"]}}}
+        expected = [name for name in self.tools if name in {"join", "cut"}]
+        with unittest.mock.patch.dict(os.environ, {"FFMPEG_SKILL_MCP_TOOLS": "join, cut, join"}):
+            replies = {r["id"]: r for r in self._rpc([request, call])}
+            self.assertEqual([t["name"] for t in replies[1]["result"]["tools"]], expected)
+            self.assertIn("usage:", replies[2]["result"]["content"][0]["text"].lower())
+            listed = sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout
+            self.assertEqual([line.split()[0] for line in listed.splitlines()], expected)
+            full = self._rpc([request], full=True)[0]
+            self.assertEqual([t["name"] for t in full["result"]["tools"]], list(self.tools))
+
+    def test_mcp_reports_unknown_advertised_tool_names(self):
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        with unittest.mock.patch.dict(os.environ, {"FFMPEG_SKILL_MCP_TOOLS": "cut,wrong-tool"}):
+            result = self._rpc([request])[0]
+            self.assertEqual(result["error"]["code"], -32000)
+            self.assertIn("wrong-tool", result["error"]["message"])
+            proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--list", check=False)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("FFMPEG_SKILL_MCP_TOOLS", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_mcp_advertisement_payload_stays_within_documented_budgets(self):
+        profiles = (
+            ({}, 12, 73_000),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_000),
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
+        )
+        for env, count, limit in profiles:
+            with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
+                listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}],
+                                   full="FFMPEG_SKILL_MCP_FULL" in env)[0]
+                self.assertEqual(len(listed["result"]["tools"]), count)
+                self.assertLessEqual(len((json.dumps(listed) + "\n").encode("utf-8")), limit)
 
     def test_mcp_tool_descriptions_are_one_liners_with_the_structured_note_moved_to_initialize(self):
         """1.20.0 agent ergonomics: MCP_STRUCTURED_NOTE used to be appended to every one of the 42

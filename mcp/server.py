@@ -3,8 +3,9 @@
 
 Every public script in ../scripts becomes a callable tool, but tools/list defaults to
 advertising only the core 12 (_contract.MCP_CORE_TOOLS) to keep the schema dump small;
-set FFMPEG_SKILL_MCP_FULL=1 to list all 42. Every tool is still callable by name via
-tools/call either way. Tool names, order, inputSchema and the structured-argument mapping
+set FFMPEG_SKILL_MCP_TOOLS to a comma-separated selection or FFMPEG_SKILL_MCP_FULL=1
+to list all 42. Every tool is still callable by name via tools/call. Tool names, order,
+inputSchema and the structured-argument mapping
 all come from the contract (scripts/_contract.py); this file is only the transport.
 Arguments are passed as a flat object (keys = argparse dests) or, for CLI compatibility,
 as an argv list. Results are the script's --json output.
@@ -212,16 +213,20 @@ def call_tool(name: str, args: Dict[str, Any], on_start: Any = None) -> Dict[str
 def tool_list() -> List[Dict[str, Any]]:
     """tools/list: one entry per ToolSpec, in the contract's order, inputSchema derived from ToolSpec.input_schema.
 
-    Default surface is the core 12 (_contract.MCP_CORE_TOOLS, roadmap P1-7): the other 30 stay
-    reachable by name through tools/call regardless. FFMPEG_SKILL_MCP_FULL=1 (anything but "" or
-    "0") lists all 42, unchanged from pre-1.18.3 behaviour.
+    Only advertisement is filtered. The full-catalogue switch takes precedence over
+    the optional selection and remains enabled by anything other than "" or "0".
     """
     all_specs = specs()
     if os.environ.get("FFMPEG_SKILL_MCP_FULL", "") not in ("", "0"):
-        names = all_specs.keys()
-    else:
-        names = (n for n in all_specs if n in _contract.MCP_CORE_TOOLS)
-    return [_contract.mcp_tool(all_specs[name]) for name in names]
+        return [_contract.mcp_tool(spec) for spec in all_specs.values()]
+    raw = os.environ.get("FFMPEG_SKILL_MCP_TOOLS", "").strip()
+    selected = {value.strip() for value in raw.split(",") if value.strip()} if raw else set(_contract.MCP_CORE_TOOLS)
+    if raw:
+        unknown = selected.difference(all_specs)
+        if unknown or not selected:
+            detail = f"unknown tool names {', '.join(sorted(unknown))}" if unknown else "no tool names"
+            raise ValueError(f"FFMPEG_SKILL_MCP_TOOLS has {detail}. Use comma-separated tool names from the full list.")
+    return [_contract.mcp_tool(spec) for name, spec in all_specs.items() if name in selected]
 
 
 def handle(req: Dict[str, Any], on_start: Any = None) -> Dict[str, Any]:
@@ -358,7 +363,12 @@ def version() -> str:
 
 def main() -> int:
     if "--list" in sys.argv:
-        for t in tool_list():
+        try:
+            tools = tool_list()
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        for t in tools:
             print(f"{t['name']:10s} {t['description']}")
         return 0
     if "--call" in sys.argv:  # debugging helper: --call NAME '{"input": "..."}'

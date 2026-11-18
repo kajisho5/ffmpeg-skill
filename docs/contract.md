@@ -1191,6 +1191,13 @@ contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
 return all 42, as every version before 1.18.3 did.
 
+Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` to advertise a named subset.
+The server trims whitespace, ignores duplicate names and preserves contract order.
+A blank value uses the default list. An unknown name or a nonblank list with no names
+returns a `tools/list` error naming the setting. The full-catalogue setting takes
+precedence. The same selection applies to `mcp/server.py --list`, which exits 2 for an
+invalid selection. `tools/call` and `prompts/list` keep their existing behavior.
+
 ### `prompts` capability: five workflow recipes
 
 Roadmap 1.20.0 "agent ergonomics": the server advertises `capabilities.prompts` in `initialize`
