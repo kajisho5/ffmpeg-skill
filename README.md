@@ -721,3 +721,11 @@ If this skill saves you time, you can help keep it maintained through [GitHub Sp
 ## License
 
 [MIT](LICENSE)
+
+ffmpeg-skill runs your FFmpeg build as a separate executable. FFmpeg has its own license.
+Its LGPL builds can include encoders such as SVT-AV1 or VideoToolbox when available.
+Builds with GPL components such as libx264, libx265 or libvidstab use GPL terms.
+That affects the default x264/x265 encoding paths and the vid.stab filters used by
+`stabilize.py`. FFmpeg labels builds configured with `--enable-nonfree` as
+non-redistributable. `doctor` displays the license reported by the selected executable.
+See [FFmpeg's license and distribution information](https://ffmpeg.org/legal.html).
