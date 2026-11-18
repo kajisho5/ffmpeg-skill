@@ -6689,6 +6689,8 @@ class BatchSourcePathTests(unittest.TestCase):
     def test_batch_watch_delivers_over_its_own_unchanged_output(self):
         """The control for the test above: nobody touched the delivered file, so the next pass
         replaces it without --overwrite."""
+        from importlib import import_module
+
         folder = self.work / "in"
         folder.mkdir()
         src = folder / "a.mp4"
@@ -6704,7 +6706,7 @@ class BatchSourcePathTests(unittest.TestCase):
             if argv[0] == "probe.py":
                 return True, {"status": "completed", "verified": True}
             return self.child_step(argv, owned)
-        with unittest.mock.patch("_common.emit._verified_artifact") as reprobe:
+        with unittest.mock.patch.object(import_module("_common.emit"), "_verified_artifact") as reprobe:
             code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
         reprobe.assert_not_called()
         self.assertTrue(doc["results"][0]["ok"], doc)
