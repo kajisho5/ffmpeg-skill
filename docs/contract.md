@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.13.1`) | any release |
+| `skill.version` | the npm / package.json version (`3.13.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.13.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.13.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -375,6 +375,13 @@ leaves the speed unchanged. A dry run without a usable input length reports a nu
 duration, factor and retime decision for `speed`. Saving a plan checks that its input still
 matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
 the output duration separately.
+
+New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
+in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
+The tool checks the same fingerprints again before saving the plan. Replay, including replay with
+`--dry-run`, refuses a changed selection as `plan_inputs_changed`. For printf patterns the
+selection ends at the first gap. Older plans without the field still run and warn
+with `plan_sequence_unbound`; regenerate the plan to check the selection.
 
 ### Repeatability
 

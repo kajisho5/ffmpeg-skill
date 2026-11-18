@@ -20,6 +20,7 @@ this document changes; the skill version comes from package.json.
 """
 import argparse
 import functools
+import importlib.metadata
 import importlib.util
 import json
 import platform
@@ -452,14 +453,17 @@ ERROR_REASONS = {
     "output_container_codecs": "a .webm output whose command encodes video or sound WebM cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
     "output_locked": "another run holds the output's lock, or is taking a stale one over (why: takeover_in_progress), or a stale lock cannot be taken over safely because the filesystem gives no OS file lock (why: takeover_unavailable: delete it by hand); details: {lock, output, pid, pid_alive, deadline, why}",
-    "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed; details: {plan, plan_sha256, checked_at, "
+    "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed, or the ordered sequence differs; details: {plan, plan_sha256, checked_at, "
                            "inputs: [{path, status: unchanged|changed|missing, expected: {size, sha256_head_tail}, actual: {size, "
-                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}",
+                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}; sequence rows include sha256_full "
+                           "when the plan records it. A sequence selection mismatch can instead "
+                           "report {expected_frame_digest, actual_frame_digest}",
     "plan_version_unsupported": "render.py PLAN: plan_version is not one this version executes; details: {plan, plan_sha256, checked_at, plan_version, supported, audit_log}",
     "plan_unknown_tool": "render.py PLAN: the plan names no tool render.py can run; details: {plan, plan_sha256, checked_at, tool, audit_log}",
     "plan_cwd_missing": "render.py PLAN: the directory the plan was made in is gone; details: {plan, plan_sha256, checked_at, cwd, audit_log}",
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
-    "plan_field_invalid": "render.py PLAN: inputs, unbound_inputs, verify (objects), commands (strings) or cwd has the wrong JSON type; "
+    "plan_field_invalid": "render.py PLAN: inputs, unbound_inputs, verify (objects), commands (strings) or cwd has the wrong JSON type, "
+                          "or sequence_frames_sha256 is not a SHA-256 digest; "
                           "details: {plan, plan_sha256, checked_at, field, field_type, audit_log}",
     "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or a command run() is given names an encoder the build lacks for a stream the output keeps (an HDR source kept as HEVC, --codec hevc, a preset's encoder; not -c:a for a source with no sound, or with -an): refused before ffmpeg runs, dry runs included, when the build's encoder list was read and lacks it, else ffmpeg's own \"Unknown encoder\" (kind ffmpeg; details: {name}; the hint points at doctor); render.py and waveform.py with a title or captions run their own dry run first and are refused with its document before the first stage encodes",
@@ -482,6 +486,7 @@ DIAGNOSTIC_CODES = {
     "lock_deadline_unset": ("warnings", "the lock's deadline (its mtime) could not be set; {lock, error}"),
     "audit_log_unwritable": ("warnings", "an audit record could not be appended; never fails the run; {path, event, error}"),
     "plan_unbound_inputs": ("warnings", "render.py PLAN: inputs that did not exist when the plan was made, so were not checked; {paths}"),
+    "plan_sequence_unbound": ("warnings", "render.py PLAN: an older sequence plan does not bind the ordered frame list"),
     # the runner
     "odd_dimensions_scaled_even": ("fallbacks", "an encode that failed on odd dimensions was run again scaled to even ones, or a graph the retry cannot reach (broll.py's filter_complex) was scaled to even ones up front (the frame loses a row or column); {output, scale}"),
     "measurement_input_pending": ("skipped", "--dry-run: a measurement skipped because its input is an earlier stage's output that does not exist yet; {path}"),
@@ -1293,11 +1298,67 @@ def _exe_report() -> Dict[str, Any]:
     return out
 
 
-def _whisper_available() -> bool:
-    from _common.runner import safe_which
-    if safe_which("whisper-cli") or safe_which("whisper-cpp") or safe_which("whisper"):
-        return True
-    return importlib.util.find_spec("faster_whisper") is not None or importlib.util.find_spec("whisper") is not None
+def _speech_startup_error(command: List[str]) -> Optional[str]:
+    from _common.emit import shown
+
+    try:
+        proc = subprocess.run(command, cwd=HERE, capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=_DETECT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"startup check timed out after {_DETECT_TIMEOUT} seconds"
+    except OSError as exc:
+        return f"startup check failed: {shown(exc)}"
+    if proc.returncode == 0:
+        return None
+    lines = (proc.stderr.strip() or proc.stdout.strip()).splitlines()
+    return shown(lines[-1][:300]) if lines else f"startup check exited {proc.returncode}"
+
+
+def _speech_package_version(name: str) -> Optional[str]:
+    try:
+        return importlib.metadata.version(name)
+    except (importlib.metadata.PackageNotFoundError, KeyError, OSError, UnicodeError):
+        return None
+
+
+def _whisper_engines() -> Dict[str, Dict[str, Any]]:
+    """Check the entry points transcription uses, without opening media or loading models."""
+    from _common.asr import _whisper_cpp_cli
+    from _common.runner import SafeShutil, safe_which
+
+    engines: Dict[str, Dict[str, Any]] = {}
+    cpp = _whisper_cpp_cli(SafeShutil(shutil))
+    if cpp:
+        error = _speech_startup_error([str(Path(cpp).absolute()), "--help"])
+        engines["whisper.cpp"] = {"usable": error is None, "checked": "cli_startup"}
+        if error:
+            engines["whisper.cpp"].update(
+                detail=error, hint="Check the installation and shared libraries of the whisper.cpp command.",
+            )
+    if importlib.util.find_spec("faster_whisper") is not None:
+        error = _speech_startup_error([sys.executable, "-c", "from faster_whisper import WhisperModel"])
+        engines["faster-whisper"] = {"usable": error is None, "checked": "import",
+                                    "av_version": _speech_package_version("av")}
+        if error:
+            engines["faster-whisper"].update(
+                detail=error,
+                hint="Check that faster-whisper and PyAV are compatible in the Python environment running doctor.",
+            )
+    whisper = safe_which("whisper")
+    if whisper:
+        # The startup check changes cwd. Resolve a relative PATH entry against the caller's cwd.
+        error = _speech_startup_error([str(Path(whisper).absolute()), "--help"])
+        engines["openai-whisper"] = {"usable": error is None, "checked": "cli_startup"}
+        if error:
+            engines["openai-whisper"].update(
+                detail=error, hint="Check the openai-whisper installation in the environment that provides the whisper command.",
+            )
+    elif _speech_package_version("openai-whisper") is not None:
+        engines["openai-whisper"] = {
+            "usable": False, "detail": "whisper command not found on PATH",
+            "hint": "Make the openai-whisper command available on PATH.",
+        }
+    return engines
 
 
 def _parakeet_available() -> bool:
@@ -1479,6 +1540,7 @@ def doctor() -> Dict[str, Any]:
     covered = _covered_by_videotoolbox(listings["encoders"])
     drawtext_probe: Optional[Dict[str, Any]] = None
     drawtext_crashed = False  # listed but crashed (#100), as opposed to absent from the build
+    speech_engines = _whisper_engines()
 
     def _from(kind: str, name: str) -> str:
         lst = listings[kind]
@@ -1522,7 +1584,7 @@ def doctor() -> Dict[str, Any]:
         elif cap.startswith("bsf:"):
             state[cap] = _from("bsfs", cap[4:])
         elif cap == "external:whisper":
-            state[cap] = "available" if _whisper_available() else "missing"
+            state[cap] = "available" if any(engine["usable"] for engine in speech_engines.values()) else "missing"
         elif cap == "external:parakeet":
             state[cap] = "available" if _parakeet_available() else "missing"
         else:
@@ -1570,6 +1632,7 @@ def doctor() -> Dict[str, Any]:
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
         "hw": _hw_default(),
         "fonts": _fonts_capability(probe=True),
+        "speech_engines": speech_engines,
     }
 
 
@@ -2285,6 +2348,10 @@ def main() -> int:
             print(head)
             print(f"missing required: {', '.join(d['missing']) or 'none'}")
             print(f"missing optional: {', '.join(d['missing_optional']) or 'none'}")
+            for name, engine in d["speech_engines"].items():
+                if not engine["usable"]:
+                    av = f" (PyAV {engine['av_version']})" if engine.get("av_version") else ""
+                    print(f"{name}{av}: {engine['detail']}. {engine['hint']}", file=sys.stderr)
             if d["unknown"]:
                 print(f"unknown (detection failed, not proven missing): {', '.join(d['unknown'])}")
             for cap, alt in sorted(d["covered_by"].items()):

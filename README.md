@@ -493,6 +493,12 @@ For local speech recognition, use
 Use a multilingual Whisper model and review its transcript before delivery.
 The Vietnamese regression tests cover font selection and burn-in from SRT.
 
+### Which engine provides word timestamps for karaoke?
+
+With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. Auto prefers Whisper engines in this order: whisper.cpp, faster-whisper, OpenAI Whisper. An engine's failure can stop automatic selection, for example when the language is known and whisper.cpp fails to produce word timings. Use `--engine` to select an engine explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.
+
+Run `doctor --json` and inspect `speech_engines` for Whisper startup checks and errors. The faster-whisper entry includes the installed PyAV version when readable. Startup checks run without loading a model. Model availability and word timestamps are checked when you transcribe.
+
 ### How well does HDR to SDR work, and what should I watch for?
 
 `color.py --to-sdr` converts PQ (HDR10), HLG and iPhone Dolby Vision 8.4 to SDR BT.709 with real tone mapping (`zscale` and `tonemap`, `hable` by default; `mobius`, `reinhard`, `clip`, `linear` and `gamma` with `--tonemap`). BT.2020 footage on an SDR transfer gets a gamut conversion only. Watch for four things:
