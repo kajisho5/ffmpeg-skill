@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.12.1
+
+_Automated release: version and notes generated from pull requests merged since 3.12.0._
+
+- test: retain diagnostics for open-GOP cut failures (#593)
+
 ## 3.12.0
 
 _Automated release: version and notes generated from pull requests merged since 3.11.3._
