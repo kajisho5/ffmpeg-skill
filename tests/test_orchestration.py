@@ -711,6 +711,22 @@ class OrchestrationTests(MediaFixtures):
         }), encoding="utf-8")
         data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
+        # alias presets resolve before platform checks; non-platform presets do not forward --no-normalize
+        proj.write_text(json.dumps({
+            "output": "render_alias_normalize_off.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "twitter", "normalize": False},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
+        proj.write_text(json.dumps({
+            "output": "render_prores_normalize_off.mov",
+            "clips": [{"src": "source.mp4"}],
+            "export": {"preset": "prores", "normalize": False},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
+        self.assertEqual(data["status"], "completed")
 
     def test_render_project(self):
         proj = OUT / "project.json"
