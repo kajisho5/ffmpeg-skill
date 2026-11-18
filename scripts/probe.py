@@ -63,12 +63,20 @@ def main() -> int:
     if args.keyframes_near is not None and not any(t.strip() for t in args.keyframes_near.split(",")):
         die("--keyframes-near takes one or more times (e.g. 12.4,47), got none")
     results = [probe(p) for p in args.inputs]
+    for result in results:
+        if result.get("dry_run"):
+            # The shared probe's zero-valued stub supports planning arithmetic. It carries
+            # no measurements to publish through the CLI or MCP.
+            for key in ("duration", "size_bytes", "video", "audio", "subtitle_streams", "data_streams"):
+                result[key] = None
     if args.keyframes_near:
         for r in results:
             fps = (r.get("video") or {}).get("fps")
             times = [time_arg(t.strip(), "--keyframes-near", fps) for t in args.keyframes_near.split(",") if t.strip()]
             if any(not math.isfinite(t) or t < 0 for t in times):
                 die("--keyframes-near takes finite times at or after 0")
+            if r.get("dry_run"):
+                continue
             r["keyframes"] = keyframe_candidates(r, times, args.keyframe_window) if r.get("video") else []
     if args.analyze:
         for r in results:
@@ -103,6 +111,9 @@ def main() -> int:
 
     if args.compact:
         for r in results:
+            if r.get("dry_run"):
+                print(f"{r['file']}: not measured (pending input)")
+                continue
             v, a = r.get("video") or {}, r.get("audio") or {}
             dur = r.get("duration")
             line = f"{r['file']}: {dur:.3f}s" if dur is not None else f"{r['file']}: ?s"

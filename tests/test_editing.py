@@ -2283,6 +2283,7 @@ class EditingTests(MediaFixtures):
         out = OUT / "copy_joined.mp4"
         doc = json.loads(script("join.py", *clips, "--copy", "--transition", "none", "-o", out, "--overwrite", "--json").stdout)
         self.assertEqual((doc["status"], doc["mode"], doc["verified"]), ("completed", "copy", True), doc)
+        self.assertTrue(doc["lossless"], doc)
         packets = {v["property"]: v for v in doc["verification"] if v.get("step") == "join"}
         self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 3 * 60, packets)
         self.assertNotIn("libx264", " ".join(doc["commands"]))

@@ -700,6 +700,17 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 
 ## JSON output
 
+The common result writer computes `verified` from the output probe or an equivalent
+artifact check and requires every verification step to pass. `lossless` is true
+only when a successful FFmpeg stream-copy write can be traced to the current
+output and the run recorded no re-encode. Stream copy can still trim the timeline,
+change metadata or drop tracks.
+
+Under `--dry-run`, both flags are false. Top-level output measurements such as
+`output_duration`, width and height are absent or null until measured. Timing
+targets such as `expected_duration` and measurements of existing inputs remain available.
+`probe.py` reports null for facts about a pending input.
+
 Non-finite numbers never reach a `--json` document (2.2.6): every tool prints through one
 writer that turns `-inf` / `inf` into the strings `"-inf"` / `"inf"` (the spelling
 `loudness.py` already used for a silent input) and NaN into `null`, then serialises with
