@@ -5767,6 +5767,24 @@ class FitCropLossTests(unittest.TestCase):
         self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
         self.assertIn("timed out", note.call_args.args[0])
 
+    def test_crop_check_reports_an_outlier_even_when_most_motion_survives(self):
+        from unittest.mock import patch
+
+        outside, = self.moving(2, 7, 6, 13, n=1)
+        inside, = self.moving(14, 19, 2, 16, n=1)
+        samples = [(4.5, outside), (5.0, inside), (5.5, inside)]
+        with patch.object(self.fit, "sample_crop_frames", return_value=(samples, self.W, self.H)), \
+             patch.object(self.fit, "warn") as warn:
+            result = self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 4, 2,
+                                         speed=2, output_duration=1)
+        self.assertLess(result["motion_outside"], 0.5)
+        self.assertEqual(result["verdict"], "review")
+        first, = result["review_points"]
+        self.assertEqual((first["source_time"], first["output_time_estimate"]), (4.5, 0.25))
+        self.assertEqual(first["signal"], "motion")
+        self.assertGreaterEqual(first["motion_outside"], 0.5)
+        self.assertEqual(warn.call_args.kwargs["review_points"], result["review_points"])
+
     def test_left_heavy_motion_is_review_anchor_near_0(self):
         c = self.fit.crop_loss(self.moving(2, 7, 6, 13), self.W, self.H, self.WINDOW, "x")
         self.assertEqual(c["verdict"], "review", c)

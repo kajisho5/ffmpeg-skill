@@ -490,7 +490,12 @@ A rectangle you already know, sitting still for the whole clip, can be filled fr
 
 ### Does it auto-track faces or subjects for reframing?
 
-`fit.py --fit crop` centres the crop unless you pass `--crop-x` and `--crop-y`. `crop.py` cuts the rectangle you pass. `cropdetect.py` measures letterbox bars, and `--motion-centre` reports where motion sat each second; it writes no file and picks no crop. `sphere.py` points a 360 view where you aim it. `look.py` writes a contact sheet. Nothing in this repository detects a face, a product or a subject. Choosing what to keep in frame is the caller's.
+`fit.py --fit crop` centres the crop unless you pass `--crop-x` and `--crop-y`. Check
+`crop_check.review_points` for sampled moments when luma motion or edge detail falls
+outside the kept window. Use `look.py OUTPUT --at TIME` with an indicated
+`output_time_estimate` to inspect one. `crop.py` cuts the rectangle you pass.
+`cropdetect.py --motion-centre` reports where motion sat each second. `sphere.py`
+points a 360 view where you aim it. Subject framing still needs visual review.
 
 ### Does it encode on the GPU?
 

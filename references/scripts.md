@@ -352,6 +352,10 @@ After a crop with a discarded margin, `crop_check` samples the kept source time
 range and checks where luma motion falls. It uses edge detail when motion falls
 below its measurement threshold. A `crop_content_off_centre` warning may suggest
 `--crop-x` or `--crop-y`. An unavailable measurement reports `unmeasured`.
+The warning can flag an individual sample even when most motion stayed in frame.
+Use `look.py OUTPUT --at TIME` for each `crop_check.review_points[].output_time_estimate`
+that is available. To compare a trimmed or retimed output with its input, extract the
+source frame separately using the point's `source_time`.
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 
 ### crop.py — crop to an exact pixel rectangle

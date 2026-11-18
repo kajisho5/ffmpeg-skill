@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Crop checks report sampled review times for inspecting discarded motion or detail (#570).
 
 ## 3.12.0
 
