@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 3.12.2
+
+_Automated release: version and notes generated from pull requests merged since 3.12.1._
+
+- fix: select WAV from the RIFF input header (#591)
+- feat(doctor): report the FFmpeg build license (#603)
+- fix: bind parsed side inputs in saved plans (#601)
+
+Closes: #518, #578
+
 ## 3.12.1
 
 _Automated release: version and notes generated from pull requests merged since 3.12.0._
