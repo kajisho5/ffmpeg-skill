@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.12.2`) | any release |
+| `skill.version` | the npm / package.json version (`3.13.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.12.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.13.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -361,7 +361,16 @@ tool, a vanished `cwd` or a malformed `argv` is refused the same way under its o
 runs the tool with the planned `argv`, then the verify steps (a `check` step may also carry
 `"content": true`, added by hand, for `check.py --content`), and reports `plan`, `plan_sha256`,
 `tool`, `tool_result`, `check` and `unbound_inputs` (each one also a `diagnostics.warnings` entry:
-nothing checked that file). `plan_version` is bumped when the document's shape changes.
+nothing checked that file). `plan_version` is bumped when the execution document's shape changes.
+
+With `fit.py --duration`, dry-run JSON, saved plans and completed results include a `timing`
+object with `method`, `source_duration`, `target_duration`, `speed_factor` and `retimed`. Durations
+are in seconds. The speed factor is the computed source/target ratio for `speed`, and 1 for
+`trim`. `retimed` says whether the command includes a speed change. A ratio within 0.0001 of 1
+leaves the speed unchanged. A dry run without a usable input length reports a null source
+duration, factor and retime decision for `speed`. Saving a plan checks that its input still
+matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
+the output duration separately.
 
 ### Repeatability
 
@@ -1197,6 +1206,13 @@ most often across the corpus in `evals/agent_prompts*.json`. Every tool -- inclu
 contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
 return all 42, as every version before 1.18.3 did.
+
+Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` to advertise a named subset.
+The server trims whitespace, ignores duplicate names and preserves contract order.
+A blank value uses the default list. An unknown name or a nonblank list with no names
+returns a `tools/list` error naming the setting. The full-catalogue setting takes
+precedence. The same selection applies to `mcp/server.py --list`, which exits 2 for an
+invalid selection. `tools/call` and `prompts/list` keep their existing behavior.
 
 ### `prompts` capability: five workflow recipes
 
