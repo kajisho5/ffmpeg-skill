@@ -28,6 +28,7 @@ Ask a short question only when the answer changes the output materially and the 
 - **Fonts and brand**: if the user mentions a brand, colours or "our font", ask for or create `brand.json` once, reuse it.
 - **CJK / non-Latin text**: let the tool pick the font by script (`--font` turns it off); `--lang ja|ko|zh-TW` for Han-only text on `graphics`/`caption` (`overlay` has none: name the face with `--font`/`--font-file`). `doctor --json` `.fonts.scripts` says what renders here. Tofu is a failed job.
 - **Crop position** for `--fit crop`: centre by default, but when the request or the source names an off-centre subject ("keep the product on the right", someone visibly off-centre in the sheet) use `--crop-x`/`--crop-y` (0=left/top, 1=right/bottom) instead of guessing centre, or ask which edge to keep.
+  A `crop_content_off_centre` warning means the crop discarded noticeable luma motion or detail. Compare contact sheets of the kept time range in the source and the cropped output before choosing the suggested anchor or switching to `--fit pad`.
 - Anything else (transition type, caption style): pick the conventional default, say what you picked, offer the alternative in one line.
 
 ## Audio-only files

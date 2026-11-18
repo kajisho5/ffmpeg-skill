@@ -348,6 +348,10 @@ frame's area), `scale` (its width over the source's) and, for `--fit crop`, the 
 pixels `cropped` on each side. It is measured by running the frame's own filters on a
 uniform frame (no decode of the source), so a 202x360 frame holding a 202x114 picture is told
 apart from a full-frame crop without a contact sheet; `subject_framing` stays unverified.
+After a crop with a discarded margin, `crop_check` samples the kept source time
+range and checks where luma motion falls. It uses edge detail when motion falls
+below its measurement threshold. A `crop_content_off_centre` warning may suggest
+`--crop-x` or `--crop-y`. An unavailable measurement reports `unmeasured`.
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 
 ### crop.py — crop to an exact pixel rectangle
@@ -1022,8 +1026,10 @@ fit.py's rule (`{aspect 16:9, width 1920}` is 1920x1080; an aspect alone takes t
 preset's size when the preset has that aspect; an aspect fit.py refuses, such as `16/9`, is
 refused unless the project's own `fit.aspect` replaces it in the render), with the project's
 `fit` object's aspect, mode, sides and rate in place of the frame's where it gives them, as
-the render's fit stage takes them, for one clip or several (#526). A clip of another
-aspect gets its spatial conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`,
+the render's fit stage takes them, for one clip or several (#526). A multi-clip
+project with an effective `fit: crop` crops each source into the delivery canvas
+at the join, so a clip of another aspect fills the frame without padding (#552).
+A clip of another aspect gets its spatial conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`,
 `fit` for pad); EDL and OTIO cannot state one. Everything else in the project -- captions,
 graphics, overlays, the silence cut, fit, a reframe the format cannot state (and `blur`'s
 background), audio processing, loudness, export -- is listed in the result's
