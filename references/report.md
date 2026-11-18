@@ -31,14 +31,15 @@ For a standalone edit, deliver the result and the five report lines first. When 
 present a review and it would help, offer it once in the user's language. In Japanese,
 「編集前と編集後を、プレビューで見比べますか？」. Mention waveforms when the host can display
 them and the media has an audio track. Prepare the review only after
-the user asks for it or accepts the offer. If they already asked for it, proceed after the edit
-and report without a second prompt.
+the user asks for it or accepts the offer. If they already asked for it, check what the host
+can present and proceed after the edit and report without a second prompt. When the host
+lacks a review view, explain the limitation and share any supported previews the user requested.
 
-Show the original and edited video side by side when both have picture. For an audio-only edit,
-provide playback and waveforms for the available audio. Draw a waveform from each available audio
-track, including a flat waveform for a silent track. For media without an audio track, show the
-picture comparison on its own. Use a known source-to-output time mapping for synchronized
-playback and waveform seeking.
+Where the host supports side-by-side playback, show the original and edited video when both
+have picture. For an audio-only edit, provide playback for the available audio. Where the
+host supports waveforms, draw them from the available audio, including a flat waveform for a
+silent track. Use a known source-to-output time mapping for synchronized playback and waveform
+seeking.
 When that mapping is unavailable, label and show the two clocks separately. The host owns the
 view, numbered edit items, and how it maps feedback to a new edit request. Use ffmpeg-skill to
 supply media, measured results, and available preview files, and to execute the requested
