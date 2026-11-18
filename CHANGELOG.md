@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- `fit.py --duration` reports `large_speed_change` when the whole clip is retimed
+  by a factor above 1.15 or below 1/1.15. Duration examples choose a trim or a
+  speed change explicitly (#582).
 
 ## 3.10.1
 

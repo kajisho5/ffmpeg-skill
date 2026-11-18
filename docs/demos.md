@@ -216,10 +216,10 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit pad --p
 ![Speed change to hit a duration](demos/speed_up.gif)
 
 ```bash
-python3 scripts/fit.py demos/out/fixtures/motion.mp4 --duration 4 --method speed --preset veryfast -o demos/out/speed_up_after.mp4
+python3 scripts/fit.py demos/out/fixtures/motion.mp4 --duration 4 --method speed --preset veryfast --json -o demos/out/speed_up_after.mp4
 ```
 
-**Look for:** An 8 s clip retimed to land exactly on 4 s; audio is pitch-corrected rather than chipmunked.
+**Look for:** An 8 s clip retimed to 4 s with pitch-corrected audio. The JSON result reports large_speed_change with a factor of 2.
 
 ### Reverse
 
