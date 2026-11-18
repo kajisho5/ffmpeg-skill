@@ -8674,6 +8674,63 @@ class SideFileGuardTests(unittest.TestCase):
         for f in (g_in, c_in, v_in):
             self.assertGreater(f.stat().st_size, 10000, f)
 
+    def test_plan_binds_file_options_in_both_argument_spellings(self):
+        cases = (
+            ("metadata", (self.src,), "--chapters", "0:00 Introduction\n", ".mp4"),
+            ("report", (f"--after={self.src}", "--no-sheets"), "--notes", "Review note\n", ".html"),
+            ("report", (f"--after={self.src}", "--no-sheets"), "--commands", "A recorded command\n", ".html"),
+        )
+        for name, args, flag, original, ext in cases:
+            label = flag.removeprefix("--")
+            side = self.tmp / (label + ".txt")
+            output = self.tmp / (label + ext)
+            for joined in (False, True):
+                with self.subTest(flag=flag, joined=joined):
+                    side.write_text(original, encoding="utf-8")
+                    plan = self.tmp / f"{label}_{joined}.json"
+                    flags = (f"{flag}={side}",) if joined else (flag, side)
+                    tool(name, *args, *flags, "-o", output, "--plan", plan, "--json")
+                    bound = json.loads(plan.read_text(encoding="utf-8"))["inputs"]
+                    self.assertCountEqual([row["path"] for row in bound], [str(self.src), str(side)])
+                    side.write_text("Changed after the plan\n", encoding="utf-8")
+                    replay = self.failed(tool("render", plan, "--json", check=False))
+                    self.assertEqual(replay["reason"], "plan_inputs_changed")
+                    self.assertFalse(output.exists())
+                    side.write_text(original, encoding="utf-8")
+                    before = side.read_bytes()
+                    collision = self.failed(tool(name, *args, *flags, "-o", output, "--plan", side,
+                                                 "--overwrite", "--json", check=False))
+                    self.assertEqual(collision["reason"], "output_is_input")
+                    self.assertEqual(side.read_bytes(), before)
+
+    def test_plan_binds_brand_json_and_ignores_path_shaped_title_text(self):
+        brand = self.tmp / "actual_brand.json"
+        brand.write_text("{}", encoding="utf-8")
+        title = self.tmp / "title_text.txt"
+        title.write_text("Unrelated file\n", encoding="utf-8")
+        plan = self.tmp / "brand_title.json"
+        tool("graphics", self.src, "--template", "title", f"--title={title}", f"--brand={brand}",
+             "-o", self.tmp / "brand_title.mp4", "--plan", plan, "--json")
+        bound = json.loads(plan.read_text(encoding="utf-8"))["inputs"]
+        paths = {row["path"] for row in bound}
+        self.assertTrue({str(self.src), str(brand)} <= paths, paths)
+        self.assertNotIn(str(title), paths)
+
+    def test_join_list_copy_plan_binds_the_list_and_each_clip(self):
+        other = self.copy("second_join_source.mp4")
+        manifest = self.tmp / "project_clips.txt"
+        manifest.write_text(f"{self.src.name}\n{other.name}\n", encoding="utf-8")
+        plan = self.tmp / "copy_join.json"
+        out = self.tmp / "copy_join.mp4"
+        tool("join", f"--list={manifest}", "--transition", "none", "--copy", "-o", out, "--plan", plan, "--json")
+        dependencies = json.loads(plan.read_text(encoding="utf-8"))["inputs"]
+        self.assertCountEqual([row["path"] for row in dependencies], [str(self.src), str(other), str(manifest)])
+        before = other.read_bytes()
+        error = self.failed(tool("join", f"--list={manifest}", "--transition", "none", "--copy", "-o", out,
+                                 "--plan", other, "--overwrite", "--json", check=False))
+        self.assertEqual(error["reason"], "output_is_input")
+        self.assertEqual(other.read_bytes(), before)
+
     def test_review_gaps_plan_side_inputs_and_colliding_sidecars(self):
         """#413 review: --plan naming a side input (an SRT) or the default output is refused, and
         two side files of one caption run naming the same path are refused before either is written."""

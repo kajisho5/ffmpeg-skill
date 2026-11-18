@@ -3578,6 +3578,12 @@ def normalize_text(text: str) -> str:
     return _LINE_END.sub("\n", text.lstrip("\ufeff"))
 
 
+def register_plan_input(path: "os.PathLike[str] | str") -> None:
+    """Bind a file the tool read through a parsed argument, regardless of its argv spelling."""
+    if STATE.plan:
+        STATE.plan_inputs.append(os.fspath(path))
+
+
 def read_text_or_die(path: str, flag: str) -> str:
     """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
     with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback. The text
@@ -3587,7 +3593,9 @@ def read_text_or_die(path: str, flag: str) -> str:
         die(f"{flag}: {path} is a directory, not a text file")
     try:
         with open(path, "r", encoding="utf-8", newline="") as fh:
-            return normalize_text(fh.read())
+            text = normalize_text(fh.read())
+        register_plan_input(path)
+        return text
     except FileNotFoundError:
         die(f"{flag}: {path} does not exist")
     except IsADirectoryError:
@@ -3647,7 +3655,9 @@ def read_json(path: "os.PathLike[str] | str") -> Any:
     """parse_json() of a UTF-8 file. Raises OSError for a file that cannot be read and ValueError
     (UnicodeDecodeError is one) for anything else, so `except (OSError, ValueError)` covers it."""
     with open(path, "r", encoding="utf-8") as fh:
-        return parse_json(fh.read())
+        doc = parse_json(fh.read())
+    register_plan_input(path)
+    return doc
 
 
 # Deferred to the foot of the module on purpose. runner is the first module the package loads and

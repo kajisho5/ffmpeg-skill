@@ -15,7 +15,7 @@ from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, refuse, warn
-from _common.runner import ffmpeg_failure_extra, STATE, dry_run_input_pending, require_tool, run, run_analysis, still_input_args
+from _common.runner import ffmpeg_failure_extra, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
 # a cover (`V`), its `audio` the first sound stream. Without a -map, FFmpeg picks the largest
@@ -55,6 +55,7 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     float, 8 for the slot), so scenes.py held ~2.3 GB per hour of audio at 8 kHz + 22.05 kHz and
     multicam --switch energy one such list per camera (A140). An s16 sample divided by 32768 is
     exact in a float32, so every value read back is the double the list held."""
+    register_plan_input(path)
     ffmpeg = require_tool("ffmpeg")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
     if start:
@@ -272,6 +273,8 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
         if role == "output":
             _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
         die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
+    if role == "input":
+        register_plan_input(path)
     if not (proc.stdout or "").strip():
         if not required:
             return {}
