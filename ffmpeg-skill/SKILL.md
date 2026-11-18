@@ -47,7 +47,7 @@ Ask only when the answer changes the output and the request does not imply it; b
 into one proposal ("Reels: 9:16 padded, 60 s, -14 LUFS, no captions — OK?"). Never ask what a probe tells.
 
 - **Destination** sets aspect, length, loudness, codec; "export/post/deliver" with none named: ask.
-- **Duration** without a method: speed for ≤1.5×, else trim; ask for a talk with a large change.
+- **Duration** without a method: choose one deliberately, and never leave it to `fit.py`'s default (speed). Cut first: drop dead air (`silence.py`) and unwanted spans, or `--method trim`. Use `--method speed` only when asked, or when cutting cannot reach the target. Ask when it's unclear whether to cut or retime. If a run where you didn't choose speed shows a `large_speed_change` warning (retime beyond 1.15×), redo it as a cut.
 - **Captions** without text: `--transcribe` if an engine exists, else ask; never invent dialogue.
 - **Brand, CJK text, crop position:** `references/workflow.md` (ask/assume section).
 - Anything else: pick the conventional default, say so, offer the alternative in one line.
@@ -98,7 +98,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "keep only these parts" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` |
 | "remove the middle" | `cut.py in.mp4 --remove 1:00-1:30` |
 | "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
-| "make it exactly 60 seconds" | `fit.py in.mp4 --duration 60` (speed; `--method trim`) |
+| "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
 | "cut out the pauses", "jump cuts" | `silence.py in.mp4` |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
