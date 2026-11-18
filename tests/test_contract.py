@@ -7709,18 +7709,37 @@ class DoctorSpeechTests(unittest.TestCase):
     def test_unreadable_pyav_metadata_preserves_the_startup_error(self):
         from _common import runner
 
+        for metadata_error in (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"), KeyError("Version")):
+            def distribution(name):
+                if name == "av":
+                    raise metadata_error
+                raise importlib.metadata.PackageNotFoundError(name)
+
+            with self.subTest(metadata_error=metadata_error), \
+                    unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                    unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "faster_whisper" or None), \
+                    unittest.mock.patch("importlib.metadata.version", side_effect=distribution), \
+                    unittest.mock.patch.object(_contract, "_speech_startup_error", return_value="cannot import av"):
+                engine = _contract._whisper_engines()["faster-whisper"]
+            self.assertEqual(engine["detail"], "cannot import av")
+            self.assertIsNone(engine["av_version"])
+
+    def test_working_faster_whisper_still_reports_pyav_version(self):
+        from _common import runner
+
         def distribution(name):
             if name == "av":
-                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+                return "17.0.0"
             raise importlib.metadata.PackageNotFoundError(name)
 
         with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
                 unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "faster_whisper" or None), \
                 unittest.mock.patch("importlib.metadata.version", side_effect=distribution), \
-                unittest.mock.patch.object(_contract, "_speech_startup_error", return_value="cannot import av"):
+                unittest.mock.patch.object(_contract, "_speech_startup_error", return_value=None):
             engine = _contract._whisper_engines()["faster-whisper"]
-        self.assertEqual(engine["detail"], "cannot import av")
-        self.assertIsNone(engine["av_version"])
+        self.assertTrue(engine["usable"])
+        self.assertEqual(engine["av_version"], "17.0.0")
+        self.assertNotIn("detail", engine)
 
     def test_whisper_module_alone_is_not_the_openai_whisper_distribution(self):
         from _common import runner
@@ -7745,9 +7764,10 @@ class DoctorSpeechTests(unittest.TestCase):
             )
             with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
                     unittest.mock.patch.dict(os.environ, {"PYTHONPATH": directory}), \
-                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]):
+                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]), \
+                    unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
                 engine = _contract._whisper_engines()["faster-whisper"]
-        self.assertEqual(engine, {"usable": True, "checked": "import"})
+        self.assertEqual(engine, {"usable": True, "checked": "import", "av_version": None})
 
 
 @unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")

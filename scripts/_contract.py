@@ -1289,7 +1289,7 @@ def _speech_startup_error(command: List[str]) -> Optional[str]:
 def _speech_package_version(name: str) -> Optional[str]:
     try:
         return importlib.metadata.version(name)
-    except (importlib.metadata.PackageNotFoundError, OSError, UnicodeError):
+    except (importlib.metadata.PackageNotFoundError, KeyError, OSError, UnicodeError):
         return None
 
 
@@ -1309,10 +1309,11 @@ def _whisper_engines() -> Dict[str, Dict[str, Any]]:
             )
     if importlib.util.find_spec("faster_whisper") is not None:
         error = _speech_startup_error([sys.executable, "-c", "from faster_whisper import WhisperModel"])
-        engines["faster-whisper"] = {"usable": error is None, "checked": "import"}
+        engines["faster-whisper"] = {"usable": error is None, "checked": "import",
+                                    "av_version": _speech_package_version("av")}
         if error:
             engines["faster-whisper"].update(
-                detail=error, av_version=_speech_package_version("av"),
+                detail=error,
                 hint="Check that faster-whisper and PyAV are compatible in the Python environment running doctor.",
             )
     whisper = safe_which("whisper")
