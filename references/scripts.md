@@ -1022,8 +1022,10 @@ fit.py's rule (`{aspect 16:9, width 1920}` is 1920x1080; an aspect alone takes t
 preset's size when the preset has that aspect; an aspect fit.py refuses, such as `16/9`, is
 refused unless the project's own `fit.aspect` replaces it in the render), with the project's
 `fit` object's aspect, mode, sides and rate in place of the frame's where it gives them, as
-the render's fit stage takes them, for one clip or several (#526). A clip of another
-aspect gets its spatial conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`,
+the render's fit stage takes them, for one clip or several (#526). A multi-clip
+project with an effective `fit: crop` crops each source into the delivery canvas
+at the join, so a clip of another aspect fills the frame without padding (#552).
+A clip of another aspect gets its spatial conform in FCPXML (`adjust-conform`: `fill` for `frame.fit: crop`,
 `fit` for pad); EDL and OTIO cannot state one. Everything else in the project -- captions,
 graphics, overlays, the silence cut, fit, a reframe the format cannot state (and `blur`'s
 background), audio processing, loudness, export -- is listed in the result's
