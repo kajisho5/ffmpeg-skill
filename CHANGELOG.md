@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.11.1
+
+_Automated release: version and notes generated from pull requests merged since 3.11.0._
+
+- test(export): seed the file size and loudness fixture (#587)
+
 ## 3.11.0
 
 _Automated release: version and notes generated from pull requests merged since 3.10.2._
