@@ -3086,6 +3086,21 @@ class EditingTests(MediaFixtures):
             self.assertEqual((report["clips"], report["verified"]), (2, True))
             self.assertAlmostEqual(report["probe"]["duration"], probe(str(native))["duration"], delta=0.01)
 
+    def test_join_list_keeps_an_existing_tabbed_filename_without_a_header(self):
+        from unittest import mock
+        from join import read_list
+
+        with tempfile.TemporaryDirectory(dir=OUT) as directory:
+            manifest = Path(directory, "parts.txt")
+            literal = Path(directory, "file\ttake.wav")
+            exists = os.path.exists
+            # A literal tab is a valid filename character on POSIX.
+            with mock.patch("join.os.path.exists", side_effect=lambda path: Path(path) == literal or exists(path)):
+                manifest.write_text("file\ttake.wav\n", encoding="utf-8")
+                self.assertEqual(read_list(str(manifest)), [str(literal)])
+                manifest.write_text("ffconcat version 1.0\nfile\ttake.wav\n", encoding="utf-8")
+                self.assertEqual(read_list(str(manifest)), [str(Path(directory, "take.wav"))])
+
     def test_join_list_checks_every_segment_before_joining(self):
         """Reported by a user generating shorts on a VPS: TTS writes one audio file per line,
         a concat step joins them, and one failed TTS call left a gap that emptied the list and

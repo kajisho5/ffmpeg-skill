@@ -303,15 +303,19 @@ def read_list(path: str) -> List[str]:
     text = read_text_or_die(path, "--list")
     base = os.path.dirname(os.path.abspath(path))
     entries: List[str] = []
+    ffconcat = False
     for line in text.split("\n"):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if line.startswith(("file ", "file\t")):
+        # In a plain list an existing POSIX filename can contain a literal tab.
+        tab_directive = line.startswith("file\t") and (ffconcat or not os.path.exists(os.path.join(base, line)))
+        if line.startswith("file ") or tab_directive:
             line = line[5:].strip()
             if len(line) >= 2 and line[0] == line[-1] and line[0] in "'\"":
                 line = line[1:-1].replace("'\\''", "'")
         elif line.split()[0] == "ffconcat" and line.split()[1:2] == ["version"]:
+            ffconcat = True
             continue  # the concat demuxer's header line names no file
         elif line.split()[0] in CONCAT_DIRECTIVES and not os.path.exists(os.path.join(base, line)):
             # only `file` lines are read: a directive was taken for a path, reported as a missing
