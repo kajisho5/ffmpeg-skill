@@ -1963,6 +1963,24 @@ def main() -> int:
     mode = ("smart" if smart_doc is not None and smart_doc["applied"] else
             "copy" if not reencoded else ("accurate" if args.accurate else "hybrid"))
     notes: List[str] = vfr_notes + join_notes + [n for o in outcomes for n in o.get("notes") or []]
+    verification = smart_verification(smart_doc) if smart_doc is not None and smart_doc.get("checks") else []
+    if not STATE.dry_run and mode == "copy" and len(requested) > 1:
+        # Per-segment keyframe snaps can all be within tolerance and still accumulate
+        # into a materially longer or shorter output. Check the written timeline once.
+        tolerance = min(expected, args.tolerance) if args.tolerance >= 0 else expected
+        if fps and result.get("video"):
+            tolerance = max(tolerance, 1 / fps)
+        delta = got - expected if got is not None else None
+        ok = delta is not None and abs(delta) <= tolerance + 1e-6
+        verification.append({"step": "cut_total_duration", "property": "output_duration",
+                             "expected": round(expected, 6), "measured": round(got, 6) if got is not None else None,
+                             "delta": round(delta, 6) if delta is not None else None,
+                             "tolerance": round(tolerance, 6), "provenance": "user_specified", "ok": ok})
+        if not ok:
+            message = (f"stream-copy total duration: wrote {fmt_secs(got)}, requested {expected:.3f}s "
+                       f"(tolerance {tolerance:.3f}s); use --accurate to re-encode the cut")
+            notes.append(message)
+            info(message)
     possible = possible_reencode_reason(mode, outcomes, len(segments))
     if possible:
         notes.append(possible_reencode_note(mode, possible, args.tolerance))
@@ -2043,7 +2061,7 @@ def main() -> int:
                                f"stream copy with no re-encode, {abs(min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])) - segments[0][0]):.2f}s off the requested start")
          if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None,
          snap=snap_result, **({"smart": smart_doc} if smart_doc is not None else {}),
-         **({"verification": smart_verification(smart_doc)} if smart_doc is not None and smart_doc.get("checks") else {}))
+         verification=verification)
     return 0
 
 
