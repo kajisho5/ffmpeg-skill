@@ -1489,7 +1489,7 @@ class Audit459AudioTests(MediaFixtures):
     def test_waveform_refuses_every_audio_only_extension(self):
         """The refusal read the extensions this skill writes sound to (AUDIO_CODECS): -o .aiff,
         .aif or .caf failed in ffmpeg's muxer instead (kind ffmpeg), and a dry run planned it."""
-        for ext in (".aiff", ".aif", ".caf"):
+        for ext in (".aiff", ".aif", ".caf", ".mka"):
             for dry in ((), ("--dry-run",)):
                 with self.subTest(ext=ext, dry_run=bool(dry)):
                     out = OUT / f"a459_wave_out{ext}"
@@ -1578,6 +1578,37 @@ class AudioOnlyOutputExtensionTests(unittest.TestCase):
                     self.assertAlmostEqual(float(streams[0]["duration"]), float(want["duration"]), delta=1.5 / self.RATE)
                     if name == "cut --accurate":
                         self.assertEqual(doc["precision"], "sample", "PCM is cut to the sample, as in .wav")
+
+    def test_matroska_audio_extracts_sound_in_copy_and_accurate_modes(self):
+        for name, codec, option in (("copy", "aac", ()), ("accurate", "flac", ("--accurate",))):
+            with self.subTest(mode=name):
+                out = self.dir / f"matroska_{name}.mka"
+                out.unlink(missing_ok=True)
+                args = ("cut.py", self.clip, "--start", "0.5", "--end", "2.5", *option, "-o", out, "--json")
+                planned = json.loads(script(*args, "--dry-run").stdout)
+                self.assertIn("-vn", planned["commands"][-1])
+                self.assertIn("-c:a copy" if name == "copy" else "-c:a flac", planned["commands"][-1])
+                self.assertFalse(out.exists())
+                report = json.loads(script(*args).stdout)
+                self.assertEqual((report["status"], report["verified"]), ("completed", True), report)
+                self.assertEqual(report["reencoded"], name == "accurate", report)
+                container, streams = self.stream(out)
+                self.assertIn("matroska", container.split(","))
+                self.assertEqual([(s["codec_type"], s["codec_name"]) for s in streams], [("audio", codec)])
+
+    def test_matroska_audio_encodes_flac_across_audio_tools(self):
+        for name in ("audio", "silence", "loudness", "join"):
+            with self.subTest(tool=name):
+                out = self.dir / f"matroska_{name}.mka"
+                plan = self.run_case(name, out, "--dry-run")
+                self.assertEqual(plan["status"], "completed", plan)
+                self.assertIn("-c:a flac", plan["commands"][-1])
+                self.assertFalse(out.exists())
+                doc = self.run_case(name, out)
+                self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc)
+                container, streams = self.stream(out)
+                self.assertIn("matroska", container.split(","))
+                self.assertEqual([(s["codec_type"], s["codec_name"]) for s in streams], [("audio", "flac")])
 
     def test_a_wma_output_is_refused_before_ffmpeg_runs(self):
         for name in self.cases:
