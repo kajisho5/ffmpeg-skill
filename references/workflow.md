@@ -31,6 +31,10 @@ Ask a short question only when the answer changes the output materially and the 
   A `crop_content_off_centre` warning means the crop discarded noticeable luma motion or detail. Compare contact sheets of the kept time range in the source and the cropped output before choosing the suggested anchor or switching to `--fit pad`.
 - Anything else (transition type, caption style): pick the conventional default, say what you picked, offer the alternative in one line.
 
+Delivery templates include black, frozen, silence and other applicable content rows. Use
+`check.py --content` for the same measurements on a standalone delivery. Include warnings
+and the `unverified` list so a reviewer knows what to watch or listen for.
+
 ## Audio-only files
 
 Audio is a first-class input: `probe`, `cut`, `silence`, `loudness`, `audio`, `sync`, `check --platform podcast`, `render --template podcast` take WAV, FLAC, MP3, M4A/AAC, OGG, Opus; output extension picks the format. Scripts needing a picture (`fit`, `caption`, `overlay`, `graphics`, `color`, `export`, `look`; the contract's `video_required` lists the rest) refuse audio with "input has no video stream" — don't force a video wrapper. `scenes` takes an audio file as one scene (`--beats`, `--audio-peaks`, `--speech`, `--highlights`); its `--sheet` and `--shots` refuse one. Recipes: `references/gotchas.md#audio-only-files`.

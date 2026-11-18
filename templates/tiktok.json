@@ -42,6 +42,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "tiktok"
+    "platform": "tiktok",
+    "content": true
   }
 }

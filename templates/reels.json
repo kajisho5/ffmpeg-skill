@@ -42,6 +42,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "reels"
+    "platform": "reels",
+    "content": true
   }
 }

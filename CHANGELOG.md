@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+- Delivery templates include the applicable `check.py --content` rows by default (#575).
 
 ## 3.12.0
 
