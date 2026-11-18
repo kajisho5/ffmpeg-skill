@@ -1395,6 +1395,7 @@ def main() -> int:
              + ", ".join(unverified[:5]) + (" ..." if len(unverified) > 5 else ""))
     emit(None, verification=[{"step": "item", "file": r["file"], "ok": bool(r.get("verified"))} for r in results]
          if not STATE.dry_run else [],
+         verification_paths=[r["file"] if r.get("written") is False else r["output"] for r in results],
          results=results, processed=done, total=len(results),
          jobs=jobs, jobs_requested=requested, wall_seconds=round(time.time() - started, 1),
          item_seconds_total=round(sum(float(r.get("seconds") or 0) for r in results), 1),
