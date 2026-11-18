@@ -346,8 +346,9 @@ asks for the CPU and gets what ffmpeg says about it. What ran is in the result's
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "unbound_inputs", "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
 implies `--dry-run`, so the same execution rules apply; `inputs` covers the `-i` files of the
-planned commands, every existing file named in argv (a recipe, a still, an SRT) and the
-subtitle/LUT/font files a filter reads; `unbound_inputs` (absolute paths, additive to version 1)
+planned commands, existing file arguments and the media, text, JSON, subtitle, LUT or font
+inputs the tool registers as it reads them. Both `--flag FILE` and `--flag=FILE` bind the same
+registered input. `unbound_inputs` (absolute paths, additive to version 1)
 names the inputs that did not exist yet when the plan was made (an earlier step's output), which
 therefore carry no fingerprint. Tools that print their document without `--json`
 (`probe`, the analysis tools) still write the plan at exit; `verify.py` and `render.py`
