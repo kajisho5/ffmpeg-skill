@@ -5763,6 +5763,7 @@ def garbage_payload(p):
 
 class ResultHonestyTests(unittest.TestCase):
     def test_aggregate_requires_readable_artifacts(self):
+        require_ffmpeg_or_skip("ffprobe")
         from _common.runner import Context
         ctx = Context()
         ctx.json = True
@@ -5782,6 +5783,19 @@ class ResultHonestyTests(unittest.TestCase):
         self.assertTrue(doc["dry_run"])
         for key in ("duration", "size_bytes", "video", "audio"):
             self.assertIsNone(doc[key], key)
+
+    def test_probe_dry_run_validates_keyframe_times_for_pending_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp) / "pending.mp4"
+            for time in ("-1", "nan", "00:00:00:99@25"):
+                with self.subTest(time=time):
+                    proc = tool("probe", pending, "--dry-run", "--json", f"--keyframes-near={time}", check=False)
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+            for time in ("1.5", "00:00:01:15@25"):
+                with self.subTest(time=time):
+                    doc = json.loads(tool("probe", pending, "--dry-run", "--json", f"--keyframes-near={time}").stdout)
+                    self.assertNotIn("keyframes", doc)
 
     def test_result_flags_and_probe_cannot_be_supplied_as_extras(self):
         from _common.runner import Context
@@ -6690,8 +6704,11 @@ class BatchSourcePathTests(unittest.TestCase):
             if argv[0] == "probe.py":
                 return True, {"status": "completed", "verified": True}
             return self.child_step(argv, owned)
-        code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        with unittest.mock.patch("_common.emit._verified_artifact") as reprobe:
+            code, doc = self.watch(folder, recipe, [lambda: self.settled_source(src, b"B" * 100), None], run_step)
+        reprobe.assert_not_called()
         self.assertTrue(doc["results"][0]["ok"], doc)
+        self.assertFalse(doc["verified"], doc)
         self.assertEqual(final.read_bytes(), b"B" * 100)
 
     def test_batch_watch_step_refuses_its_own_output_replaced_before_its_check(self):

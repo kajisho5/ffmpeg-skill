@@ -71,12 +71,12 @@ def main() -> int:
                 result[key] = None
     if args.keyframes_near:
         for r in results:
-            if r.get("dry_run"):
-                continue
             fps = (r.get("video") or {}).get("fps")
             times = [time_arg(t.strip(), "--keyframes-near", fps) for t in args.keyframes_near.split(",") if t.strip()]
             if any(not math.isfinite(t) or t < 0 for t in times):
                 die("--keyframes-near takes finite times at or after 0")
+            if r.get("dry_run"):
+                continue
             r["keyframes"] = keyframe_candidates(r, times, args.keyframe_window) if r.get("video") else []
     if args.analyze:
         for r in results:
