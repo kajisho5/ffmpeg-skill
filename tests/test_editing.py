@@ -3057,7 +3057,7 @@ class EditingTests(MediaFixtures):
         (d / "line5.wav").write_bytes(b"")             # a TTS call that created its file and then failed
         (d / "line6.wav").write_bytes(b"not audio")    # a download that saved an error page
         (d / "parts.txt").write_text("line1.wav\n# the TTS step's own comment\n\nline2.wav\nline3.wav\n"
-                                     "file 'line4.wav'\nline5.wav\nline6.wav\n", encoding="utf-8")
+                                     "file\t'line4.wav'\nline5.wav\nline6.wav\n", encoding="utf-8")
         proc = script("join.py", "--list", d / "parts.txt", "--transition", "none", "--json",
                       "-o", d / "voice_fail.wav", expect_fail=True)
         doc = json.loads(proc.stdout)
