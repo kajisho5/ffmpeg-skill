@@ -1186,6 +1186,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         "verify": verify,
         "notes": list(extra.get("notes") or []),
     }
+    if tool == "fit" and "timing" in extra:
+        doc["timing"] = extra["timing"]
     try:
         tmp = f"{path}.tmp{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:

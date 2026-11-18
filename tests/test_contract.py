@@ -1372,6 +1372,34 @@ class ContractTests(unittest.TestCase):
         doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "-o", self.out("trim_fit.mkv"), "--json").stdout)
         self.assertNotIn("large_speed_change", codes(doc))
 
+    def test_fit_reports_timing_in_dry_run_saved_plan_and_result(self):
+        output, plan = self.out("fit_timing.mp4"), self.out("fit_timing.json")
+        args = (self.src, "--duration", "5.8", "-o", output, "--fast", "--json")
+        dry = json.loads(tool("fit", *args, "--plan", plan).stdout)
+        timing = dry["timing"]
+        self.assertEqual(timing["method"], "speed")
+        self.assertAlmostEqual(timing["source_duration"], 6.0, delta=0.025)
+        self.assertEqual(timing["target_duration"], 5.8)
+        self.assertAlmostEqual(timing["speed_factor"], timing["source_duration"] / 5.8)
+        self.assertEqual(json.loads(plan.read_text(encoding="utf-8"))["timing"], timing)
+        self.assertFalse(output.exists())
+        real = json.loads(tool("fit", *args).stdout)
+        self.assertEqual(real["timing"], timing)
+        self.assertTrue(real["verified"])
+        replayed = json.loads(tool("render", plan, "--overwrite", "--json").stdout)
+        self.assertEqual(replayed["tool_result"]["timing"], timing)
+
+    def test_fit_timing_distinguishes_trim_from_a_pending_retime(self):
+        pending = self.out("fit_input_not_generated.mp4")
+        output = self.out("fit_plan_only.mp4")
+        for method, factor in (("speed", None), ("trim", 1.0)):
+            with self.subTest(method=method):
+                doc = json.loads(tool("fit", pending, "--duration", "2", "--method", method,
+                                      "-o", output, "--dry-run", "--json-brief").stdout)
+                self.assertEqual(doc["timing"], {"method": method, "source_duration": None,
+                                                 "target_duration": 2.0, "speed_factor": factor})
+                self.assertFalse(doc["verified"])
+
     def test_changelog_mentions_every_closed_issue_since_last_tag(self):
         """A merged fix can land after CHANGELOG.md's current-version section was already
         written (this happened for real: #77's fix, PR #88, merged after the 0.12.0 section was
@@ -10003,6 +10031,9 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         proj.write_text(json.dumps({"clips": [{"src": str(self.nolength), "speed": 2}]}), encoding="utf-8")
         doc, proc = self.doc("render", proj, "-o", "speed.mp4", "--dry-run")
         self.assertIn("speed_length_placeholder", [s["code"] for s in doc["diagnostics"]["skipped"]])
+        doc, _ = self.doc("fit", self.nolength, "--duration", "5", "-o", "speed.mp4", "--dry-run")
+        self.assertIsNone(doc["timing"]["speed_factor"])
+        self.assertIsNone(doc["timing"]["source_duration"])
 
     def test_loudness_too_short_is_not_silent(self):
         """A257: a clip shorter than one 400 ms gating block was called silent: loudness.py told the
