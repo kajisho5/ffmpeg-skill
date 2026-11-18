@@ -526,7 +526,12 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
-    ap.add_argument("--normalize", action="store_true", help=f"the platform presets ({', '.join(sorted(PLATFORM_OF))}): when the written file misses the platform's loudness spec, run loudness.py on it (audio re-encoded, video copied) so one export delivers")
+    norm = ap.add_mutually_exclusive_group()
+    norm.add_argument("--normalize", action="store_true",
+                      help=f"the platform presets ({', '.join(sorted(PLATFORM_OF))}): when the written file misses the platform's loudness spec, "
+                           "run loudness.py on it (audio re-encoded, video copied) so one export delivers (on by default for platform presets)")
+    norm.add_argument("--no-normalize", action="store_true",
+                      help="do not run loudness normalization even if the written file misses the platform's loudness spec")
     ap.add_argument("--alpha-mode", choices=["straight", "premultiplied"],
                     help="alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): write the colour straight "
                          "(default, as decoded) or premultiplied by the alpha; written to the result as alpha_mode")
@@ -547,6 +552,11 @@ def main() -> int:
     if args.normalize and args.preset not in PLATFORM_OF:
         die(f"--normalize applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",
             hint="drop --normalize, or run loudness.py with your own target")
+    if args.no_normalize and args.preset not in PLATFORM_OF:
+        die(f"--no-normalize applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",
+            hint="drop --no-normalize, or run loudness.py with your own target")
+
+    should_normalize = (args.preset in PLATFORM_OF) if not args.no_normalize else False
 
     p = PRESETS[args.preset]
     meta = probe(args.input)
@@ -809,7 +819,7 @@ def main() -> int:
                 notes.append(f"output audio is silent (integrated loudness -inf, {platform} expects {spec['lufs']:g} LUFS); "
                              "check the source's audio or give the export a real track (audio.py --replace)")
                 warn(notes[-1], "output_audio_silent", platform=platform)
-            elif not ok and args.normalize:
+            elif not ok and should_normalize:
                 # Eval 7: every platform job ran export -> loudness.py -> export again (two video
                 # encodes). The levels pass only re-encodes audio, so do it here on the written
                 # file and the caller gets one export that meets the spec.
@@ -856,12 +866,12 @@ def main() -> int:
                     warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=True)
             elif not ok:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
-                             f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize")
+                             f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize (drop --no-normalize)")
                 warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=False)
     elif platform and not has_audio and not STATE.dry_run:
         record_skip(f"no loudness check against {platform}'s spec: the source has no audio, so the export has none",
                     "loudness_no_audio", platform=platform)
-    elif platform and has_audio and args.normalize:
+    elif platform and has_audio and should_normalize:
         spec = PLATFORMS[platform]
         notes.append(f"[dry-run] --normalize: loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} would run on the written file if it misses {platform}'s spec")
     if p["max"] and not args.allow_long and not STATE.dry_run:

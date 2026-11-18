@@ -153,7 +153,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
 | "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` |
 | "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
-| "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
+| "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`; platform presets normalise loudness by default) |
 | "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |
 | "make a GIF preview" | `export.py in.mp4 --preset gif` |
 | "the recording is corrupted" | `export.py in.mp4 --preset copy --repair` |

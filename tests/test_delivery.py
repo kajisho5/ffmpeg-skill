@@ -1128,17 +1128,43 @@ class DeliveryTests(MediaFixtures):
             self.assertEqual(precious.read_bytes(), b"PRECIOUS")
         finally:
             precious.unlink()
-        # --normalize on a preset without a loudness spec is refused; under --dry-run it says what it would do
+        # --normalize and --no-normalize on a preset without a loudness spec are refused; under --dry-run it says what it would do
         d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--normalize", "-o", OUT / "export_norm_h265.mp4", "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
-        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--no-normalize", "-o", OUT / "export_norm_h265.mp4", "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--dry-run", "--json").stdout)
         self.assertTrue(any("--normalize" in n for n in d.get("notes", [])), d)
-        # without the flag the same file is reported, not fixed
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--no-normalize", "-o", out, "--dry-run", "--json").stdout)
+        self.assertFalse(any("--normalize" in n for n in d.get("notes", [])), d)
+        # without flags, platform presets normalise by default (#579)
         proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
+        d = json.loads(proc.stdout)
+        self.assertTrue(d["loudness"]["ok"])
+        self.assertTrue(d["loudness"]["normalized"])
+        # with --no-normalize the un-normalised level is reported, not fixed
+        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--no-normalize", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertFalse(d["loudness"]["ok"])
         self.assertNotIn("normalized", d["loudness"])
         self.assertIn("--normalize", " ".join(d["notes"]))
+
+    def test_export_platform_preset_normalizes_quiet_audio_by_default(self):
+        """#579: export.py platform presets normalize quiet audio by default."""
+        quiet = OUT / "quiet_source.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "color=c=black:s=320x240:r=24",
+           "-f", "lavfi", "-i", "sine=f=440:r=48000",
+           "-filter_complex", "[1:a]volume=-30dB[a]",
+           "-map", "0:v", "-map", "[a]", "-t", "3",
+           "-c:v", "libx264", "-c:a", "aac", quiet)
+        out = OUT / "export_reels_quiet_norm.mp4"
+        proc = script("export.py", quiet, "--preset", "reels", "-o", out, "--fast", "--json", "--overwrite")
+        d = json.loads(proc.stdout)
+        self.assertEqual(d["status"], "completed")
+        self.assertTrue(d["loudness"]["ok"], d["loudness"])
+        self.assertTrue(d["loudness"]["normalized"])
+        self.assertAlmostEqual(d["loudness"]["lufs"], -14.0, delta=2.0)
 
     def test_every_delivery_template_renders_and_passes_its_own_check(self):
         """1.14: `render.py --template NAME INPUT` is the one command a delivery request becomes,

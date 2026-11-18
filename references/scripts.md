@@ -2382,10 +2382,12 @@ integrated loudness ended more than 1 LU from the target because of it.
 ### export.py — delivery presets
 ```
 export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444|prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha|key-fill|h265|gif|copy
-                [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize] [-o OUT]
+                [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize | --no-normalize] [-o OUT]
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
+Platform presets (`youtube`, `youtube4k`, `reels`, `tiktok`, `shorts`, `linkedin`, `facebook`, `x`)
+normalise loudness by default if the written audio misses the platform spec; `--no-normalize` opts out.
 A still picture is refused (`kind: input`) by every preset: a delivery has a length, and
 `insert.py` makes a clip of it.
 Editing masters (`prores`, `dnxhr-lb/sq/hq/hqx/444`, and the alpha presets) keep the source's size,

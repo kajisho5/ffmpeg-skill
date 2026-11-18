@@ -5960,3 +5960,11 @@ before it was changed. Five classes are changed, two are left for a decision.
   drawtext, so it was not done; that needs an FFmpeg 9 run and a decision. The test is not
   loosened: one rise and one fall, which a first frame brighter than the next fails. Code:
   `graphics.main()` (`fade_a`).
+- **`export.py` platform presets normalise loudness by default (`--no-normalize` opts out).**
+  Platform presets (`youtube`, `reels`, `tiktok`, `shorts`, `x`, etc.) promise platform-compliant
+  deliveries. Previously, `--normalize` was opt-in, so a plain `export.py in.mp4 --preset reels`
+  would measure the loudness against the platform spec, note the shortfall, and deliver quiet audio.
+  `render.py` already enabled `--normalize` by default for platform presets in project templates;
+  making it the default for `export.py` directly eliminates quiet deliveries while `--no-normalize`
+  allows explicitly skipping the pass. Tests: `test_export_normalize_meets_the_platform_loudness_in_one_call`,
+  `test_export_platform_preset_normalizes_quiet_audio_by_default`.

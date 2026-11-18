@@ -2225,6 +2225,8 @@ def main() -> int:
                  "normalize_on_by_default", preset=ex["preset"])
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
+        elif normalize is False:
+            argv += ["--no-normalize"]
         sh("export.py", *argv, stage="export")
         stages_done.append("export")
     else:
