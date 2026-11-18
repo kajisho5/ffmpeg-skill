@@ -99,11 +99,61 @@ def is_rgb(meta: Optional[Dict[str, Any]]) -> bool:
     return bool(_RGB_PIX_FMT_RE.match(str(((meta or {}).get("video") or {}).get("pix_fmt") or "")))
 
 
+# The matrices (ffprobe's names) swscale can be told to make YUV with, by its own name for each
+# (scale's out_color_matrix). A BT.2020/HDR line tags one of these on an RGB source (#544).
+_SWS_OUT_MATRIX = {"bt2020nc": "bt2020", "bt709": "bt709", "smpte170m": "bt601", "bt470bg": "bt601",
+                   "fcc": "fcc", "smpte240m": "smpte240m"}
+
+
+def hdr_line_matrix(v: Optional[Dict[str, Any]]) -> str:
+    """The matrix tag (ffprobe's name) a 10-bit line that keeps a BT.2020 / HDR source's colour
+    writes for the probed video `v`: a YUV source's own, or bt2020nc when it has none, as always.
+
+    An RGB source has no matrix: its tag is `gbr` (FFV1, PNG, qtrle, libx264rgb and most RGB
+    codecs write it) or nothing, and the YUV the line stores is made by a conversion. Through
+    3.10.0 the line passed the tag on (`-colorspace gbr`, which no encoder parses: every re-encode
+    of such a source failed inside ffmpeg) or wrote bt2020nc over FFmpeg's default conversion,
+    BT.601 (#544). For an RGB source the tag is the matrix hdr_rgb_matrix_filter() converts with:
+    the source's own when it names one swscale can make (a mislabelled RGB file, whose frames
+    FFmpeg 6.1 already converted by that tag), else bt2020nc."""
+    v = v or {}
+    cs = v.get("color_space")
+    if _RGB_PIX_FMT_RE.match(str(v.get("pix_fmt") or "")):
+        return cs if cs in _SWS_OUT_MATRIX else "bt2020nc"
+    return cs or "bt2020nc"
+
+
+def hdr_rgb_matrix_filter(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """For an RGB source that probes BT.2020 or HDR, written on a line that keeps that colour
+    (video_args' Main10 / 10-bit lines; `line_meta`: the probe the line was chosen for when it is
+    another picture's, as in a join): the filter that makes its YUV with the matrix the line tags
+    (hdr_line_matrix), limited range, 4:4:4 at the line's 10 bits, so no later conversion (an
+    auto-inserted one, with FFmpeg's BT.601 default) decides the matrix. None for every other
+    source, and when the line's matrix is one swscale cannot be told to make (bt2020c, ICtCp).
+
+    Only the matrix is named. Primaries and transfer are the source's and stay as they are (the
+    line tags them), so the picture is the source's RGB read back by the output's own tags
+    (measured on FFmpeg 6.1.1: C03028 came back 196/52/35 before, 192/48/40 after)."""
+    v = (meta or {}).get("video") or {}
+    if not v.get("bt2020_or_hdr") or not is_rgb(meta):
+        return None
+    line_v = v if line_meta is None else (line_meta.get("video") or {})
+    if not line_v.get("bt2020_or_hdr"):
+        return None
+    matrix = _SWS_OUT_MATRIX.get(hdr_line_matrix(line_v))
+    if matrix is None:
+        return None
+    # a palette is turned into YUV with fixed BT.601 coefficients whatever out_color_matrix says
+    return ("format=rgb24," if v.get("pix_fmt") == "pal8" else "") + f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv444p10le"
+
+
 # An odd-sized BT.601 source is padded to even for the colorspace filter and cropped back to its
 # own size after it (bt709_matrix_filter): both wrap the conversion in the one -vf the merge finds.
 _EVEN_PAD = "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,"
-_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s)$"
-                               % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter())))
+_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s"
+                               r"|(?:format=rgb24,)?scale=out_color_matrix=(?:%s):out_range=tv,format=yuv444p10le)$"
+                               % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter()),
+                                  "|".join(sorted(set(_SWS_OUT_MATRIX.values())))))
 # [N:v], [N:v:0] and [N:V:0] (PROBED_VIDEO: the motion picture, not an attached cover)
 _INPUT_VIDEO_REF = re.compile(r"\[(\d+):[vV](?::0)?\]")
 
@@ -285,6 +335,13 @@ def bt709_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     valid as it stands for a command with no other filter; run() folds it into the tool's own
     -vf or -filter_complex (fold_bt709_matrix()) before the command is recorded or run."""
     f = bt709_matrix_filter(meta)
+    return ["-vf", f] if f else []
+
+
+def hdr_rgb_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
+    """["-vf", hdr_rgb_matrix_filter(meta)] for an encoder line that keeps a BT.2020 / HDR source's
+    colour, or []: bt709_matrix_args()'s counterpart for that line, folded by run() the same way."""
+    f = hdr_rgb_matrix_filter(meta)
     return ["-vf", f] if f else []
 
 
