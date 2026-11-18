@@ -8,6 +8,10 @@
 
 - Crop checks report sampled review times for inspecting discarded motion or detail (#570).
 
+## 3.13.1
+
+_Automated release: version and notes generated from pull requests merged since 3.13.0._
+
 ### Fixed
 
 - **An HDR or BT.2020 RGB source is re-encoded with the matrix its output is tagged with (#544).**
@@ -21,6 +25,9 @@
   `multicam.py`, `broll.py` and `overlay.py --video`. YUV sources and SDR RGB sources are
   unchanged, and so are the 8-bit BT.709 lines given such a source (`export.py`'s fixed presets,
   `grid.py`) and the alpha lines. Measured on FFmpeg 6.1.1 only.
+- fix: align HDR RGB conversion with its matrix tag (#560)
+
+Closes: #544
 
 ## 3.13.0
 
