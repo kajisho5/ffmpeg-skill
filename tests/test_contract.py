@@ -8703,6 +8703,60 @@ class SideFileGuardTests(unittest.TestCase):
                     self.assertEqual(collision["reason"], "output_is_input")
                     self.assertEqual(side.read_bytes(), before)
 
+    def test_sequence_protects_frames_from_output_and_plan_collisions(self):
+        frames = self.tmp / "protected_frames"
+        frames.mkdir()
+        first, second = (frames / f"frame{i:02}.png" for i in range(2))
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(first))
+        second.write_bytes(first.read_bytes())
+        alias = self.tmp / "hardlink.png"
+        os.link(second, alias)
+        out = self.tmp / "sequence.mp4"
+        for flags in (("--pattern", first.name, "-o", first),
+                      ("--pattern", "frame%02d.png", "-o", alias),
+                      ("--pattern", "*.png", "-o", out, "--plan", alias),
+                      ("--pattern", "*.png", "-o", out, "--plan", second, "--dry-run")):
+            with self.subTest(flags=flags):
+                before = [p.read_bytes() for p in (first, second, alias)]
+                result = self.failed(tool("sequence", "--dir", frames, *flags, "--overwrite",
+                                          "--json", check=False))
+                self.assertEqual(result["reason"], "output_is_input")
+                self.assertEqual([p.read_bytes() for p in (first, second, alias)], before)
+                self.assertFalse(out.exists())
+
+    def test_sequence_plan_binds_and_rechecks_the_ordered_frames(self):
+        frames = self.tmp / "planned_frames"
+        frames.mkdir()
+        first, second, extra = (frames / f"frame{i:02}.png" for i in range(3))
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(first))
+        content = first.read_bytes()
+        second.write_bytes(content)
+        for mode_name, pattern in (("glob", "*.png"), ("printf", "frame%02d.png")):
+            with self.subTest(pattern=pattern):
+                out, plan = self.tmp / f"{mode_name}.mp4", self.tmp / f"{mode_name}.json"
+                tool("sequence", "--dir", frames, "--pattern", pattern, "-o", out, "--plan", plan, "--json")
+                saved = json.loads(plan.read_text(encoding="utf-8"))
+                self.assertCountEqual([Path(row["path"]) for row in saved["inputs"]],
+                                      [first.resolve(), second.resolve()])
+                self.assertEqual(saved["unbound_inputs"], [])
+                self.assertFalse(out.exists())
+                second.write_bytes(content + b"changed")
+                error = self.failed(tool("render", plan, "--json", check=False))
+                self.assertEqual(error["reason"], "plan_inputs_changed")
+                second.unlink()
+                error = self.failed(tool("render", plan, "--json", check=False))
+                self.assertEqual(error["reason"], "plan_inputs_changed")
+                second.write_bytes(content)
+                extra.write_bytes(content)
+                for mode in ((), ("--dry-run",)):
+                    error = self.failed(tool("render", plan, *mode, "--json", check=False))
+                    self.assertEqual(error["reason"], "plan_inputs_changed")
+                    self.assertFalse(out.exists())
+                extra.unlink()
+                result = json.loads(tool("render", plan, "--json").stdout)
+                self.assertTrue(result["verified"], result)
+                self.assertTrue(out.is_file())
+
     def test_plan_binds_brand_json_and_ignores_path_shaped_title_text(self):
         brand = self.tmp / "actual_brand.json"
         brand.write_text("{}", encoding="utf-8")

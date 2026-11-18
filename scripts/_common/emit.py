@@ -1100,11 +1100,11 @@ def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Option
     existing file named in argv, and files registered by the input readers or by
     escape_filter_path(). Registered paths come from parsed inputs and may start with a dash."""
     import shlex
-    seen: List[str] = []
+    seen: Dict[str, None] = {}
     candidates = [a for a in argv if a and not a.startswith("-")] + (ctx or STATE).plan_inputs
     for a in candidates:
-        if a and os.path.isfile(a) and a not in seen:
-            seen.append(a)
+        if a and a not in seen and os.path.isfile(a):
+            seen[a] = None
     for line in commands:
         try:
             toks = shlex.split(line.split("] ", 1)[1] if line.startswith("[dry-run] ") else line)
@@ -1112,8 +1112,8 @@ def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Option
             continue
         for i, tok in enumerate(toks[:-1]):
             if tok == "-i" and os.path.isfile(toks[i + 1]) and toks[i + 1] not in seen:
-                seen.append(toks[i + 1])
-    return seen
+                seen[toks[i + 1]] = None
+    return list(seen)
 
 
 def _planned_outputs(commands: Sequence[str]) -> List[str]:
@@ -1138,15 +1138,16 @@ def _plan_unbound_inputs(commands: Sequence[str], ctx: "Optional[Context]" = Non
     tool's own intermediates are bound by the command that makes them). render.py reports them on
     execution: nothing checks that their content is what the plan was made for."""
     import shlex
+    ctx = ctx or STATE
     produced: List[str] = []
     out: List[str] = []
 
     def consider(p: str) -> None:
-        if (not p or p == "-" or p.startswith("pipe:") or os.path.exists(p)
+        if (not p or p == "-" or p.startswith("pipe:") or p in ctx.plan_generated_inputs or os.path.exists(p)
                 or os.path.abspath(p) in produced or os.path.abspath(p) in out):
             return
         out.append(os.path.abspath(p))
-    for p in (ctx or STATE).plan_inputs:
+    for p in ctx.plan_inputs:
         consider(p)
     for line in commands:
         try:
@@ -1225,6 +1226,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         "verify": verify,
         "notes": list(extra.get("notes") or []),
     }
+    if ctx.sequence_frames_sha256 is not None:
+        doc["sequence_frames_sha256"] = ctx.sequence_frames_sha256
     try:
         tmp = f"{path}.tmp{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:

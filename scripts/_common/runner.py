@@ -364,7 +364,7 @@ class Context:
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries",
-                 "_stream_copy_outputs", "_encoded_media")
+                 "_stream_copy_outputs", "_encoded_media", "plan_generated_inputs", "sequence_frames_sha256")
 
     def __init__(self) -> None:
         self.reset()
@@ -397,6 +397,8 @@ class Context:
         self.plan: Optional[str] = None              # --plan FILE: write the dry-run as a plan document (implies --dry-run)
         self.plan_written = False                    # write_plan() ran (emit or the exit hook), so the hook does not write twice
         self.plan_inputs: List[str] = []             # side inputs (srt/ass/lut/font files) a tool named through escape_filter_path
+        self.plan_generated_inputs: set[str] = set()  # temporary inputs reconstructed by the tool
+        self.sequence_frames_sha256: Optional[str] = None
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
         self.alpha_line: Optional[str] = None        # --keep-alpha / --transparent: the alpha line written (_common.alpha.ALPHA_CODECS)
         self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply

@@ -363,6 +363,12 @@ runs the tool with the planned `argv`, then the verify steps (a `check` step may
 `tool`, `tool_result`, `check` and `unbound_inputs` (each one also a `diagnostics.warnings` entry:
 nothing checked that file). `plan_version` is bumped when the document's shape changes.
 
+New `sequence` plans fingerprint the selected frame files in `inputs`. The additive
+`sequence_frames_sha256` field binds their order and contents. Replay, including replay with
+`--dry-run`, refuses a changed selection as `plan_inputs_changed`. For printf patterns the
+selection ends at the first gap. Older plans without the field still run and warn
+with `plan_sequence_unbound`; regenerate the plan to check the selection.
+
 ### Repeatability
 
 No tool keeps state or uses randomness. `deterministic_inputs` is `false` only for
