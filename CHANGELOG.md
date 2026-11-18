@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.11.2
+
+_Automated release: version and notes generated from pull requests merged since 3.11.1._
+
+- fix: require execution evidence for result claims (#588)
+
 ## 3.11.1
 
 _Automated release: version and notes generated from pull requests merged since 3.11.0._
