@@ -7,6 +7,9 @@ assume the skill is installed at `~/.claude/skills/ffmpeg-skill`; shorten with
 Run `bash examples/make_demo.sh` to generate sample footage from nothing and
 push it through 13 of the 42 scripts (outputs land in `examples/out/`; a second run replaces them).
 
+For an end-to-end edit of spoken footage, see the
+[subtitled Reels walkthrough](reels-walkthrough.md).
+
 ---
 
 ### "What am I working with?"

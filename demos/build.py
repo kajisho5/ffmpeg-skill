@@ -1985,6 +1985,9 @@ INSPECTION = [
 # --------------------------------------------------------------------------- docs
 DOC_HEADER = """# Demo gallery
 
+For a complete edit of spoken footage, follow the
+[subtitled Reels walkthrough](../examples/reels-walkthrough.md).
+
 Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
 the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of
 people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
