@@ -2085,6 +2085,64 @@ sys.exit(fit.main())
             self.assertEqual(fold(["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", "scale=2:2"] + enc),
                              ["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", f"{conv},scale=2:2", "-c:v", "libx264", "out.mp4"])
 
+    def test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source(self):
+        """#544: an RGB source that probes BT.2020 / HDR has no matrix (tag `gbr`, or none). The 10-bit
+        line that keeps its colour passed `-colorspace gbr` to the encoder (refused inside ffmpeg) or
+        tagged bt2020nc over FFmpeg's BT.601 conversion. The line now tags bt2020nc and ends with a
+        conversion that names it, folded like the BT.709 one; a YUV source's line is what it was."""
+        from _common.color import hdr_line_matrix, hdr_rgb_matrix_filter
+        from _common.decision import line_matrix_filter
+
+        def meta(**v):
+            return {"file": "src", "video": dict({"bt2020_or_hdr": True, "color_primaries": "bt2020", "color_transfer": "smpte2084"}, **v)}
+        conv = "scale=out_color_matrix=bt2020:out_range=tv,format=yuv444p10le"
+        for cs in ("gbr", None, "unknown", "bt2020nc", "bt2020c", "ictcp"):
+            for pf in ("gbrp10le", "rgb48be", "rgb24", "gbrap10le"):
+                m = meta(pix_fmt=pf, color_space=cs)
+                self.assertEqual((hdr_line_matrix(m["video"]), hdr_rgb_matrix_filter(m)), ("bt2020nc", conv), (cs, pf))
+        # an RGB file mislabelled with a YUV matrix swscale can make keeps that tag, and the conversion names it
+        m = meta(pix_fmt="gbrp10le", color_space="bt709")
+        self.assertEqual((hdr_line_matrix(m["video"]), hdr_rgb_matrix_filter(m)),
+                         ("bt709", "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p10le"))
+        # a YUV source: its own tag, bt2020nc without one, and no conversion, as before
+        for cs, want in (("bt2020nc", "bt2020nc"), (None, "bt2020nc"), ("bt2020c", "bt2020c"), ("bt709", "bt709")):
+            m = meta(pix_fmt="yuv420p10le", color_space=cs)
+            self.assertEqual((hdr_line_matrix(m["video"]), hdr_rgb_matrix_filter(m)), (want, None), cs)
+        # not an HDR / BT.2020 source: this conversion is not for it (bt709_matrix_filter's is)
+        sdr = {"file": "src", "video": {"bt2020_or_hdr": False, "pix_fmt": "rgb24", "color_space": "gbr"}}
+        self.assertIsNone(hdr_rgb_matrix_filter(sdr))
+        self.assertIsNone(hdr_rgb_matrix_filter(None))
+        rgb, yuv = meta(pix_fmt="gbrp10le", color_space="gbr"), meta(pix_fmt="yuv420p10le", color_space="bt2020nc")
+        # in a graph of several sources the matrix is the line's; an SDR line is not this conversion's
+        self.assertEqual(hdr_rgb_matrix_filter(rgb, yuv), conv)
+        self.assertIsNone(hdr_rgb_matrix_filter(rgb, meta(pix_fmt="yuv420p10le", color_space="bt2020c")))
+        self.assertIsNone(hdr_rgb_matrix_filter(rgb, sdr))
+        saved = (_common.STATE.codec, _common.STATE.hw, _common.STATE.alpha_line)
+        try:
+            _common.STATE.hw = False
+            for codec in (None, "hevc", "prores") + (("av1",) if {"libsvtav1", "libaom-av1"} & set(_common.ffmpeg_encoders()) else ()):
+                _common.STATE.codec = codec
+                line = _common.video_args(rgb)
+                self.assertEqual(line[-2:], ["-vf", conv], codec)
+                self.assertEqual(line[line.index("-colorspace") + 1], "bt2020nc", codec)
+                self.assertNotIn("gbr", " ".join(line), codec)
+                self.assertNotIn("-vf", _common.video_args(yuv), codec)
+                self.assertNotIn("-vf", _common.video_args(rgb, convert_matrix=False), codec)
+                self.assertEqual(line_matrix_filter(rgb), conv, codec)
+                self.assertEqual((_common.matrix_chain(rgb, rgb), _common.matrix_chain(rgb, yuv)), (conv + ",", conv + ","), codec)
+                self.assertEqual((_common.matrix_chain(yuv, rgb), _common.matrix_chain(sdr, rgb)), ("", ""), codec)
+            _common.STATE.codec = None
+            _common.STATE.alpha_line = "prores4444"  # an alpha line builds its own way to YUV (alpha.py)
+            self.assertNotIn("-vf", _common.video_args(rgb))
+            self.assertIsNone(line_matrix_filter(rgb))
+            self.assertEqual(_common.matrix_chain(rgb, rgb), "")
+        finally:
+            _common.STATE.codec, _common.STATE.hw, _common.STATE.alpha_line = saved
+        fold = _common.fold_bt709_matrix
+        for c in (conv, "format=rgb24," + conv):
+            self.assertEqual(fold(["ffmpeg", "-i", "a.mkv", "-vf", "crop=2:2:0:0", "-c:v", "libx265", "-vf", c, "out.mp4"]),
+                             ["ffmpeg", "-i", "a.mkv", "-vf", f"{c},crop=2:2:0:0", "-c:v", "libx265", "out.mp4"])
+
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.18.3 behaviour: every

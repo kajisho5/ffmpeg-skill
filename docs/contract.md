@@ -315,7 +315,11 @@ only; `_common.bt709_matrix_filter()`), so the label and the pixels agree. An un
 source adds no filter, and the tags themselves never convert (`bt709_tag_args()`). An RGB picture
 (a PNG or JPEG still, a PNG sequence, a qtrle clip, an `overlay --image` logo, an emoji PNG,
 `waveform --image`) is converted to BT.709 YUV explicitly (`scale=out_color_matrix=bt709`; a JPEG is
-a `bt470bg` source); `grid.py` converts each cell by its own tags. Where a converted picture meets an
+a `bt470bg` source); `grid.py` converts each cell by its own tags. An RGB source that probes HDR
+or BT.2020 keeps the 10-bit line, and its YUV is made with the matrix that line tags
+(`scale=out_color_matrix=bt2020`, tagged `bt2020nc`; `_common.color.hdr_rgb_matrix_filter()`, #544);
+an 8-bit BT.709 line given such a source (an `export.py` fixed preset, `grid.py`) and an alpha line
+do not convert it. Where a converted picture meets an
 untagged one in a mixing filter, the untagged one is labelled BT.709 (`setparams`, tags only), so
 FFmpeg 7.1+'s colourspace negotiation converts neither (`join`, `multicam`, `broll` and `overlay --video`
 too, beside a converted clip). A colour a tool draws from a hex or named value (a pad, `tpad` or
