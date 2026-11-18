@@ -458,7 +458,7 @@ They are the most used tools here, and they are tested on every pull request and
 
 ### Which engine provides word timestamps for karaoke?
 
-With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. The Whisper fallback order is whisper.cpp, faster-whisper, then OpenAI Whisper. Use `--engine` to select one explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.
+With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. Auto prefers Whisper engines in this order: whisper.cpp, faster-whisper, OpenAI Whisper. An engine's failure can stop automatic selection, for example when the language is known and whisper.cpp fails to produce word timings. Use `--engine` to select an engine explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.
 
 Run `doctor --json` and inspect `speech_engines` if an installed Whisper engine fails to start. The report shows what was checked for each engine, including import errors and the installed PyAV version when faster-whisper fails. These checks run without loading a model. Model availability and word timestamps are checked when you transcribe.
 

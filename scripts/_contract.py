@@ -1303,7 +1303,8 @@ def _whisper_engines() -> Dict[str, Dict[str, Any]]:
             )
     whisper = safe_which("whisper")
     if whisper:
-        error = _speech_startup_error([whisper, "--help"])
+        # The startup check changes cwd. Resolve a relative PATH entry against the caller's cwd.
+        error = _speech_startup_error([str(Path(whisper).absolute()), "--help"])
         engines["openai-whisper"] = {"usable": error is None, "checked": "cli_startup"}
         if error:
             engines["openai-whisper"].update(

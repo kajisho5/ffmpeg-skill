@@ -7474,13 +7474,14 @@ class DoctorSpeechTests(unittest.TestCase):
     def test_whisper_cli_probe_is_bounded(self):
         from _common import runner
 
-        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: "whisper.exe" if name == "whisper" else None), \
+        executable = Path("tools", "bin", "whisper")
+        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: str(executable) if name == "whisper" else None), \
                 unittest.mock.patch("importlib.util.find_spec", return_value=None), \
                 unittest.mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 10)) as run:
             engine = _contract._whisper_engines()["openai-whisper"]
         self.assertFalse(engine["usable"])
         self.assertIn("timed out", engine["detail"])
-        self.assertEqual(run.call_args.args[0], ["whisper.exe", "--help"])
+        self.assertEqual(run.call_args.args[0], [str(executable.absolute()), "--help"])
         self.assertGreater(run.call_args.kwargs["timeout"], 0)
 
     def test_faster_whisper_import_does_not_create_a_model(self):
