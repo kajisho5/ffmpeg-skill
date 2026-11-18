@@ -452,14 +452,17 @@ ERROR_REASONS = {
     "output_container_codecs": "a .webm output whose command encodes video or sound WebM cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
     "output_locked": "another run holds the output's lock, or is taking a stale one over (why: takeover_in_progress), or a stale lock cannot be taken over safely because the filesystem gives no OS file lock (why: takeover_unavailable: delete it by hand); details: {lock, output, pid, pid_alive, deadline, why}",
-    "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed; details: {plan, plan_sha256, checked_at, "
+    "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed, or the ordered sequence differs; details: {plan, plan_sha256, checked_at, "
                            "inputs: [{path, status: unchanged|changed|missing, expected: {size, sha256_head_tail}, actual: {size, "
-                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}",
+                           "sha256_head_tail} | \"missing\"}], unbound_inputs, audit_log}; sequence rows include sha256_full "
+                           "when the plan records it. A sequence selection mismatch can instead "
+                           "report {expected_frame_digest, actual_frame_digest}",
     "plan_version_unsupported": "render.py PLAN: plan_version is not one this version executes; details: {plan, plan_sha256, checked_at, plan_version, supported, audit_log}",
     "plan_unknown_tool": "render.py PLAN: the plan names no tool render.py can run; details: {plan, plan_sha256, checked_at, tool, audit_log}",
     "plan_cwd_missing": "render.py PLAN: the directory the plan was made in is gone; details: {plan, plan_sha256, checked_at, cwd, audit_log}",
     "plan_argv_invalid": "render.py PLAN: argv is not a list; details: {plan, plan_sha256, checked_at, argv_type, audit_log}",
-    "plan_field_invalid": "render.py PLAN: inputs, unbound_inputs, verify (objects), commands (strings) or cwd has the wrong JSON type; "
+    "plan_field_invalid": "render.py PLAN: inputs, unbound_inputs, verify (objects), commands (strings) or cwd has the wrong JSON type, "
+                          "or sequence_frames_sha256 is not a SHA-256 digest; "
                           "details: {plan, plan_sha256, checked_at, field, field_type, audit_log}",
     "decoder_missing": "color.py / graphics.py / overlay.py: a VP9 source or --video layer stored with an alpha layer, on a build with no libvpx-vp9 decoder (FFmpeg's own VP9 decoder drops the alpha), kind missing_tool; details: {name}",
     "encoder_missing": "--codec av1/prores: the build's encoder list was read and has no encoder for the codec (kind missing_tool; details: {codec, encoders}); or a command run() is given names an encoder the build lacks for a stream the output keeps (an HDR source kept as HEVC, --codec hevc, a preset's encoder; not -c:a for a source with no sound, or with -an): refused before ffmpeg runs, dry runs included, when the build's encoder list was read and lacks it, else ffmpeg's own \"Unknown encoder\" (kind ffmpeg; details: {name}; the hint points at doctor); render.py and waveform.py with a title or captions run their own dry run first and are refused with its document before the first stage encodes",
@@ -482,6 +485,7 @@ DIAGNOSTIC_CODES = {
     "lock_deadline_unset": ("warnings", "the lock's deadline (its mtime) could not be set; {lock, error}"),
     "audit_log_unwritable": ("warnings", "an audit record could not be appended; never fails the run; {path, event, error}"),
     "plan_unbound_inputs": ("warnings", "render.py PLAN: inputs that did not exist when the plan was made, so were not checked; {paths}"),
+    "plan_sequence_unbound": ("warnings", "render.py PLAN: an older sequence plan does not bind the ordered frame list"),
     # the runner
     "odd_dimensions_scaled_even": ("fallbacks", "an encode that failed on odd dimensions was run again scaled to even ones, or a graph the retry cannot reach (broll.py's filter_complex) was scaled to even ones up front (the frame loses a row or column); {output, scale}"),
     "measurement_input_pending": ("skipped", "--dry-run: a measurement skipped because its input is an earlier stage's output that does not exist yet; {path}"),
