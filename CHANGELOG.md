@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 3.11.3
+
+_Automated release: version and notes generated from pull requests merged since 3.11.2._
+
+- docs: explain execution guards up front (#586)
+- fix(cut): verify the total duration of copied segments (#589)
+
+Closes: #557, #571
+
 ## 3.11.2
 
 _Automated release: version and notes generated from pull requests merged since 3.11.1._
