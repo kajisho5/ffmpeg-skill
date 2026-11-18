@@ -98,7 +98,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "keep only these parts" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` |
 | "remove the middle" | `cut.py in.mp4 --remove 1:00-1:30` |
 | "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
-| "make it exactly 60 seconds" | `fit.py in.mp4 --duration 60` (speed; `--method trim`) |
+| "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
 | "cut out the pauses", "jump cuts" | `silence.py in.mp4` |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
