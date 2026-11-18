@@ -9,6 +9,12 @@
 - A completed `fit.py --fit crop` can report `crop_check`, an advisory measurement
   of discarded luma motion or detail with a suggested crop anchor (#570).
 
+## 3.10.2
+
+_Automated release: version and notes generated from pull requests merged since 3.10.1._
+
+- fix(wrap): never break inside a reduplicated ideograph (看看, 试试) (#583)
+
 ## 3.10.1
 
 _Automated release: version and notes generated from pull requests merged since 3.10.0._
