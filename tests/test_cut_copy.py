@@ -974,7 +974,21 @@ class CutJoinTests(unittest.TestCase):
         decode order loses them (144 frames for 150). The join was 672 ms long and said mode
         copy; it is now re-cut from the source, with the right frames and no gaps."""
         out = DIR / "open_gop_join.mp4"
-        data = cut_json(self.hevc25, "--segments", "0-2,4-6,8-10", "-o", out)
+        # If #533 recurs, let cut stop its own FFmpeg child and retain that child's logs.
+        # A relative report name in a temporary cwd also works on Windows without escaping a drive letter.
+        with tempfile.TemporaryDirectory(prefix="ffskill_open_gop_") as directory:
+            report_name = "open-gop.ffmpeg.log"
+            try:
+                proc = script("cut.py", self.hevc25.resolve(), "--segments", "0-2,4-6,8-10",
+                              "--timeout", "60", "-o", out.resolve(), "--json", cwd=directory,
+                              env=dict(os.environ, FFREPORT=f"file={report_name}:level=32"))
+            except AssertionError as exc:
+                report = Path(directory, report_name)
+                if report.is_file():
+                    log = report.read_text(encoding="utf-8", errors="replace")
+                    raise AssertionError(f"{exc}\nFFmpeg report (tail):\n{log[-6000:]}") from None
+                raise
+        data = json.loads(proc.stdout)
         self.assertTrue(data["reencoded"])
         self.assertIn("concat_fallback", data["reencode_reason"])
         self.assertTrue(any("open GOP" in n for n in data["notes"]), data["notes"])
