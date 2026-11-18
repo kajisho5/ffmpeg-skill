@@ -641,6 +641,7 @@ NON_AV_STREAM_TOOLS = frozenset({"audio", "broll", "color", "crop", "cut", "dein
 # is in neither.
 EMITTED_KEYS: Dict[str, Dict[str, Any]] = {
     "fit": {
+        "timing": {"type": "object", "description": "--duration only, in dry-run JSON, saved plans and real results. {method, source_duration, target_duration, speed_factor, retimed}: lengths in seconds, the computed source/target ratio for speed or 1 for trim, and whether the command retimes the source. Ratios within 0.0001 of 1 keep the speed unchanged. A dry run without a usable input length has null source_duration, speed_factor and retimed for speed."},
         "picture": {"type": "object", "description": "after a real run that sized the frame (--aspect, --width or --height): where the picture sits in the frame written, measured, not judged (#519): {measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format; the picture is the rectangle where the two differ (no frame of the source is decoded), and frame_width/frame_height are the written file's. frame_share: picture area over frame area (1.0 for --fit crop). scale: the picture's width over the source's displayed width (for --fit crop, the width it was scaled to before the crop); a note says so when it is below 1 and no --width or --height was given. cropped: source pixels --fit crop cut on each side, each axis at its own scale (all 0 otherwise). {measured: false, reason} (and a note) when the measurement gave no frame of the written size. Absent under --dry-run. Whether the subject is in the rectangle is still a look: subject_framing stays in unverified"},
         "crop_check": {"type": "object", "description": "after a real --fit crop that cuts something away (absent otherwise, under --dry-run, for --fit pad/blur and a crop with no margin): where the source's luma motion, or with none its edge detail, sits against the kept window. A proxy, not subject detection; a measurement, not a judgement. {axis: x|y, the cropped axis; discarded_fraction: the frame's area share cut away; motion_outside / detail_outside: the energy shares in the cut-away part (null when there is none); centroid: 0..1 along axis, of motion when it is above its floor, else of detail; suggested_anchor: the --crop-x/--crop-y value centring the kept window on centroid, or null; samples: the sample points measured (9 asked, over the trim's window under --method trim, else the whole source); basis: luma_motion_proxy; verdict: ok|review|unmeasured}. review also records a crop_content_off_centre warning; unmeasured (no sample decoded, or flat frames) adds a note only. subject_framing stays in unverified"}},
     "cropdetect": {
@@ -1123,6 +1124,29 @@ def _version_line(binary: str) -> Optional[str]:
     return m.group(1) if m else (first[0] if first else "unknown")
 
 
+def _ffmpeg_license(exe: Optional[str]) -> Optional[str]:
+    """Read the selected executable's upstream -L notice without guessing from its version."""
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "-hide_banner", "-L"], capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=_DETECT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode:
+        return None
+    notice = " ".join((proc.stdout + "\n" + proc.stderr).split())
+    if "has nonfree parts compiled in." in notice:
+        return "nonfree"
+    match = re.search(r"GNU (Lesser )?General Public License as published by the Free Software Foundation; "
+                      r"either version (2\.1|2|3) of the License, or \(at your option\) any later version", notice)
+    if not match:
+        return None
+    family = "LGPL" if match[1] else "GPL"
+    version = match[2] if "." in match[2] else match[2] + ".0"
+    return f"{family}-{version}-or-later"
+
+
 # ----------------------------------------------------------------------------- FFmpeg security advisories
 # doctor's `ffmpeg_security`: a small, dated, hand-maintained table of high-severity FFmpeg CVEs and
 # the first upstream point release on each branch that carries the fix. ffmpeg-skill does not ship
@@ -1529,6 +1553,7 @@ def doctor() -> Dict[str, Any]:
         "ffmpeg": versions["ffmpeg"],
         "ffprobe": versions["ffprobe"],
         **exes,
+        "ffmpeg_license": _ffmpeg_license(exes.get("ffmpeg_path")),
         # non-fatal: never part of `ok`, `usable` or the exit code
         "ffmpeg_security": ffmpeg_security(versions, {b: exes.get(f"{b}_source") for b in versions}),
         "available": available,
@@ -2246,6 +2271,7 @@ def main() -> int:
         else:
             print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
             print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
+            print(f"FFmpeg build license {d['ffmpeg_license'] or 'unknown'}")
             for name in ("ffmpeg", "ffprobe"):
                 if d[f"{name}_source"] == "homebrew-ffmpeg-full":
                     print(f"{name} runs from {d[f'{name}_path']}: Homebrew's keg-only ffmpeg-full, used because the {name} on PATH is the lean formula (no drawtext/subtitles)")

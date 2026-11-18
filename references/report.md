@@ -25,7 +25,24 @@ Look: final_sheet.png（字幕はセーフエリア内、ロゴは右上）
 Notes: 元は VFR だったので 30 fps に揃えた。音声はモノラルだったのでステレオにした
 ```
 
-Keep it to those five lines plus anything the user must decide. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
+Keep these five lines as the report itself. Include any decision the user needs to make. Never describe a fix you did not run. `verified` covers only what was measured: in `Notes:` name any `unverified` item the user would assume checked. Report a step with `attribution: unresolved`; do not re-run it.
+
+For a standalone edit, deliver the result and the five report lines first. When the host can
+present a review and it would help, offer it once in the user's language. In Japanese,
+「編集前と編集後を、プレビューで見比べますか？」. Mention waveforms when the host can display
+them and the media has an audio track. Prepare the review only after
+the user asks for it or accepts the offer. If they already asked for it, check what the host
+can present and proceed after the edit and report without a second prompt. When the host
+lacks a review view, explain the limitation and share any supported previews the user requested.
+
+Where the host supports side-by-side playback, show the original and edited video when both
+have picture. For an audio-only edit, provide playback for the available audio. Where the
+host supports waveforms, draw them from the available audio, including a flat waveform for a
+silent track. Synchronize playback and waveform seeking when the host can do so using a known
+source-to-output time mapping. Otherwise, label and show the two clocks separately. The host owns the
+view, numbered edit items, and how it maps feedback to a new edit request. Use ffmpeg-skill to
+supply media, measured results, and available preview files, and to execute the requested
+changes. Velisa and other callers that own the review handle it through their own workflow.
 
 When a step fails, replace `Done:` with `Failed:` and keep the rest honest:
 

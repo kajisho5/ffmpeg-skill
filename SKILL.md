@@ -8,7 +8,7 @@ description: 'Edit video and audio with local FFmpeg: cut, join, reframe, speed,
 ## Quick start
 
 Run `python3 <skill-dir>/scripts/<name>.py`; the table below routes requests, `--help` lists every flag.
-MCP `tools/list` shows the core 12; the other 30 of the 42 tools stay callable by name.
+MCP lists 12 by default. Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` for a smaller editing list. All 42 stay callable by name.
 
 Shared flags (the rest, codec defaults and `--hw`: `references/flags.md`):
 `--dry-run` (plan, write nothing), `--json` (output, probe, commands), `--json-brief` (status + `summary`),
@@ -85,6 +85,8 @@ A failure starts `Failed:` and quotes `error.message`; with nothing to check or 
 `Look: not needed`. A partial result is `Done:` with the shortfall in `Notes:`, never `Done (partially):`.
 These fillers are sentences, not labels: a Japanese report says `Check: 検証するものなし` / `Look: 不要`.
 Never describe a fix you did not run. Full Japanese example and more rules: `references/report.md`.
+
+Report the completed edit first. For standalone use, offer a review preview when useful and supported by the host. Prepare it only if the user requests or accepts it. Velisa and other callers that own the review handle their own presentation.
 
 ## Request → script
 

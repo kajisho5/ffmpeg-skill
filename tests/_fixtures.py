@@ -49,11 +49,11 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
 SH_LIMIT = float(os.environ.get("FFSKILL_TEST_SH_LIMIT", "900"))
 
 
-def sh(*cmd, expect_fail=False, env=None):
+def sh(*cmd, expect_fail=False, env=None, cwd=None):
     argv = [str(c) for c in cmd]
     posix = os.name == "posix"
     child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                             errors="replace", env=env, start_new_session=posix)
+                             errors="replace", env=env, cwd=cwd, start_new_session=posix)
     try:
         out, err = child.communicate(timeout=SH_LIMIT)
     except subprocess.TimeoutExpired:

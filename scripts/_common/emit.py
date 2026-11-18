@@ -1097,12 +1097,13 @@ def _plan_at_exit() -> None:
 
 def _plan_inputs(commands: Sequence[str], argv: Sequence[str] = (), ctx: "Optional[Context]" = None) -> List[str]:
     """Every existing file the plan depends on: the `-i` inputs of the planned commands, any
-    existing file named in argv (a recipe, a project, an SRT, a LUT, a still), and the side
-    inputs tools register through escape_filter_path() (review 6: only `-i` files were bound)."""
+    existing file named in argv, and files registered by the input readers or by
+    escape_filter_path(). Registered paths come from parsed inputs and may start with a dash."""
     import shlex
     seen: List[str] = []
-    for a in list(argv) + list((ctx or STATE).plan_inputs):
-        if a and not a.startswith("-") and os.path.isfile(a) and a not in seen:
+    candidates = [a for a in argv if a and not a.startswith("-")] + (ctx or STATE).plan_inputs
+    for a in candidates:
+        if a and os.path.isfile(a) and a not in seen:
             seen.append(a)
     for line in commands:
         try:
@@ -1210,13 +1211,21 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         if same_file(written, path):
             refuse("input", "output_path_taken", f"--plan {path!r} is also a file this run writes ({written!r}); "
                    "give the plan its own path", output=path, other=written)
+    try:
+        fingerprints = [fingerprint(p) for p in plan_inputs]
+    except OSError as exc:
+        die(f"cannot fingerprint a plan input: {exc}", kind="input", ctx=ctx)
+    by_path = {entry["path"]: entry for entry in fingerprints}
+    for source, expected in ctx.measured_plan_inputs.items():
+        if by_path.get(source) != expected:
+            die(f"plan input {source!r} changed since measurement; make a new plan", kind="input", ctx=ctx)
     doc = {
         "plan_version": PLAN_VERSION,
         "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": tool,
         "argv": cleaned,
         "cwd": os.getcwd(),
-        "inputs": [fingerprint(p) for p in plan_inputs],
+        "inputs": fingerprints,
         # inputs that did not exist yet, so carry no fingerprint (render.py reports them on execution)
         "unbound_inputs": _plan_unbound_inputs(ctx.commands, ctx),
         "commands": list(ctx.commands),
@@ -1224,6 +1233,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
         "verify": verify,
         "notes": list(extra.get("notes") or []),
     }
+    if tool == "fit" and "timing" in extra:
+        doc["timing"] = extra["timing"]
     try:
         tmp = f"{path}.tmp{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:
