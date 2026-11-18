@@ -50,8 +50,8 @@ from typing import Dict, List, Optional
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
-from _common.emit import note, record_fallback, record_skip, warn
-from _common.probe import PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
+from _common.emit import note, record_fallback, record_skip, refuse, warn
+from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
 from _common.emit import file_identity, input_length, own_length, refuse_still
 from check import SPECS as PLATFORMS, measure_loudness
@@ -601,6 +601,12 @@ def main() -> int:
     # metadata.py's does): default_output()'s .webm -> .mp4 is for the re-encoding presets
     output = args.output or default_output(args.input, args.preset, p["ext"] or Path(args.input).suffix.lstrip(".") or None)
     out_ext = Path(output).suffix.lstrip(".").lower()
+    # The runner's picture check looks for a video encoder. Copy and GIF do not name one.
+    if args.preset in ("copy", "gif") and "." + out_ext in AUDIO_MEDIA_EXT:
+        refuse("input", "output_extension_audio_only",
+               f"output {output!r}: .{out_ext} holds sound only, and --preset {args.preset} writes a picture",
+               hint="name a video file for this preset, or extract the sound with cut.py or audio.py",
+               output=output, extension="." + out_ext, encoders=["gif"] if args.preset == "gif" else [])
 
     vf: List[str] = []
     # A GIF is RGB: an untagged SDR source is labelled BT.709 (tags only) for palettegen's conversion,

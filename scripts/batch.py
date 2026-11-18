@@ -1393,8 +1393,11 @@ def main() -> int:
     if unverified and not STATE.dry_run:
         note(f"{len(unverified)} item(s) completed but did not verify everything they wrote (see each row's unverified): "
              + ", ".join(unverified[:5]) + (" ..." if len(unverified) > 5 else ""))
+    # A successful watch summary is printed after Ctrl-C between passes. Keep the completed
+    # item results without starting another round of probes after the user asked to stop.
     emit(None, verification=[{"step": "item", "file": r["file"], "ok": bool(r.get("verified"))} for r in results]
          if not STATE.dry_run else [],
+         verification_paths=[] if args.watch else [r["file"] if r.get("written") is False else r["output"] for r in results],
          results=results, processed=done, total=len(results),
          jobs=jobs, jobs_requested=requested, wall_seconds=round(time.time() - started, 1),
          item_seconds_total=round(sum(float(r.get("seconds") or 0) for r in results), 1),

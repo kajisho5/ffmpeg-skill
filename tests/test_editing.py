@@ -50,6 +50,28 @@ class EditingTests(MediaFixtures):
         script("cut.py", self.src, "--segments", "1-3,6-9", "-o", out)
         self.assertTrue(_is_faststart(out), "cut.py's multi-segment concat join must write +faststart")
 
+    def test_cut_copy_checks_the_total_duration_across_segments(self):
+        src = OUT / "cut_total_short_gop.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=20",
+           "-f", "lavfi", "-i", "sine=d=20", "-c:v", "libx264", "-preset", "ultrafast", "-g", "5",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        out = OUT / "cut_total_duration.mp4"
+        segments = "0-0.04,0.064-0.104,0.128-0.168"
+        dry = json.loads(script("cut.py", src, "--segments", segments, "-o", out, "--dry-run", "--json").stdout)
+        self.assertEqual((dry["verified"], dry["output_duration"], dry["verification"]), (False, None, []))
+        for flags in ((), ("--tolerance", "-1")):
+            with self.subTest(flags=flags):
+                doc = json.loads(script("cut.py", src, "--segments", segments, *flags, "-o", out,
+                                        "--overwrite", "--json").stdout)
+                self.assertEqual((doc["status"], doc["mode"], doc["verified"]), ("completed", "copy", False), doc)
+                step = next(s for s in doc["verification"] if s["step"] == "cut_total_duration")
+                self.assertFalse(step["ok"])
+                self.assertAlmostEqual(step["expected"], 0.12)
+                self.assertEqual(step["measured"], doc["output_duration"])
+                self.assertTrue(any("--accurate" in note for note in doc["notes"]))
+        doc = json.loads(script("cut.py", src, "--segments", "0-1,2-3", "-o", out, "--overwrite", "--json").stdout)
+        self.assertEqual((doc["mode"], doc["verified"]), ("copy", True), doc)
+
     def test_cut_segments_accurate(self):
         out = OUT / "cut2.mp4"
         script("cut.py", self.src, "--segments", "1-3,6-9", "--accurate", "-o", out)
@@ -2283,6 +2305,7 @@ class EditingTests(MediaFixtures):
         out = OUT / "copy_joined.mp4"
         doc = json.loads(script("join.py", *clips, "--copy", "--transition", "none", "-o", out, "--overwrite", "--json").stdout)
         self.assertEqual((doc["status"], doc["mode"], doc["verified"]), ("completed", "copy", True), doc)
+        self.assertTrue(doc["lossless"], doc)
         packets = {v["property"]: v for v in doc["verification"] if v.get("step") == "join"}
         self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 3 * 60, packets)
         self.assertNotIn("libx264", " ".join(doc["commands"]))

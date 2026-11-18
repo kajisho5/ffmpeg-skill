@@ -226,11 +226,11 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     if (want_w or 0) < 0 or (want_h or 0) < 0:
         raise TimelineError(f"frame width/height must be positive, got {frame.get('width')!r} x {frame.get('height')!r}")
     src_w, src_h = _picture(first) or (1920, 1080)
-    if ratio is None and not want_w and not want_h:
+    fit_mode = str(frame.get("fit") or "pad")
+    if ratio is None and not want_w and not want_h and not (fit_mode == "crop" and len(clips_in) > 1):
         width, height = src_w, src_h
     else:
         width, height = frame_size(ratio, want_w, want_h, src_w, src_h)
-    fit_mode = str(frame.get("fit") or "pad")
     if fit_mode not in _CONFORM:
         raise TimelineError(f"frame.fit {frame.get('fit')!r}: use pad, crop or blur (fit.py's --fit)")
 

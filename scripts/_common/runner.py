@@ -363,7 +363,8 @@ class Context:
     __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
-                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries")
+                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries",
+                 "_stream_copy_outputs", "_encoded_media")
 
     def __init__(self) -> None:
         self.reset()
@@ -386,6 +387,8 @@ class Context:
         self.fast = False         # x264 preset forced to veryfast
         self.duration_hint: Optional[float] = None  # expected output length, for the progress percent
         self.commands: List[str] = []               # every ffmpeg command line, for --json and --dry-run
+        self._stream_copy_outputs: Dict[str, Dict[str, int]] = {}
+        self._encoded_media = False
         self.timeout: float = _env_timeout()         # seconds per ffmpeg invocation, 0 = none
         self.overwrite = False                       # --overwrite: an existing output may be replaced
         self.written: set = set()                    # output paths this process has written itself
@@ -2418,6 +2421,31 @@ def _hw_fallback(cmd: List[str], ctx: "Context") -> Optional[List[str]]:
     return out if changed else None
 
 
+def _record_media_write(ctx: Context, cmd: Sequence[str], output: str) -> None:
+    """Record evidence from a successful FFmpeg write, separately from the printable plan."""
+    if output == "-" or output.startswith("pipe:"):
+        return
+    identity = owned_identity(output)
+    if not identity:
+        return
+    last_input = max((i for i, arg in enumerate(cmd[:-1]) if arg == "-i"), default=-1)
+    options = cmd[last_input + 2:-1]
+    codecs = [(arg, value) for arg, value in zip(options, options[1:])
+              if re.fullmatch(r"-(?:(?:c|codec)(?::\S+)?|[vasdt]codec)", arg)]
+    if any(arg in ("-c", "-codec") for arg, _ in codecs) and all(value == "copy" for _, value in codecs):
+        ctx._stream_copy_outputs[_checked_key(output)] = identity
+    else:
+        # A later concat/remux may copy an intermediate that this run encoded.
+        ctx._encoded_media = True
+
+
+def stream_copy_output(ctx: Context, output: str) -> bool:
+    """Conservatively prove stream copy for the current file using this runner's write records."""
+    identity = ctx._stream_copy_outputs.get(_checked_key(output))
+    return bool(identity and not ctx._encoded_media and not ctx.stage_verification
+                and owned_identity(output) == identity)
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -2527,6 +2555,8 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                 _remember_output(cmd)
             else:
                 _cleanup_partial_output(exec_cmd)
+        if is_ffmpeg and proc.returncode == 0:
+            _record_media_write(ctx, tried, cmd[-1])
     return proc
 
 
@@ -2590,7 +2620,8 @@ def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
         return _run_captured(cmd, False)
 
 
-def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False) -> subprocess.CompletedProcess:
+def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False,
+                 timeout_is_fatal: bool = True) -> subprocess.CompletedProcess:
     """Run an ffmpeg *measurement* (scene scores, crop rectangles, decoded PCM, signal stats,
     silence detection, loudness, stabilisation pass 1): output to `-f null`, a pipe or a temp
     file, no deliverable written. These are not run() calls -- they run under --dry-run too,
@@ -2598,7 +2629,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     silences" and loudness.py a made-up -20 LUFS under --dry-run) -- but they get the same
     wall-clock limit as any other ffmpeg invocation and, with check=True, the same `kind: ffmpeg`
     failure instead of an exit-0 "0 scenes found" over a file ffmpeg could not read. record=True
-    lists the command in the --json `commands` like run() does."""
+    lists the command in the --json `commands` like run() does. With
+    timeout_is_fatal=False, raise TimeoutExpired so advisory callers can report a missing measurement."""
     cmd = guard_still_patterns(cmd)
     _refuse_url_media(cmd)
     if record:
@@ -2612,6 +2644,8 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
         with long_filters_in_files(cmd) as exec_cmd:
             proc = subprocess.run(exec_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text, **text_kw, timeout=limit)
     except subprocess.TimeoutExpired:
+        if not timeout_is_fatal:
+            raise
         _timed_out(cmd, limit or 0)
     if check and proc.returncode != 0:
         err = proc.stderr if text else proc.stderr.decode(errors="replace")
@@ -3220,6 +3254,7 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
     d, base = os.path.split(dst)
     stem, ext = os.path.splitext(base)
     with _OutputLock(dst):
+        copied = stream_copy_output(STATE, src)
         # under the lock: the target the check above decided about, not one put there since
         # (`src` is the caller's to remove, as on every other refusal)
         refuse_changed_output(dst)
@@ -3227,6 +3262,8 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
             try:
                 os.replace(src, dst)
                 _remember_output(cmd)
+                if copied and (identity := owned_identity(dst)):
+                    STATE._stream_copy_outputs[_checked_key(dst)] = identity
                 return
             except OSError:
                 pass
@@ -3242,7 +3279,9 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
                 except OSError:
                     pass
             die(f"could not place {dst}: {e}", kind="output")
-    _remember_output(cmd)
+        _remember_output(cmd)
+        if copied and (identity := owned_identity(dst)):
+            STATE._stream_copy_outputs[_checked_key(dst)] = identity
 
 
 # extensions ffmpeg opens through the image2 demuxer, the only one that expands `%d` in a name

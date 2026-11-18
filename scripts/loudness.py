@@ -275,7 +275,8 @@ def _versions(args, meta: dict, plan: list) -> int:
         versions.append({"target": label, "output": out, "targets": {"lufs": lufs, "tp": tp, "lra": args.lra},
                          **({"result": doc["result"]} if "result" in doc else {})})
         steps += [dict(st, version=label) for st in doc.get("verification") or []]
-    emit(None, versions=versions, outputs=[v["output"] for v in versions], dropped_non_av_streams=dropped,
+    outputs = [v["output"] for v in versions]
+    emit(None, versions=versions, outputs=outputs, verification_paths=outputs, dropped_non_av_streams=dropped,
          **({"verification": steps} if steps else {}))
     if not STATE.json and not STATE.plan:
         print("\n".join(v["output"] for v in versions))  # one path per line, as a single run prints its one

@@ -1596,6 +1596,20 @@ class AudioOnlyOutputExtensionTests(unittest.TestCase):
                 self.assertIn("matroska", container.split(","))
                 self.assertEqual([(s["codec_type"], s["codec_name"]) for s in streams], [("audio", codec)])
 
+    def test_a_late_sound_can_be_cut_to_flac_in_matroska(self):
+        source = self.dir / "matroska_late_source.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.clip, "-itsoffset", "2.3", "-i", self.tone,
+           "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", source)
+        self.assertGreater(probe(str(source))["audio"]["start_time"], 2.2)
+        out = self.dir / "matroska_late.mka"
+        args = ("cut.py", source, "--start", "0", "--end", "3", "--accurate", "-o", out, "--json")
+        plan = json.loads(script(*args, "--dry-run").stdout)
+        self.assertIn("asetnsamples=n=4096:p=0", plan["commands"][-1])
+        doc = json.loads(script(*args).stdout)
+        self.assertTrue(doc["verified"], doc)
+        self.assertEqual(doc["probe"]["audio"]["codec"], "flac")
+        self.assertAlmostEqual(doc["probe"]["duration"], 3.0, delta=0.01)
+
     def test_matroska_audio_encodes_flac_across_audio_tools(self):
         for name in ("audio", "silence", "loudness", "join"):
             with self.subTest(tool=name):
