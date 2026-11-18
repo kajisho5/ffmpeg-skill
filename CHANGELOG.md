@@ -5,7 +5,18 @@
 ## Unreleased
 
 - Crop checks report sampled review times for inspecting discarded motion or detail (#570).
+
+## 3.13.0
+
+_Automated release: version and notes generated from pull requests merged since 3.12.2._
+
 - MCP can advertise a comma-separated selection via `FFMPEG_SKILL_MCP_TOOLS` (#573).
+- fix(fit): report structured retime details (#597)
+- docs: offer opt-in standalone edit review (#599)
+- fix(join): accept tab-separated ffconcat directives (#598)
+- feat(mcp): advertise a named selection of tools (#604)
+
+Closes: #573
 
 ## 3.12.2
 
