@@ -13,6 +13,7 @@
 ### Fixed
 
 - Return a verification failure when a video delivery misses a required export property (#620).
+- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
 
 ## 3.13.2
 
