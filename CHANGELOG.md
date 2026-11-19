@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 3.14.0
+
+_Automated release: version and notes generated from pull requests merged since 3.13.2._
+
 ### Added
 
 - Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
@@ -13,6 +19,13 @@
 ### Fixed
 
 - Preserve reading order and edge punctuation in generated right-to-left captions (#623).
+- ci(release): the version no longer depends on a PR's title (#631)
+- Preserve reading order in right-to-left captions (#625)
+- Report measured picture geometry from export and render (#618)
+- Keep common Chinese caption words together (#619)
+- Compare a requested cut in-point with the output start (#614)
+
+Closes: #548, #569, #606, #623
 
 ## 3.13.2
 
