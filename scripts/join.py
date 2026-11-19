@@ -44,7 +44,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
-from _common.runner import path_denied, read_text_or_die
+from _common.runner import path_denied, read_text_or_die, run_analysis
 from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
@@ -468,6 +468,15 @@ def _aac_priming_seconds(path: str, sample_rate: int) -> Optional[float]:
         return None
 
 
+def _decoded_audio_seconds(path: str) -> Optional[float]:
+    """The length of the first sound stream as a decoder delivers it (priming already dropped),
+    by decoding it: packet spans miss the overhang a stream-copy join carries into the next clip."""
+    cmd = ffmpeg_base() + ["-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "48000",
+                           "-f", "s16le", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    return len(proc.stdout or b"") / 2 / 48000 if proc.returncode == 0 else None
+
+
 SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B-frame reordering
 SPAN_TAIL_SECONDS = 10.0   # read from this far before the end, so a seek that lands early still reaches it
 
@@ -583,27 +592,34 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                    f"--copy: picture and sound start or end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",
                    clips=[{"path": g["path"], "differs": {"video_span": g["video"], "audio_span": g["audio"]}} for g in gaps])
-        if mov_output and (metas[0].get("audio") or {}).get("codec") == "aac":
-            # Subsequent clips' leading AAC padding can play at the seam when MP4/MOV remuxes
-            # the packets as one track. The input's skip marker describes what a decoder should
-            # discard there. Bound the cumulative risk by the same budget as the A/V span check.
-            priming = []
-            for index, (path, meta) in enumerate(zip(args.inputs[1:], metas[1:]), start=1):
-                seconds = _aac_priming_seconds(path, (meta.get("audio") or {}).get("sample_rate") or 0)
-                if seconds is None:
-                    refuse("input", "join_copy_mismatch", f"--copy: could not measure AAC priming in {path}",
-                           hint="drop --copy to re-encode the join",
-                           clips=[{"index": index, "path": path, "differs": {"aac_priming_ms": None}}])
-                if seconds > 0:
-                    priming.append((index, path, seconds))
-            total = sum(seconds for _, _, seconds in priming)
-            if total > COPY_AV_GAP:
+        if (metas[0].get("audio") or {}).get("codec") == "aac" and n > 1:
+            # A stream-copy join plays each later clip's AAC priming (the samples its first packet
+            # says to skip) at its seam, and carries the sound an earlier clip decodes to beyond its
+            # picture into the next one, whatever the container. Both streams' spans in the joined
+            # file still match, so only this sum shows it: on eight 4 s clips (21.3 ms priming,
+            # 10.7 ms overhang each) it predicted 32 ms more delay at every join, and the measured
+            # delay of a beep against a flash was 32, 64, ... 224 ms on FFmpeg 6.1 in .mp4, .mov
+            # and .mkv alike (#610). Beyond COPY_AV_GAP at any clip, --copy is refused.
+            drift, at, rows = 0.0, [], []
+            for index, (path, meta) in enumerate(zip(args.inputs, metas)):
+                priming = 0.0 if index == 0 else _aac_priming_seconds(path, (meta.get("audio") or {}).get("sample_rate") or 0)
+                decoded = _decoded_audio_seconds(path)
+                v_span = _stream_span(path, "V", float(meta.get("duration") or 0.0), float(meta.get("start_time") or 0.0))
+                if priming is None or decoded is None or v_span is None or v_span[1] is None:
+                    refuse("input", "join_copy_mismatch", f"--copy: could not measure the AAC priming or sound length of {path}, "
+                           "so the delay a copy join adds at its seams is unknown", hint="drop --copy to re-encode the join",
+                           clips=[{"index": index, "path": path, "differs": {"aac_drift_ms": None}}])
+                drift += priming
+                at.append(drift)
+                rows.append({"index": index, "path": path, "differs": {"aac_priming_ms": round(priming * 1000, 3),
+                                                                       "sound_delay_ms": round(drift * 1000, 3)}})
+                drift += decoded - (v_span[1] - v_span[0])
+            if max(at) > COPY_AV_GAP:
                 refuse("input", "join_copy_mismatch",
-                       f"--copy: AAC priming at the joins totals {total * 1000:.1f} ms and can delay the sound",
-                       hint="drop --copy so each AAC clip is decoded and its leading padding removed",
-                       aac_priming_ms=round(total * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000,
-                       clips=[{"index": i, "path": p, "differs": {"aac_priming_ms": round(s * 1000, 3)}}
-                              for i, p, s in priming])
+                       f"--copy: a copy join would put the sound {max(at) * 1000:.0f} ms behind the picture by clip "
+                       f"{at.index(max(at)) + 1} (AAC priming played at each seam, plus each clip's sound running past its picture)",
+                       hint="drop --copy, which decodes each clip and trims its sound to its picture",
+                       aac_drift_ms=round(max(at) * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000, clips=rows)
     fps = (metas[0].get("video") or {}).get("fps") or 30.0
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     place_silent([m.get("duration") or 0.0 for m in metas], 0.0)

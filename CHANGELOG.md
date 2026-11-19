@@ -28,6 +28,13 @@ _Automated release: version and notes generated from pull requests merged since 
 
 ### Fixed
 
+- **A stream-copy join of AAC clips no longer lets the sound fall behind (#610).** `join.py --copy`
+  played each later clip's AAC priming at its seam and carried each clip's sound past its picture
+  into the next: on eight 4 s clips the beep came 32 ms later at every join (224 ms by clip 8) in
+  `.mp4`, `.mov` and `.mkv` alike, and the result said `verified: true`. The delay is now predicted
+  from each clip's priming and decoded sound length (it matched the measured delay at all eight
+  clips), and a copy join whose sound would be more than 50 ms behind at any clip is refused
+  (`join_copy_mismatch`, `details.aac_drift_ms`); two such clips still join, three do not.
 - **A still image with a `%` in its name that is not a pattern can be used (#558).**
   `overlay.py --image 'a%20b.png'` (also `50%.png`, `insert.py`, `broll.py --insert`, `probe.py`)
   failed inside ffmpeg with "Option pattern_type not found". A still with a `%` in its name is now

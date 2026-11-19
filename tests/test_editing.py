@@ -2302,15 +2302,22 @@ class EditingTests(MediaFixtures):
         """2.24: --copy --transition none joins clips with matching streams by stream copy (the
         joined packets are the clips' packets, nothing re-encoded), and refuses a clip that differs,
         or a picture and sound that end apart, by name and before anything is written."""
-        clips = [self._av_clip(OUT / f"copy_{i}.mp4", 2, 2, 300 + 200 * i) for i in range(3)]
+        # three AAC clips would put the sound 87 ms behind by clip 3 (#610, refused below and in
+        # test_join_copy_refuses_aac_priming_that_accumulates_at_seams); two stay within 50 ms
+        clips = [self._av_clip(OUT / f"copy_{i}.mp4", 2, 2, 300 + 200 * i) for i in range(2)]
         out = OUT / "copy_joined.mp4"
         doc = json.loads(script("join.py", *clips, "--copy", "--transition", "none", "-o", out, "--overwrite", "--json").stdout)
         self.assertEqual((doc["status"], doc["mode"], doc["verified"]), ("completed", "copy", True), doc)
         self.assertTrue(doc["lossless"], doc)
         packets = {v["property"]: v for v in doc["verification"] if v.get("step") == "join"}
-        self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 3 * 60, packets)
+        self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 2 * 60, packets)
         self.assertNotIn("libx264", " ".join(doc["commands"]))
-        self.assertClose(probe(str(out))["video"]["duration"], 6.0, 0.1)
+        self.assertClose(probe(str(out))["video"]["duration"], 4.0, 0.1)
+        third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 700)
+        drift = json.loads(script("join.py", *clips, third, "--copy", "--transition", "none", "-o", OUT / "copy_three.mp4",
+                                  "--json", expect_fail=True).stdout)["error"]
+        self.assertEqual(drift["reason"], "join_copy_mismatch", drift)
+        self.assertGreater(drift["details"]["aac_drift_ms"], 50, drift)
         wide = OUT / "copy_wide.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=96x48:r=30:d=2",
            "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", wide)
@@ -2362,11 +2369,18 @@ class EditingTests(MediaFixtures):
         quiet = OUT / "copy_quiet.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=2",
            "-f", "lavfi", "-i", "sine=f=500:d=2", "-af", "volume=0", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", quiet)
-        doc = json.loads(script("join.py", clips[0], quiet, clips[1], "--copy", "--transition", "none", "-o",
+        # two clips: three AAC clips would put the sound 87 ms behind by the third (#610)
+        doc = json.loads(script("join.py", clips[0], quiet, "--copy", "--transition", "none", "-o",
                                 OUT / "copy_with_quiet.mp4", "--overwrite", "--json").stdout)
         self.assertEqual([(s["at"], s["end"]) for s in doc["silent"]], [(2.0, 4.0)], doc.get("silent"))
 
     def test_join_copy_refuses_aac_priming_that_accumulates_at_seams(self):
+        """#610: a copy join plays each later clip's AAC priming at its seam and carries each clip's
+        sound past its picture into the next (+32 ms per join on FFmpeg 6.1 for 21.3 ms priming and
+        10.7 ms overhang, in .mp4, .mov and .mkv alike), and both streams' spans in the joined file
+        still match, so no span check sees it. A predicted delay beyond 50 ms at any clip refuses
+        --copy, a Matroska output included; a re-encoded join lands every clip's sound where its
+        picture is."""
         clips = []
         for i in range(4):
             clip = OUT / f"primed_aac_{i}.mp4"
@@ -2384,8 +2398,15 @@ class EditingTests(MediaFixtures):
             self.assertEqual(report["status"], "failed", report)
             self.assertIsNot(report.get("verified"), True, report)
             self.assertEqual(report["error"]["reason"], "join_copy_mismatch", report)
-            self.assertGreater(report["error"]["details"]["aac_priming_ms"], 50)
+            self.assertGreater(report["error"]["details"]["aac_drift_ms"], 50)
             self.assertFalse(output.exists())
+        # the delay is the copy join's, not the container's: a Matroska output is refused the same way
+        mkv = OUT / "primed_aac_copy.mkv"
+        mkv.unlink(missing_ok=True)
+        report = json.loads(script("join.py", *clips, "--transition", "none", "--copy", "-o", mkv,
+                                   "--json", expect_fail=True).stdout)
+        self.assertEqual((report["status"], report["error"]["reason"]), ("failed", "join_copy_mismatch"), report)
+        self.assertFalse(mkv.exists())
 
         encoded = OUT / "primed_aac_encoded.mp4"
         report = json.loads(script("join.py", *clips, "--transition", "none", "-o", encoded,
