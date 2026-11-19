@@ -50,6 +50,22 @@ class OrchestrationTests(MediaFixtures):
         self.assertIn("stages: clips → join", page, "the dry run ran even though out.mp4 is already there")
         self.assertIn(f"{run['probe']['duration']:.3f} s", page)
         self.assertIn('data-k="out"', page)
+        self.assertNotIn('id="captions"', page, "a project with no cue file shows no field that would add one")
+        # a second page into the same folder is refused unless --overwrite
+        again = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj)], capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(again.returncode, 1, again.stderr)
+        self.assertIn("--overwrite", again.stderr)
+        # check rows show their status and value; a run with no probe has sound "not measured"
+        failed = {"status": "failed", "verified": False, "check": {"ok": False, "checks": [
+            {"check": "loudness", "status": "FAIL", "value": "-30.1 LUFS", "expected": "-14 LUFS"},
+            {"check": "codec", "status": "PASS", "value": "h264", "expected": "h264"}]}}
+        (work / "failed.json").write_text(json.dumps(failed), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "failed.json", "-o", work / "failed_review")
+        page = (work / "failed_review" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<li class="fail">FAIL loudness: -30.1 LUFS (expected -14 LUFS)</li>', page)
+        self.assertIn('<li class="pass">PASS codec: h264', page)
+        self.assertIn("<b>sound</b><span>not measured</span>", page)
+        self.assertNotIn("None", page.split('id="project"')[0])
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

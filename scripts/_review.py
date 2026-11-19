@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a review page for a render project: the plan, the result, and fields to re-edit it.
 
-    python3 scripts/_review.py project.json [--result render.json] [-o project.review]
+    python3 scripts/_review.py project.json [--result render.json] [-o project.review] [--overwrite]
     npx ffmpeg-skill review project.json [--result render.json]
 
 Standalone use only (#633): this is not one of the contract's tools and the MCP server does not
@@ -29,16 +29,25 @@ from _common.runner import found_exe  # noqa: E402
 from _common.decision import parse_time  # noqa: E402
 
 
+STILL_TIMEOUT = 120  # seconds for one still or one probe: a stalled read is a missing still, not a hang
+
+
 def still(src: str, at: float, out: Path) -> bool:
     """One 320 px wide JPEG of `src` at `at` seconds; False when ffmpeg could not write it."""
-    proc = subprocess.run([found_exe("ffmpeg"), "-v", "error", "-y", "-ss", f"{max(at, 0):.3f}", "-i", src, "-frames:v", "1",
-                           "-vf", "scale=320:-2", "-q:v", "4", str(out)], capture_output=True)
+    try:
+        proc = subprocess.run([found_exe("ffmpeg"), "-v", "error", "-y", "-ss", f"{max(at, 0):.3f}", "-i", src, "-frames:v", "1",
+                               "-vf", "scale=320:-2", "-q:v", "4", str(out)], capture_output=True, timeout=STILL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False
     return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
 
 
 def length(src: str) -> "float | None":
-    proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src],
-                          capture_output=True, text=True)
+    try:
+        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src],
+                              capture_output=True, text=True, timeout=STILL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
     try:
         return float(proc.stdout.strip())
     except ValueError:
@@ -83,7 +92,8 @@ def plan_section(project: dict, base: Path, folder: Path) -> str:
 <label>fit <select id="fit">{"".join(f'<option{" selected" if frame.get("fit") == o else ""}>{o}</option>' for o in ("", "pad", "crop", "blur"))}</select></label>
 <label>loudness LUFS <input id="lufs" value="{html.escape(str(loud.get("lufs", "")))}"></label>
 <label>export preset <input id="preset" value="{html.escape(str((project.get("export") or {}).get("preset", "")))}"></label></div>
-<label class="block">captions text <textarea id="captions">{html.escape(text)}</textarea></label>'''
+''' + (f'<label class="block">captions cue file <input id="captions" value="{html.escape(text)}"></label>'
+       if text else "")
     return "".join(rows) + settings
 
 
@@ -94,18 +104,22 @@ def result_section(result: dict, folder: Path) -> str:
              ("duration", f'{probe["duration"]:.3f} s' if probe.get("duration") is not None else None),
              ("size", f'{video.get("width")}×{video.get("height")}' if video.get("width") else None),
              ("frame rate", f'{video.get("fps"):g} fps' if video.get("fps") else None),
-             ("sound", f'{audio.get("codec")} {audio.get("channels")} ch' if audio else "none")]
+             # no probe at all is a measurement the run did not make, not a file without sound
+             ("sound", None if not probe else f'{audio.get("codec")} {audio.get("channels")} ch' if audio else "none")]
     out = "".join(f'<div class="fact"><b>{html.escape(k)}</b><span>{html.escape("not measured" if v is None else str(v))}</span></div>'
                   for k, v in facts)
     failed = [s for s in result.get("verification") or [] if s.get("ok") is False]
     steps = "".join(f'<li>{html.escape(str(s.get("stage", "")))} {html.escape(str(s.get("step")))}: expected '
                     f'{html.escape(json.dumps(s.get("expected")))}, measured {html.escape(json.dumps(s.get("measured")))}</li>' for s in failed)
     check = result.get("check") or {}
-    rows = "".join(f'<li class="{html.escape(str(r.get("verdict", "")).lower())}">{html.escape(str(r.get("verdict")))} '
-                   f'{html.escape(str(r.get("name") or r.get("check")))}: {html.escape(str(r.get("detail") or r.get("measured") or ""))}</li>'
+    # check.py's rows: {check, status, value, expected}
+    rows = "".join(f'<li class="{html.escape(str(r.get("status", "")).lower())}">{html.escape(str(r.get("status")))} '
+                   f'{html.escape(str(r.get("check")))}: {html.escape(str(r.get("value")))}'
+                   f'{html.escape(" (expected " + str(r["expected"]) + ")" if r.get("expected") not in (None, "") else "")}</li>'
                    for r in check.get("checks") or [])
     sheet = ""
     path, dur = result.get("output"), probe.get("duration")
+    path = str(Path(path).resolve()) if path else path  # an absolute path is never read as an ffmpeg option
     if path and dur and os.path.isfile(path):
         sheet = "".join(figure(folder, f"out_{k}.jpg", path, dur * (k + 0.5) / 6, f"{dur * (k + 0.5) / 6:.1f} s") for k in range(6))
     return (f'<div class="facts">{out}</div>' + (f'<h3>Failed steps</h3><ul>{steps}</ul>' if steps else "")
@@ -139,7 +153,7 @@ if(v===''){{delete p.clips[i][k];}}else{{p.clips[i][k]=(k==='speed'||/^\\d+(\\.\
 const set=(o,k,v,num)=>{{if(v===''){{if(p[o])delete p[o][k];}}else{{p[o]=p[o]||{{}};p[o][k]=num?Number(v):v;}}}};
 set('frame','aspect',document.getElementById('aspect').value.trim());set('frame','fit',document.getElementById('fit').value);
 set('loudness','lufs',document.getElementById('lufs').value.trim(),true);set('export','preset',document.getElementById('preset').value.trim());
-const t=document.getElementById('captions').value;if(t.trim()){{p.captions=p.captions||{{}};p.captions.text=t;}}return p;}}
+const c=document.getElementById('captions');if(c&&c.value.trim()){{p.captions.text=c.value.trim();}}return p;}}
 function show(){{document.getElementById('run').textContent='python3 scripts/render.py '+name+' --overwrite --json';
 document.getElementById('ask').textContent='Render '+name+' again with the project I saved, then report it.';}}
 document.getElementById('save').onclick=()=>{{const b=new Blob([JSON.stringify(edited(),null,2)+'\\n'],{{type:'application/json'}});
@@ -152,6 +166,7 @@ def main(argv=None) -> int:
     ap.add_argument("project", help="the render.py project JSON")
     ap.add_argument("--result", help="the render.py --json document of a run of this project")
     ap.add_argument("-o", "--output", help="the folder to write (default: <project>.review next to the project)")
+    ap.add_argument("--overwrite", action="store_true", help="replace a review page already in that folder")
     a = ap.parse_args(argv)
     proj_path = Path(a.project).resolve()
     try:
@@ -161,6 +176,14 @@ def main(argv=None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     folder = Path(a.output).resolve() if a.output else proj_path.with_suffix(".review")
+    if folder == proj_path:  # a project named x.review: its folder cannot be the project itself
+        folder = proj_path.with_name(proj_path.name + "-review")
+    if (folder / "index.html").exists() and not a.overwrite:
+        print(f"error: {folder / 'index.html'} exists; pass --overwrite to replace it", file=sys.stderr)
+        return 1
+    if folder.exists() and not folder.is_dir():
+        print(f"error: {folder} exists and is not a folder", file=sys.stderr)
+        return 1
     folder.mkdir(parents=True, exist_ok=True)
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
