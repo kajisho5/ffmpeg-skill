@@ -1988,6 +1988,10 @@ frozen table, matched case-folded; `--lang`, else the script detector, picks the
 set, and with no language the union of the six is used). `--wrap measured` is 1.15's
 width-only wrap exactly, kept so an older split can be reproduced. The result's
 `caption` object carries the layout counts plus `wrap` and `phrase_breaks`.
+For Chinese cues, phrase wrapping keeps a short list of common two-character words,
+including `视频`/`視頻`, `效果` and `功能`, on the same line when they fit.
+This list works in Simplified and Traditional captions, including when the script is
+inferred. Use manual line breaks for other words that should stay together.
 graphics.py takes the same flag for the labels that can hold more than one line
 (the hook card, the meme lines, the sticker chip). The breaker never rewrites,
 shortens or translates the text: a cue that cannot fit `--max-lines` is split
