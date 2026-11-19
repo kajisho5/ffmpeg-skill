@@ -1276,6 +1276,7 @@
   "name": "waveform",
   "properties": [
    "argv",
+   "at",
    "audio_stream",
    "background",
    "brand",
@@ -1309,7 +1310,8 @@
    "title",
    "vis_height",
    "waveform_mode",
-   "width"
+   "width",
+   "window"
   ],
   "required": []
  }
