@@ -522,28 +522,33 @@ def script_font_status(script: str) -> str:
     return "available" if entry else "missing"
 
 
-def font_covers_script(font_name: str, script: str) -> bool:
+def _fontconfig_family_coverage(font_name: str, script: str) -> Optional[bool]:
     """Whether the installed family `font_name` actually carries glyphs for `script`.
 
     `fc-match` cannot answer this: given a family that IS installed it returns that family
     whatever `:lang=` asks for (verified -- `fc-match "DejaVu Sans:lang=zh-cn"` answers
     "DejaVu Sans", which has no Han glyphs at all). `fc-list :lang=xx:family=<name>` does: it
-    lists only files that satisfy BOTH, so an empty listing is the proof of no coverage. Unknown
-    (no fontconfig at all) counts as covering: a warning nobody can verify is worse than none.
+    lists only files that satisfy BOTH, so an empty listing is the proof of no coverage.
+    None means there was no usable result.
     """
     if script not in FC_LANG or not font_name:
-        return True
+        return None
     exe = _safe_which("fc-list")
     if not exe:
-        return True
+        return None
     try:
         proc = subprocess.run([exe, f":lang={FC_LANG[script]}:family={font_name}", "file"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
-        return True
+        return None
     if proc.returncode != 0:
-        return True
+        return None
     return bool(proc.stdout.strip())
+
+
+def font_covers_script(font_name: str, script: str) -> bool:
+    """Legacy callers warn only on a confirmed lack of coverage."""
+    return _fontconfig_family_coverage(font_name, script) is not False
 
 
 # Named flags differ per tool: overlay.py and graphics.py take a font FILE, caption.py takes a
@@ -745,8 +750,12 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     key = font_key(script, lang)
     if script == "latin":
         tag = (lang or "").strip().lower().replace("_", "-").split("-", 1)[0]
-        marked = re.search(r"[\u01a0\u01a1\u01af\u01b0\u1ea0-\u1ef9]", unicodedata.normalize("NFC", text or ""))
-        if tag == "vi" or marked:
+        normalized = unicodedata.normalize("NFC", text or "")
+        marked = re.search(r"[ƠơƯư\u1ea0-\u1ef9]", normalized)
+        # Breve-a and stroked d also occur separately in other languages. Their combination
+        # with each other or with Vietnamese tilde vowels is a stronger signal.
+        combined = re.search(r"[Đđ]", normalized) and re.search(r"[ĂăÃãĨĩŨũ]", normalized)
+        if tag == "vi" or marked or combined:
             key = "vi"
     if key == "latin":
         return script, None, None
@@ -754,12 +763,18 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
         return script, None, None
     diagnostic_script = key if key == "vi" else script
     if font_explicit and font:
-        known = _script_font_entry(key, font) if key == "vi" and platform.system() == "Windows" else None
-        known_family = known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold()
-        if key == "vi" and not _safe_which("fc-list") and not known_family:
+        if key == "vi":
+            coverage = _fontconfig_family_coverage(font, key)
+            if coverage is None and platform.system() == "Windows" and not _safe_which("fc-list"):
+                known = _script_font_entry(key, font)
+                if known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold():
+                    coverage = True
+        else:
+            coverage = font_covers_script(font, key)
+        if coverage is None:
             warn(f"font: could not verify Vietnamese coverage for '{font}'. Check the burned accents or "
                  f"{FONT_FLAG_HINT}.", "font_coverage_unverified", script=key)
-        elif not font_covers_script(font, key):
+        elif coverage is False:
             warn(f"font: '{font}' does not cover {LANGUAGE_NAMES[key]} text on this machine; keeping it as asked "
                  f"(drop --font, or {FONT_FLAG_HINT}, to pick one by script automatically)", "font_lacks_script",
                  font=font, script=diagnostic_script)

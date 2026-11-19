@@ -4006,18 +4006,26 @@ class ScriptFontTests(unittest.TestCase):
         from _common import fonts
 
         entry = ("/test/vi.ttf", "Test Vietnamese")
-        cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None), ("Xin chao", "vi-VN"))
+        cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None),
+                 ("đã ăn", None), ("Xin chao", "vi-VN"))
         with unittest.mock.patch.object(fonts, "_script_font_entry", return_value=entry) as resolve:
             for sample, lang in cases:
                 with self.subTest(sample=sample, lang=lang):
                     self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", *entry))
                     resolve.assert_called_with("vi")
+            for sample in ("hello", "Mănăstire", "rođen"):
+                self.assertEqual(fonts.script_font_for_text(sample), ("latin", None, None))
         with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-list"), \
-             unittest.mock.patch.object(fonts, "font_covers_script", return_value=False) as covers, \
+             unittest.mock.patch.object(fonts.subprocess, "run") as fc_list, \
              unittest.mock.patch.object(fonts, "warn") as warn:
-            fonts.script_font_for_text("Tiếng Việt", font="Narrow Font", font_explicit=True)
-            covers.assert_called_once_with("Narrow Font", "vi")
-            self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), ("font_lacks_script", "vi"))
+            for result, code in ((subprocess.CompletedProcess([], 0, stdout=""), "font_lacks_script"),
+                                 (subprocess.CompletedProcess([], 1), "font_coverage_unverified"),
+                                 (subprocess.TimeoutExpired("fc-list", 10), "font_coverage_unverified")):
+                fc_list.side_effect = [result]
+                self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True),
+                                 ("latin", None, None))
+                self.assertEqual(fc_list.call_args.args[0], ["fc-list", ":lang=vi:family=Narrow Font", "file"])
+                self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), (code, "vi"))
 
     def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
         family = font_family_for_script("vi")
