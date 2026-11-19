@@ -8,6 +8,7 @@
 
 - Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
 - Keep common two-character words together in Chinese phrase wrapping (#569).
+- Report measured picture placement after reframing in export and render results (#548).
 
 ### Changed
 
