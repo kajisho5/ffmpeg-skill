@@ -1119,7 +1119,8 @@ raise SystemExit(export.main())
                 doc = json.loads(script("export.py", src, "--preset", preset, "--fast", "--json", "-o", out).stdout)
                 self.assertEqual(probe(str(out))["video"]["fps"], 60)
                 self.assertTrue(any("one source frame in 2" in n for n in doc.get("notes") or []), doc.get("notes"))
-                check = json.loads(script("check.py", out, "--platform", "youtube", "--json", expect_fail=True).stdout)
+                # since 4.0.0 the preset meets youtube's loudness too (#579), so the whole check passes
+                check = json.loads(script("check.py", out, "--platform", "youtube", "--json").stdout)
                 fps_row = next(r for r in check["checks"] if r["check"] == "fps")
                 self.assertEqual(fps_row["status"], "PASS", fps_row)
 
