@@ -992,6 +992,10 @@ A real render first runs its own dry run; when that is refused because a stage n
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
 title or captions does the same).
+The optional `stage_pictures` object keeps the fit and export stages' frame geometry under
+their stage names. Each report measures its own stage's frame and counts cropped pixels
+from that stage's input. `picture` carries the last sizing stage's report when available.
+Cache hits replay recorded geometry. Dry runs omit both fields.
 A `captions` block with `text` (a cue file) delivers the SRT the captions stage generates as
 `<output>.srt` beside the output (`caption_srt`), guarded with the output before the first stage;
 it is not delivered (a `caption_srt_not_delivered` skip) when the stage came from `--cache` or the
@@ -2408,6 +2412,9 @@ export.py --list
 ```
 A still picture is refused (`kind: input`) by every preset: a delivery has a length, and
 `insert.py` makes a clip of it.
+Presets with a fixed width and height report `picture` after a real scaled export. It
+describes the foreground rectangle and crop using the same fields as `fit.py`. It is
+absent with `--no-scale` or under `--dry-run`. Inspect the written frame to judge framing.
 Editing masters (`prores`, `dnxhr-lb/sq/hq/hqx/444`, and the alpha presets) keep the source's size,
 rate and colour tags and read the written codec and profile back (`codec` verification step).
 The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)
