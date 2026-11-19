@@ -2316,7 +2316,7 @@ class EditingTests(MediaFixtures):
         # a third clip: on FFmpeg 6.1 to 8 the predicted delay passes 50 ms and the join is refused;
         # where a build predicts less (FFmpeg 9 joins it), the joined sound is measured against
         # where each clip starts, so the prediction is checked on whichever build runs this
-        third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 700)
+        third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 2000)  # far from 300 and 500 Hz: its band hears only it
         three = OUT / "copy_three.mp4"
         proc = subprocess.run([sys.executable, str(SCRIPTS / "join.py"), *map(str, clips), str(third), "--copy",
                                "--transition", "none", "-o", str(three), "--json", "--overwrite"],
@@ -2328,7 +2328,7 @@ class EditingTests(MediaFixtures):
             self.assertFalse(three.exists())
         else:
             self.assertEqual((doc["mode"], doc["verified"]), ("copy", True), doc)
-            for freq, start in ((500, 2.0), (700, 4.0)):
+            for freq, start in ((500, 2.0), (2000, 4.0)):
                 self.assertLessEqual(abs(self._tone_onset(three, freq) - start), 0.05, f"{freq} Hz clip starts late")
         wide = OUT / "copy_wide.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=96x48:r=30:d=2",
