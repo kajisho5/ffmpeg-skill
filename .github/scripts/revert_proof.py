@@ -29,7 +29,7 @@ _spec.loader.exec_module(RESOLVER)
 LEDGER = "docs/defect-ledger.jsonl"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
-DEF_LINE = re.compile(r"^[ +]\s+def (\w+)\(")
+DEF_LINE = re.compile(r"^[ +](\s+)def (\w+)\(")
 
 
 def git(*args: str, cwd: str = ".") -> str:
@@ -39,7 +39,7 @@ def git(*args: str, cwd: str = ".") -> str:
 def changed_tests(diff: str) -> "dict[str, list[str]]":
     """module -> test names the diff adds or edits (the enclosing `def test_` of each hunk)."""
     found: "dict[str, list[str]]" = {}
-    module, current = None, None
+    module, current, depth = None, None, 0
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
@@ -48,15 +48,30 @@ def changed_tests(diff: str) -> "dict[str, list[str]]":
             continue
         elif line.startswith("@@"):
             m = HUNK_TEST.match(line)
-            current = m.group(1) if m else None  # the hunk header names the def it starts inside
+            # the hunk header names the def it starts inside (a test method: four spaces deep)
+            current, depth = (m.group(1), 4) if m else (None, 0)
         else:
             m = DEF_LINE.match(line)
-            if m:  # a def line, unchanged or added, opens the method the next lines belong to
-                current = m.group(1) if m.group(1).startswith("test_") else None
+            # a def line, unchanged or added, opens the method the next lines belong to; one deeper
+            # than the current test is a helper inside it and keeps the test (review of #635)
+            if m and not (current and len(m.group(1)) > depth):
+                current, depth = (m.group(2), len(m.group(1))) if m.group(2).startswith("test_") else (None, 0)
             # a changed line belongs to the test it sits in (a body-only edit counts, #635)
             if line[:1] in "+-" and current and current not in found.setdefault(module, []):
                 found[module].append(current)
     return {k: v for k, v in found.items() if v}
+
+
+def outcome(stderr: str, case: str) -> str:
+    """"fails", "passes" or "unclear" for one test from `unittest -v` output. Only the test's own
+    line counts: an import error or a failed setUpClass never reaches it, so the test did not run
+    and proves nothing (review of #635); a skip proves nothing either."""
+    # -v prints a docstring's first line after the name, on a line of its own
+    m = re.search(rf"^{re.escape(case)} \([^)\n]*\)(?:\n[^\n]*?)? \.\.\. (ok|FAIL|ERROR|skipped|expected failure|unexpected success)",
+                  stderr, flags=re.M)
+    if not m:
+        return "unclear"
+    return {"ok": "passes", "FAIL": "fails", "ERROR": "fails", "unexpected success": "fails"}.get(m.group(1), "unclear")
 
 
 def main() -> int:
@@ -108,7 +123,7 @@ def main() -> int:
     if not tests:
         print(f"{len(shipped)} shipped file(s) changed and no test was added or edited")
         return 1
-    failing, passing = [], []
+    failing, passing, unclear = [], [], []
     with tempfile.TemporaryDirectory() as tmp:
         git("worktree", "add", "--detach", "-q", tmp, args.head)
         try:
@@ -116,15 +131,17 @@ def main() -> int:
             git("checkout", "--no-overlay", base, "--", *SHIPPED, cwd=tmp)
             for module, cases in tests.items():
                 for case in cases:
-                    proc = subprocess.run([sys.executable, "-m", "unittest", f"tests.{module}", "-k", case],
+                    proc = subprocess.run([sys.executable, "-m", "unittest", "-v", f"tests.{module}", "-k", case],
                                           cwd=tmp, capture_output=True, text=True, timeout=1800)
-                    (failing if proc.returncode else passing).append(f"{module}.{case}")
+                    {"fails": failing, "passes": passing}.get(outcome(proc.stderr, case), unclear).append(f"{module}.{case}")
         finally:
             git("worktree", "remove", "--force", tmp)
     for name in failing:
         print(f"  fails without the change   {name}")
     for name in passing:
         print(f"  passes without the change  {name}  (pins behaviour that was already there)")
+    for name in unclear:
+        print(f"  did not run on the base    {name}  (import, setUpClass or a skip: not evidence either way)")
     if failing:
         return 0
     print("no added or edited test fails on the base code: the change is not shown to do anything")

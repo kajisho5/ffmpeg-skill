@@ -86,8 +86,10 @@ def run_shard(name: str, k: int, n: int) -> int:
     # runner whose ffmpeg lost libass or whose fonts are gone ran less than its tick says (#558)
     if result.skipped:
         print()  # a test's own output may have left the line open; the marker must start one
-    for _test, reason in result.skipped:
-        print(SKIP_MARK + " ".join(str(reason).split()))
+    for test, reason in result.skipped:
+        # a skipped setUpClass is one entry for a whole class that did not run: say so (review of #635)
+        whole = f"{test.description}, every test in it: " if isinstance(test, unittest.suite._ErrorHolder) else ""
+        print(SKIP_MARK + whole + " ".join(str(reason).split()))
     return 0 if result.wasSuccessful() else 1
 
 

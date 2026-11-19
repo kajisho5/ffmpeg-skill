@@ -3137,6 +3137,16 @@ sys.exit(fit.main())
                 "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
                 "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
         self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
+        # a helper defined inside a test keeps the test; a sibling helper ends it
+        nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
+                  "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
+        self.assertEqual(proof.changed_tests(nested), {"test_x": ["test_a"]})
+        # only the test's own line counts: a failed setUpClass or import never ran it
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a)\nA docstring. ... FAIL\n", "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ERROR\n", "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ok\n", "test_a"), "passes")
+        self.assertEqual(proof.outcome("setUpClass (tests.test_x.T) ... ERROR\n", "test_a"), "unclear")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... skipped 'no ffmpeg'\n", "test_a"), "unclear")
         self.assertEqual(origins.kind_of("Add missing validation (#700)", {"fix"}), "fix")
         self.assertEqual(origins.kind_of("fix: x (#701)", {"feature", "chore"}), "feature")
         self.assertEqual(origins.kind_of("fix: x (#702)", {"chore"}), "fix")
