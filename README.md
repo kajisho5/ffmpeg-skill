@@ -482,6 +482,8 @@ fixed dimensions or fixed frame rate, or a missed duration or file size limit fa
 The written file stays available for diagnosis. Loudness gaps are reported in the result
 and mark the export unverified so the caller can decide whether to normalize or retry.
 
+When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
+
 A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
 position beside the output start with
 `python3 scripts/look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png`.
