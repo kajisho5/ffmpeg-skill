@@ -29,7 +29,7 @@ _spec.loader.exec_module(RESOLVER)
 LEDGER = "docs/defect-ledger.jsonl"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
-ADDED_TEST = re.compile(r"^\+\s+def (test_\w+)\(")
+DEF_LINE = re.compile(r"^[ +]\s+def (\w+)\(")
 
 
 def git(*args: str, cwd: str = ".") -> str:
@@ -39,15 +39,23 @@ def git(*args: str, cwd: str = ".") -> str:
 def changed_tests(diff: str) -> "dict[str, list[str]]":
     """module -> test names the diff adds or edits (the enclosing `def test_` of each hunk)."""
     found: "dict[str, list[str]]" = {}
-    module = None
+    module, current = None, None
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
-            module = m.group(1) if m else None
-        elif module:
-            m = HUNK_TEST.match(line) or ADDED_TEST.match(line)
-            if m and m.group(1) not in found.setdefault(module, []):
-                found[module].append(m.group(1))
+            module, current = (m.group(1) if m else None), None
+        elif not module:
+            continue
+        elif line.startswith("@@"):
+            m = HUNK_TEST.match(line)
+            current = m.group(1) if m else None  # the hunk header names the def it starts inside
+        else:
+            m = DEF_LINE.match(line)
+            if m:  # a def line, unchanged or added, opens the method the next lines belong to
+                current = m.group(1) if m.group(1).startswith("test_") else None
+            # a changed line belongs to the test it sits in (a body-only edit counts, #635)
+            if line[:1] in "+-" and current and current not in found.setdefault(module, []):
+                found[module].append(current)
     return {k: v for k, v in found.items() if v}
 
 
@@ -64,31 +72,37 @@ def main() -> int:
     if not shipped:
         print("no shipped code changed: nothing to prove")
         return 0
+    budget = json.loads(git("show", f"{args.head}:.github/code-budget.json"))
+    # the freeze is about the contract, not about a title: it is checked before the exemption
+    if budget.get("feature_freeze"):
+        before, after = RESOLVER._contract_at(base), RESOLVER._contract_at(args.head)
+        if before is None or after is None:
+            print("feature freeze (.github/code-budget.json): the contract could not be read at "
+                  + ("the base" if before is None else "the head") + ", so its additions are not known")
+            return 1
+        added = RESOLVER.contract_additions(before, after)
+        if added:
+            print("feature freeze (.github/code-budget.json): this change adds to the contract: "
+                  + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))
+            return 1
     if EXEMPT_TITLE.match(args.title):
         print(f"title {args.title!r} declares no behaviour change: not judged")
         return 0
     fixes = re.match(r"fix\b", args.title, re.I) or any(
         line.startswith("+- ") for line in git("diff", base, args.head, "--", "CHANGELOG.md").splitlines())
-    if fixes and LEDGER not in names and not args.no_ledger:
+    added_entries = [line for line in git("diff", base, args.head, "--", LEDGER).splitlines() if line.startswith("+{")]
+    if fixes and not added_entries and not args.no_ledger:
         print(f"a fix adds a line to {LEDGER}: the defect's class, why it got through, and the mechanism "
               "changed so the class cannot recur (#632)")
         return 1
-    budget = json.loads(git("show", f"{args.head}:.github/code-budget.json"))
     if fixes:
         net = sum(int(a) - int(r) for a, r, name in (line.split("\t") for line in git(
             "diff", "--numstat", base, args.head, "--", *SHIPPED).splitlines()) if name.endswith(".py") and a != "-")
         limit = budget.get("fix_max_net_lines")
-        reasons = [json.loads(line[1:]).get("size_reason") for line in git("diff", base, args.head, "--", LEDGER).splitlines()
-                   if line.startswith("+{")]
+        reasons = [json.loads(line[1:]).get("size_reason") for line in added_entries]
         if limit is not None and net > limit and not any(reasons) and not args.no_ledger:
             print(f"this fix adds {net} net lines to shipped code (limit {limit}): prefer a refusal or removing a mode, "
                   f"or give the reason as size_reason in its {LEDGER} line")
-            return 1
-    if budget.get("feature_freeze"):
-        added = RESOLVER.contract_additions(RESOLVER._contract_at(base), RESOLVER._contract_at(args.head))
-        if added:
-            print("feature freeze (.github/code-budget.json): this change adds to the contract: "
-                  + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))
             return 1
     tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"))
     if not tests:
@@ -98,7 +112,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         git("worktree", "add", "--detach", "-q", tmp, args.head)
         try:
-            git("checkout", base, "--", *SHIPPED, cwd=tmp)  # the base's code under the head's tests
+            # the base's code under the head's tests; --no-overlay also drops files the change added
+            git("checkout", "--no-overlay", base, "--", *SHIPPED, cwd=tmp)
             for module, cases in tests.items():
                 for case in cases:
                     proc = subprocess.run([sys.executable, "-m", "unittest", f"tests.{module}", "-k", case],

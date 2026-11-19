@@ -28,8 +28,13 @@ SHIPPED = ("scripts", "mcp")
 
 
 def git(*args):
-    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace").stdout
+    """git's stdout; a git that fails stops the measurement (an unreadable history is not an
+    empty window)."""
+    proc = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode:
+        raise SystemExit(f"git {' '.join(args[:3])} failed: {proc.stderr.strip()}")
+    return proc.stdout
 
 
 def kind_of(subject, labels):
@@ -39,10 +44,16 @@ def kind_of(subject, labels):
         return "release"
     if "dependencies" in labels:
         return "other"
-    if labels & {"feature", "enhancement", "minor"} or re.match(r"(feat|add)\b", s):
-        return "feature"
-    if labels & {"fix", "bug", "patch"} or re.match(r"fix\b", s):
+    # a fix or feature label decides; the subject's prefix only when none does (`chore` alone is
+    # not a decision: the autolabeler adds it to every PR that touches a .md file, #631)
+    if labels & {"fix", "bug", "patch"}:
         return "fix"
+    if labels & {"feature", "enhancement", "minor"}:
+        return "feature"
+    if re.match(r"fix\b", s):
+        return "fix"
+    if re.match(r"(feat|add)\b", s):
+        return "feature"
     return "other"
 
 

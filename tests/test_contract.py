@@ -3118,6 +3118,35 @@ sys.exit(fit.main())
                              f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
             seen_without[entry["class"]] = n
 
+    def test_the_632_scripts_read_what_a_change_did(self):
+        """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the
+        `def` is a context line) and not a helper between two tests; fix_origins.kind_of lets a
+        fix or feature label decide before the subject's prefix (a `chore` label alone does not
+        decide); and the revert-proof workflow runs again when a title is edited, apart from
+        ci.yml so that an edit does not cancel the test matrix."""
+        import importlib.util
+
+        def load(name):
+            spec = importlib.util.spec_from_file_location(name, ROOT / ".github" / "scripts" / f"{name}.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        proof, origins = load("revert_proof"), load("fix_origins")
+        diff = ("+++ b/tests/test_x.py\n@@ -10,6 +10,6 @@ class T:\n     def test_a(self):\n         x = 1\n"
+                "-        y = 2\n+        y = 3\n     def helper(self):\n-        z = 1\n+        z = 2\n"
+                "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
+                "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
+        self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
+        self.assertEqual(origins.kind_of("Add missing validation (#700)", {"fix"}), "fix")
+        self.assertEqual(origins.kind_of("fix: x (#701)", {"feature", "chore"}), "feature")
+        self.assertEqual(origins.kind_of("fix: x (#702)", {"chore"}), "fix")
+        self.assertEqual(origins.kind_of("Keep words together (#703)", {"chore"}), "other")
+        self.assertEqual(origins.kind_of("chore(release): bump version to 3.15.0 [skip ci]", set()), "release")
+        wf = (ROOT / ".github" / "workflows" / "revert-proof.yml").read_text(encoding="utf-8")
+        self.assertIn("types: [opened, synchronize, reopened, edited]", wf)
+        self.assertIn("--no-overlay", (ROOT / ".github" / "scripts" / "revert_proof.py").read_text(encoding="utf-8"))
+        self.assertNotIn("revert_proof", (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+
     def test_shipped_code_does_not_grow(self):
         """.github/code-budget.json: the shipped code has a ceiling. A fix that adds a refusal, a
         reason and a result field is the code the next fix repairs (the file records the numbers

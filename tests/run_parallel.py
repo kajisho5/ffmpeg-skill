@@ -84,6 +84,8 @@ def run_shard(name: str, k: int, n: int) -> int:
     result = unittest.TextTestRunner(verbosity=1).run(suite)
     # one line per skipped test, for the parent's summary: a job that skips is still green, so a
     # runner whose ffmpeg lost libass or whose fonts are gone ran less than its tick says (#558)
+    if result.skipped:
+        print()  # a test's own output may have left the line open; the marker must start one
     for _test, reason in result.skipped:
         print(SKIP_MARK + " ".join(str(reason).split()))
     return 0 if result.wasSuccessful() else 1
