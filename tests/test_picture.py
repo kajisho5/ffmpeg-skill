@@ -7311,6 +7311,10 @@ class LeanBuildTests(unittest.TestCase):
         proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
                       "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
         self.assertIn("not a valid label", json.loads(proc.stdout)["error"]["message"])
+        cues.write_text("0-00:00:02;00@oops Malformed endpoint\n", encoding="utf-8")
+        proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
+                      "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
+        self.assertIn("malformed drop-frame timing", json.loads(proc.stdout)["error"]["message"])
 
     def test_look_draws_the_sheet_without_timecodes_on_a_build_without_drawtext(self):
         """#394: the default sheet needs drawtext only for its stamps; without it the step every

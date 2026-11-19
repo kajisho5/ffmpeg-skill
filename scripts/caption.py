@@ -103,7 +103,7 @@ def cue_times_match(line: str) -> "Optional[re.Match[str]]":
 
 
 # an SRT timing line: the times alone, the cue text on the lines after it
-DROP_FRAME_RE = re.compile(r"^\s*\d+:\d{2}:\d{2};\d+")
+DROP_FRAME_RE = re.compile(r"^\s*(?:\d[\d:.,]*(?:@[^\s-]+)?\s*(?:-->|-|–|to)\s*)?\d+:\d{2}:\d{2};")
 DROP_FRAME_LABEL = re.compile(r"(\d+):(\d{2}):(\d{2});(\d{2})")
 SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[,.]\d+\s*$")
 # the same line as WebVTT may write it, without the hours: `00:01.000 --> 00:02.000`
@@ -178,7 +178,7 @@ def parse_text_cues(path: str, auto_seconds: float, gap: float, fps: Optional[fl
             die(f"--text: {path} is an SRT file (line {n} is a timing line with no text: "
                 f"'{raw.strip()}'); pass it as --srt (render.py: --srt, not --cues)", kind="input")
         if DROP_FRAME_RE.match(raw) and not cue_times_match(raw):
-            die(f"--text: line {n} needs two times and caption text after the drop-frame timecode", kind="input")
+            die(f"--text: line {n} has malformed drop-frame timing; give two times and caption text", kind="input")
     for line in lines:
         if not line.strip():
             continue

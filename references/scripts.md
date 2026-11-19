@@ -1914,7 +1914,8 @@ converted with `--fps`, or the input video's own fps when `--input` is given and
 not). An `@fps` suffix on a cue boundary overrides that rate. Use `hh:mm:ss;ff` for drop-frame
 labels at 29.97 or 59.94 fps. An invalid or skipped drop-frame label is refused. If the cue rate
 differs from the probed input rate, `caption_timecode_rate_mismatch` names the affected boundary
-and the estimated time difference when the input has a stable frame rate. Use seconds or
+and the estimated time difference when the input has a stable frame rate and the label is
+valid at that rate. Use seconds or
 word-level timestamps from a transcript when the source has a variable frame rate.
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
