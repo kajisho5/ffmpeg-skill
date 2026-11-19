@@ -7,7 +7,7 @@ from __future__ import annotations
 import unicodedata
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emoji import emoji_clusters
-from _common.fonts import char_script
+from _common.fonts import char_script, detect_script
 
 
 # --------------------------------------------------------------------------- text measurement (1.12)
@@ -191,7 +191,18 @@ PENALTY_SENTENCE_END = 0.0    # R3: after 。、！？ -- the one break a reader
 _HYPHENS = ("-", "‐")    # ‑ (non-breaking hyphen) is deliberately NOT here
 
 
-def _atoms(line: str) -> "List[Tuple[str, bool]]":
+# Common caption vocabulary with a clear internal boundary. Keep this small: it is
+# a phrase-wrap hint, not a dictionary or a general Chinese segmenter.
+_CHINESE_WORDS = frozenset(("视频", "視頻", "影片", "效果", "功能", "字幕", "剪辑", "剪輯",
+                            "画面", "畫面", "音频", "音頻", "声音", "聲音"))
+
+
+def _protect_chinese_words(text: str, mode: str, lang: "Optional[str]") -> bool:
+    return (mode == "phrase" and any(word in text for word in _CHINESE_WORDS)
+            and detect_script(text, lang) == "zh")
+
+
+def _atoms(line: str, *, chinese: bool = False) -> "List[Tuple[str, bool]]":
     """Break a line into the smallest pieces a wrap may separate -- one atom per CJK/Thai
     character, one per emoji cluster, one per whitespace-delimited word otherwise -- each with
     whether a space stood before it in the original. The flag is what puts the text back together
@@ -232,6 +243,8 @@ def _atoms(line: str) -> "List[Tuple[str, bool]]":
                 # and break_penalty still scores a break between them PENALTY_FORBIDDEN, so it is a cost
                 # the wrapper may pay, not a wall. Compared on the atom's tail, so an opening bracket the
                 # pair carries (（看 + 看) still merges, and a closing mark between the two (「看」看) does not
+                out[-1] = (out[-1][0] + ch, out[-1][1])
+            elif chinese and out and not pending and out[-1][0][-1:] + ch in _CHINESE_WORDS:
                 out[-1] = (out[-1][0] + ch, out[-1][1])
             elif out and not pending and _is_katakana_run(ch) and _is_katakana_run(out[-1][0][-1]):
                 # a katakana word (タイミング, コンピューター) is one atom: eval 17 saw タイ|ミング
@@ -530,7 +543,8 @@ def _gaps(lines: "List[str]", gaps: "Optional[List[bool]]") -> "List[bool]":
 
 
 def _fix_orphans(lines: "List[str]", max_em: float,
-                 gaps: "Optional[List[bool]]" = None, kinsoku: bool = False) -> "List[str]":
+                 gaps: "Optional[List[bool]]" = None, kinsoku: bool = False,
+                 *, chinese: bool = False) -> "List[str]":
     """No last line that is a single stranded atom.
 
     Greedy wrapping leaves one character alone whenever the line before it filled exactly: eval 14
@@ -544,10 +558,12 @@ def _fix_orphans(lines: "List[str]", max_em: float,
     for _ in range(len(lines)):
         if len(lines) < 2:
             break
-        tail = _atoms(lines[-1])
+        tail = _atoms(lines[-1], chinese=chinese)
         if len(tail) != 1 or text_width_em(lines[-1]) >= ORPHAN_MIN_EM:
             break
-        prev = _kinsoku_atoms(_atoms(lines[-2])) if kinsoku else _atoms(lines[-2])
+        prev = _atoms(lines[-2], chinese=chinese)
+        if kinsoku:
+            prev = _kinsoku_atoms(prev)
         if len(prev) < 2:
             break
         moved, spaced = prev[-1]
@@ -563,7 +579,7 @@ def _fix_orphans(lines: "List[str]", max_em: float,
 
 
 def _fix_weak_lines(lines: "List[str]", max_em: float,
-                    gaps: "Optional[List[bool]]" = None) -> "List[str]":
+                    gaps: "Optional[List[bool]]" = None, *, chinese: bool = False) -> "List[str]":
     """R2, generalised: _fix_orphans run at *every* boundary, against _is_weak_line.
 
     1.15 only ever looked at the last line, so a stranded digit or kana in the middle of a
@@ -577,7 +593,7 @@ def _fix_weak_lines(lines: "List[str]", max_em: float,
         for _ in range(len(lines)):
             if not _is_weak_line(lines[i]):
                 break
-            prev = _kinsoku_atoms(_atoms(lines[i - 1]))
+            prev = _kinsoku_atoms(_atoms(lines[i - 1], chinese=chinese))
             if len(prev) < 2:
                 break
             moved, spaced = prev[-1]
@@ -638,7 +654,7 @@ def _rebalance(lines: "List[str]", max_em: float,
 
 
 def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]",
-                      gaps: "Optional[List[bool]]" = None) -> "Tuple[List[str], int]":
+                      gaps: "Optional[List[bool]]" = None, *, chinese: bool = False) -> "Tuple[List[str], int]":
     """_rebalance with R1-R4 deciding, for every script rather than spaced ones only.
 
     Returns the new lines and how many breaks a phrase rule moved away from the position 1.15's
@@ -650,10 +666,12 @@ def _rebalance_phrase(lines: "List[str]", max_em: float, lang: "Optional[str]",
     moved = 0
     for i in range(len(out) - 1):
         first, second = out[i], out[i + 1]
-        tail_atoms = _atoms(second)
+        tail_atoms = _atoms(second, chinese=chinese)
         if tail_atoms:
             tail_atoms[0] = (tail_atoms[0][0], gaps[i])
-        atoms = _split_hyphens(_atoms(first) + tail_atoms)
+        atoms = _split_hyphens(_atoms(first, chinese=chinese) + tail_atoms)
+        if chinese:
+            atoms = _kinsoku_atoms(atoms)
         if len(atoms) < 2:
             continue
         cut = best_break(atoms, max_em, lang)
@@ -700,7 +718,8 @@ def _kinsoku_atoms(atoms: "List[Tuple[str, bool]]") -> "List[Tuple[str, bool]]":
 
 def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
                    sliced: "Optional[List[int]]" = None,
-                   gaps: "Optional[List[bool]]" = None, kinsoku: bool = False) -> "List[str]":
+                   gaps: "Optional[List[bool]]" = None, kinsoku: bool = False,
+                   chinese: bool = False) -> "List[str]":
     """The greedy fill on its own: the line count every mode must keep.
 
     `slice_overlong` (off by default -- only caption.py's final burn-in pass turns it on, never
@@ -739,7 +758,8 @@ def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
                 return pieces[-1], False
         return atom, spaced
 
-    for atom, spaced in (_kinsoku_atoms(_atoms(raw)) if kinsoku else _atoms(raw)):
+    atoms = _atoms(raw, chinese=chinese)
+    for atom, spaced in (_kinsoku_atoms(atoms) if kinsoku else atoms):
         if not current:
             current, current_gap = start_line(atom, spaced)
             continue
@@ -757,7 +777,7 @@ def _greedy_chunks(raw: str, max_em: float, *, slice_overlong: bool = False,
 
 
 def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]",
-             gaps: "Optional[List[bool]]" = None) -> "List[str]":
+             gaps: "Optional[List[bool]]" = None, *, chinese: bool = False) -> "List[str]":
     """The post-passes for one greedy chunk, in the mode's own order. Never changes the count:
     a pass that would is discarded, exactly as 1.15 did."""
     if len(chunk) < 2:
@@ -767,10 +787,11 @@ def _balance(chunk: "List[str]", max_em: float, mode: str, lang: "Optional[str]"
         fixed = _fix_orphans(chunk, max_em, gaps)
         rebalanced = _rebalance(fixed, max_em, list(gaps) if gaps is not None else None)
     else:
-        fixed = _fix_weak_lines(_fix_orphans(chunk, max_em, gaps, kinsoku=True), max_em, gaps)
+        fixed = _fix_orphans(chunk, max_em, gaps, kinsoku=True, chinese=chinese)
+        fixed = _fix_weak_lines(fixed, max_em, gaps, chinese=chinese)
         later = list(gaps) if gaps is not None else None
-        rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang, later)
-        rebalanced = _fix_weak_lines(rebalanced, max_em, later)
+        rebalanced, _moved = _rebalance_phrase(fixed, max_em, lang, later, chinese=chinese)
+        rebalanced = _fix_weak_lines(rebalanced, max_em, later, chinese=chinese)
     if len(rebalanced) == len(chunk):
         return rebalanced
     return fixed if len(fixed) == len(chunk) else chunk
@@ -793,13 +814,14 @@ def wrap_text(text: str, max_em: float, *, balance: bool = True, mode: str = "ph
     widest line. Neither mode ever changes the number of lines the greedy fill produced.
     """
     lines: "List[str]" = []
+    chinese = _protect_chinese_words(text, mode, lang)
     for raw in text.split("\n"):
         if not raw.strip():
             continue
         gaps: "List[bool]" = []
         chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced, gaps=gaps,
-                               kinsoku=mode == "phrase")
-        lines.extend(_balance(chunk, max_em, mode, lang, gaps) if balance else chunk)
+                               kinsoku=mode == "phrase", chinese=chinese)
+        lines.extend(_balance(chunk, max_em, mode, lang, gaps, chinese=chinese) if balance else chunk)
     return lines or [text]
 def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
                   lang: "Optional[str]" = None, slice_overlong: bool = False,
@@ -815,14 +837,15 @@ def wrap_variants(text: str, max_em: float, *, mode: str = "phrase",
     wrapped: "List[str]" = []
     greedy: "List[str]" = []
     measured: "List[str]" = []
+    chinese = _protect_chinese_words(text, mode, lang)
     for raw in text.split("\n"):
         if not raw.strip():
             continue
         gaps: "List[bool]" = []
         chunk = _greedy_chunks(raw, max_em, slice_overlong=slice_overlong, sliced=sliced, gaps=gaps,
-                               kinsoku=mode == "phrase")
+                               kinsoku=mode == "phrase", chinese=chinese)
         greedy.extend(chunk)
-        wrapped.extend(_balance(list(chunk), max_em, mode, lang, gaps))
+        wrapped.extend(_balance(list(chunk), max_em, mode, lang, gaps, chinese=chinese))
         if mode == "measured":
             measured.extend(chunk)
         else:

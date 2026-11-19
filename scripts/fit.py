@@ -135,7 +135,8 @@ def _picture_rows(path_meta: dict, chain: str, colour: str, sw: int, sh: int, si
     return proc.stdout if proc.returncode == 0 and len(proc.stdout or b"") == size else None
 
 
-def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, sized: bool) -> dict:
+def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, sized: bool,
+                    *, matrix_filter: "Optional[str]" = None) -> dict:
     """Where the picture sits in the written frame (#519): measured, not judged. ffmpeg runs the
     frame's own filters (the scale and pad, the blur graph with its background drawn black, or the
     scale and crop) on one white and one black frame of the source's displayed size and pixel
@@ -148,8 +149,7 @@ def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, siz
     if not (sw and sh and W and H):
         why = "the source or the written frame has no size"
     else:
-        conv = line_matrix_filter(meta)
-        chain = ",".join(([conv] if conv else []) + list(filters))
+        chain = ",".join(([matrix_filter] if matrix_filter else []) + list(filters))
         out_pix = out_video.get("pix_fmt")
         white = _picture_rows(meta, chain, "white", sw, sh, W * H, out_pix)
         black = _picture_rows(meta, chain, "black", sw, sh, W * H, out_pix) if white is not None else None
@@ -691,7 +691,8 @@ def main() -> int:
         msg += f", speed {factor:.3f}x"
     info(msg)
     if geometry and not STATE.dry_run:
-        extra["picture"] = measure_picture(geometry, meta, sw, sh, result["video"], sized=bool(args.width or args.height))
+        extra["picture"] = measure_picture(geometry, meta, sw, sh, result["video"],
+                                           sized=bool(args.width or args.height), matrix_filter=line_matrix_filter(meta))
     if crop_window and not STATE.dry_run:
         # the source range the output shows: a trim's window, else the whole source (speed retimes all of it)
         k0, klen = kept if kept else (0.0, src_dur or (meta.get("duration") or 0.0))
