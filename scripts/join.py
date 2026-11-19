@@ -349,7 +349,8 @@ def preflight(paths: List[str], audible: Optional[List[int]] = None) -> Tuple[Li
         if dry_run_input_pending(p):
             pending.append({"index": i, "path": p})
             continue
-        if not os.path.exists(p):
+        # a file that is there but unreadable is "permission denied" too, not ffprobe's line (#558)
+        if path_denied(p) or not os.path.exists(p):
             problems.append({"index": i, "path": p, "reason": "permission denied" if path_denied(p) else "missing"})
             continue
         if os.path.isdir(p):

@@ -169,7 +169,7 @@ def preflight_beds(args: argparse.Namespace) -> List[Dict[str, Any]]:
         if dry_run_input_pending(path):
             continue
         reason = None
-        if not os.path.exists(path):
+        if path_denied(path) or not os.path.exists(path):
             reason = "permission denied" if path_denied(path) else "missing"
         elif os.path.isdir(path):
             reason = "a directory, not a file"

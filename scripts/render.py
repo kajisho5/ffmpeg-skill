@@ -1903,7 +1903,7 @@ def main() -> int:
     problems: List[Dict[str, Any]] = []
     for i, c in enumerate(clips):
         src = rel(c["src"])
-        if not os.path.exists(src):  # under --dry-run too: a plan for a missing file is no plan
+        if path_denied(src) or not os.path.exists(src):  # under --dry-run too: a plan for a missing file is no plan
             problems.append({"index": i, "path": src, "reason": "permission denied" if path_denied(src) else "missing"})
         elif os.path.isdir(src):
             problems.append({"index": i, "path": src, "reason": "a directory, not a file"})

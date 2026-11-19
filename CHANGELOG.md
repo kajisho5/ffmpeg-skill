@@ -34,7 +34,7 @@ _Automated release: version and notes generated from pull requests merged since 
   opened with `-f image2 -pattern_type none`, which reads a literal `%` and a `%d` name alike as
   the one file (measured on FFmpeg 6.1.1 for `.png` and `.jpg`).
 - **A relative subtitle path with a colon works (#558).** `caption.py --srt ./a:b.srt` (and
-  `d:e/c.srt`) failed with "Protocol not found": the `./` was dropped before the path reached the
+  `d:e/c.srt`) burned in failed with "Protocol not found": the `./` was dropped before the path reached the
   subtitles filter. A relative path whose first segment has a colon is written `./...` in every
   filter option (subtitles, ass, LUT, font and text files).
 - **An output extension FFmpeg has no muxer for is refused before ffmpeg runs (#558).**

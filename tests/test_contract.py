@@ -12956,10 +12956,13 @@ class BasicsAudit558Tests(unittest.TestCase):
                         self.assertIn("permission denied", err["message"])
                         self.assertNotIn("not found", err["message"])
                         self.assertTrue(err.get("hint"))
-            proc = sh(*other_user, sys.executable, SCRIPTS / "join.py", locked / "a.mp4", self.clip,
-                      "-o", self.work / "perm_join.mp4", "--json", check=False)
-            problems = json.loads(proc.stdout).get("problems") or []
-            self.assertEqual([p["reason"] for p in problems if p["index"] == 0], ["permission denied"], proc.stdout[-600:])
+            # behind a closed directory and a file that is there but unreadable alike (review of
+            # the 4.0 branch: the second reached ffprobe and said "unreadable: ... Permission denied")
+            for path in (locked / "a.mp4", base / "noread.mp4"):
+                proc = sh(*other_user, sys.executable, SCRIPTS / "join.py", path, self.clip,
+                          "-o", self.work / "perm_join.mp4", "--json", check=False)
+                problems = json.loads(proc.stdout).get("problems") or []
+                self.assertEqual([p["reason"] for p in problems if p["index"] == 0], ["permission denied"], (path.name, proc.stdout[-600:]))
         finally:
             os.chmod(locked, 0o700)
             os.chmod(base / "noread.mp4", 0o600)

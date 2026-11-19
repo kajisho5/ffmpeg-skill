@@ -168,7 +168,7 @@ removes a tool, a flag or an output key.
 | What changed in 4.0.0 | 3.x behaviour | 4.0 behaviour | Migrating from 3.x |
 |---|---|---|---|
 | The promise is split by tool (`stability`) | every tool under the same promise | the 12 core ones `stable`, the other 30 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
-| `export.py`, a single-file video delivery (not GIF) that misses a required property: a missing picture or sound stream, the wrong video codec, preset size or fixed frame rate, or a duration or `--max-mb` limit (#620) | exit 0 with `verified: false` | exit 1, `kind: verification`, the failed steps listed and the file kept. A failed loudness step still only sets `verified: false` | Read the exit status, or `status`, instead of `verified` alone |
+| `export.py`, a single-file video delivery (not GIF) that misses a required property: a missing picture or sound stream, the wrong video codec (for an editing master also its profile and pixel format), preset size or fixed frame rate, or a duration or `--max-mb` limit (#620) | exit 0 with `verified: false` | exit 1, `kind: verification`, the failed steps listed and the file kept. A failed loudness step still only sets `verified: false` | Read the exit status, or `status`, instead of `verified` alone |
 | `fit.py --duration` whose implicit speed factor is above 1.15 or below 1/1.15 (#582) | retimed, with `large_speed_change` among the warnings | refused before ffmpeg runs, `error.reason: fit_method_required` (`details: {factor, threshold, source_duration, target_duration}`), dry runs with a known length included | Pass `--method speed` to retime or `--method trim` to trim; `--smooth blend` or `--smooth interpolate` also chooses a retime |
 | Delivery templates (`render.py --template`) (#575) | platform checks only | the template's `check` also runs `check.py --content` (black frames, freezes, flashes, silence, dropouts); a failed row fails the render and keeps the file | Fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}` |
 | An input that is empty, a directory, not media, or unreadable by this user; an output extension the build has no muxer for (#558) | ffprobe's raw lines (`kind: input`, no reason), "input not found" for a permission error, and `kind: ffmpeg` after a completed dry run for `out.xyz` | `kind: input` with `error.reason` `input_empty`, `input_is_directory`, `input_not_media`, `input_permission_denied` or `output_extension_unknown`, dry runs included | Match on `error.reason`, not on the message |
@@ -1077,7 +1077,8 @@ today from a deterministic failure that would fail identically on a blind retry,
 here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
 For single-file video delivery presets other than GIF, `export.py` exits nonzero if an
-expected A/V stream is missing or the expected video codec, enabled preset dimensions, fixed
+expected A/V stream is missing or the expected video codec (for an editing master also its
+profile and pixel format), enabled preset dimensions, fixed
 preset fps, preset duration cap or `--max-mb` limit fails verification. The JSON result reports
 `kind: verification`, `verified: false`, the retained file and the failed steps. Plain mode
 reports the error on stderr. A failed loudness step is advisory for export and sets

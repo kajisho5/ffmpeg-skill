@@ -381,6 +381,10 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     p = str(Path(path))
     if _on_windows():
         p = p.replace("\\", "/")
+    else:
+        # on POSIX a backslash is a character of the name (#408): turning it into `/` opened a
+        # different path, so it is escaped through both passes instead
+        p = p.replace("\\", "\\\\\\\\")
     # A filter that opens its file through libavformat (subtitles=, metadata=print:file=) reads a
     # relative `a:b.srt` or `d:e/c.srt` as protocol `a` or `d` ("Protocol not found"), and Path()
     # above has dropped the `./` a caller wrote to say it is a file (#558). A relative path whose
@@ -390,10 +394,6 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
     pure = PureWindowsPath(p) if _on_windows() else PurePosixPath(p)
     if ":" in p.split("/", 1)[0] and not pure.is_absolute() and not pure.drive:
         p = "./" + p
-    else:
-        # on POSIX a backslash is a character of the name (#408): turning it into `/` opened a
-        # different path, so it is escaped through both passes instead
-        p = p.replace("\\", "\\\\\\\\")
     p = p.replace(":", "\\\\:")
     p = p.replace("'", "\\\\\\'")
     for ch in (",", ";", "[", "]"):

@@ -3019,6 +3019,11 @@ class PictureTests(MediaFixtures):
         self.assertEqual(escape_filter_path("plain.srt", bind=False), "plain.srt")
         if os.name != "nt":
             self.assertEqual(escape_filter_path("/abs/a:b.srt", bind=False), "/abs/a\\\\:b.srt")
+            # the POSIX backslash escape (#408) still applies to a name that also has a colon: the
+            # first port of this fix put it under the colon branch's `else`, and `a:b\\x.srt` opened
+            # `a:bx.srt` (review of the 4.0 branch)
+            with unittest.mock.patch.object(decision, "_on_windows", return_value=False):
+                self.assertEqual(escape_filter_path("a:b\\x.srt", bind=False), "./a\\\\:b\\\\\\\\x.srt")
         with unittest.mock.patch.object(decision, "_on_windows", return_value=True):
             for drive_path, want in (("C:/Users/me/c.srt", "C\\\\:/Users/me/c.srt"),
                                      ("C:\\Users\\me\\c.srt", "C\\\\:/Users/me/c.srt"),
