@@ -3098,6 +3098,14 @@ sys.exit(fit.main())
         finally:
             sys.path.remove(str(ROOT / "tests"))
         names = [m.__name__ for m in test_all.MODULES] + ["test_contract"]
+        # a tests/test_*.py that is in neither list is run by nothing: CI would stay green on a
+        # file of tests nobody listed (the list is kept by hand)
+        on_disk = sorted(p.stem for p in (ROOT / "tests").glob("test_*.py") if p.stem != "test_all")
+        self.assertEqual(on_disk, sorted(names), "add the new module to test_all.MODULES and run_parallel.ROUGH_SECONDS")
+        # a skipped test is reported, not only counted as passed: the summary names each reason
+        self.assertEqual(run_parallel.skip_summary({}), "\nskipped: none")
+        self.assertEqual(run_parallel.skip_summary({"no drawtext": 2, "Windows": 5}).splitlines()[1:],
+                         ["skipped: 7 test(s), 2 reason(s)", "    5  Windows", "    2  no drawtext"])
         work = [(n, k, run_parallel.SHARDS.get(n, 1)) for n in names for k in range(run_parallel.SHARDS.get(n, 1))]
         self.assertEqual(set(run_parallel.ROUGH_SECONDS), set(names), "every module needs a cost to be balanced")
         for n in (1, 2, 3, 5, len(work)):

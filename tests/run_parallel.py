@@ -62,11 +62,29 @@ def _flatten(suite):
             yield item
 
 
+SKIP_MARK = "SKIPPED-TEST: "
+
+
+def skip_summary(skipped: "dict[str, int]") -> str:
+    """What the run did not test, most frequent reason first: the line a reader of a green job
+    looks at to see whether it tested what its name says."""
+    if not skipped:
+        return "\nskipped: none"
+    rows = sorted(skipped.items(), key=lambda kv: (-kv[1], kv[0]))
+    return "\n".join([f"\nskipped: {sum(skipped.values())} test(s), {len(rows)} reason(s)"]
+                     + [f"  {count:3d}  {reason}" for reason, count in rows])
+
+
 def run_shard(name: str, k: int, n: int) -> int:
     """Child mode: run every n-th test of module `name`, starting at k, in definition order."""
     tests = list(_flatten(unittest.defaultTestLoader.loadTestsFromName(name)))
     suite = unittest.TestSuite(t for i, t in enumerate(tests) if i % n == k)
-    return 0 if unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful() else 1
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    # one line per skipped test, for the parent's summary: a job that skips is still green, so a
+    # runner whose ffmpeg lost libass or whose fonts are gone ran less than its tick says (#558)
+    for _test, reason in result.skipped:
+        print(SKIP_MARK + " ".join(str(reason).split()))
+    return 0 if result.wasSuccessful() else 1
 
 
 def run_job(job: "tuple", out_root: Path) -> "tuple":
@@ -75,8 +93,8 @@ def run_job(job: "tuple", out_root: Path) -> "tuple":
     out = out_root / (name.replace("test_", "") + ("" if n == 1 else f"_{k + 1}"))
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, OUT=str(out))
-    cmd = ([sys.executable, "-m", "unittest", name] if n == 1
-           else [sys.executable, str(Path(__file__).resolve()), "--shard", name, str(k), str(n)])
+    # always through run_shard(), a whole module as shard 0 of 1: it reports what it skipped
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--shard", name, str(k), str(n)]
     t0 = time.time()
     proc = subprocess.run(cmd, cwd=str(HERE), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True, encoding="utf-8", errors="replace")
@@ -107,20 +125,25 @@ def main() -> int:
     out_root = Path(os.environ.get("OUT", HERE / "out")).resolve()
     t0 = time.time()
     failed, ran = [], 0
+    skipped: "dict[str, int]" = {}
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         # printed as each module finishes, not in the order they were started: a job that is
         # cancelled or runs out of time still shows every module that got to its end (#514)
         for done in as_completed([pool.submit(run_job, j, out_root) for j in work]):
             name, code, secs, output = done.result()
-            last = output.strip().splitlines()[-1] if output.strip() else ""
+            shown = [line for line in output.strip().splitlines() if not line.startswith(SKIP_MARK)]
+            last = shown[-1] if shown else ""
             ran += sum(int(m) for m in re.findall(r"^Ran (\d+) tests?", output, flags=re.M))
+            for reason in re.findall("^" + re.escape(SKIP_MARK) + "(.*)$", output, flags=re.M):
+                skipped[reason] = skipped.get(reason, 0) + 1
             print(f"\n===== {name}: {'OK' if code == 0 else 'FAILED'} in {secs:.0f}s ({last}) =====")
             if code != 0:
                 failed.append(name)
                 print(output)
             else:
-                print("\n".join(line for line in output.splitlines()[-3:]))
+                print("\n".join(shown[-3:]))
             sys.stdout.flush()
+    print(skip_summary(skipped))
     print(f"\n{ran} tests, {len(names)} modules in {len(work)} processes, {jobs} at a time, {time.time() - t0:.0f}s wall; "
           + ("FAILED: " + ", ".join(failed) if failed else "all OK"))
     return 1 if failed else 0
