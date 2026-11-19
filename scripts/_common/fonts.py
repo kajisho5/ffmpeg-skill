@@ -609,7 +609,11 @@ def _scan_font_coverage(path: str, script: str, *, face_index: Optional[int] = N
     if os.path.isdir(path):
         # libass loads the files directly in the folder it is given, not its subfolders or
         # hidden files, while fc-scan walks them all (review of #636)
-        targets = sorted(os.path.join(path, n) for n in os.listdir(path)
+        try:
+            names = os.listdir(path)
+        except OSError:
+            return None  # a folder that cannot be listed: coverage unknown, never a stop
+        targets = sorted(os.path.join(path, n) for n in names
                          if not n.startswith(".") and os.path.isfile(os.path.join(path, n)))
         if not targets:
             return False

@@ -12,7 +12,9 @@ is read as a file: pass it after `--` or as `./-name.mp4`; an output starting wi
 `kind: input` with a hint, `input_is_directory`, `input_empty` (0 bytes) or
 `input_permission_denied` (the file or a directory on the way to it is not readable; a path that
 is not there is "input not found"); `input_not_media` comes after, when ffprobe cannot read it.
-A side file (`--lut`, `--srt`, a font) is checked by its own flag and may say so in other words.
+A side file (`--lut`, `--srt`, a font) is checked by its own flag, and a tool's own preflight
+(`render.py`'s project and template inputs, `join.py --list`) runs before this one; either may
+word the same problem differently, without these reasons.
 For the output, before ffmpeg runs: `output_extension_missing` and
 `output_extension_unknown` (an extension the installed FFmpeg has no muxer for, such as
 `out.xyz`; a command that names its format with `-f` is exempt).
@@ -2506,11 +2508,14 @@ Scales into the preset frame (pad by default), tags BT.709 (a BT.601-matrix or R
 trims to the table's platform maximums (Reels 90 s, X 140 s; the table's as of its date, and
 platforms change them) unless `--allow-long`, and says
 so: `trimmed: {from, to}` and a `notes` line. For
-youtube / youtube4k / reels / x it meets the platform's LUFS / true-peak spec by
-default since 4.0.0: the written file is measured and, when it is outside the
-spec, `loudness.py` runs on it (audio re-encoded, video copied;
+youtube / youtube4k / reels / x the written file is measured and, since 4.0.0,
+a usable measurement outside the platform's LUFS / true-peak spec runs
+`loudness.py` on it by default (audio re-encoded, video copied;
 `loudness.normalized: true`), so a platform export is one command instead of
-export, loudness, export again. `--no-normalize` keeps 3.x's behaviour: the
+export, loudness, export again. That pass can still leave the file outside the
+spec (`loudness_outside_spec` beside `normalized: true`), and silent sound is
+not corrected (`silent: true`); `loudness.ok` and `verified` say what was
+achieved. `--no-normalize` keeps 3.x's behaviour: the
 level is measured and only reported, the result's `loudness` (and a `notes`
 line) naming the `loudness.py` call that fixes it; `--normalize` is still accepted. A
 measurement that cannot be read is `loudness.measured: false` (values null) with

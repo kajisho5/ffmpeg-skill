@@ -121,6 +121,22 @@ class OrchestrationTests(MediaFixtures):
         subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "--result", str(rel), "-o",
                         str(work / "rel_review")], check=True, capture_output=True, text=True, cwd="/")
         self.assertTrue((work / "rel_review" / "stills" / "out_0.jpg").exists())
+        # literal text longer than a file name may be is not a path; a project named index.html
+        # in the review folder is never overwritten by the page (review of #636)
+        long_text = work / "long.json"
+        long_text.write_text(json.dumps({"output": "l.mp4", "clips": [{"src": "src.mp4"}],
+                                         "overlays": [{"text": "x" * 300}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", long_text, "-o", work / "long_review")
+        self.assertTrue((work / "long_review" / "index.html").exists())
+        inside = work / "inside"
+        inside.mkdir(exist_ok=True)
+        as_page = inside / "index.html"
+        as_page.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": str(work / "src.mp4")}]}), encoding="utf-8")
+        before = as_page.read_bytes()
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(as_page), "-o", str(inside), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual(as_page.read_bytes(), before)
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

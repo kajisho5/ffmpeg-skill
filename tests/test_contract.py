@@ -3193,6 +3193,20 @@ sys.exit(fit.main())
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
                       "ffmpeg_version", "new")
 
+    def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
+        """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
+        fc-scan that fails is, never an exception that stops the caption; an empty folder that
+        lists is no coverage (False)."""
+        import importlib
+        import tempfile
+        from unittest import mock
+        sys.path.insert(0, str(SCRIPTS))
+        fonts = importlib.import_module("_common.fonts")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(fonts, "_safe_which", return_value="/bin/true"):
+            self.assertIs(fonts._scan_font_coverage(tmp, "latin"), False)
+            with mock.patch.object(fonts.os, "listdir", side_effect=PermissionError("denied")):
+                self.assertIsNone(fonts._scan_font_coverage(tmp, "latin"))
+
     def test_an_optional_probe_and_a_dash_named_playlist_review_of_636(self):
         """Review of #636: an optional probe of an empty file or a folder returns {} as a failed
         ffprobe did, instead of exiting the caller; a playlist named like an option (-list.m3u8)
@@ -3309,6 +3323,10 @@ sys.exit(fit.main())
         undecorated = ("+++ b/tests/test_x.py\n@@ -5,3 +5,2 @@ def test_guard(self):\n     @unittest.skipIf(False, 'x')\n"
                        "-    @unittest.skip('y')\n     def test_b(self):\n")
         self.assertEqual(proof.changed_tests(undecorated, lambda module: head), {"test_x": ["A.test_b"]})
+        # an `@` line deeper than the method is body text (a string), not a decorator
+        in_body = ("+++ b/tests/test_x.py\n@@ -3,3 +3,2 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                   "-        @header\n         self.assertTrue(True)\n")
+        self.assertEqual(proof.changed_tests(in_body, lambda module: head), {"test_x": ["A.test_guard"]})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")

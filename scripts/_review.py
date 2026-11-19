@@ -234,11 +234,18 @@ def main(argv=None) -> int:
             for v in value:
                 yield from strings(v)
     for text in list(strings(project)) + ([str(result["output"])] if result and result.get("output") else []):
-        candidate = Path(text) if os.path.isabs(text) else proj_path.parent / text
-        if candidate.exists():
-            SOURCES.add(os.path.realpath(candidate))
+        try:
+            candidate = Path(text) if os.path.isabs(text) else proj_path.parent / text
+            if candidate.exists():
+                SOURCES.add(os.path.realpath(candidate))
+        except (OSError, ValueError):
+            continue  # literal text (an overlay line, a title) that cannot be a file name
     # the two documents this run reads are inputs too
     SOURCES.update(os.path.realpath(p) for p in [proj_path] + ([a.result] if a.result else []))
+    # nothing is written over an input: not the page, not a still (checked before any write)
+    if os.path.realpath(folder / "index.html") in SOURCES:
+        print(f"error: {folder / 'index.html'} is an input of this run; give another -o", file=sys.stderr)
+        return 1
     stills = folder / STILLS
     if os.path.lexists(stills):
         # only a stills folder this tool made is cleared; anything else in its place is someone's

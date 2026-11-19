@@ -100,7 +100,9 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
                 if owner:
                     # a deleted line sits between head lines lineno-1 and lineno: a decorator
                     # belongs to the def below the gap, anything else to the line above it
-                    if line[0] == "-" and line[1:].lstrip().startswith("@"):
+                    body = line[1:]
+                    if (line[0] == "-" and body.lstrip().startswith("@")
+                            and len(body) - len(body.lstrip()) <= (old_depth if old else 4)):
                         pending = line  # placed when its def is read; a deleted line moves no head line
                         continue
                     at = lineno if line[0] == "+" else lineno - 1
