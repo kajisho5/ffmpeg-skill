@@ -111,6 +111,22 @@ class AudioTests(MediaFixtures):
             self.assertGreater(frame_rgb(output, 0, marker + 3, 87)[1], 200)
             self.assertLess(frame_rgb(output, 0, marker - 3, 87)[1], 20)
 
+    def test_waveform_still_refuses_a_video_only_flag_by_name(self):
+        """--at draws PNGs: --fps, --silence-threshold, --quality and the other video-output flags
+        were accepted and ignored; each is refused by name, and --color, which the PNG draws, is not."""
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            source = Path(tmp) / "tone.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", source)
+            for flags, name in ((("--fps", "60"), "--fps"), (("--silence-threshold", "-30"), "--silence-threshold"),
+                                (("--quality", "10"), "--quality"), (("--fast",), "--fast")):
+                proc = script("waveform.py", source, "--at", "1", *flags, "-o", Path(tmp) / "w.png", "--json",
+                              expect_fail=True)
+                self.assertIn(f"{name} only applies to the video output", json.loads(proc.stdout)["error"]["message"])
+                self.assertFalse((Path(tmp) / "w.png").exists())
+            done = json.loads(script("waveform.py", source, "--at", "1", "--color", "red", "-o", Path(tmp) / "w.png",
+                                     "--json").stdout)
+            self.assertEqual(done["status"], "completed", done)
+
     def test_waveform_spectrum_style(self):
         out = OUT / "waveform2.mp4"
         script("waveform.py", self.src, "--style", "spectrum", "--width", "640", "--height", "360", "-o", out)

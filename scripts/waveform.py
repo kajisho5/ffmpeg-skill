@@ -52,6 +52,9 @@ from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
 
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
+# flags that shape the video output and mean nothing to --at's PNGs
+WAVEFORM_VIDEO_ONLY = {"fps", "silence_threshold", "preset", "image_fit", "position", "vis_height", "opacity",
+                       "fast", "codec", "quality", "hw", "no_hw"}
 
 
 def _waveform_stills(args, meta: dict, rate: int) -> int:
@@ -239,6 +242,14 @@ def main() -> int:
     if not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.at:
+        # a video-only flag would be accepted and ignored: refused by name (a flag the tool cannot
+        # honour is refused, docs/design-decisions.md)
+        video_only = [a for a in ap._actions if a.option_strings and a.dest in WAVEFORM_VIDEO_ONLY
+                      and getattr(args, a.dest) != a.default
+                      and not (a.dest == "preset" and args.fast)]  # --fast sets the preset itself
+        if video_only:
+            die(f"--at draws waveform PNGs; {', '.join(a.option_strings[-1] for a in video_only)} "
+                "only applies to the video output")
         args.window = 2.0 if args.window is None else args.window
         return _waveform_stills(args, meta, audio_streams[args.audio_stream].get("sample_rate") or 0)
     if args.window is not None:
