@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import stat
 import statistics
 import sys
 from array import array
@@ -26,22 +27,38 @@ PROBED_VIDEO = "V:0"
 PROBED_AUDIO = "a:0"
 
 
-def fingerprint(path: str) -> Dict[str, Any]:
+def fingerprint(path: str, *, complete: bool = False) -> Dict[str, Any]:
     """Size plus a sha256 over the first and last 8 MiB: enough to notice a re-export, a re-trim
     or a swapped file, cheap enough for a multi-GB source (hashing a whole master would make
-    planning slower than the edit)."""
+    planning slower than the edit). Sequence plans also request a full-file hash."""
     import hashlib
-    st = os.stat(path)
     h = hashlib.sha256()
     chunk = 8 * 1024 * 1024
-    with open(path, "rb") as f:
+    # A file could have been replaced by a FIFO since the caller checked its type.
+    def open_without_waiting(name, flags):
+        return os.open(name, flags | getattr(os, "O_NONBLOCK", 0))
+
+    with open(path, "rb", opener=open_without_waiting) as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"{path!r} is not a regular file")
         h.update(f.read(chunk))
         if st.st_size > 2 * chunk:
             f.seek(-chunk, os.SEEK_END)
             h.update(f.read(chunk))
         elif st.st_size > chunk:
             h.update(f.read())
-    return {"path": os.path.abspath(path), "size": st.st_size, "sha256_head_tail": h.hexdigest()}
+        result = {"path": os.path.abspath(path), "size": st.st_size, "sha256_head_tail": h.hexdigest()}
+        if complete:
+            if st.st_size > 2 * chunk:
+                whole = hashlib.sha256()
+                f.seek(0)
+                for data in iter(lambda: f.read(chunk), b""):
+                    whole.update(data)
+                result["sha256_full"] = whole.hexdigest()
+            else:
+                result["sha256_full"] = result["sha256_head_tail"]
+    return result
 
 
 def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,

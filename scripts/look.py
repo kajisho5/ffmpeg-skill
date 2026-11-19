@@ -7,6 +7,7 @@ Examples:
   python3 look.py final.mp4 --tiles 4x5 --width 1600
   python3 look.py final.mp4 --at 2.5 --at 7          # single frames -> final_2.500s.png, final_7.000s.png
   python3 look.py before.mp4 --compare after.mp4 --at 4   # side-by-side frame
+  python3 look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png
   python3 look.py reel.mp4 --safe tiktok --at 3          # shade what TikTok's own UI covers
   python3 look.py show.mp4 --guides title,action,4:3 --at 10   # broadcast safe-area outlines
 Then view the PNG (Read tool / image viewer) and verify before reporting.
@@ -225,6 +226,8 @@ def main() -> int:
     ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS (default 4x3)")
     ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
+    ap.add_argument("--compare-at", action="append", metavar="TIME",
+                    help="seek time in the comparison file, one per --at. By default both use --at.")
     ap.add_argument("--no-timecode", action="store_true")
     ap.add_argument("--safe", choices=PLATFORM_CHOICES, help="shade the zones this platform's UI covers (its description bar, "
                                                        "like column, status bar) so you can see whether anything readable is under them")
@@ -238,6 +241,12 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.compare_at and not args.compare:
+        die("--compare-at needs --compare FILE")
+    if args.compare and not args.at:
+        die("--compare needs --at TIME")
+    if args.compare_at and len(args.compare_at) != len(args.at):
+        die("give one --compare-at TIME per --at TIME")
 
     meta = probe(args.input)
     if not meta.get("video"):
@@ -312,6 +321,7 @@ def main() -> int:
     if tm:
         tc = "," + tm + tc
     outputs: List[str] = []
+    comparisons = []
     # An untagged SDR source is BT.709 (what players and every encoder line here take it as), but the
     # conversion to the PNG's RGB reads "unknown" as BT.601: C03028 came out B31F28 (#410). Its
     # frames are labelled first (tags only), so that conversion reads them as BT.709.
@@ -325,9 +335,9 @@ def main() -> int:
         note(square_pixels_note(meta["video"]))
 
     if args.compare:
-        if not args.at:
-            die("--compare needs --at TIME")
         cmeta = probe(args.compare)
+        if not cmeta.get("video"):
+            die("--compare input has no video stream")
         if guides and any(g.get("guide") == "4:3" for g in guides):
             # the guides are drawn on both pictures: the second must be wider than 4:3 as well
             cw, ch = display_size(cmeta.get("video") or {})
@@ -339,10 +349,15 @@ def main() -> int:
         lab2 = bt709_label_filter(cmeta)
         lab2 = lab2 + "," if lab2 else ""
         csq = (square_pixels(cmeta.get("video")) + ",") if square_pixels(cmeta.get("video")) else ""
+        pairs = []
         for idx, t in enumerate(args.at):
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
             _refuse_past_end(t, sec, meta, args.input)
-            _refuse_past_end(t, sec, cmeta, args.compare, "--compare clip")
+            comparison = args.compare_at[idx] if args.compare_at else t
+            compare_sec = time_arg(comparison, "--compare-at", cmeta["video"].get("fps")) if args.compare_at else sec
+            _refuse_past_end(comparison, compare_sec, cmeta, args.compare, "--compare clip")
+            pairs.append((sec, compare_sec))
+        for idx, (sec, compare_sec) in enumerate(pairs):
             if args.output and len(args.at) == 1 and Path(args.output).suffix.lower() in IMAGE_EXTS:
                 out = args.output  # one frame, one named image file: the caller's -o is the contract
             else:
@@ -351,7 +366,6 @@ def main() -> int:
                 stem_part = (args.output and Path(args.output).stem) or stem
                 out = os.path.join(outdir, f"{stem_part}_vs_{Path(args.compare).stem}_{idx}_{sec:.3f}s.png")
             half = args.width // 2
-            stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
             # the tone map and the --safe / --guides boxes go on each picture as scaled, before the
             # pad: drawn after it, a picture letterboxed in the box got guides from the padded
             # height (a 2:1 clip beside a 16:9 one); the timecode stamp is drawn on the box
@@ -361,16 +375,19 @@ def main() -> int:
             # second's size, so a 4:3 beside a 16:9 came out squashed (#411)
             box_h = max(_half_height(half, display_size(meta["video"])),
                         _half_height(half, display_size(cmeta.get("video"))))
-            def fit(conv):
+            def fit(conv, seek):
                 conv = "," + conv if conv else ""
+                stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(seek))}':{font_prefix}{FONT}"
+                # Each side starts at its own first selected frame, even if the frame grids differ.
                 return (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{conv}{pre},"
-                        f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp}")
-            fc = (f"[0:{PROBED_VIDEO}]{lab}{sq}{fit(tm)}[a];[1:{PROBED_VIDEO}]{lab2}{csq}{fit(tm2)}[b];"
+                        f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp},setpts=PTS-STARTPTS")
+            fc = (f"[0:{PROBED_VIDEO}]{lab}{sq}{fit(tm, sec)}[a];[1:{PROBED_VIDEO}]{lab2}{csq}{fit(tm2, compare_sec)}[b];"
                   f"[a][b]hstack=inputs=2[out]")
-            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, *_seek(sec, cmeta), *still_input_args(args.compare), "-i", args.compare,
+            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, *_seek(compare_sec, cmeta), *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
+            comparisons.append({"output": out, "input_seek": sec, "compare_seek": compare_sec})
     elif args.at:
         for t in args.at:
             sec = time_arg(t, "--at", meta["video"].get("fps") if meta.get("video") else None)
@@ -450,7 +467,7 @@ def main() -> int:
             ink = {"frames": [measure_ink(o) for o in outputs]}
 
     emit(outputs[0] if len(outputs) == 1 else None, outputs=outputs, **({"ink": ink} if ink is not None else {}),
-         **({"guides": guides} if guides else {}))
+         **({"guides": guides} if guides else {}), **({"comparisons": comparisons} if comparisons else {}))
     if len(outputs) > 1 and not args.json:
         for o in outputs:
             print(o)
