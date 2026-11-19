@@ -145,6 +145,12 @@ def _probe_limit() -> float:
     return min(PROBE_TIMEOUT, STATE.timeout) if STATE.timeout else PROBE_TIMEOUT
 
 
+def _ffprobe(*args: str) -> "subprocess.CompletedProcess[str]":
+    # every short ffprobe question this module asks: text out, stderr dropped, the probe time limit
+    return subprocess.run([found_exe("ffprobe"), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                          encoding="utf-8", errors="replace", timeout=_probe_limit())
+
+
 def ffmpeg_version() -> "Tuple[int, int]":
     """(major, minor) of the FFmpeg build on PATH, parsed once from `ffprobe -version`; (0, 0)
     when it cannot be read. ffprobe rather than ffmpeg because --dry-run promises never to run
@@ -156,8 +162,7 @@ def ffmpeg_version() -> "Tuple[int, int]":
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION = (0, 0)
         try:
-            out = subprocess.run([found_exe("ffprobe"), "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                                 timeout=_probe_limit()).stdout
+            out = _ffprobe("-version").stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
                 _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
@@ -194,8 +199,7 @@ def ffmpeg_release() -> "Optional[Tuple[int, int, int]]":
     if not _FFMPEG_RELEASE_READ:
         _FFMPEG_RELEASE_READ = True
         try:
-            out = subprocess.run([found_exe("ffprobe"), "-version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                                 timeout=_probe_limit()).stdout
+            out = _ffprobe("-version").stdout
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)(?:\.(\d+))?", out)
             if m:
                 _FFMPEG_RELEASE = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
@@ -1037,11 +1041,9 @@ def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
         out_real = os.path.realpath(output)
     except OSError:
         return
-    for i, a in enumerate(cmd):
-        if a == "-i" and i + 1 < len(cmd):
-            inp = cmd[i + 1]
-            if same_file(inp, output):
-                _refuse_output_is_input(output, inp, out_real, "would overwrite it while ffmpeg is still reading it")
+    for inp in shape_of(cmd).inputs:
+        if same_file(inp, output):
+            _refuse_output_is_input(output, inp, out_real, "would overwrite it while ffmpeg is still reading it")
 
 
 def same_file(a: str, b: str) -> bool:
@@ -1113,8 +1115,8 @@ def _check_output_path(cmd: Sequence[str]) -> None:
 
 
 class Shape(NamedTuple):
-    """What an ffmpeg command line reads and writes, found once: the checks below each used to
-    search the argument list for `-i` and take the last argument as the output themselves."""
+    # What an ffmpeg command line reads and writes, found once: the checks below each used to
+    # search the argument list for `-i` and take the last argument as the output themselves.
     inputs: Tuple[str, ...]        # every `-i` value, in order
     output: str                    # the last argument
     output_opts: Tuple[str, ...]   # what follows the last input's path, before the output
@@ -2852,9 +2854,7 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     if not src or not os.path.isfile(src):
         return True
     try:
-        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                             timeout=_probe_limit()).stdout
+        out = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src).stdout
     except (OSError, subprocess.TimeoutExpired):
         return True
     kinds = {ln.strip() for ln in out.splitlines() if ln.strip()}
@@ -2892,10 +2892,7 @@ def carried_stream_maps(src: Optional[str], output: str, *, chapters: bool = Tru
     if not src or not os.path.isfile(src):
         return []
     try:
-        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries",
-                              "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *input_format_args(src), src],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-                             errors="replace", timeout=_probe_limit()).stdout
+        out = _ffprobe("-v", "error", "-show_entries", "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *input_format_args(src), src).stdout
         doc = json.loads(out or "{}")
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return []
@@ -2983,10 +2980,7 @@ def subtitle_codec_args(src: Optional[str], output: str) -> List[str]:
     if not src or not os.path.isfile(src):
         return args
     try:
-        out = subprocess.run([found_exe("ffprobe"), "-v", "error", "-select_streams", "s", "-show_entries",
-                              "stream=codec_name", "-of", "csv=p=0", *input_format_args(src), src],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-                             errors="replace", timeout=_probe_limit()).stdout
+        out = _ffprobe("-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", *input_format_args(src), src).stdout
     except (OSError, subprocess.TimeoutExpired):
         return args
     ext = os.path.splitext(output)[1]
@@ -3004,9 +2998,7 @@ def _non_av_kinds(src: Optional[str]) -> Optional[Dict[str, int]]:
     if not src or not os.path.isfile(src):
         return None
     try:
-        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
-                               *input_format_args(src), src], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                              encoding="utf-8", errors="replace", timeout=_probe_limit())
+        proc = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src)
     except (OSError, subprocess.TimeoutExpired):
         return None
     kinds = [ln.strip().strip(",") for ln in (proc.stdout or "").splitlines() if ln.strip()]
