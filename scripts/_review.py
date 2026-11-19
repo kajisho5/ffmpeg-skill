@@ -56,6 +56,15 @@ def still(src: str, at: float, out: Path) -> bool:
     return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
 
 
+def write_new(path: Path, text: str) -> None:
+    """Write `path` as a new file: into a temporary name beside it, then renamed over it. Writing
+    in place followed a symlink or a hard link at that name into whatever it pointed to (a project
+    input), and truncated it; a rename replaces the name only (review of #636)."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def length(src: str) -> "tuple[float | None, float]":
     """The source's duration (None when unknown) and its frame rate (30 when unknown), which a
     frame-based time such as 00:00:05:45 is read at."""
@@ -249,7 +258,8 @@ def main(argv=None) -> int:
     stills = folder / STILLS
     if os.path.lexists(stills):
         # only a stills folder this tool made is cleared; anything else in its place is someone's
-        if not (stills.is_dir() and not stills.is_symlink() and (stills / STILLS_MARK).is_file()):
+        mark = stills / STILLS_MARK
+        if not (stills.is_dir() and not stills.is_symlink() and mark.is_file() and not mark.is_symlink()):
             print(f"error: {stills} exists and was not made by the review page; move it or give another -o", file=sys.stderr)
             return 1
         inside = [p for p in SOURCES if Path(p).is_relative_to(stills.resolve())]
@@ -262,7 +272,7 @@ def main(argv=None) -> int:
                     and os.path.realpath(entry) not in SOURCES):
                 entry.unlink()
     stills.mkdir(parents=True, exist_ok=True)
-    (stills / STILLS_MARK).write_text("made by scripts/_review.py; cleared on each run\n", encoding="utf-8")
+    write_new(stills / STILLS_MARK, "made by scripts/_review.py; cleared on each run\n")
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(proj_path.parent))
@@ -280,7 +290,7 @@ def main(argv=None) -> int:
                        # runnable from anywhere: this copy's render.py, both paths quoted for a shell
                        run=json.dumps(f"python3 {shlex.quote(str(HERE / 'render.py'))} {shlex.quote(str(proj_path))} "
                                       "--overwrite --json").replace("</", "<\\/"))
-    (folder / "index.html").write_text(page, encoding="utf-8")
+    write_new(folder / "index.html", page)
     print(folder / "index.html")
     return 0
 

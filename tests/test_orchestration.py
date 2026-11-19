@@ -137,6 +137,27 @@ class OrchestrationTests(MediaFixtures):
                                  capture_output=True, text=True, cwd=str(work))
         self.assertEqual(refused.returncode, 1, refused.stderr)
         self.assertEqual(as_page.read_bytes(), before)
+        # a marker or a page name that links to an input is replaced as a name, never written
+        # through: the input keeps its bytes (review of #636)
+        linked = work / "linked"
+        (linked / "stills").mkdir(parents=True, exist_ok=True)
+        precious = work / "precious.txt"
+        precious.write_text("keep me", encoding="utf-8")
+        try:  # a Windows runner without symlink rights cannot make one: that half is skipped there
+            (linked / "stills" / ".ffmpeg-skill-review-stills").symlink_to(precious)
+        except OSError:
+            pass
+        else:
+            refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(linked),
+                                      "--overwrite"], capture_output=True, text=True, cwd=str(work))
+            self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+        hard = work / "hard"
+        hard.mkdir(exist_ok=True)
+        os.link(precious, hard / "index.html")
+        sh(sys.executable, SCRIPTS / "_review.py", proj, "-o", hard, "--overwrite")
+        self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+        self.assertIn("<html", (hard / "index.html").read_text(encoding="utf-8"))
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")
