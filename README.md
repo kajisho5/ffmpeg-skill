@@ -492,6 +492,8 @@ For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to a
 request a drift measurement, which may be unavailable for short or low-confidence recordings.
 Review lip sync by watching and listening to the delivered file.
 
+When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
+
 A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
 position beside the output start with
 `python3 scripts/look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png`.
