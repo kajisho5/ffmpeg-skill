@@ -88,7 +88,7 @@ def contract_surface(doc: Dict[str, object]) -> set:
 
 def contract_additions(old: Optional[Dict[str, object]], new: Optional[Dict[str, object]]) -> List[Tuple[str, str, str]]:
     """What the new contract has that the old one lacks, sorted. Empty when either is unknown:
-    a floor that cannot be measured is not applied, and the labels decide alone."""
+    a floor that cannot be measured is not applied (the shipped-code floor does not depend on it)."""
     if not old or not new:
         return []
     return sorted(contract_surface(new) - contract_surface(old))
@@ -199,7 +199,7 @@ def _git_paths(sha: str) -> List[str]:
 
 def _contract_at(rev: Optional[str]) -> Optional[Dict[str, object]]:
     """`_contract.py --json` of the working tree (rev None) or of a tag, read from an export of
-    that tag's scripts/. None when it cannot be produced: the caller then applies no floor."""
+    that tag's scripts/. None when it cannot be produced: the caller then applies no contract floor."""
     import tempfile
 
     def read(script: str) -> Dict[str, object]:
