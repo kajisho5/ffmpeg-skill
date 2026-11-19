@@ -68,7 +68,7 @@ CROP_DETAIL_MIN = 16  # an 8-bit luma gradient counts as detail at or above this
 CROP_MOTION_MIN = 8  # an 8-bit frame difference counts as motion at or above this
 CROP_MOTION_FLOOR = 0.05  # mean counted difference per pixel per sample: below it nothing moved
 CROP_DETAIL_FLOOR = 0.05  # mean counted gradient per pixel per sample: below it the frames are flat
-CROP_MOTION_OUTSIDE_WARN = 0.5  # with motion: review when this share of it is in the cut-away part
+CROP_MOTION_EXCESS_WARN = 0.15  # with motion: review when the motion share cut away exceeds the area share by this (#630)
 CROP_DETAIL_EXCESS_WARN = 0.15  # no motion: review when the detail share cut away exceeds the area share by this
 
 
@@ -229,7 +229,8 @@ def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
     energy share in the discarded part (a column the window edge cuts counts pro rata).
     centroid: of M when its mean is at or above CROP_MOTION_FLOOR, else of D. suggested_anchor:
     the --crop-x/--crop-y value (0..1) that centres the kept window on the centroid, clamped.
-    verdict: review when motion is present and motion_outside >= CROP_MOTION_OUTSIDE_WARN, or
+    verdict: review when motion is present and motion_outside - discarded_fraction >=
+    CROP_MOTION_EXCESS_WARN (motion spread evenly over the frame is not off centre, #630), or
     with no motion when detail_outside - discarded_fraction >= CROP_DETAIL_EXCESS_WARN; ok
     otherwise; unmeasured when no whole pair was given or the frames are flat (no division by
     zero, centroid and suggested_anchor null)."""
@@ -299,7 +300,7 @@ def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
     if discarded > 1e-9:
         check["suggested_anchor"] = round(min(1.0, max(0.0, (centroid - keep / 2) / discarded)), 2)
     if has_motion:
-        review = (m_out or 0.0) >= CROP_MOTION_OUTSIDE_WARN
+        review = (m_out or 0.0) - discarded >= CROP_MOTION_EXCESS_WARN
     else:
         review = (d_out or 0.0) - discarded >= CROP_DETAIL_EXCESS_WARN
     check["verdict"] = "review" if review else "ok"
@@ -355,7 +356,9 @@ def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: fl
             signal = check["signal"]
             share = check[f"{signal}_outside"]
             advice = f"{share:.0%} of the sampled luma {signal} lies outside the kept window."
-            if check["suggested_anchor"] is not None:
+            in_use = round(w0 / check["discarded_fraction"], 2) if check["discarded_fraction"] else None
+            # naming the anchor this run already used is no remedy (#630)
+            if check["suggested_anchor"] is not None and check["suggested_anchor"] != in_use:
                 advice += f" --crop-{axis} {check['suggested_anchor']:g} centres the window on the aggregate signal."
         else:
             advice = "Some samples have substantial luma motion or detail outside the kept window."

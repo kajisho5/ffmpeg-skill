@@ -6108,6 +6108,35 @@ class FitCropLossTests(unittest.TestCase):
         self.assertLess(c["motion_outside"], 0.5)
         self.assertAlmostEqual(c["suggested_anchor"], 0.5, delta=0.1)
 
+    def bars(self, xs, shift=0):
+        buf = bytearray(self.W * self.H)
+        for y in range(4, 14):
+            for x in xs:
+                buf[y * self.W + x + shift] = 255
+        return bytes(buf)
+
+    def test_motion_spread_over_the_frame_is_not_off_centre(self):
+        """#630: a 16:9 to 9:16 crop cuts 68% of the width, so motion spread evenly over the frame
+        (a pan, handheld footage, testsrc2) has more than half of it outside. That is the area
+        share, not content off centre: ok. Motion at both edges is review, and the remedy does not
+        name the centred anchor the run already used."""
+        from unittest.mock import patch
+
+        spread = list(range(0, 31, 3))
+        c = self.fit.crop_loss([(self.bars(spread), self.bars(spread, 1))] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertGreater(c["motion_outside"], 0.5, c)
+        self.assertEqual(c["verdict"], "ok", c)
+        edges = [1, 2, 3, 28, 29, 30]
+        pair = (self.bars(edges), self.bars([0, 1, 2, 29, 30, 31]))  # both move outward: centred
+        c = self.fit.crop_loss([pair] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertEqual((c["verdict"], c["suggested_anchor"]), ("review", 0.5), c)
+        with patch.object(self.fit, "sample_crop_frames", return_value=([(1.0, pair)], self.W, self.H)), \
+             patch.object(self.fit, "warn") as warn:
+            self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 0, 2)
+        message = warn.call_args.args[0]
+        self.assertNotIn("--crop-x", message)
+        self.assertIn("--fit pad", message)
+
     def test_flat_frames_are_unmeasured_without_division_by_zero(self):
         for fill in (0, 128):
             flat = self.frame(0, 0, 0, 0, fill=fill)

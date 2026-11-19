@@ -33,6 +33,7 @@ _Automated release: version and notes generated from pull requests merged since 
 
 ### Fixed
 
+- **`fit.py --fit crop` no longer warns about motion spread over the whole frame (#630).** A 16:9 to 9:16 crop cuts 68% of the width, so evenly spread motion (a pan, handheld footage) always had more than half of it outside and raised `crop_content_off_centre`, suggesting the `--crop-x` already in use. The motion rule now asks for an excess of 0.15 over the discarded share, as the detail rule does, and the warning no longer names the anchor the run used.
 - **A stream-copy join of AAC clips no longer lets the sound fall behind (#610).** `join.py --copy`
   played each later clip's AAC priming at its seam and carried each clip's sound past its picture
   into the next: on eight 4 s clips the beep came 32 ms later at every join (224 ms by clip 8) in
