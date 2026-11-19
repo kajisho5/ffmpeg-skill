@@ -1191,22 +1191,24 @@ def _reject_plan(path: str, plan_sha256: Optional[str], reason: str, msg: str, *
 
 def plan_input_status(inputs: Sequence[Any]) -> List[Dict[str, Any]]:
     """Each fingerprinted plan input against the file as it is now: {path, status: unchanged |
-    changed | missing, expected: {size, sha256_head_tail}, actual: {size, sha256_head_tail} or
-    "missing"}."""
+    changed | missing, expected: {size, sha256_head_tail[, sha256_full]}, actual: the same keys
+    or "missing"}."""
     rows: List[Dict[str, Any]] = []
     for inp in inputs:
         inp = inp if isinstance(inp, dict) else {"path": inp}
         p = inp.get("path")
         expected = {"size": inp.get("size"), "sha256_head_tail": inp.get("sha256_head_tail")}
+        if "sha256_full" in inp:
+            expected["sha256_full"] = inp["sha256_full"]
         if not p or not os.path.isfile(str(p)):
             rows.append({"path": p, "status": "missing", "expected": expected, "actual": "missing"})
             continue
         try:
-            now = fingerprint(str(p))
+            now = fingerprint(str(p), complete=True) if "sha256_full" in expected else fingerprint(str(p))
         except OSError:
             rows.append({"path": p, "status": "missing", "expected": expected, "actual": "missing"})
             continue
-        actual = {"size": now["size"], "sha256_head_tail": now["sha256_head_tail"]}
+        actual = {key: now[key] for key in expected}
         rows.append({"path": p, "status": "unchanged" if actual == expected else "changed", "expected": expected, "actual": actual})
     return rows
 
@@ -1260,6 +1262,7 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     Every refusal is `kind: input` with `error.reason` and `error.details` and appends one audit
     record (docs/design-decisions.md, "Nothing happens silently")."""
     digest = _plan_sha256(path)
+    audit_path = os.path.abspath(path)
     if plan.get("plan_version") != PLAN_VERSION:
         _reject_plan(path, digest, "plan_version_unsupported",
                      f"{path}: plan_version {plan.get('plan_version')!r} is not {PLAN_VERSION}",
@@ -1305,6 +1308,24 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     # a plan an earlier version recorded with --json-brief (A181): the tool is run for its full
     # document, as every plan written now asks for
     argv = [str(a) for a in plan["argv"] if not is_output_shape_flag(str(a))]
+    expected_frames = plan.get("sequence_frames_sha256")
+    replay_env = None
+    if tool == "sequence" and expected_frames is None:
+        warn("this older sequence plan does not bind the ordered frame list; make a new plan to check it",
+             "plan_sequence_unbound")
+    elif tool == "sequence":
+        if not isinstance(expected_frames, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_frames):
+            _reject_plan(audit_path, digest, "plan_field_invalid",
+                         "sequence_frames_sha256 must be a SHA-256 digest", field="sequence_frames_sha256")
+        from sequence import SEQUENCE_PLAN_ENV, replay_frame_digest
+        if STATE.dry_run:
+            actual_frames = replay_frame_digest(argv)
+            if actual_frames != expected_frames:
+                _reject_plan(audit_path, digest, "plan_inputs_changed",
+                             "the ordered sequence frames differ from what was planned; make a new plan",
+                             expected_frame_digest=expected_frames, actual_frame_digest=actual_frames)
+        else:
+            replay_env = dict(os.environ, **{SEQUENCE_PLAN_ENV: expected_frames})
     if STATE.dry_run:
         for c in plan.get("commands") or []:
             STATE.commands.append(c)
@@ -1317,7 +1338,8 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
              unbound_inputs=unbound)
         return 0
     info(f"executing plan {path}: {tool} " + " ".join(argv))
-    proc = run_tool([str(script)] + with_flags(argv, child_args() + ["--json"]))  # before a `--` in the plan's argv
+    proc = run_tool([str(script)] + with_flags(argv, child_args() + ["--json"]),
+                    env=replay_env)  # before a `--` in the plan's argv
     for is_command, line in stderr_records(proc.stderr):
         if is_command and not line.startswith("[dry-run]"):
             STATE.commands.append(line)
@@ -1329,6 +1351,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         doc = {}
     if proc.returncode != 0 or doc.get("status") != "completed":
         err = doc.get("error") or {}
+        if replay_env is not None and err.get("reason") == "plan_inputs_changed":
+            _reject_plan(audit_path, digest, "plan_inputs_changed", err["message"],
+                         **(err.get("details") or {}))
         error_extra = absorb_stage(tool, doc)  # the tool's reason/details and records ride along
         # the tool's exit code is the plan's (124 timeout, 130/143 interrupted), as sh() passes a stage's on
         die(f"{tool} failed while executing the plan: {err.get('message') or proc.stderr.strip()[-300:]}",

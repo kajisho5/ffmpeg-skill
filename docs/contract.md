@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.13.1`) | any release |
+| `skill.version` | the npm / package.json version (`3.13.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.13.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.13.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -375,6 +375,13 @@ leaves the speed unchanged. A dry run without a usable input length reports a nu
 duration, factor and retime decision for `speed`. Saving a plan checks that its input still
 matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
 the output duration separately.
+
+New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
+in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
+The tool checks the same fingerprints again before saving the plan. Replay, including replay with
+`--dry-run`, refuses a changed selection as `plan_inputs_changed`. For printf patterns the
+selection ends at the first gap. Older plans without the field still run and warn
+with `plan_sequence_unbound`; regenerate the plan to check the selection.
 
 ### Repeatability
 
@@ -904,6 +911,7 @@ Keys added after 3.1.8, additive (delivery masters and versions, #417-#423):
 | `versions`, `outputs` | `loudness.py --versions` | one row per target `{target, output, targets, result}` (top-level `output` is null) and the files written; each version's `loudness` and `duration` steps carry `version`, and `verified` holds only when every version met its own target. An empty list is refused; a `--plan` path that is one of the version files is refused (`output_path_taken`) |
 | `crossfade`, `expected_duration`, `seam` | `loop.py` | `crossfade`: the fade in seconds, whole frames; `expected_duration`: the length asked for, checked by the `duration` step within 1.5 frames; `seam`: the first seam measured (`video_step` against `video_typical_step`, `audio_level_step_db`) |
 | `guides` | `look.py --guides` | each outline drawn on the PNG (`action` 0.93, `title` 0.90 of the frame, or the `4:3` centre cut with its own); a frame (either clip under `--compare`) no wider than 4:3 refuses `4:3` |
+| `comparisons` | `look.py --compare` | One `{output, input_seek, compare_seek}` row per PNG, with requested positions in seconds on each input's clock. Repeat `--compare-at` once per `--at` to give the right side separate times. Otherwise both sides use `--at`. A dry run reports the planned image paths and seeks. The tool leaves the visual match to the reviewer. |
 | `levels`; row `legal levels` | `check.py --levels bt709\|ebu-r103` | `{standard, reference, bit_depth, legal {y, c}, window_seconds, frames, out_of_range_pct {y, u, v, chroma}, brng_pct, worst_frame {time, y_pct, chroma_pct}, min {y, u, v}, max {y, u, v}, windows [{start, end, ...the same}]}`: `legal` is the inclusive code range at the file's bit depth, the shares are percentages of samples (chroma: Cb and Cr together, at their own resolution), counted exactly per frame, and `brng_pct` is signalstats' BRNG (pixels with any component outside the fixed nominal range) |
 | `legalize`; step `legal_levels` | `color.py --legalize bt709\|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`) | `{standard, reference, legal, output}`: `output` is the `levels` document of the written file; the step fails (`verified: false`, status `completed`) when one frame keeps more than 1 % of its luma or chroma samples out of range after the encode, with a `legalize_residual` warning whenever any sample is out |
 | `smart`; `mode` `smart`; `reencode_reason` `smart` / `smart_fallback`; steps `smart_frames`, `smart_packets`, `smart_decode`, `smart_params` | `cut.py --smart` | `{applied, parts [{segment, kind: reencode\|copy, start, end, frames}], reencoded_frames, copied_frames, matched, encoder, checks {frames, grid_worst_seconds, copied_packets_equal, frames_decoded_equal, time_base}, time_base}`: only the partial GOPs at the cut points are re-encoded (libx264 matched to the source's profile, level, pixel format, reorder depth, size, SAR and colour tags), the rest is the source's packets, and the output is checked against the source before it is moved into place. When it cannot be made or does not verify: `{applied: false, reason, reason_code}`, `mode: accurate`, the whole cut re-encoded |

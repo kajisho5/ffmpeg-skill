@@ -1774,6 +1774,7 @@ seen before, and fix or report what fails.
 look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes (-o basename -> basename_sheet.png)
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
 look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame (-o basename -> basename_vs_AFTER_0_4.000s.png)
+look.py SOURCE --at 12.5 --compare CUT --compare-at 0 -o start.png # requested in-point beside cut start
 look.py INPUT --safe tiktok [--at 3]                              # shade what the app's UI covers
 look.py INPUT --guides title,action,4:3 [--at 3]                  # broadcast safe-area outlines
 ```
@@ -1782,8 +1783,11 @@ reaches a delivery): `action` 93 % and `title` 90 % of the frame (SMPTE ST 2046-
 centre 4:3 window of a wider frame with SD's 90 % action and 80 % title safe inside it (refused on
 a frame that is not wider than 4:3). It combines with `--safe PLATFORM` (the app's own UI zones)
 and works on a contact sheet's tiles as on a single frame; the result's `guides` lists them.
-An `--at` past the end of either picture is refused (`kind: input`); a still picture has one,
-at `--at 0`.
+`--compare-at` sets the right-hand seek on the comparison file's clock. Repeat it once per
+`--at`, in the same order. The default uses each `--at` seek on both sides. Each seek is
+checked against its own file's duration (`kind: input` if past the end). A still picture
+has one seek position, at zero. `comparisons`
+pairs each PNG with its two requested seek times. Inspect the frames to judge the cut.
 Outputs PNG. View it with the Read tool (or any image viewer) and judge the
 frame like an editor would. Use `--compare` to show before/after to the user. `--safe NAME` (1.14) shades the zones that
 destination's own UI covers -- TikTok's description block and like column, the Reels/Shorts
