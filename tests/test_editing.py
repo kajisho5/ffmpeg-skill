@@ -2313,11 +2313,23 @@ class EditingTests(MediaFixtures):
         self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 2 * 60, packets)
         self.assertNotIn("libx264", " ".join(doc["commands"]))
         self.assertClose(probe(str(out))["video"]["duration"], 4.0, 0.1)
+        # a third clip: on FFmpeg 6.1 to 8 the predicted delay passes 50 ms and the join is refused;
+        # where a build predicts less (FFmpeg 9 joins it), the joined sound is measured against
+        # where each clip starts, so the prediction is checked on whichever build runs this
         third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 700)
-        drift = json.loads(script("join.py", *clips, third, "--copy", "--transition", "none", "-o", OUT / "copy_three.mp4",
-                                  "--json", expect_fail=True).stdout)["error"]
-        self.assertEqual(drift["reason"], "join_copy_mismatch", drift)
-        self.assertGreater(drift["details"]["aac_drift_ms"], 50, drift)
+        three = OUT / "copy_three.mp4"
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "join.py"), *map(str, clips), str(third), "--copy",
+                               "--transition", "none", "-o", str(three), "--json", "--overwrite"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        doc = json.loads(proc.stdout)
+        if proc.returncode:
+            self.assertEqual(doc["error"]["reason"], "join_copy_mismatch", doc)
+            self.assertGreater(abs(doc["error"]["details"]["aac_drift_ms"]), 50, doc)
+            self.assertFalse(three.exists())
+        else:
+            self.assertEqual((doc["mode"], doc["verified"]), ("copy", True), doc)
+            for freq, start in ((500, 2.0), (700, 4.0)):
+                self.assertLessEqual(abs(self._tone_onset(three, freq) - start), 0.05, f"{freq} Hz clip starts late")
         wide = OUT / "copy_wide.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=96x48:r=30:d=2",
            "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", wide)
