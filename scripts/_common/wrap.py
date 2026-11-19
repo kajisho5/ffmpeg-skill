@@ -244,7 +244,7 @@ def _atoms(line: str, *, chinese: bool = False) -> "List[Tuple[str, bool]]":
                 # the wrapper may pay, not a wall. Compared on the atom's tail, so an opening bracket the
                 # pair carries (（看 + 看) still merges, and a closing mark between the two (「看」看) does not
                 out[-1] = (out[-1][0] + ch, out[-1][1])
-            elif chinese and out and not pending and out[-1][0] + ch in _CHINESE_WORDS:
+            elif chinese and out and not pending and out[-1][0][-1:] + ch in _CHINESE_WORDS:
                 out[-1] = (out[-1][0] + ch, out[-1][1])
             elif out and not pending and _is_katakana_run(ch) and _is_katakana_run(out[-1][0][-1]):
                 # a katakana word (タイミング, コンピューター) is one atom: eval 17 saw タイ|ミング

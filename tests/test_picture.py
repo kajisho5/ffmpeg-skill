@@ -5661,6 +5661,7 @@ class PhraseWrapTests(unittest.TestCase):
             ("我们一起来看看这个视频的效果吧", ("看看", "视频", "效果"), (None, "zh-CN")),
             ("你可以试试这个新的功能看看效果如何呢", ("试试", "功能", "看看", "效果"), (None, "zh-CN")),
             ("我們來看看「視頻」的效果，試試新的功能吧！", ("看看", "視頻", "效果", "試試", "功能"), ("zh-TW",)),
+            ("这是段原声音频请认真听听", ("声音", "音频", "听听"), (None, "zh-CN")),
         )
         for cue, words, langs in cases:
             for lang in langs:
