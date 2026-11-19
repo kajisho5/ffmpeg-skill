@@ -820,7 +820,8 @@ Each item is recorded here so it is not re-proposed from scratch.
   frame: 0.28 em, about 3 % of the line width**, which still lands the box inside the gap libass
   reserved rather than on a glyph. That measured number is the documented bound, not a tighter
   estimate. An RTL line is measured from its rendered end instead of its logical prefix: libass
-  lays Arabic and Hebrew out right-to-left, so the logical prefix is the *right* part of the
+  uses whole-event bidirectional layout (`Encoding -1`) for generated styles with RTL text.
+  The logical prefix of an Arabic or Hebrew line is the *right* part of the
   picture and measuring it from the left put the PNG on top of the text.
   The overlay is clamped to the frame and the test asserts it stays inside the safe area.
   The gap itself is exact: U+2588 FULL BLOCK was **measured**, not assumed, at 0.83 em (FreeSans),

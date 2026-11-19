@@ -1922,6 +1922,9 @@ and the estimated time difference when the input has a stable frame rate and the
 valid at that rate. Use seconds or
 word-level timestamps from a transcript when the source has a variable frame rate.
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
+For Hebrew, Arabic and other right-to-left cues, generated styles use libass's
+whole-line bidirectional layout so edge punctuation and karaoke retain their reading order.
+An authored `--ass` file uses the styles in that file.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` across the cue; `--karaoke-timing

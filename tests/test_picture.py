@@ -29,6 +29,49 @@ from _common import default_font_file, detect_script, escape_filter_path, font_f
 class PictureTests(MediaFixtures):
     """Caption, overlay, graphics, color, redact, deinterlace, denoise, stabilize, background and grid, plus fonts, emoji, shaping and caption wrap."""
 
+    def test_rtl_caption_keeps_punctuation_and_karaoke_in_reading_order(self):
+        from _common import script_font_status
+
+        def rgb(path, second):
+            return subprocess.run(["ffmpeg", "-v", "error", "-ss", str(second), "-i", str(path),
+                                   "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                  capture_output=True, check=True).stdout
+
+        def ink_mask(data):
+            return bytes(max(data[i:i + 3]) > 96 for i in range(0, len(data), 3))
+
+        for lang, words in (("he", "שלום זה מבחן"), ("ar", "مرحبا هذا اختبار"), ("en", "Hello this works")):
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory(dir=OUT) as tmp:
+                if lang != "en" and script_font_status(lang) != "available":
+                    continue
+                folder = Path(tmp)
+                source = tiny_clip(folder / "black.mp4", "color=black:s=640x360:r=25", seconds=3)
+                cues = folder / "cues.txt"
+                plain = folder / "plain.mp4"
+                args = ("--lang", lang, "--size", "34", "--outline", "0", "--shadow", "0",
+                        "--quality", "0", "--fast", "--json")
+                if lang != "en":
+                    cues.write_text(f"0-1 {words}?\n1-2 \u200f{words}?\u200f\n", encoding="utf-8")
+                    script("caption.py", source, "--text", cues, "-o", plain, *args)
+                    unmarked, marked = (ink_mask(rgb(plain, t)) for t in (0.4, 1.4))
+                    self.assertGreater(sum(unmarked), 100)
+                    self.assertEqual(unmarked, marked, "terminal punctuation should match an explicit RTL cue")
+                cues.write_text(f"0-2.7 {words}\n", encoding="utf-8")
+                out, ass = folder / "karaoke.mp4", folder / "karaoke.ass"
+                script("caption.py", source, "--text", cues, "--karaoke", "--karaoke-timing", "even",
+                       "--highlight-color", "FF2222", "--color", "FFFFFF", "--write-ass", ass, "-o", out, *args)
+                style = next(line for line in ass.read_text(encoding="utf-8").splitlines() if line.startswith("Style:"))
+                self.assertEqual(style.rsplit(",", 1)[1], "1" if lang == "en" else "-1")
+                frame = rgb(out, 0.7)
+                reds = [(i // 3) % 640 for i in range(0, len(frame), 3)
+                        if frame[i] > 150 and frame[i] > frame[i + 1] + 75 and frame[i] > frame[i + 2] + 75]
+                self.assertGreater(len(reds), 30, "first word should have visible red highlight")
+                centre = sum(reds) / len(reds)
+                if lang == "en":
+                    self.assertLess(centre, 320)
+                else:
+                    self.assertGreater(centre, 320)
+
     # ---------------------------------------------------------------- deinterlace
     def test_deinterlace_frame_mode_keeps_fps(self):
         out = OUT / "deint1.mp4"
