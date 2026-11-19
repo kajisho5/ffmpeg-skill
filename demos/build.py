@@ -918,6 +918,8 @@ def demo_cut_accurate(ctx):
                      "--json", "-o", before, capture=True)
     ctx.script("cut.py", src, "--start", "2.05", "--duration", "3", "--accurate",
                "--preset", "veryfast", "-o", after)
+    ctx.script("look.py", src, "--at", "2.05", "--compare", after, "--compare-at", "0",
+               "-o", ctx.path("start.png"))
     if out:
         found = json.loads(out)
         ctx.note("copy: keyframe_snapped=%s, %.2f s of extra material; accurate: 2.05 s exactly"
@@ -1984,6 +1986,9 @@ INSPECTION = [
 
 # --------------------------------------------------------------------------- docs
 DOC_HEADER = """# Demo gallery
+
+For a complete edit of spoken footage, follow the
+[subtitled Reels walkthrough](../examples/reels-walkthrough.md).
 
 Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
 the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of

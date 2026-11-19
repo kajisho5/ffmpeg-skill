@@ -479,11 +479,23 @@ It cannot tell you whether the result looks or sounds right, and the result says
 
 When an export fits video into a preset frame, `picture` gives the measured rectangle for pad, blur fill or crop. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available.
 
+A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
+position beside the output start with
+`python3 scripts/look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png`.
+Open the PNG to check the two frames. For several cuts, pair the source in-points with their
+positions in the output by repeating both time flags.
+
 ### Are silence removal and captions stable?
 
 They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.
 
 `caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
+
+### Which engine provides word timestamps for karaoke?
+
+With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. Auto prefers Whisper engines in this order: whisper.cpp, faster-whisper, OpenAI Whisper. An engine's failure can stop automatic selection, for example when the language is known and whisper.cpp fails to produce word timings. Use `--engine` to select an engine explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.
+
+Run `doctor --json` and inspect `speech_engines` for Whisper startup checks and errors. The faster-whisper entry includes the installed PyAV version when readable. Startup checks run without loading a model. Model availability and word timestamps are checked when you transcribe.
 
 ### How well does HDR to SDR work, and what should I watch for?
 
