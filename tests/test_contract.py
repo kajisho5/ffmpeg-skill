@@ -1342,7 +1342,8 @@ class ContractTests(unittest.TestCase):
         or -slower picture (caught in review of #91's fix, before it shipped). fit.py must not
         call run_keeping_subtitles() when it's changing speed -- dropping the subtitle track is
         the honest outcome, reported via dropped_non_av_streams: true, not a silently-wrong one."""
-        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("speed_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "speed",
+                              "-o", self.out("speed_fit.mkv"), "--json").stdout)
         self.assertTrue(doc["dropped_non_av_streams"])
         kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
         self.assertNotIn("subtitle", kinds)
@@ -1357,14 +1358,16 @@ class ContractTests(unittest.TestCase):
         def codes(doc):
             return [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings") or []]
 
-        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("warn_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "speed",
+                              "-o", self.out("warn_fit.mkv"), "--json").stdout)
         large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
                  if w["code"] == "large_speed_change"]
         self.assertEqual(len(large), 1, doc.get("diagnostics"))
         self.assertAlmostEqual(large[0]["factor"], 3.0, delta=0.05)  # the 6s fixture at 2s
         self.assertEqual(large[0]["threshold"], 1.15)
         # the same size of change downwards (6s stretched to 12s, 0.5x) is reported too
-        doc = json.loads(tool("fit", self.subbed, "--duration", "12", "-o", self.out("slow_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "12", "--method", "speed",
+                              "-o", self.out("slow_fit.mkv"), "--json").stdout)
         large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
                  if w["code"] == "large_speed_change"]
         self.assertEqual(len(large), 1, doc.get("diagnostics"))
@@ -1375,6 +1378,37 @@ class ContractTests(unittest.TestCase):
         # and neither is a trim to the reported case's target: nothing was retimed
         doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "-o", self.out("trim_fit.mkv"), "--json").stdout)
         self.assertNotIn("large_speed_change", codes(doc))
+
+    def test_fit_refuses_a_large_implicit_retime_in_the_plan_and_real_run(self):
+        source = self.out("103_8_seconds.mp4")
+        sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=10:d=103.8",
+           "-c:v", "libx264", "-preset", "ultrafast", source)
+        output = self.out("shortened.mp4")
+        args = (source, "--duration", "60", "-o", output, "--json")
+        for flags in ((), ("--dry-run",)):
+            with self.subTest(flags=flags):
+                process = tool("fit", *args, *flags, check=False)
+                self.assertNotEqual(process.returncode, 0)
+                result = json.loads(process.stdout)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"]["reason"], "fit_method_required")
+                self.assertEqual(result["error"]["details"],
+                                 {"factor": 1.73, "threshold": 1.15, "source_duration": 103.8, "target_duration": 60.0})
+                self.assertEqual(result["commands"], [])
+                self.assertFalse(output.exists())
+        plan = json.loads(tool("fit", *args, "--method", "speed", "--dry-run").stdout)
+        self.assertAlmostEqual(plan["timing"]["speed_factor"], 1.73)
+        self.assertIn("large_speed_change", [row["code"] for row in plan["diagnostics"]["warnings"]])
+        self.assertFalse(plan["verified"])
+
+        small_source = self.out("62_seconds.mp4")
+        sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=10:d=62",
+           "-c:v", "libx264", "-preset", "ultrafast", small_source)
+        small = json.loads(tool("fit", small_source, "--duration", "60", "-o", output, "--json").stdout)
+        self.assertAlmostEqual(small["timing"]["speed_factor"], 62 / 60)
+        self.assertTrue(small["verified"])
+        codes = [row["code"] for row in (small.get("diagnostics") or {}).get("warnings", [])]
+        self.assertNotIn("large_speed_change", codes)
 
     def test_fit_reports_timing_in_dry_run_saved_plan_and_result(self):
         output, plan = self.out("fit_timing.mp4"), self.out("fit_timing.json")
@@ -3464,7 +3498,7 @@ sys.exit(fit.main())
         outdir.mkdir(exist_ok=True)
         cases = {
             "cut": [self.src, "--start", "1", "--end", "3", "-o", outdir / "cut.mp4"],
-            "fit": [self.src, "--duration", "3", "-o", outdir / "fit.mp4"],
+            "fit": [self.src, "--duration", "3", "--method", "speed", "-o", outdir / "fit.mp4"],
             "caption": [self.src, "--text", self.cues, "-o", outdir / "cap.mp4"],
             "overlay": [self.src, "--image", self.logo, "-o", outdir / "ov.mp4"],
             "graphics": [self.src, "--template", "title", "--title", "T", "-o", outdir / "gfx.mp4"],
@@ -4135,7 +4169,7 @@ sys.exit(fit.main())
         doc = json.loads(proc.stdout)
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("--start", doc["error"]["message"])
-        proc = tool("fit", self.src, "--duration", "00:00:01:15", "--dry-run", "--json", "-o", self.out("smpte_fit.mp4"))
+        proc = tool("fit", self.src, "--duration", "00:00:01:15", "--method", "speed", "--dry-run", "--json", "-o", self.out("smpte_fit.mp4"))
         self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
         proc = tool("background", "--duration", "00:00:01:15", "--fps", "30", "--width", "64", "--height", "64", "--dry-run", "--json", "-o", self.out("smpte_bg.mp4"))
         self.assertIn("1.500", " ".join(map(str, json.loads(proc.stdout)["commands"])))
@@ -4469,7 +4503,7 @@ sys.exit(fit.main())
         # F8
         odd = self.out("odd.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=641x359:rate=30", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "2", "-pix_fmt", "yuv444p", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", odd)
-        for name, extra in (("cut", ["--start", "0.5", "--end", "1.5", "--accurate"]), ("fit", ["--duration", "1"]), ("color", ["--correct", "--exposure", "0.2"]), ("overlay", ["--text", "hi"])):
+        for name, extra in (("cut", ["--start", "0.5", "--end", "1.5", "--accurate"]), ("fit", ["--duration", "1", "--method", "speed"]), ("color", ["--correct", "--exposure", "0.2"]), ("overlay", ["--text", "hi"])):
             doc = json.loads(tool(name, odd, *extra, "--fast", "--json", "-o", self.out(f"odd_{name}.mp4")).stdout)
             self.assertEqual(doc["status"], "completed", name)
             self.assertEqual((doc["probe"]["video"]["width"] % 2, doc["probe"]["video"]["height"] % 2), (0, 0), name)
@@ -5604,7 +5638,7 @@ sys.exit(fit.main())
             "cut": [self.src, "--start", "1", "--end", "3", "--accurate", "-o", self.out("v_cut.mp4")],
             "audio": [self.wav, "-o", self.out("v_au.mp3")],
             "silence": [self.src, "-o", self.out("v_sil.mp4")],
-            "fit": [self.src, "--duration", "3", "-o", self.out("v_fit.mp4")],
+            "fit": [self.src, "--duration", "3", "--method", "speed", "-o", self.out("v_fit.mp4")],
             "export": [self.src, "--preset", "x", "-o", self.out("v_exp.mp4")],
             "caption": [self.src, "--text", self.cues, "-o", self.out("v_cap.mp4")],
             "overlay": [self.src, "--image", self.logo, "-o", self.out("v_ov.mp4")],
@@ -10892,7 +10926,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertIsNone(json.loads(tool("probe", self.nolength, "--json").stdout)["duration"])  # the fixture
         n, c = self.nolength, self.clip
         cases = {
-            "fit speed": ("fit", n, "--duration", "1"),
+            "fit speed": ("fit", n, "--duration", "1", "--method", "speed"),
             "fit trim": ("fit", n, "--duration", "1", "--method", "trim"),
             "freeze": ("freeze", n, "--at", "1", "--hold", "1"),
             "speedramp": ("speedramp", n, "--segment", "0-2:2.0"),
@@ -10930,7 +10964,8 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         remux = self.work / "unread_remux.mkv"
         self.doc("export", n, "--preset", "copy", "-o", remux)
         self.assertGreater(json.loads(tool("probe", remux, "--json").stdout)["duration"], 1.9)
-        doc, _ = self.doc("fit", remux, "--duration", "1", "-o", self.work / "unread_fit.mp4")
+        doc, _ = self.doc("fit", remux, "--duration", "1", "--method", "speed",
+                          "-o", self.work / "unread_fit.mp4")
         self.assertEqual((doc["status"], doc["verified"]), ("completed", True))
         # a tool that does not compute with the length still runs on the file as it is
         doc, _ = self.doc("fit", n, "--width", "80", "-o", self.work / "unread_scaled.mp4")
@@ -11194,7 +11229,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", beat)
         cases = {
             "probe": [c], "probe --analyze": [c, "--analyze"], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
-            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
+            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", "--method", "speed", *o()],
             "metadata": [c, "--title", "t", *o()], "metadata --auto-chapters": [c, "--auto-chapters", *o()],
             "caption": [c, "--text", cues, *o()], "overlay": [c, "--image", logo, *o()],
             "graphics": [c, "--template", "title", "--title", "T", *o()], "audio": [c, "--voice", "light", *o()],

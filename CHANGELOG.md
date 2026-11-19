@@ -46,6 +46,7 @@ _Automated release: version and notes generated from pull requests merged since 
 - Compare a requested cut in-point with the output start (#614)
 
 Closes: #548, #569, #606, #623
+- Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 
 ## 3.13.2
 

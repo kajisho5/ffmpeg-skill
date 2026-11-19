@@ -3,10 +3,9 @@
 
 Duration: --duration N with --method speed (retime video+audio, pitch-preserving
 via atempo chaining) or --method trim (keep the first N seconds, or a centred
-window with --from-center). Speed is the default method, but a retime beyond
-1.15x in either direction is never silent: the result's diagnostics carry a
-large_speed_change warning with the factor, because retiming the whole clip is
-easy to ask for by accident when what was wanted was a cut.
+window with --from-center). A duration alone allows a small retime. Beyond
+1.15x in either direction, choose --method speed, --method trim, or an explicit
+slow-motion filter. A large retime reports large_speed_change with the factor.
 Aspect: --aspect 16:9|9:16|1:1|4:5|W:H with
 --fit pad (letterbox/pillarbox with --pad-color, default black, or --pad-fill blur\nfor a blurred copy of the frame behind the picture), --fit crop, or --fit blur\n(the whole picture centred on a blurred, darkened copy of itself -- nothing\ncropped, no black bars).
 --width and/or --height set the output size: give one and the other follows
@@ -36,7 +35,7 @@ Examples:
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --width 1080
   python3 fit.py input.mp4 --aspect 9:16 --fit pad --pad-fill blur   # the phone-editor look: blurred frame behind the bars
   python3 fit.py input.mp4 --aspect 9:16 --fit blur                  # same look in one word (blurred + darkened fill)
-  python3 fit.py input.mp4 --aspect 1:1 --fit crop --duration 15
+  python3 fit.py input.mp4 --aspect 1:1 --fit crop --duration 15 --method trim
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
   python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
   python3 fit.py input.mp4 --width 1920 --height 1080            # exact frame, no aspect needed
@@ -53,7 +52,7 @@ from _common.runner import require_tool, run_analysis
 from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
-from _common.emit import input_length, refuse_still, warn
+from _common.emit import input_length, refuse, refuse_still, warn
 from _common.probe import fingerprint
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
@@ -344,7 +343,8 @@ def main() -> int:
                           "the first track, same as leaving it unset always did")
     d = ap.add_argument_group("duration")
     d.add_argument("--duration", help="target duration (seconds or mm:ss)")
-    d.add_argument("--method", choices=["speed", "trim"], default="speed", help="how to reach the duration (default speed; a retime beyond 1.15x in either direction is reported as a large_speed_change warning in the result)")
+    d.add_argument("--method", choices=["speed", "trim"],
+                   help="how to reach the duration (small retimes default to speed; larger changes need an explicit choice)")
     d.add_argument("--from-center", action="store_true", help="with --method trim, keep the middle instead of the start")
     d.add_argument("--max-speed", type=float, default=4.0, help="refuse speed factors above this (default 4x)")
     d.add_argument("--smooth", choices=["none", "blend", "interpolate"], default="none",
@@ -372,6 +372,8 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    method_given = args.method is not None
+    args.method = args.method or "speed"
 
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
@@ -457,13 +459,16 @@ def main() -> int:
             if factor > args.max_speed or factor < 1 / args.max_speed:
                 die(f"required speed factor {factor:.2f}x exceeds --max-speed {args.max_speed}x; use --method trim or raise the limit")
             if factor > SPEED_WARN_FACTOR or factor < 1 / SPEED_WARN_FACTOR:
-                warn(f"speed {factor:.2f}x: the whole picture and sound are retimed to reach "
-                     f"{target:.2f}s and nothing is cut; a retime beyond {SPEED_WARN_FACTOR:g}x "
-                     "is reported because it is easy to ask for by accident (speed is the "
-                     "default --method) when a cut was wanted -- if it was, use --method trim "
-                     "or cut first (silence.py removes dead air)",
-                     "large_speed_change", factor=round(factor, 3), threshold=SPEED_WARN_FACTOR,
-                     source_duration=round(src_dur, 3), target_duration=round(target, 3))
+                change = dict(factor=round(factor, 3), threshold=SPEED_WARN_FACTOR,
+                              source_duration=round(src_dur, 3), target_duration=round(target, 3))
+                if not method_given and not (factor < 1 and args.smooth != "none"):
+                    refuse("input", "fit_method_required",
+                           f"--duration {target:g} would retime the entire clip at {factor:.2f}x. Choose how to reach the target.",
+                           hint="pass --method speed to retime, --method trim to keep the start, "
+                                "or select what to keep with cut.py --segments or silence.py",
+                           **change)
+                warn(f"speed {factor:.2f}x: retiming the entire picture and sound to {target:.2f}s",
+                     "large_speed_change", **change)
             retimed = abs(factor - 1.0) > 1e-4
             if retimed:
                 vf.append(f"setpts={1/factor:.8f}*PTS")

@@ -1042,10 +1042,14 @@ preset fps, preset duration cap or `--max-mb` limit fails verification. The JSON
 reports the error on stderr. A failed loudness step is advisory for export and sets
 `verified: false` in JSON. Dry runs finish without post-export assertions.
 
-`fit.py --method speed` reports `large_speed_change` in `diagnostics.warnings`
-for speed factors above 1.15 or below 1/1.15, including in a dry run. The
-warning carries `factor`, `threshold`, `source_duration` and `target_duration`
-(durations in seconds).
+`fit.py --duration` refuses an implicit speed factor above 1.15 or below 1/1.15
+with `error.reason: fit_method_required`. Choose `--method speed` to retime or
+`--method trim` to trim. For stretching, `--smooth blend` and `--smooth interpolate`
+also express a choice to retime. A large retime that proceeds reports
+`large_speed_change` in `diagnostics.warnings`. The warning and refusal details
+carry `factor`, `threshold`, `source_duration` and `target_duration` (seconds).
+These rules also apply to dry runs with a known source duration. A pending source
+is checked when its duration can be read.
 
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,

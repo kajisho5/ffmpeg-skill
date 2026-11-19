@@ -49,7 +49,7 @@ TABLE = {
     "deinterlace": ([], ".mp4"),
     "denoise": ([], ".mp4"),
     "export": (["--preset", "youtube"], ".mp4"),
-    "fit": (["--duration", "{mid}"], ".mp4"),
+    "fit": (["--duration", "{mid}", "--method", "speed"], ".mp4"),
     "freeze": (["--at", "{mid}", "--hold", "0.5"], ".mp4"),
     "graphics": (["--template", "title", "--title", "Sweep", "--start", "0", "--end", "{mid}"], ".mp4"),
     "look": (["--at", "{mid}"], ".png"),

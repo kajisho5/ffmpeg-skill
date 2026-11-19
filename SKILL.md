@@ -47,7 +47,7 @@ Ask only when the answer changes the output and the request does not imply it; b
 into one proposal ("Reels: 9:16 padded, 60 s, -14 LUFS, no captions — OK?"). Never ask what a probe tells.
 
 - **Destination** sets aspect, length, loudness, codec; "export/post/deliver" with none named: ask.
-- **Duration** without a method: choose one deliberately, and never leave it to `fit.py`'s default (speed). Cut first: drop dead air (`silence.py`) and unwanted spans, or `--method trim`. Use `--method speed` only when asked, or when cutting cannot reach the target. Ask when it's unclear whether to cut or retime. If a run where you didn't choose speed shows a `large_speed_change` warning (retime beyond 1.15×), redo it as a cut.
+- **Duration** without a method: choose what to keep first. Drop dead air (`silence.py`) and unwanted spans, or use `--method trim` for a simple trim. Use `--method speed` when asked to retime. Ask when the intended edit is unclear. A large implicit retime fails with `fit_method_required`.
 - **Captions** without text: `--transcribe` if an engine exists, else ask; never invent dialogue.
 - **Brand, CJK text, crop position:** `references/workflow.md` (ask/assume section).
 - Anything else: pick the conventional default, say so, offer the alternative in one line.

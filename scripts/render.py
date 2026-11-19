@@ -1965,7 +1965,7 @@ def main() -> int:
             if abs(spd - 1.0) > 1e-6:  # speed 1.0 used to cost a full re-encode for nothing
                 dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else planned_clip_length(c, src, i)
                 fitted = str(work / f"clip{i:02d}_speed{mid}")
-                sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "-o", fitted, stage="clips")
+                sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "--method", "speed", "-o", fitted, stage="clips")
                 part = fitted
         parts.append(part)
     stages_done.append("clips")

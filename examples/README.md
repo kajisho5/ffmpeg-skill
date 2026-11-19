@@ -31,7 +31,7 @@ python3 $S/cut.py talk.mp4 --segments 0-1:30,18:40-20:00 -o talk_short.mp4
 
 ### "Make it exactly 60 seconds"
 ```bash
-python3 $S/fit.py talk_short.mp4 --duration 60                  # speed up/down (pitch preserved)
+python3 $S/fit.py talk_short.mp4 --duration 60 --method speed   # speed up/down (pitch preserved)
 python3 $S/fit.py talk_short.mp4 --duration 60 --method trim    # keep the first 60 s
 ```
 
@@ -100,7 +100,7 @@ python3 $S/look.py before.mp4 --compare after.mp4 --at 4
 
 ### "Tell me what you'd run first"
 ```bash
-python3 $S/fit.py input.mp4 --duration 60 --aspect 9:16 --dry-run
+python3 $S/fit.py input.mp4 --duration 60 --method trim --aspect 9:16 --dry-run
 python3 $S/export.py input.mp4 --preset reels --json          # structured result incl. probe of the output
 ```
 
@@ -251,7 +251,7 @@ python3 $S/export.py final.mp4 --preset gif -o preview.gif
 ```bash
 python3 $S/probe.py raw.mp4 --compact
 python3 $S/cut.py raw.mp4 --segments 0:45-3:10,5:00-6:30 -o step1.mp4
-python3 $S/fit.py step1.mp4 --duration 60 --aspect 9:16 --fit crop --width 1080 -o step2.mp4
+python3 $S/fit.py step1.mp4 --duration 60 --method speed --aspect 9:16 --fit crop --width 1080 -o step2.mp4
 python3 $S/caption.py step2.mp4 --text cues.txt -o step3.mp4
 python3 $S/overlay.py step3.mp4 --image logo.png --position top-right --scale 180 -o step4.mp4
 python3 $S/loudness.py step4.mp4 -o step5.mp4

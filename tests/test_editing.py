@@ -292,7 +292,7 @@ class EditingTests(MediaFixtures):
     # ---------------------------------------------------------------- fit
     def test_fit_duration_speed_and_aspect_pad(self):
         out = OUT / "fit1.mp4"
-        script("fit.py", self.src, "--duration", "6", "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
+        script("fit.py", self.src, "--duration", "6", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
         m = probe(str(out))
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
@@ -411,14 +411,14 @@ class EditingTests(MediaFixtures):
             vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
             return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
         blur = OUT / "fit_pad_blur.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
         m = probe(str(blur))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
         avg, spread = bar_stats(str(blur))
         self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
         self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
         solid = OUT / "fit_pad_color.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
         avg, spread = bar_stats(str(solid))
         self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
         self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
@@ -1319,7 +1319,7 @@ class EditingTests(MediaFixtures):
                                          ("fit.py", mute, ["--method", "trim", "--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", two48, ["--method", "trim", "--duration", "1.2"], "-t 1.200 "),
                                          # a retimed track ends before the target (atempo), so its -t cuts nothing and stays
-                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234 ")):
+                                         ("fit.py", two48, ["--duration", "1.23425", "--method", "speed"], "-t 1.234 ")):
             with self.subTest(pending=tool, source=source.name, args=args):
                 plan = json.loads(script(tool, source, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
                 self.assertIn(text, str(plan["commands"]))
@@ -2891,7 +2891,7 @@ class EditingTests(MediaFixtures):
 
     def test_progress_and_fast_flags(self):
         out = OUT / "prog.mp4"
-        proc = script("fit.py", self.src, "--duration", "6", "--fast", "--progress", "-o", out)
+        proc = script("fit.py", self.src, "--duration", "6", "--method", "speed", "--fast", "--progress", "-o", out)
         self.assertIn("%", proc.stderr)
         self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
         self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
@@ -3033,14 +3033,14 @@ class EditingTests(MediaFixtures):
         self.assertGreater(distinct, 200, f"{distinct} distinct pictures of 240: the slow motion repeats frames")
         plan = json.loads(script("fit.py", src, "--duration", "4", "--smooth", "interpolate", "--dry-run", "--json").stdout)
         self.assertIn("minterpolate=fps=30:", " ".join(plan["commands"]), "without --fps the source's rate")
-        proc = script("fit.py", self.vfr, "--duration", "6", "-o", OUT / "smooth_rate_vfr.mp4", "--overwrite", "--fast")
+        proc = script("fit.py", self.vfr, "--duration", "6", "--method", "speed", "-o", OUT / "smooth_rate_vfr.mp4", "--overwrite", "--fast")
         self.assertIn("source looks variable-frame-rate", proc.stderr)
 
     def test_fit_blur_keeps_the_whole_picture_on_a_blurred_border(self):
         """--fit blur: the target aspect, nothing cropped, borders that carry a dimmed copy of the
         picture rather than black, and a centre band that is still the scaled source."""
         out = OUT / "fit_blur.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "blur",
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "blur",
                "--width", "360", "--fast", "-o", out)
         m = probe(str(out))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
@@ -3049,7 +3049,7 @@ class EditingTests(MediaFixtures):
         self.assertGreater(top_spread, 8, f"blurred border is flat: {top_spread}")
         # the centre band is the fitted source: 360x202 sits at y=(640-202)/2
         ref = OUT / "fit_blur_ref.mp4"
-        script("fit.py", self.src, "--duration", "3", "--width", "360", "--fast", "-o", ref)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--width", "360", "--fast", "-o", ref)
         mid_avg, _ = self._region_stats(out, "iw:180:0:230")
         ref_avg, _ = self._region_stats(ref, "iw:180:0:10")
         self.assertClose(mid_avg, ref_avg, 12, "the centre of a blur fit is the scaled source")
@@ -5426,7 +5426,7 @@ class StillAsClipTests(unittest.TestCase):
             "cut": ("cut.py", "--start", "0", "--end", "1"),
             "cut past its frame": ("cut.py", "--start", "0.2", "--end", "1"),
             "cut --accurate": ("cut.py", "--start", "0.2", "--end", "1", "--accurate"),
-            "fit speed": ("fit.py", "--duration", "1"),
+            "fit speed": ("fit.py", "--duration", "1", "--method", "speed"),
             "fit trim": ("fit.py", "--duration", "1", "--method", "trim"),
             "freeze": ("freeze.py", "--at", "0.4", "--hold", "0.5"),
             "speedramp": ("speedramp.py", "--segment", "0-1:2.0"),

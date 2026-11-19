@@ -1377,7 +1377,7 @@ raise SystemExit(export.main())
         self.assertEqual(render_mod.expand_templates("youtube-shorts"), ["youtube-shorts"],
                          "a template that ships under its own name stays itself")
         target = OUT / "alias_src.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "crop",
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "crop",
                "--width", "360", "--fast", "-o", target)
 
         def commands(tool, *argv):

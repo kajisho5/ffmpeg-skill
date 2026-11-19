@@ -17,7 +17,7 @@ variant it does not show.
 | "cut on the beat", "edit it to the music" | `scenes.py track.mp4 --beats --json > beats.json`, then `cut.py input.mp4 --segments ... --snap beats --snap-source beats.json` (`--snap-source` carries the measured grid over) |
 | "speed up here, slow-mo there" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
 | "hold on this frame", "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
-| "smooth slow motion", "half speed but fluid" | `fit.py input.mp4 --duration 2x --smooth interpolate` (slow) or `--smooth blend` |
+| "smooth slow motion", "half speed but fluid" | For a 10 s clip, `fit.py input.mp4 --duration 20 --smooth interpolate` or `--smooth blend` |
 | "reverse this clip" | `reverse.py input.mp4` |
 | "loop this clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
 | "make it vertical / 9:16 / square" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`; `--pad-fill blur` for blurred bars) |
