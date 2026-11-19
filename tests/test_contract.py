@@ -2824,7 +2824,8 @@ sys.exit(fit.main())
             "  return { error: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }), status: null };\n"
             "}\n"
             "stub.calls = [];\n"
-            "const fallen = inst.runWithPython(['doctor'], 'win32', stub);\n"
+            "const same = (c) => c;\n"
+            "const fallen = inst.runWithPython(['doctor'], 'win32', stub, same);\n"
             "if (fallen.missing || fallen.status !== 7) process.exit(2);\n"
             "if (callsOf(stub) !== 'python3 -c|python -c|python doctor') process.exit(3);\n"
             "function kept(cmd, args) {\n"
@@ -2833,7 +2834,7 @@ sys.exit(fit.main())
             "  return { status: 2, error: null };\n"
             "}\n"
             "kept.calls = [];\n"
-            "const scriptFailed = inst.runWithPython(['doctor'], 'win32', kept);\n"
+            "const scriptFailed = inst.runWithPython(['doctor'], 'win32', kept, same);\n"
             "if (scriptFailed.missing || scriptFailed.status !== 2) process.exit(4);\n"
             "if (kept.calls.some(c => c[0] !== 'python3')) process.exit(5);\n"
             "function missing(cmd, args) {\n"
@@ -2841,7 +2842,7 @@ sys.exit(fit.main())
             "  return { error: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }), status: null };\n"
             "}\n"
             "missing.calls = [];\n"
-            "const none = inst.runWithPython(['doctor'], 'linux', missing);\n"
+            "const none = inst.runWithPython(['doctor'], 'linux', missing, same);\n"
             "if (!none.missing || missing.calls.join() !== 'python3') process.exit(6);\n"
             "if (inst.pythonCandidates('linux').join() !== 'python3') process.exit(7);\n"
             "if (inst.pythonCandidates('win32').join() !== 'python3,python,py') process.exit(8);\n",
@@ -2884,28 +2885,53 @@ sys.exit(fit.main())
             "    return { status: 0 };\n"
             "  };\n"
             "  m.calls = []; m.ffmpeg = 'no';\n"
+            "  // the stand-in PATH: ffmpeg once it runs, and the programs this machine has\n"
+            "  m.find = (c) => (c === 'ffmpeg' || programs.includes(c) ? c : null);\n"
             "  return m;\n"
             "}\n"
             "const ran = (m) => m.calls.filter((c) => / install /.test(c));\n"
             "let m = machine(['brew'], 'yes'); m.ffmpeg = 'yes';\n"
-            "eq(inst.setupFfmpeg('darwin', m, {}, false, () => {}, true).state, 'present', 20); eq(ran(m), [], 21);\n"
+            "eq(inst.setupFfmpeg('darwin', m, {}, false, () => {}, true, m.find).state, 'present', 20); eq(ran(m), [], 21);\n"
             "m = machine(['apt-get', 'sudo'], 'yes');\n"
-            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, false).state, 'skipped', 22); eq(ran(m), [], 23);\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, false, m.find).state, 'skipped', 22); eq(ran(m), [], 23);\n"
             "m = machine(['apt-get', 'sudo'], 'yes');\n"
-            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'installed', 24); eq(ran(m), ['sudo apt-get install -y ffmpeg'], 25);\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true, m.find).state, 'installed', 24); eq(ran(m), ['sudo apt-get install -y ffmpeg'], 25);\n"
             "m = machine(['apt-get', 'sudo'], 'fail');\n"
-            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'failed', 26);\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true, m.find).state, 'failed', 26);\n"
             "m = machine(['dnf', 'sudo'], 'yes');\n"
-            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'skipped', 27); eq(ran(m), [], 28);\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true, m.find).state, 'skipped', 27); eq(ran(m), [], 28);\n"
             "m = machine(['brew'], 'keg'); let env = { PATH: '/usr/bin' };\n"
-            "let got = inst.setupFfmpeg('darwin', m, env, false, () => {}, true);\n"
+            "let got = inst.setupFfmpeg('darwin', m, env, false, () => {}, true, m.find);\n"
             "eq(got.state, 'installed', 29); if (!/ffmpeg-full.bin/.test(env.PATH) || !/export PATH=/.test(got.line)) process.exit(30);\n"
             "m = machine(['winget'], 'no');\n"
-            "eq(inst.setupFfmpeg('win32', m, {}, false, () => {}, true).state, 'new_shell', 31); eq(ran(m), ['winget install --id Gyan.FFmpeg -e'], 32);\n",
+            "eq(inst.setupFfmpeg('win32', m, {}, false, () => {}, true, m.find).state, 'new_shell', 31); eq(ran(m), ['winget install --id Gyan.FFmpeg -e'], 32);\n",
             encoding="utf-8")
         proc = subprocess.run(["node", str(probe), str(ROOT / "bin" / "install.js")],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+
+        # Every program the installer starts is found on PATH's absolute entries and run by its full
+        # path: a bare name would let Windows look in the current directory first, so a winget.exe
+        # in the project would run. Nothing is run to find it.
+        bindir = self.out("which_bin")
+        bindir.mkdir()
+        (bindir / "tool").write_text("", encoding="utf-8")
+        here = self.out("which_cwd")
+        here.mkdir()
+        (here / "tool").write_text("", encoding="utf-8")
+        found = subprocess.run(
+            ["node", "-e", "const i = require(process.argv[1]); const [abs, cwd] = process.argv.slice(2);\n"
+             "const r = (p) => i.which('tool', { PATH: p }, 'linux');\n"
+             "const win = (p, have) => i.which('winget', { PATH: p }, 'win32', (f) => have.includes(f));\n"
+             "process.stdout.write(JSON.stringify([r(abs), r('.'), r(''), r(`.:${abs}`), r('which_cwd'), i.which('nothing-here', { PATH: abs }, 'linux'),\n"
+             "  win('C:\\\\bin;.', ['C:\\\\bin\\\\winget.exe']), win('.;C:\\\\bin', ['C:\\\\bin\\\\winget.cmd']), win('rel', ['rel\\\\winget.exe'])]));",
+             str(ROOT / "bin" / "install.js"), str(bindir), str(here)],
+            cwd=str(here), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(found.returncode, 0, found.stderr)
+        self.assertEqual(json.loads(found.stdout),
+                         [str(bindir / "tool"), None, None, str(bindir / "tool"), None, None, "C:\\bin\\winget.exe", None, None])
+        js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+        self.assertNotRegex(js, r"spawn(Sync)?\('(ffmpeg|python3?|py|brew|winget|apt-get|sudo)'", "a program is spawned by its bare name")
 
         def setup(home, *flags):
             env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))

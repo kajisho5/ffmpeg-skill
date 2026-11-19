@@ -101,17 +101,48 @@ function ffmpegUnsupported(versionLine) {
   return major < 6 || (major === 6 && minor < 1) ? FFMPEG_UNSUPPORTED.replace('{v}', `${major}.${minor}`) : null;
 }
 
+// The absolute path of a program, from the absolute entries of PATH only, or null; nothing is run
+// to find it. Spawning a bare name lets the OS search on its own terms: on Windows that search
+// starts in the current directory, so a winget.exe or python.exe in the project being worked on
+// would run in place of the installed one. A relative PATH entry ("." or an empty one) is skipped
+// for the same reason. On Windows only .exe and .com are taken (a .bat or .cmd needs a shell).
+function which(cmd, env, platform, isFile) {
+  const plat = platform || process.platform;
+  const p = plat === 'win32' ? path.win32 : path.posix;
+  const e = env || process.env;
+  const exists = isFile || ((f) => {
+    try { return fs.statSync(f).isFile(); } catch (_) {
+      // a Windows App Execution Alias (winget.exe, python.exe in WindowsApps) is a reparse point
+      // that stat may not follow; lstat still sees it, and spawning it by its full path works
+      try { return plat === 'win32' && Boolean(fs.lstatSync(f)); } catch (__) { return false; }
+    }
+  });
+  const exts = plat === 'win32' ? ['.exe', '.com'] : [''];
+  const dirs = String(e.PATH || e.Path || '').split(plat === 'win32' ? ';' : ':').filter((d) => d && p.isAbsolute(d));
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const full = p.join(dir, cmd + (cmd.toLowerCase().endsWith(ext) ? '' : ext));
+      if (exists(full)) return full;
+    }
+  }
+  return null;
+}
+
 function pythonCandidates(platform) {
   return platform === 'win32' ? ['python3', 'python', 'py'] : ['python3'];
 }
 
 // The first candidate that runs and is 3.10+: { cmd, version } (version "3.12", or null when the
 // probe printed nothing), or { missing: true, ... } when none is.
-function findPython(platform, spawn) {
+// resolve(name) gives the program to run (default: which); a test passes its own.
+function findPython(platform, spawn, resolve) {
   const candidates = pythonCandidates(platform);
   const run = spawn || spawnSync;
+  const find = resolve || ((c) => which(c, process.env, platform));
   let last = null;
-  for (const cmd of candidates) {
+  for (const name of candidates) {
+    const cmd = find(name);
+    if (!cmd) continue;
     const probe = run(cmd, PYTHON_PROBE, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 15000 });
     if (probe.error || probe.status !== 0) {
       last = probe;
@@ -123,15 +154,15 @@ function findPython(platform, spawn) {
   return { missing: true, error: last && last.error, status: last && last.status, candidates };
 }
 
-function runWithPython(scriptArgs, platform, spawn) {
-  const py = findPython(platform, spawn);
+function runWithPython(scriptArgs, platform, spawn, resolve) {
+  const py = findPython(platform, spawn, resolve);
   if (py.missing) return py;
   return (spawn || spawnSync)(py.cmd, scriptArgs, { stdio: 'inherit' });
 }
 
 // After an install: say so when no Python 3.10+ is on PATH, since every script needs one.
-function warnMissingPython(platform, spawn, warn) {
-  const py = findPython(platform, spawn);
+function warnMissingPython(platform, spawn, warn, resolve) {
+  const py = findPython(platform, spawn, resolve);
   if (!py.missing) return null;
   const line = `warning: no Python 3.10+ interpreter was found (tried: ${py.candidates.join(', ')}); the skill's scripts need one (3.0.0 removed Python 3.9).`;
   (warn || console.warn)(`\n  ${line}`);
@@ -164,8 +195,10 @@ function ffmpegInstallPlan(platform, onPath, isRoot) {
   return { cmd: ['sudo', ...apt] };
 }
 
-function ffmpegRuns(spawn, env) {
-  const r = spawn('ffmpeg', ['-version'], { encoding: 'utf8', env });
+function ffmpegRuns(spawn, env, find) {
+  const exe = find('ffmpeg', env);
+  if (!exe) return false;
+  const r = spawn(exe, ['-version'], { encoding: 'utf8', env });
   return !r.error && r.status === 0;
 }
 
@@ -173,23 +206,27 @@ function ffmpegRuns(spawn, env) {
 // "present", "installed", "new_shell" (installed, but this process cannot see it), "skipped"
 // (nothing was run) or "failed". Homebrew's ffmpeg-full is keg-only, so its bin directory is put
 // on env.PATH for the rest of this process and the export line is printed for the user's profile.
-function setupFfmpeg(platform, spawn, env, isRoot, log, allowInstall) {
-  if (ffmpegRuns(spawn, env)) return { state: 'present', line: null };
+// resolve(name, env) gives a program's absolute path or null (default: which); a test passes its own.
+function setupFfmpeg(platform, spawn, env, isRoot, log, allowInstall, resolve) {
+  const find = resolve || ((c, e) => which(c, e, platform));
+  if (ffmpegRuns(spawn, env, find)) return { state: 'present', line: null };
   if (!allowInstall) return { state: 'skipped', line: 'ffmpeg is not on PATH and --no-ffmpeg was given: nothing was installed.' };
-  const onPath = (cmd) => !spawn(cmd, ['--version'], { stdio: 'ignore', env }).error;
+  const onPath = (cmd) => Boolean(find(cmd, env));
   const plan = ffmpegInstallPlan(platform, onPath, isRoot);
   if (!plan.cmd) return { state: 'skipped', line: `ffmpeg is not on PATH and was not installed: ${plan.why}.` };
   log(`  ffmpeg is not on PATH; running: ${plan.cmd.join(' ')}`);
-  const r = spawn(plan.cmd[0], plan.cmd.slice(1), { stdio: 'inherit', env });
+  // every program by its absolute path, apt-get after sudo included
+  const argv = plan.cmd.map((a, i) => (i === 0 || (plan.cmd[0] === 'sudo' && i === 1) ? find(a, env) : a));
+  const r = spawn(argv[0], argv.slice(1), { stdio: 'inherit', env });
   if (r.error || r.status !== 0) {
     return { state: 'failed', line: `"${plan.cmd.join(' ')}" did not finish (${r.error ? r.error.message : `exit ${r.status}`}): ffmpeg is still missing.` };
   }
   if (plan.keg) {
-    const k = spawn(plan.keg[0], plan.keg.slice(1), { encoding: 'utf8', env });
+    const k = spawn(find(plan.keg[0], env), plan.keg.slice(1), { encoding: 'utf8', env });
     const prefix = !k.error && k.status === 0 && typeof k.stdout === 'string' ? k.stdout.trim() : '';
     if (prefix) env.PATH = `${path.join(prefix, 'bin')}${path.delimiter}${env.PATH || ''}`;
   }
-  if (ffmpegRuns(spawn, env)) {
+  if (ffmpegRuns(spawn, env, find)) {
     return { state: 'installed', line: plan.keg ? 'ffmpeg-full is keg-only: add this to your shell profile so every terminal finds it:\n    export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"' : null };
   }
   return { state: 'new_shell', line: 'FFmpeg was installed, but this terminal does not see it yet: open a new terminal and run `npx ffmpeg-skill doctor`.' };
@@ -261,7 +298,8 @@ function copyRecursive(src, dst) {
 }
 
 function checkFfmpeg() {
-  const r = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
+  const exe = which('ffmpeg');
+  const r = exe ? spawnSync(exe, ['-version'], { encoding: 'utf8' }) : { error: new Error('not on PATH') };
   if (r.error || r.status !== 0) {
     console.warn('\n  warning: ffmpeg was not found on PATH. The skill needs FFmpeg to run:');
     console.warn('    macOS:   brew install ffmpeg-full; export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"');
@@ -385,4 +423,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { detectAgents, ffmpegInstallPlan, setupFfmpeg, SETUP_FLAGS, argumentError, payloadPaths, PAYLOAD, FLAGS, pythonCandidates, runWithPython, findPython, warnMissingPython, ffmpegUnsupported, FFMPEG_UNSUPPORTED, PYTHON_PROBE };
+module.exports = { which, detectAgents, ffmpegInstallPlan, setupFfmpeg, SETUP_FLAGS, argumentError, payloadPaths, PAYLOAD, FLAGS, pythonCandidates, runWithPython, findPython, warnMissingPython, ffmpegUnsupported, FFMPEG_UNSUPPORTED, PYTHON_PROBE };
