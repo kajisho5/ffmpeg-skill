@@ -4169,6 +4169,9 @@ class ScriptFontTests(unittest.TestCase):
                     resolve.assert_called_with("vi")
             for sample in ("hello", "Mănăstire", "rođen"):
                 self.assertEqual(fonts.script_font_for_text(sample), ("latin", None, None))
+            # Igbo shares these letters; a caller who names the language keeps its own font (review of #636)
+            for sample, lang in (("Ọ dị mma", "ig"), ("ẹ kú àárọ̀", "yo")):
+                self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", None, None))
         with unittest.mock.patch.object(fonts.platform, "system", return_value="Linux"), \
              unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-match"), \
              unittest.mock.patch.object(fonts.subprocess, "run") as fc_match, \

@@ -808,8 +808,10 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
         # Breve-a and stroked d also occur separately in other languages. Their combination
         # with each other or with Vietnamese tilde vowels is a stronger signal.
         combined = re.search(r"[Đđ]", normalized) and re.search(r"[ĂăÃãĨĩŨũ]", normalized)
-        # an empty sample (a dry run before transcription) asks for no face (review of #636)
-        if (tag == "vi" and normalized.strip()) or marked or combined:
+        # an empty sample (a dry run before transcription) asks for no face; a language the
+        # caller names that is not Vietnamese (Igbo, Yoruba share these letters) keeps its own
+        # font: the letters cannot tell them apart, the tag can (review of #636)
+        if (tag == "vi" and normalized.strip()) or (tag in ("", "vi") and (marked or combined)):
             key = "vi"
     if key == "latin":
         return script, None, None

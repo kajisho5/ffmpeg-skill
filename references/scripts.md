@@ -2507,8 +2507,8 @@ for a source with no duration, and when the budget leaves under 100 kb/s for the
 Scales into the preset frame (pad by default), tags BT.709 (a BT.601-matrix or RGB source is converted to it, as by every re-encode), sets `+faststart`,
 trims to the table's platform maximums (Reels 90 s, X 140 s; the table's as of its date, and
 platforms change them) unless `--allow-long`, and says
-so: `trimmed: {from, to}` and a `notes` line. For
-youtube / youtube4k / reels / x the written file is measured and, since 4.0.0,
+so: `trimmed: {from, to}` and a `notes` line. For every platform preset (youtube, youtube4k, youtube-hdr, youtube-av1, reels, tiktok,
+shorts, linkedin, facebook, x) the written file is measured and, since 4.0.0,
 a usable measurement outside the platform's LUFS / true-peak spec runs
 `loudness.py` on it by default (audio re-encoded, video copied;
 `loudness.normalized: true`), so a platform export is one command instead of

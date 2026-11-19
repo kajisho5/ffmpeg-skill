@@ -3336,6 +3336,21 @@ sys.exit(fit.main())
                      "         expected = \"\"\"first\n-@header\n last\"\"\"\n")
         self.assertEqual(proof.changed_tests(in_string, lambda module: head_src, lambda module: base_src),
                          {"test_x": ["T.test_example"]})
+        # with the base's module a deleted line is the test it was in on the base's side: a
+        # decorator deleted from a helper inside a test is that test's, and the lines of a class
+        # the change removed are nobody's, not the test above them (review of #636)
+        base_two = ("import unittest\nclass A(unittest.TestCase):\n    def test_a(self):\n        @staticmethod\n"
+                    "        def helper():\n            return 1\n        self.assertEqual(helper(), 1)\n"
+                    "class B(unittest.TestCase):\n    def test_b(self):\n        pass\n")
+        head_two = base_two.replace("        @staticmethod\n", "")
+        helper_deco = ("+++ b/tests/test_x.py\n@@ -3,4 +3,3 @@ class A(unittest.TestCase):\n     def test_a(self):\n"
+                       "-        @staticmethod\n         def helper():\n             return 1\n")
+        self.assertEqual(proof.changed_tests(helper_deco, lambda module: head_two, lambda module: base_two),
+                         {"test_x": ["A.test_a"]})
+        no_b = base_two.split("class B")[0]
+        class_gone = ("+++ b/tests/test_x.py\n@@ -6,5 +6,2 @@ class A(unittest.TestCase):\n             return 1\n"
+                      "         self.assertEqual(helper(), 1)\n-class B(unittest.TestCase):\n-    def test_b(self):\n-        pass\n")
+        self.assertEqual(proof.changed_tests(class_gone, lambda module: no_b, lambda module: base_two), {})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")

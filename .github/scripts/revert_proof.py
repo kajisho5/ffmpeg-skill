@@ -76,6 +76,7 @@ def changed_tests(diff: str, read=lambda module: "", read_base=None) -> "dict[st
     (or one that does not parse) the enclosing `def test_` of each hunk is used, bare."""
     found: "dict[str, list[str]]" = {}
     module, current, depth, lineno, owner, old, old_depth = None, None, 0, 0, {}, None, 0
+    base_owner, head_tests = None, set()
     old_lineno, decorators = 0, None  # the base side's line number, and its decorator lines
     pending = None  # a deleted decorator: its test is the def below it on the base's side
     for line in diff.splitlines():
@@ -83,7 +84,12 @@ def changed_tests(diff: str, read=lambda module: "", read_base=None) -> "dict[st
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
             module, current = (m.group(1) if m else None), None
             owner = test_lines(read(module)) if module else {}
-            decorators = decorator_lines(read_base(module)) if module and read_base else None
+            src = read_base(module) if module and read_base else None
+            decorators = decorator_lines(src) if src is not None else None
+            # with the base's parsed module a deleted line is its own test's on the base's side,
+            # and counts while that test is still in the head (review of #636)
+            base_owner = test_lines(src) if decorators is not None else None
+            head_tests = set(owner.values())
         elif not module:
             continue
         elif line.startswith("@@"):
@@ -119,6 +125,13 @@ def changed_tests(diff: str, read=lambda module: "", read_base=None) -> "dict[st
                     # indent (an `@` line at the method's own depth)
                     decorator = (old_lineno in decorators if decorators is not None else
                                  body.lstrip().startswith("@") and len(body) - len(body.lstrip()) <= (old_depth if old else 4))
+                    if line[0] == "-" and base_owner is not None:
+                        hit = base_owner.get(old_lineno)
+                        name = f"{hit[0]}.{hit[1]}" if hit in head_tests else None
+                        if name and name not in found.setdefault(module, []):
+                            found[module].append(name)
+                        old_lineno += 1
+                        continue
                     if line[0] == "-" and decorator:
                         pending = line  # placed when its def is read; a deleted line moves no head line
                         old_lineno += 1
