@@ -1035,12 +1035,12 @@ strings. `retryable` is currently always `false`: none of the kinds are distingu
 today from a deterministic failure that would fail identically on a blind retry, so nothing
 here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
-For single-file video delivery presets other than GIF, `export.py` exits nonzero and reports
-`kind: verification`, `verified: false` and the retained file when an expected A/V stream
-is missing or its codec, enabled preset dimensions, fixed preset fps, preset duration cap
-or `--max-mb` limit fails verification. The JSON result includes the failed steps. A failed
-loudness step is advisory for export and still sets `verified: false`. Dry runs finish without
-post-export assertions.
+For single-file video delivery presets other than GIF, `export.py` exits nonzero if an
+expected A/V stream is missing or the expected video codec, enabled preset dimensions, fixed
+preset fps, preset duration cap or `--max-mb` limit fails verification. The JSON result reports
+`kind: verification`, `verified: false`, the retained file and the failed steps. Plain mode
+reports the error on stderr. A failed loudness step is advisory for export and sets
+`verified: false` in JSON. Dry runs finish without post-export assertions.
 
 `fit.py --method speed` reports `large_speed_change` in `diagnostics.warnings`
 for speed factors above 1.15 or below 1/1.15, including in a dry run. The

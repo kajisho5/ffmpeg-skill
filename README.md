@@ -477,10 +477,10 @@ Every command a tool records as run is in its `--json` `commands` (`batch.py` li
 
 It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
 
-For a single-file video delivery other than GIF, a missing expected picture or audio stream, a mismatched preset codec,
-fixed dimensions or fixed frame rate, or a missed duration or file size limit fails the call.
-The written file stays available for diagnosis. Loudness gaps are reported in the result
-and mark the export unverified so the caller can decide whether to normalize or retry.
+For a single-file video delivery other than GIF, the call fails if an expected picture or audio stream is missing, the
+video codec, dimensions or fixed frame rate differ from the preset, or the output exceeds a duration or file size limit.
+The written file stays available for diagnosis. When a platform preset specifies loudness, a failed loudness check
+marks the export unverified so the caller can decide whether to normalize or retry.
 
 When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
 
