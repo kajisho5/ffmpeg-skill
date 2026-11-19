@@ -438,6 +438,32 @@ class PictureTests(MediaFixtures):
                                       f"line wider than the safe area: {line!r}")
         self.assertEqual(" ".join(l for _, lines in blocks for l in lines), text, "no word is lost or cut")
 
+    def test_caption_warns_when_a_cue_uses_30_over_a_2997_source(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            folder = Path(tmp)
+            source = tiny_clip(folder / "ntsc.mp4", "color=black:s=320x240:r=30000/1001", seconds=3)
+            self.assertAlmostEqual(probe(str(source))["video"]["fps"], 29.97, places=3)
+            cues = folder / "cues.txt"
+            cases = (("00:00:01:00-00:00:02:00 Hello", ["--fps", "30"], -0.002),
+                     ("00:00:01:00@30-00:00:02:00@30 Hello", [], -0.002),
+                     ("00:00:01:00-00:00:02:00 Hello", [], None),
+                     ("1-2 Hello", ["--fps", "30"], None))
+            for index, (line, flags, drift) in enumerate(cases):
+                with self.subTest(line=line, flags=flags):
+                    cues.write_text(line + "\n", encoding="utf-8")
+                    modes = ((), ("--dry-run",)) if index == 0 else (("--dry-run",),)
+                    for mode in modes:
+                        doc = json.loads(script("caption.py", source, "--text", cues, *flags, *mode,
+                                                "--fast", "-o", folder / f"written-{index}.mp4", "--json").stdout)
+                        warnings = [w for w in (doc.get("diagnostics") or {}).get("warnings", [])
+                                    if w["code"] == "caption_timecode_rate_mismatch"]
+                        if drift is None:
+                            self.assertEqual(warnings, [])
+                        else:
+                            self.assertEqual(len(warnings), 1)
+                            self.assertAlmostEqual(warnings[0]["drift_seconds"], drift, places=6)
+                            self.assertEqual(warnings[0]["cue_timecode"], "00:00:02:00")
+
     def test_phrase_wrap_burns_and_reports(self):
         """1.16 end to end: the dl1 and dl4 cues are burnt in, the ASS the run writes carries the
         phrase breaks, and the result document says which wrap produced them."""
@@ -7219,6 +7245,23 @@ class LeanBuildTests(unittest.TestCase):
         cues.write_text("00:00:00,500 --> 00:00:02,500 Hello\n0:03-0:05 World\n", encoding="utf-8")
         script("caption.py", "--text", str(cues), "--write-srt", str(OUT / "same_line_out.srt"))
         self.assertIn("Hello", (OUT / "same_line_out.srt").read_text(encoding="utf-8"))
+
+    def test_drop_frame_labels_convert_and_refuse_skipped_frames(self):
+        from caption import parse_text_cues
+        OUT.mkdir(parents=True, exist_ok=True)
+        cues = OUT / "drop_frame_valid.txt"
+        for fps, first, second in ((29.97, "02", "03"), (59.94, "04", "06")):
+            with self.subTest(fps=fps):
+                cues.write_text(f"00:01:00;{first}@{fps} --> 00:01:00;{second}@{fps} First minute\n"
+                                f"00:10:00;00 --> 00:10:01;00 Tenth minute\n", encoding="utf-8")
+                result = parse_text_cues(str(cues), 3, 0, fps)
+                self.assertAlmostEqual(result[0][0], 60.06, places=6)
+                self.assertAlmostEqual(result[1][0], 599.9994, places=6)
+                self.assertAlmostEqual(result[1][1] - result[1][0], 1.001, places=6)
+        cues.write_text("00:01:00;00 --> 00:01:02;00 Invalid\n", encoding="utf-8")
+        proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
+                      "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
+        self.assertIn("not a valid label", json.loads(proc.stdout)["error"]["message"])
 
     def test_look_draws_the_sheet_without_timecodes_on_a_build_without_drawtext(self):
         """#394: the default sheet needs drawtext only for its stamps; without it the step every

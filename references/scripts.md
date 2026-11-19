@@ -1911,7 +1911,11 @@ sizes itself, so `fit_scope` is `null` with a note.
 Text cue format, one per line: `0:00-0:03 Hello`, `00:00:03.500 --> 00:00:06 Two | lines`,
 or `00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode` (`hh:mm:ss:ff`, frame count
 converted with `--fps`, or the input video's own fps when `--input` is given and `--fps` is
-not — a timecode-shaped cue with no fps available is refused rather than misread as plain text).
+not). An `@fps` suffix on a cue boundary overrides that rate. Use `hh:mm:ss;ff` for drop-frame
+labels at 29.97 or 59.94 fps. An invalid or skipped drop-frame label is refused. If the cue rate
+differs from the probed input rate, `caption_timecode_rate_mismatch` names the affected boundary
+and the estimated time difference when the input has a stable frame rate. Use seconds or
+word-level timestamps from a transcript when the source has a variable frame rate.
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
