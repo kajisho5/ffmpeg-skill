@@ -12010,7 +12010,7 @@ class SharedCodeAudit465Tests(unittest.TestCase):
         guarded = ["ffmpeg", "-pattern_type", "none", "-i", "a%d.png", "out.mp4"]
         self.assertEqual(runner.guard_input_formats(guarded), guarded, "an input that has one keeps one")
         self.assertEqual(runner.guard_input_formats(["ffprobe", "-v", "error", "a%d.png"]),
-                         ["ffprobe", "-v", "error", "-pattern_type", "none", "a%d.png"])
+                         ["ffprobe", "-v", "error", "-f", "image2", "-pattern_type", "none", "a%d.png"])
         # the real thing: grid.py with a still named st%d.png beside a decoy st1.png
         ffmpeg("-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "green.png"))
         os.replace(self.work / "green.png", self.work / "st%d.png")
@@ -12730,6 +12730,289 @@ class ReviewOf530Tests(unittest.TestCase):
                     os.kill(pid, signal.SIGKILL)
                 except OSError:
                     pass
+
+
+class BasicsAudit558Tests(unittest.TestCase):
+    """Seven ordinary things from the basics audit of 3.10.0 (#558), one test per class: a `%`
+    in a still's name, an output extension no muxer has, an input that is empty, a directory,
+    not media or not readable, the contract printed into a pipe that closes, and an input name
+    that starts with a dash. (The colon in a relative subtitle path is in test_picture.py.)
+    docs/design-decisions.md, "After 3.10.1 -- file names and unusable inputs (#558)"."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=2",
+               "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def doc(self, name, *args, cwd=None):
+        proc = tool(name, *args, check=False, cwd=cwd)
+        try:
+            return json.loads(proc.stdout)
+        except ValueError:
+            self.fail(f"{name} printed no JSON document (exit {proc.returncode}):\n{proc.stderr[-800:]}")
+
+    @staticmethod
+    def pixel(path, at="0.5", crop="8:8:8:8"):
+        """The mean (r, g, b) of a small patch of one decoded frame."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", at, "-i", str(path), "-vf", f"crop={crop},scale=1:1:flags=area",
+                              "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, check=True).stdout
+        return tuple(raw[:3])
+
+    def test_a_percent_in_a_still_name_is_that_file_pattern_or_not(self):
+        """`-pattern_type none` went in front of every image name with a `%`, but FFmpeg opens a
+        name that is not a pattern (`a%20b.png`, `50%.png`) with png_pipe, which has no such
+        option: the run failed as kind ffmpeg. The image2 demuxer is named now, so a literal `%`
+        and a `%d` that must not be expanded are both read as the one file. Measured as pixels:
+        the still is red, the file a pattern would have opened is blue."""
+        runner = sys.modules["_common.runner"]
+        self.assertEqual(runner.still_input_args("a%20b.png"), ["-f", "image2", "-pattern_type", "none"])
+        self.assertEqual(runner.still_input_args("take%d.mp4"), [], "a video is not read by image2")
+        self.assertEqual(runner.still_input_args("plain.png"), [])
+        work = self.work / "pct"
+        work.mkdir(exist_ok=True)
+        for ext in ("png", "jpg"):
+            red = work / f"red.{ext}"
+            ffmpeg("-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", "-update", "1", str(red))
+            for decoy in ("pat1", "seq001"):
+                ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=32x32", "-frames:v", "1", "-update", "1", str(work / f"{decoy}.{ext}"))
+            for stem in ("a%20b", "50%", "pat%d", "seq%03d"):
+                still = work / f"{stem}.{ext}"
+                shutil.copyfile(red, still)
+                with self.subTest(still=still.name, tool="probe"):
+                    meta = self.doc("probe", still, "--json")
+                    self.assertEqual((meta["video"]["width"], meta["video"]["height"]), (32, 32), meta)
+                with self.subTest(still=still.name, tool="overlay"):
+                    out = work / "ov.mp4"
+                    doc = self.doc("overlay", self.clip, "--image", still, "--position", "top-left", "--margin", "0",
+                                   "-o", out, "--fast", "--overwrite", "--json")
+                    self.assertEqual(doc["status"], "completed", doc.get("error"))
+                    r, _g, b = self.pixel(out)
+                    self.assertGreater(r, 150, f"the red {still.name} was drawn: {(r, _g, b)}")
+                    self.assertLess(b, 100, (r, _g, b))
+        still = work / "a%20b.png"
+        with self.subTest(tool="insert"):
+            out = work / "ins.mp4"
+            doc = self.doc("insert", still, "--duration", "0.5", "-o", out, "--fast", "--overwrite", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            r, _g, b = self.pixel(out, at="0.2", crop="8:8:iw/2-4:ih/2-4")
+            self.assertGreater(r, 150)
+            self.assertLess(b, 100)
+        with self.subTest(tool="broll"):
+            out = work / "broll.mp4"
+            doc = self.doc("broll", self.clip, "--insert", work / "pat%d.png", "--at", "0.5", "--duration", "0.5",
+                           "-o", out, "--fast", "--overwrite", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            r, _g, b = self.pixel(out, at="0.7", crop="8:8:iw/2-4:ih/2-4")
+            self.assertGreater(r, 150, "the still itself, not pat1.png")
+            self.assertLess(b, 100)
+
+    def test_an_output_extension_no_muxer_has_is_refused_before_ffmpeg(self):
+        """`-o weird.xyz` failed inside ffmpeg (kind ffmpeg) after a dry run that completed. It is
+        refused as input, dry runs included, by the build's own muxer list; an extension the build
+        does map to a muxer is never refused, whatever its case, nor one named with `-f`."""
+        runner = sys.modules["_common.runner"]
+        for name, args in (("fit", ["--aspect", "1:1"]), ("cut", ["--start", "0", "--end", "1"]), ("audio", ["--voice", "light"])):
+            for dry in (["--dry-run"], []):
+                with self.subTest(tool=name, dry=dry):
+                    target = self.work / f"weird_{name}.xyz"
+                    doc = self.doc(name, self.clip, *args, "-o", target, "--json", *dry)
+                    err = doc.get("error") or {}
+                    self.assertEqual((doc["status"], err.get("kind"), err.get("reason")),
+                                     ("failed", "input", "output_extension_unknown"), doc)
+                    self.assertEqual(err["details"]["extension"], ".xyz")
+                    self.assertIn(".mp4", err["hint"])
+                    self.assertEqual(doc.get("commands"), [], "refused before any ffmpeg command was planned or run")
+                    self.assertFalse(target.exists())
+        known = runner._muxer_extensions()
+        self.assertTrue(known, "this build's muxer list could be read")
+        self.assertLessEqual({".mp4", ".mkv", ".mov", ".wav"}, known)
+        self.assertNotIn(".xyz", known)
+
+        class Refused(Exception):
+            pass
+
+        def refused(*_a, **_k):
+            raise Refused()
+
+        with unittest.mock.patch.object(runner, "refuse", side_effect=refused):
+            # every extension this build maps to a muxer, in either case, and .mka (the Matroska
+            # audio muxer shares its name with Matroska, so `-h muxer=` never lists it)
+            for ext in sorted(known | {".mka"}):
+                runner._refuse_unknown_extension(f"out{ext}")
+                runner._refuse_unknown_extension(f"out{ext.upper()}")
+            runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "out.MKV"])
+            runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "-f", "matroska", "out.xyz"])
+            with self.assertRaises(Refused):
+                runner._check_output_extension(["ffmpeg", "-f", "lavfi", "-i", "color", "out.xyz"])
+            # a build that cannot be asked refuses nothing
+            with unittest.mock.patch.object(runner, "_MUXER_EXT", [None]):
+                runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "out.xyz"])
+        outside = sorted(known - runner._COMMON_OUTPUT_EXT)
+        if ".3g2" in outside:  # an extension the skill does not name, which the build has to be asked about
+            doc = self.doc("fit", self.clip, "--aspect", "1:1", "-o", self.work / "kept.3g2", "--dry-run", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+
+    def test_an_input_that_cannot_be_media_says_which_it_is(self):
+        """An empty file, a directory and a text file came back as ffprobe's raw lines, with the
+        address of its context and no reason or hint. Each says what it is, kind input."""
+        work = self.work / "unusable"
+        work.mkdir(exist_ok=True)
+        empty, folder, text = work / "empty.mp4", work / "folder.mp4", work / "notes.mp4"
+        empty.write_bytes(b"")
+        folder.mkdir(exist_ok=True)
+        text.write_bytes(b"not a media file\n" * 40)
+        address = re.compile(r"@ (?:0x)?[0-9A-Fa-f]{6,}")
+        for path, reason in ((empty, "input_empty"), (folder, "input_is_directory"), (text, "input_not_media")):
+            for name, args in (("probe", []), ("fit", ["--aspect", "1:1", "-o", work / "out.mp4"]),
+                               ("fit", ["--aspect", "1:1", "-o", work / "out.mp4", "--dry-run"]),
+                               ("loudness", ["--measure-only"])):
+                with self.subTest(input=path.name, tool=name, args=args[-1:]):
+                    doc = self.doc(name, path, *args, "--json")
+                    err = doc.get("error") or {}
+                    self.assertEqual((doc["status"], err.get("kind"), err.get("reason")), ("failed", "input", reason), doc)
+                    self.assertTrue(err.get("hint"), err)
+                    self.assertIn(path.name, err["message"])
+                    self.assertIsNone(address.search(err["message"]), err["message"])
+                    self.assertEqual(err["details"]["path"], str(path))
+        self.assertFalse((work / "out.mp4").exists())
+        self.assertEqual(text.read_bytes(), b"not a media file\n" * 40)
+        # ffprobe's own words stay in the message, without the context prefix that carries an address
+        probe_mod = sys.modules["_common.probe"]
+        cleaned = probe_mod._LOG_CONTEXT_RE.sub("", "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55d15dcc31c0] moov atom not found\n"
+                                                    "[matroska,webm @ 000001e5a9c4b2c0] EBML header parsing failed")
+        self.assertEqual(cleaned, "moov atom not found\nEBML header parsing failed")
+
+    def test_a_file_the_user_may_not_reach_is_not_reported_as_missing(self):
+        """An input inside a directory the user may not search was "input not found": os.path.exists()
+        is False for EACCES as for ENOENT. It is `input_permission_denied` now, a dry run included;
+        a path that is not there is still "not found"."""
+        runner = sys.modules["_common.runner"]
+        with unittest.mock.patch("os.stat", side_effect=PermissionError(13, "Permission denied")):
+            self.assertTrue(runner.path_denied("locked/a.mp4"))
+            self.assertEqual(runner.absent_word("locked/a.mp4"), "permission denied")
+        with unittest.mock.patch("os.stat", side_effect=FileNotFoundError(2, "No such file or directory")):
+            self.assertFalse(runner.path_denied("gone.mp4"))
+            self.assertEqual(runner.absent_word("gone.mp4"), "not found")
+        gone = self.doc("probe", self.work / "gone.mp4", "--json")
+        self.assertIn("not found", gone["error"]["message"])
+        self.assertIsNone(gone["error"].get("reason"))
+        if os.name == "nt":
+            self.skipTest("a directory's mode does not stop a search on Windows")
+        base = self.work / "perm"
+        locked = base / "locked"
+        locked.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.clip, locked / "a.mp4")
+        shutil.copyfile(self.clip, base / "noread.mp4")
+        other_user = []
+        if os.geteuid() == 0:
+            # root reads everything: run the tool as nobody, which needs every directory on the
+            # way to be open to it (a temp folder under a private one is not: denied all the same)
+            setpriv = shutil.which("setpriv")
+            if not setpriv:
+                self.skipTest("root without setpriv cannot be denied a file")
+            other_user = [setpriv, "--reuid=65534", "--regid=65534", "--clear-groups"]
+            for d in (self.work, base):
+                os.chmod(d, 0o755)
+            os.chmod(locked, 0o700)
+            os.chmod(base / "noread.mp4", 0o600)
+        else:
+            os.chmod(locked, 0o000)
+            os.chmod(base / "noread.mp4", 0o000)
+        try:
+            for path in (locked / "a.mp4", base / "noread.mp4"):
+                for name, args in (("probe", []), ("fit", ["--aspect", "1:1", "-o", self.work / "perm_out.mp4"]),
+                                   ("fit", ["--aspect", "1:1", "-o", self.work / "perm_out.mp4", "--dry-run"])):
+                    with self.subTest(input=path.name, tool=name, args=args[-1:]):
+                        proc = sh(*other_user, sys.executable, SCRIPTS / f"{name}.py", path, *args, "--json", check=False)
+                        doc = json.loads(proc.stdout)
+                        err = doc.get("error") or {}
+                        self.assertEqual((doc["status"], err.get("kind"), err.get("reason")),
+                                         ("failed", "input", "input_permission_denied"), (doc, proc.stderr[-300:]))
+                        self.assertIn("permission denied", err["message"])
+                        self.assertNotIn("not found", err["message"])
+                        self.assertTrue(err.get("hint"))
+            proc = sh(*other_user, sys.executable, SCRIPTS / "join.py", locked / "a.mp4", self.clip,
+                      "-o", self.work / "perm_join.mp4", "--json", check=False)
+            problems = json.loads(proc.stdout).get("problems") or []
+            self.assertEqual([p["reason"] for p in problems if p["index"] == 0], ["permission denied"], proc.stdout[-600:])
+        finally:
+            os.chmod(locked, 0o700)
+            os.chmod(base / "noread.mp4", 0o600)
+        self.assertFalse((self.work / "perm_out.mp4").exists())
+
+    @unittest.skipIf(os.name == "nt", "how a closed pipe is reported to a writer on Windows is not verified")
+    def test_the_contract_into_a_pipe_that_closes_ends_quietly(self):
+        """README's quick start pipes `contract --json` into `head -40`: the document is far longer
+        than a pipe's buffer, and the write after the reader left raised BrokenPipeError (a
+        traceback, exit 1). The reader got what it asked for: no traceback, exit 0."""
+        for argv in (["--json"], ["--json", "--static"], ["--json", "--tool", "cut"]):
+            with self.subTest(argv=argv):
+                child = subprocess.Popen([sys.executable, str(SCRIPTS / "_contract.py"), *argv],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    self.assertEqual(child.stdout.read(1), b"{")
+                    child.stdout.close()
+                    err = child.stderr.read().decode("utf-8", "replace")
+                    code = child.wait(timeout=120)
+                finally:
+                    child.stderr.close()
+                    if child.poll() is None:
+                        child.kill()
+                self.assertNotIn("Traceback", err)
+                self.assertNotIn("BrokenPipe", err)
+                self.assertEqual(code, 0, err[-400:])
+        whole = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static")
+        self.assertGreater(len(whole.stdout), 70000, "the document is longer than a pipe's buffer, so the case above is the real one")
+        self.assertEqual(json.loads(whole.stdout)["contract_version"], sys.modules["_contract"].CONTRACT_VERSION)
+
+    def test_an_input_name_starting_with_a_dash_is_read_as_a_file(self):
+        """File-name robustness: ffprobe takes its input as a bare argument, so `-report` and
+        `-dash.mp4` were read as options ("You have to specify one input file"), and `-report`
+        left an ffprobe log file in the working directory. A relative name that starts with a dash
+        reaches ffmpeg and ffprobe as `./name`, and a default output named after it is a file too."""
+        runner = sys.modules["_common.runner"]
+        self.assertEqual(runner.file_arg("-take.mp4"), "./-take.mp4")
+        for kept in ("take.mp4", "./-take.mp4", "dir/-take.mp4", "/abs/-take.mp4", "-", "C:\\clips\\-take.mp4", "C:/clips/take.mp4"):
+            self.assertEqual(runner.file_arg(kept), kept)
+        self.assertEqual(runner.guard_input_names(["ffmpeg", "-y", "-i", "-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"]),
+                         ["ffmpeg", "-y", "-i", "./-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"])
+        self.assertEqual(runner.guard_input_names(["ffprobe", "-version"]), ["ffprobe", "-version"], "an option stays an option")
+        work = self.work / "dash"
+        work.mkdir(exist_ok=True)
+        for name in ("-report", "-dash.mp4"):
+            shutil.copyfile(self.clip, work / name)
+        for name in ("-report", "-dash.mp4"):
+            with self.subTest(input=name, tool="probe"):
+                meta = self.doc("probe", "--json", "--", name, cwd=work)
+                self.assertEqual((meta.get("video") or {}).get("width"), 160, meta)
+                self.assertEqual(meta["file"], name, "the name is reported as it was given")
+            with self.subTest(input=name, tool="cut"):
+                out = work / f"cut{len(name)}.mp4"
+                doc = self.doc("cut", "--start", "0", "--end", "1", "-o", out, "--json", "--", name, cwd=work)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertTrue(all(f"-i ./{name}" in c for c in doc["commands"] if " -i " in c), doc["commands"])
+                self.assertEqual(self.doc("probe", out, "--json")["video"]["width"], 160)
+        with self.subTest(tool="fit", output="default"):
+            doc = self.doc("fit", "./-dash.mp4", "--aspect", "1:1", "--fast", "--json", cwd=work)
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            self.assertTrue((work / "-dash_fit.mp4").is_file(), sorted(p.name for p in work.iterdir()))
+        with self.subTest(tool="verify"):
+            doc = self.doc("verify", "./-dash.mp4", "--quick", "--out", work / "verify_out", "--json", cwd=work)
+            failed = [(s["step"], s.get("error")) for f in doc["files"] for s in f["steps"] if not s["ok"]]
+            self.assertEqual(failed, [], "each step was given the input as a file")
+        logs = sorted(p.name for p in work.iterdir() if p.suffix == ".log")
+        self.assertEqual(logs, [], "no ffmpeg or ffprobe log file was written beside the caller")
+        # an output that starts with a dash is still the caller's to rename (the existing refusal)
+        doc = self.doc("fit", "./-dash.mp4", "--aspect", "1:1", "--json", "--dry-run", "--output=-out.mp4", cwd=work)
+        self.assertEqual(doc["error"]["reason"], "output_looks_like_option")
 
 
 if __name__ == "__main__":

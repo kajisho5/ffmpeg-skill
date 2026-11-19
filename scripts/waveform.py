@@ -42,7 +42,7 @@ from _common import (add_common, apply_common, aac_args, color_hex, default_outp
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common.emit import absorb_stage_hw, note, refuse, warn
-from _common.runner import refuse_missing_components_first
+from _common.runner import absent_word, refuse_missing_components_first
 from _common.decision import length_output_t
 from _common.probe import AUDIO_MEDIA_EXT
 
@@ -122,7 +122,7 @@ def main() -> int:
             die("--image must be a readable local file; this skill has no network access, so save "
                 "the image locally and pass its path", kind="input")
         if not os.path.exists(args.image):
-            die(f"--image file not found: {args.image}", kind="input")
+            die(f"--image file {absent_word(args.image)}: {args.image}", kind="input")
         # read under --dry-run too (the file exists, checked above): a plate the real run refuses
         # is refused by the plan (#404: a dry run completed on a video given as --image)
         plate = probe(args.image, role="input")
@@ -143,7 +143,7 @@ def main() -> int:
     # encoded: check it here, before any encode, and name the flag the caller gave
     for flag, path in (("--srt", args.srt), ("--text", args.text)):
         if path and not os.path.isfile(path):
-            die(f"{flag} file not found: {path}", kind="input")
+            die(f"{flag} file {absent_word(path)}: {path}", kind="input")
 
     if args.width <= 0 or args.height <= 0:
         die(f"--width/--height must be > 0, got width={args.width} height={args.height}")

@@ -44,7 +44,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
-from _common.runner import read_text_or_die
+from _common.runner import path_denied, read_text_or_die
 from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
@@ -350,7 +350,7 @@ def preflight(paths: List[str], audible: Optional[List[int]] = None) -> Tuple[Li
             pending.append({"index": i, "path": p})
             continue
         if not os.path.exists(p):
-            problems.append({"index": i, "path": p, "reason": "missing"})
+            problems.append({"index": i, "path": p, "reason": "permission denied" if path_denied(p) else "missing"})
             continue
         if os.path.isdir(p):
             problems.append({"index": i, "path": p, "reason": "a directory, not a file"})

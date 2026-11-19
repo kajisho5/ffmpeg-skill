@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from _common.probe import SILENT_PEAK_DBFS
+from _common.runner import path_denied
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import file_origin, stream_end, warn
 from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, conform_filter, conform_to_length, late_sound_lead
@@ -169,7 +170,7 @@ def preflight_beds(args: argparse.Namespace) -> List[Dict[str, Any]]:
             continue
         reason = None
         if not os.path.exists(path):
-            reason = "missing"
+            reason = "permission denied" if path_denied(path) else "missing"
         elif os.path.isdir(path):
             reason = "a directory, not a file"
         elif os.path.getsize(path) == 0:

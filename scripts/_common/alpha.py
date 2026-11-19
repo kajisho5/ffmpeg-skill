@@ -123,7 +123,7 @@ def frame_means(cmd_head: List[str], path: str, chain: str) -> "Dict[str, object
     # bytes a frame (~250 MB for an hour at 30 fps), the per-frame means a float each. The same
     # wall-clock limit as run_analysis(), which this replaces here.
     _runner._refuse_url_media(cmd)
-    cmd = _runner.guard_input_formats(cmd)
+    cmd = _runner.guard_input_names(cmd)
     limit = _runner._limit_for(cmd)
     size = w * h
     frames: List[float] = []

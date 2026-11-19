@@ -23,6 +23,7 @@ import functools
 import importlib.metadata
 import importlib.util
 import json
+import os
 import platform
 import re
 import shutil
@@ -440,6 +441,10 @@ ERROR_REASONS = {
     "media_path_is_playlist": "an input is a playlist that ffmpeg would follow to the files or URLs it names: HLS .m3u8/.m3u or an ffconcat list (by name or by its first bytes), a DASH manifest or an IMF composition playlist (by name or by the content ffmpeg's own probe looks for, whatever the file is called); the skill takes media files only; details: {path}",
     "media_path_has_line_break": "a path written into a concat list (loop.py, join.py --copy, sequence.py, multi-part cuts) contains a line break, which the concat format cannot hold: each line is a directive, so the name would add entries to the list; details: {path}",
     "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}. sequence.py: a frame of the sequence that does not decode (every frame is decoded once before the encode; when that check cannot be made, a note says so and nothing is refused); details: {path (the first), frames, frames_unreadable, frames_total}",
+    "input_is_directory": "an input given where a media file is read is a directory; details: {path}",
+    "input_empty": "an input is an empty file (0 bytes): the trace of a recording, download or render step that wrote nothing; details: {path}",
+    "input_not_media": "ffprobe could not read an input as media (a text file, a file cut short): the message carries ffprobe's own lines without their context addresses; details: {path}",
+    "input_permission_denied": "an input exists or may exist but the user this runs as may not read it, or may not search a directory on the way to it (EACCES, as opposed to a path that is not there, which stays \"input not found\" with no reason); dry runs included; details: {path}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart; details: {clips: [{index?, path, differs}]}",
     "fit_method_required": "fit.py --duration would retime the clip beyond 1.15x in either direction without a method or an explicit slow-motion filter; details: {factor, threshold, source_duration, target_duration}",
@@ -448,6 +453,7 @@ ERROR_REASONS = {
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_extension_missing": "a media output with no file extension (and no -f naming its format), so ffmpeg could not choose a container; refused before ffmpeg runs, dry runs included; details: {output}",
+    "output_extension_unknown": "a media output whose extension this ffmpeg build maps to no muxer (out.xyz), with no -f naming its format: ffmpeg chooses the container by the extension alone, so it could not; judged from the build's own muxer list (`ffmpeg -muxers`, each muxer's common extensions), asked only for an extension outside the common ones, and not refused when the build cannot be asked; refused before ffmpeg runs, dry runs included; the hint names extensions the tools write; details: {output, extension}",
     "output_extension_unsupported": "a media output named .wma (from -o or the input's default name) that the run would encode into: the skill has no WMA encoder line and writes .wma only as a stream copy of WMA sound (wmav1, wmav2, wmapro, wmalossless, wmavoice) with no picture; the hint names the audio extensions it writes (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka); refused before ffmpeg runs (loudness.py and silence.py before their measuring pass), dry runs included; details: {output, extension, written}",
     "output_extension_audio_only": "a media output named with an audio-only extension (.wav, .m4a, .mp3, ...: every one the skill reads) whose command encodes a picture, that export.py, metadata.py or render.py would copy a picture into, or given to waveform.py: refused before delivery, dry runs included; name a video container, or extract the sound with cut.py or audio.py; details: {output, extension, encoders (empty for a copy and for waveform.py)}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
@@ -2385,5 +2391,23 @@ def main() -> int:
     return 0
 
 
+def _main_to_a_pipe() -> int:
+    """main(), ending quietly when the reader of stdout has gone (#558): `contract --json | head -40`,
+    README's quick start, closes the pipe after 40 of the document's lines, and print() of the
+    rest raised BrokenPipeError: a traceback and exit 1 for a command that had done its job.
+    stdout is pointed at the null device so the interpreter's own flush at exit finds nothing to
+    report; a reader that left has what it asked for, so the exit code is 0."""
+    try:
+        code = main()
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_to_a_pipe())

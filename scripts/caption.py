@@ -60,7 +60,7 @@ from _common.fonts import font_choice, fonts_dir_face, record_font_choice, requi
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
 from _common.asr import srt_blocks
-from _common.runner import normalize_text
+from _common.runner import absent_word, normalize_text
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
                      break_penalty, _is_weak_line, _atoms, _join, _break_spaced, _bare_word, _function_words,
@@ -1705,7 +1705,7 @@ def main() -> int:
     if args.mode == "mux":
         if not srt_path or (not os.path.exists(srt_path) and not planned_only
                             and not (STATE.dry_run and (args.text or args.transcribe))):
-            die(f"SRT file not found: {srt_path}")
+            die(f"SRT file {absent_word(srt_path)}: {srt_path}")
         codec = mux_subtitle_codec(output)
         out_ext = Path(output).suffix.lower().lstrip(".")
         # The picture and the sound are copied: a WebM holds only VP8/VP9/AV1 and Opus/Vorbis, so
@@ -1741,7 +1741,7 @@ def main() -> int:
                 [(p, lang) for p, lang in srt_tracks[1:]]
         for path, _lang in added[1:]:
             if not os.path.exists(path) and not STATE.dry_run:
-                die(f"SRT file not found: {path}")
+                die(f"SRT file {absent_word(path)}: {path}")
         for n in range(1, len(added)):
             path, lang = added[n]
             pending = not os.path.exists(path)  # a dry run's pending track: an earlier step writes it
@@ -2011,7 +2011,7 @@ def main() -> int:
 
     if args.ass:
         if not generated_ass and not os.path.exists(args.ass) and not planned_ass:
-            die(f"ASS file not found: {args.ass}")
+            die(f"ASS file {absent_word(args.ass)}: {args.ass}")
     # 2.2.6: a burn whose cues are all blank, or all outside the video, draws nothing -- and used
     # to report verified. Count the cues that can actually be seen; none is a refusal.
     if generated_ass:
@@ -2065,7 +2065,7 @@ def main() -> int:
     else:
         if not srt_path or (not os.path.exists(srt_path) and not planned_only
                             and not (STATE.dry_run and (args.text or args.transcribe))):
-            die(f"SRT file not found: {srt_path}")
+            die(f"SRT file {absent_word(srt_path)}: {srt_path}")
         style = [
             f"FontName={ass_font_name(args.font)}",
             f"FontSize={args.size}",

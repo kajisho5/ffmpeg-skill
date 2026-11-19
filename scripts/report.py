@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common import guard_sidecar, STATE, add_common, apply_common, child_args, die, emit, info, probe, read_text_or_die, run_tool
 from _common.emit import record_skip, warn
+from _common.runner import file_arg
 
 HERE = Path(__file__).resolve().parent
 
@@ -44,7 +45,7 @@ def sheet_b64(path: str, tiles: str = "4x2", width: int = 1200) -> "Tuple[Option
         return None, {"reason": "dry_run", "message": "a dry run draws no contact sheet"}
     with tempfile.TemporaryDirectory(prefix="ffskill_report_") as tmp:
         png = os.path.join(tmp, "sheet.png")
-        proc = run_tool([str(HERE / "look.py"), path, "--tiles", tiles, "--width", str(width), "-o", png, "--json"] + child_args())
+        proc = run_tool([str(HERE / "look.py"), file_arg(path), "--tiles", tiles, "--width", str(width), "-o", png, "--json"] + child_args())
         try:
             doc = json.loads(proc.stdout)
         except ValueError:
@@ -56,7 +57,7 @@ def sheet_b64(path: str, tiles: str = "4x2", width: int = 1200) -> "Tuple[Option
 
 def loudness(path: str) -> "Tuple[Dict[str, Any], Dict[str, Any]]":
     """(lufs/tp/lra, or {}; why there is no measurement)."""
-    proc = run_tool([str(HERE / "loudness.py"), path, "--measure-only"] + child_args())
+    proc = run_tool([str(HERE / "loudness.py"), file_arg(path), "--measure-only"] + child_args())
     try:
         d = json.loads(proc.stdout)
     except ValueError:
@@ -69,7 +70,7 @@ def loudness(path: str) -> "Tuple[Dict[str, Any], Dict[str, Any]]":
 
 def check(path: str, platform: str) -> "Tuple[Optional[Dict[str, Any]], Dict[str, Any]]":
     """(check.py's document, or None when it could not run at all; why)."""
-    proc = run_tool([str(HERE / "check.py"), path, "--platform", platform, "--json"] + child_args())
+    proc = run_tool([str(HERE / "check.py"), file_arg(path), "--platform", platform, "--json"] + child_args())
     try:
         doc = json.loads(proc.stdout)
     except ValueError:

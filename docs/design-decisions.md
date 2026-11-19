@@ -108,6 +108,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
 - [After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)](#after-3101--an-hdr-or-bt2020-rgb-source-is-made-yuv-with-the-matrix-its-line-tags-544)
 - [After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine](#after-3141--npx-ffmpeg-skill-setup-one-command-for-a-new-machine)
+- [After 3.13.2 — file names and unusable inputs (#558)](#after-3132--file-names-and-unusable-inputs-558)
 <!-- contents:end -->
 
 ## Time limits
@@ -4452,7 +4453,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   started, and the dry run completed. `run()` refuses it as `kind: input`,
   `output_extension_missing`, unless the command names a format with `-f` after its last input.
   An unknown extension (`out.xyz`) is still left to the muxer: telling which of FFmpeg's 200-odd
-  muxers a build has would cost a process per run. Side files are not checked, and `look.py` takes
+  muxers a build has would cost a process per run. (Changed by #558, "After 3.13.2 — file names": it is
+  refused, and the build is asked only for an extension outside the common ones.) Side files are not checked, and `look.py` takes
   an `-o` without an image extension as a stem in every mode (`<stem>_sheet.png`,
   `<stem>_vs_<other>_<i>_<t>s.png`, `<stem>_<t>s.png`), as the decision above already said for
   `--at`. Code: `runner._check_output_extension()`. Tests:
@@ -4726,6 +4728,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **Read RIFF/WAVE inputs as WAV (#518).** FFmpeg 9.0.2 can misidentify ordinary
   PCM audio as MPEG-TS. The same input-format helper now uses the file header
   for probes, edits and measurements. Explicit input formats take precedence.
+  Since #558 the guard is `-f image2 -pattern_type none` ("After 3.13.2 — file names"): the option alone failed
+  for a name that is not a pattern.
 - **Two paths are one file when they resolve alike or when the file is the same (device and
   inode)** (A5). `run()`'s output-is-input guard compared resolved strings, so a hard link to the
   input and, on a case-insensitive volume, the input's name in another case were written over.
@@ -6087,3 +6091,105 @@ before it was changed. Five classes are changed, two are left for a decision.
   `test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager`
   (tests/test_contract.py). The three install commands are tested against a stand-in for the
   package manager; none has been run by this test on a machine without FFmpeg.
+
+## After 3.13.2 — file names and unusable inputs (#558)
+
+Seven items of the basics audit of 3.10.0, each reproduced on FFmpeg 6.1.1 (Linux, Python 3.11)
+before it was changed. Nothing here was run on FFmpeg 7.1, 8 or 9, on macOS or on Windows; what
+is said about them is reasoned and marked so.
+
+- **A still with a `%` in its name is opened with `-f image2 -pattern_type none`.** The A7 entry
+  above put `-pattern_type none` alone in front of every image name with a `%`. FFmpeg chooses
+  image2 by itself only for a name it reads as a pattern (`logo%d.png`); `a%20b.png` and `50%.png`
+  are opened by `png_pipe` (`jpeg_pipe`, ...), which has no such option, and every tool given one
+  failed as `kind: ffmpeg` ("Option pattern_type not found": `overlay --image`, `insert`,
+  `broll --insert`, `probe`). Naming the demuxer makes both cases one: measured for `a%20b`,
+  `50%`, `p%d` and `q%03d` as `.png` and `.jpg` (the decoded pixel is the file's own, not the
+  numbered neighbour's), and the decode of a `%`-named file is byte-identical with and without the
+  two options for the 20 of the 21 extensions in `_IMAGE2_EXT` this build writes (`.xpm` it
+  cannot write). Forced, image2 takes the codec from the extension, as it already did for a `%d`
+  name: a JPEG named `x%20y.png` does not open (it did not before either). That `image2` accepts
+  `pattern_type none` on 7.1 to 9 is reasoned from the A7 guard having passed CI there for `%d`
+  names, which image2 was already reading. Code: `runner.still_input_args()`. Test:
+  `BasicsAudit558Tests.test_a_percent_in_a_still_name_is_that_file_pattern_or_not`; the exact
+  argument list `test_a_percent_in_a_still_path_never_opens_another_file` pins moved with it.
+- **A relative path with a colon in its first segment is written `./...` inside a filter.**
+  `escape_filter_path()` went through `Path()`, which drops a leading `./`, so
+  `caption.py --srt ./a:b.srt` reached the subtitles filter as `a\\:b.srt`; the filter opens its
+  file through libavformat, which read `a` as a protocol ("Protocol not found"). `d:e/c.srt` failed
+  the same way, and so does `metadata=print:file=` given such a name directly. `lut3d`, drawtext's
+  `fontfile`/`textfile` and `ssim`'s `stats_file` open with `fopen` and worked before; `./name` is
+  the same file to them. An absolute path is unchanged. On Windows the path is judged as a Windows
+  path (`PureWindowsPath`): `C:/x`, `C:\x` and the drive-relative `C:x` keep their form, because
+  the drive's colon is escaped and is not a scheme; that branch is tested with `_on_windows()`
+  patched, not on Windows. The callers are `caption.py` (subtitles, ass, fontsdir), `graphics.py`
+  (ass, fontsdir), `color.py` (lut3d), `stabilize.py` (its own temp path), `_common.drawtext`
+  (fontfile, textfile), `_contract.py`'s drawtext check, `_common.emoji` and `_common.probe`
+  (temp paths). Test:
+  `PictureTests.test_a_relative_path_with_a_colon_inside_a_filter_is_opened_as_a_file`.
+- **An output extension the build maps to no muxer is refused before ffmpeg**
+  (`output_extension_unknown`, `kind: input`, dry runs included). This changes the sentence in
+  "the sweep of A159" above, "An unknown extension (`out.xyz`) is still left to the muxer: telling
+  which of FFmpeg's 200-odd muxers a build has would cost a process per run": the cost falls only
+  on a run whose extension is outside `runner._COMMON_OUTPUT_EXT` (the extensions the skill names
+  and a few every build has), and is paid once per process. For any other extension the build is
+  asked: the names from `ffmpeg -muxers` and each one's "Common extensions:" line from
+  `ffmpeg -h muxer=NAME` (about 190 short processes, 8 at a time: 1.9 s wall on 4 cores here).
+  FFmpeg chooses the muxer by the extension alone, without case, so that list decides; `.mka` is
+  in the common set because the Matroska audio muxer shares the name `matroska` and `-h muxer=`
+  never lists it. When the build cannot be asked, or one muxer cannot be read, nothing is
+  refused and the command runs as before; a `-f` after the last input exempts the output, as it
+  does for a missing extension. A static table was not used: it would refuse an extension a
+  later FFmpeg adds. Measured on 6.1.1: the 26 tools of `tests/sweep.py` that take `-o`, and
+  `join`, `multicam`, `broll`, `grid`, `insert`, `background` and `waveform` by hand, failed as
+  `kind: ffmpeg` with a completed dry run and refuse now in both (`render.py --template` refuses
+  through its export stage; a project with no export stage has its own rule for the extension). That the two
+  listings have the same shape on 7.1 to 9 is not verified; if they do not, the answer is "cannot
+  be asked" and the old behaviour. Code: `runner._refuse_unknown_extension()`. Test:
+  `BasicsAudit558Tests.test_an_output_extension_no_muxer_has_is_refused_before_ffmpeg`.
+- **An input that cannot be media says which it is.** `probe()` refuses a directory
+  (`input_is_directory`), an empty file (`input_empty`) and a file ffprobe cannot read
+  (`input_not_media`) with a hint each, where it used to pass on ffprobe's lines ("moov atom not
+  found" behind a `[mov,mp4,... @ 0x...]` prefix whose address differs on every run). The
+  not-media message still opens with "ffprobe failed on PATH", which `verify.py`'s report rows and
+  two existing tests match, and keeps ffprobe's own words without the prefix. A file cut short
+  and a text file named `.mp4` get the same reason: ffprobe says the same of both. An output this
+  run wrote is not judged here (`role="output"` is unchanged), and an ffmpeg failure's stderr
+  (`kind: ffmpeg`) still carries the prefixes. Code: `probe._refuse_unusable_input()`,
+  `probe._refuse_not_media()`. Test: `test_an_input_that_cannot_be_media_says_which_it_is`.
+- **A file the user may not reach is "permission denied", not "not found"**
+  (`input_permission_denied`). `os.path.exists()` is false for EACCES as for ENOENT.
+  `runner.path_denied()` tells them apart (`os.stat` raising `PermissionError`, or a file that is
+  there and not readable), for a real run and a dry run: a dry run used to take such an input for
+  an earlier stage's output that was not written yet. A path that is not there stays "input not
+  found" with no reason, as before. The same word is used where a tool names a missing file
+  itself: `join.py`'s, `audio.py`'s and `render.py`'s problem lists (`reason: "permission
+  denied"` beside `"missing"`), `verify.py` (which raised a traceback from `Path.is_dir()`), and
+  the SRT, ASS, LUT, chapters, brand, `--image` and layer files. Not changed: side files checked
+  with `os.path.isfile()` by tools not listed here. On Windows a directory's mode does not stop a
+  search, so only the mocked half of the test runs there. Test:
+  `test_a_file_the_user_may_not_reach_is_not_reported_as_missing`.
+- **`_contract.py` ends quietly when its reader has gone.** `contract --json | head -40`, README's
+  quick start, closed the pipe on a document of about 990 KB; `print()` raised `BrokenPipeError`
+  (a traceback, exit 1). It exits 0 with nothing on stderr. The tools write their document with
+  `sys.stdout.write()`, which on Python 3.11 here returned normally for a 5 MB document into a
+  closed pipe, so they are not changed; other Python versions were not measured. How Windows
+  reports a closed pipe to the writer is not verified, and the test is skipped there. Test:
+  `test_the_contract_into_a_pipe_that_closes_ends_quietly`.
+- **An input name starting with a dash is read as a file.** ffprobe takes its input as a bare
+  argument, so `-report` and `-dash.mp4` (given after `--`) were read as options: "You have to
+  specify one input file", and for `-report` an `ffprobe-*.log` written into the working
+  directory. `runner.guard_input_names()` writes such a name `./name` where the command is built:
+  each `-i` value of an ffmpeg command, and the last argument of an ffprobe command when a file
+  of that name exists (which tells it from an option such as `-version`). `run()`,
+  `run_analysis()`, the frame readers of `_common.alpha` and `_common.probe` and the stream
+  checks inside `runner` all pass through it; documents and messages keep the name as given.
+  Three places passed such a name on by themselves and are changed too: `default_output()`
+  (`./-dash.mp4` gave the default output `-dash_fit.mp4`, which the output guard then refused),
+  `verify.py` (its `Path` dropped the `./` before the name reached a step's parser) and
+  `report.py` (`--after=-x.mp4`). An explicit output starting with a dash is still refused with
+  the `./NAME` hint (`output_looks_like_option`), as decided. Not changed: `verify.py` also drops
+  the `./` of a name with a colon (`./co:lon.mp4` is then refused as a URL with the hint to write
+  `./`), and a `--font-file` starting with a dash is drawn but its family is not read by
+  `fc-scan`. `./name` with a forward slash is a file to ffmpeg on Windows as well (reasoned, not
+  run). Test: `test_an_input_name_starting_with_a_dash_is_read_as_a_file`.

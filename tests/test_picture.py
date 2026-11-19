@@ -3005,6 +3005,61 @@ class PictureTests(MediaFixtures):
         vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
         self.assertEqual(vf, "subtitles=" + escape_filter_path(str(colon / "e.srt"), bind=False))
 
+    def test_a_relative_path_with_a_colon_inside_a_filter_is_opened_as_a_file(self):
+        """#558: `caption.py --srt ./a:b.srt` failed inside ffmpeg ("Protocol not found").
+        escape_filter_path() went through Path(), which drops the `./`, and the subtitles filter
+        opens its file through libavformat, where a bare `a:b.srt` (or `d:e/c.srt`) is protocol
+        `a`. A relative path whose first segment has a colon is written `./...` again; an
+        absolute path and a Windows drive path are not touched."""
+        from _common import decision
+        self.assertEqual(escape_filter_path("a:b.srt", bind=False), "./a\\\\:b.srt")
+        self.assertEqual(escape_filter_path("./a:b.srt", bind=False), "./a\\\\:b.srt")
+        self.assertEqual(escape_filter_path("d:e/c.srt", bind=False), "./d\\\\:e/c.srt")
+        self.assertEqual(escape_filter_path("sub/a:b.srt", bind=False), "sub/a\\\\:b.srt")
+        self.assertEqual(escape_filter_path("plain.srt", bind=False), "plain.srt")
+        if os.name != "nt":
+            self.assertEqual(escape_filter_path("/abs/a:b.srt", bind=False), "/abs/a\\\\:b.srt")
+        with unittest.mock.patch.object(decision, "_on_windows", return_value=True):
+            for drive_path, want in (("C:/Users/me/c.srt", "C\\\\:/Users/me/c.srt"),
+                                     ("C:\\Users\\me\\c.srt", "C\\\\:/Users/me/c.srt"),
+                                     ("C:c.srt", "C\\\\:c.srt"), ("sub\\c.srt", "sub/c.srt")):
+                self.assertEqual(escape_filter_path(drive_path, bind=False), want, "a drive letter is not a scheme")
+        if os.name == "nt":
+            self.skipTest("a file name cannot hold a colon on Windows")
+        work = OUT / "g558_colon"
+        (work / "d:e").mkdir(parents=True, exist_ok=True)
+        clip = work / "black.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=320x180:r=10:d=2",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", clip)
+        cue = "1\n00:00:00,000 --> 00:00:02,000\nHELLO\n"
+        for name in ("a:b.srt", "d:e/c.srt"):
+            (work / name).write_text(cue, encoding="utf-8")
+        cube = work / "l:ut.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)), encoding="utf-8")
+
+        def run_in(argv):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / argv[0]), *argv[1:], "--json", "--overwrite", "--fast"], cwd=work,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            return json.loads(proc.stdout)
+
+        def brightest(path):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                                  "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+            return max(raw)
+
+        self.assertLess(brightest(clip), 40, "the fixture is black")
+        for given in ("./a:b.srt", "a:b.srt", "d:e/c.srt", str(work / "a:b.srt")):
+            with self.subTest(srt=given):
+                doc = run_in(["caption.py", "black.mp4", "--srt", given, "-o", "burned.mp4"])
+                if (doc.get("error") or {}).get("reason") == "filter_missing":
+                    self.skipTest("this build has no subtitles filter")
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertGreater(brightest(work / "burned.mp4"), 150, "the cue was drawn, so the file was opened")
+        with self.subTest(lut="l:ut.cube"):
+            doc = run_in(["color.py", "black.mp4", "--lut", "l:ut.cube", "-o", "graded.mp4"])
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            self.assertIn("lut3d=file=./l\\\\:ut.cube", " ".join(doc["commands"]))
+
     def test_help_survives_a_legacy_console_encoding(self):
         """--help contains non-ASCII (Japanese example, arrows); a cp1252 console must not raise UnicodeEncodeError."""
         env = dict(os.environ, PYTHONIOENCODING="cp1252")

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import _stop_child, _unwatch, _watch
+from _common.runner import absent_word, file_arg, _stop_child, _unwatch, _watch
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -74,12 +74,13 @@ def collect(paths: List[str]) -> List[Path]:
     files: List[Path] = []
     for p in paths:
         pp = Path(p)
-        if pp.is_dir():
+        # os.path, not Path.is_dir(): that one raises on a path the user may not look at (#558)
+        if os.path.isdir(p):
             files += sorted(x for x in pp.rglob("*") if x.suffix.lower() in MEDIA_EXT and x.is_file())
-        elif pp.is_file():
+        elif os.path.isfile(p):
             files.append(pp)
         else:
-            die(f"not found: {p}")
+            die(f"{absent_word(p)}: {p}")
     if not files:
         die("no media files found")
     return files
@@ -142,7 +143,9 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         if not ok:
             r.update(kind="verification", reason="hdr_lost", message=r["error"])
         return r
-    child = subprocess.Popen([sys.executable, str(HERE / argv[0])] + argv[1:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE,
+    # argv[1] is the step's input: one named -take.mp4 is given as ./-take.mp4, or the step's
+    # parser reads it as an option (collect()'s Path drops a ./ the caller wrote, #558)
+    child = subprocess.Popen([sys.executable, str(HERE / argv[0]), file_arg(argv[1])] + argv[2:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     # watched like run_tool()'s child (review of #530): a SIGTERM or Ctrl-C to verify.py stops the
     # step through stop_children() -- its own handler removes its partial output and lock --

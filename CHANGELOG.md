@@ -48,6 +48,33 @@ _Automated release: version and notes generated from pull requests merged since 
 
 Closes: #548, #569, #606, #623
 - Ask for a duration method before making a large implicit retime in `fit.py` (#582).
+- **A still image with a `%` in its name that is not a pattern can be used (#558).**
+  `overlay.py --image 'a%20b.png'` (also `50%.png`, `insert.py`, `broll.py --insert`, `probe.py`)
+  failed inside ffmpeg with "Option pattern_type not found". A still with a `%` in its name is now
+  opened with `-f image2 -pattern_type none`, which reads a literal `%` and a `%d` name alike as
+  the one file (measured on FFmpeg 6.1.1 for `.png` and `.jpg`).
+- **A relative subtitle path with a colon works (#558).** `caption.py --srt ./a:b.srt` (and
+  `d:e/c.srt`) failed with "Protocol not found": the `./` was dropped before the path reached the
+  subtitles filter. A relative path whose first segment has a colon is written `./...` in every
+  filter option (subtitles, ass, LUT, font and text files).
+- **An output extension FFmpeg has no muxer for is refused before ffmpeg runs (#558).**
+  `-o weird.xyz` failed as `kind: ffmpeg` after a dry run that completed. It is `kind: input`,
+  reason `output_extension_unknown`, dry runs included, judged by the installed build's own muxer
+  list; an extension the build knows is never refused, and one outside the common ones costs a
+  one-time lookup of about two seconds.
+- **An input that is empty, a directory or not media says so (#558).** Reasons `input_empty`,
+  `input_is_directory` and `input_not_media`, each with a hint, in place of ffprobe's raw lines
+  with a memory address in them.
+- **A file the user may not read is "permission denied", not "input not found" (#558).** Reason
+  `input_permission_denied`, for a file behind a directory that cannot be searched and for an
+  unreadable file, in a dry run too; `join.py`, `audio.py`, `render.py` and `verify.py` name it the
+  same way, and `verify.py` no longer ends in a traceback on such a path.
+- **`contract --json | head` no longer prints a traceback (#558).** `scripts/_contract.py` exits 0
+  quietly when the reader of its output closes the pipe (README's quick start does this).
+- **An input name starting with a dash is read as a file (#558).** `probe.py -- -report` and
+  `-- -dash.mp4` failed in ffprobe, and `-report` left an `ffprobe-*.log` in the working
+  directory. Such a name reaches ffmpeg and ffprobe as `./name`; the default output named after it
+  is written too, and `verify.py` and `report.py` pass it on as a file.
 
 ## 3.13.2
 
