@@ -7315,6 +7315,9 @@ class LeanBuildTests(unittest.TestCase):
         proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
                       "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
         self.assertIn("malformed drop-frame timing", json.loads(proc.stdout)["error"]["message"])
+        ordinary_text = "2019-2020; text"
+        cues.write_text(ordinary_text + "\n", encoding="utf-8")
+        self.assertEqual(parse_text_cues(str(cues), 3, 0, 29.97), [(0, 3, ordinary_text)])
 
     def test_look_draws_the_sheet_without_timecodes_on_a_build_without_drawtext(self):
         """#394: the default sheet needs drawtext only for its stamps; without it the step every

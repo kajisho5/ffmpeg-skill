@@ -89,6 +89,7 @@ FORCE_STYLE_ALIGN = {"bottom": 2, "top": 6, "center": 10, "bottom-left": 1, "bot
 TIME_RE = re.compile(
     r"^\s*(?P<a>[\d:;.,@]+)\s*(?P<sep>-->|-|–|to)\s*(?P<b>[\d:;.,@]+)\s+(?P<text>.+)$"
 )
+DROP_FRAME_CLOCK = r"\d+:\d+:\d+;"
 
 
 def cue_times_match(line: str) -> "Optional[re.Match[str]]":
@@ -99,11 +100,13 @@ def cue_times_match(line: str) -> "Optional[re.Match[str]]":
     m = TIME_RE.match(line)
     if m and m.group("sep") == "to" and not (":" in m.group("a") and ":" in m.group("b")):
         return None
+    if m and any(";" in token and not re.match(DROP_FRAME_CLOCK, token) for token in (m.group("a"), m.group("b"))):
+        return None
     return m
 
 
 # an SRT timing line: the times alone, the cue text on the lines after it
-DROP_FRAME_RE = re.compile(r"^\s*(?:\d[\d:.,]*(?:@[^\s-]+)?\s*(?:-->|-|–|to)\s*)?\d+:\d{2}:\d{2};")
+DROP_FRAME_RE = re.compile(r"^\s*(?:\d[\d:.,]*(?:@[^\s-]+)?\s*(?:-->|-|–|to)\s*)?" + DROP_FRAME_CLOCK)
 DROP_FRAME_LABEL = re.compile(r"(\d+):(\d{2}):(\d{2});(\d{2})")
 SRT_TIMING_RE = re.compile(r"^\s*\d+:\d{2}:\d{2}[,.]\d+\s*-->\s*\d+:\d{2}:\d{2}[,.]\d+\s*$")
 # the same line as WebVTT may write it, without the hours: `00:01.000 --> 00:02.000`
