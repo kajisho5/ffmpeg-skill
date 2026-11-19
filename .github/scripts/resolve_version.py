@@ -71,14 +71,18 @@ def changes_shipped_code(paths: Iterable[str]) -> bool:
 
 def contract_surface(doc: Dict[str, object]) -> set:
     """The names a caller can depend on in a contract document (`_contract.py --json`): every
-    tool, every flag of its input schema and every field of its output schema."""
+    tool, every flag of its input schema with each spelling it accepts on the command line (a
+    second spelling of an existing flag is a new name too), and every field of its output schema."""
     surface = set()
     for tool in doc.get("tools") or []:
         name = tool.get("name")
         surface.add(("tool", name, ""))
         for kind, key in (("flag", "input_schema"), ("field", "output_schema")):
-            for prop in ((tool.get(key) or {}).get("properties") or {}):
+            for prop, spec in ((tool.get(key) or {}).get("properties") or {}).items():
                 surface.add((kind, name, prop))
+                cli = spec.get("cli") if kind == "flag" and isinstance(spec, dict) else None
+                for spelling in (cli if isinstance(cli, list) else []):  # a positional's is the marker "positional"
+                    surface.add(("spelling", name, spelling))
     return surface
 
 

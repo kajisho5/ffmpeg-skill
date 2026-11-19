@@ -1948,13 +1948,16 @@ sys.exit(fit.main())
         self.assertIsNone(v)
 
         # the contract floor: names a caller can depend on, compared between two documents
-        old = {"tools": [{"name": "look", "input_schema": {"properties": {"at": {}}},
+        old = {"tools": [{"name": "look", "input_schema": {"properties": {"at": {"cli": ["--at"]}, "input": {"cli": "positional"}}},
                           "output_schema": {"properties": {"outputs": {}}}}]}
-        new = {"tools": [{"name": "look", "input_schema": {"properties": {"at": {}, "compare_at": {}}},
+        new = {"tools": [{"name": "look", "input_schema": {"properties": {
+                              "at": {"cli": ["--at", "--time"]}, "input": {"cli": "positional"}, "compare_at": {"cli": ["--compare-at"]}}},
                           "output_schema": {"properties": {"outputs": {}, "comparisons": {}}}},
                          {"name": "new", "input_schema": {}, "output_schema": {}}]}
         added = rv.contract_additions(old, new)
-        self.assertEqual(added, [("field", "look", "comparisons"), ("flag", "look", "compare_at"), ("tool", "new", "")])
+        # a second spelling of an existing flag is a name a caller can now depend on, too
+        self.assertEqual(added, [("field", "look", "comparisons"), ("flag", "look", "compare_at"),
+                                 ("spelling", "look", "--compare-at"), ("spelling", "look", "--time"), ("tool", "new", "")])
         self.assertEqual(rv.contract_additions(new, old), [], "a removal is not an addition")
         self.assertEqual(rv.contract_additions(None, new), [], "an unread contract applies no floor")
         v, _ = rv.resolve("3.13.2", ["Compare a cut (#614)"], chore, ["a"], None, paths, added)
@@ -1966,6 +1969,9 @@ sys.exit(fit.main())
         surface = rv.contract_surface(rv._contract_at(None))
         self.assertIn(("tool", "cut", ""), surface)
         self.assertIn(("flag", "fit", "duration"), surface)
+        self.assertIn(("spelling", "fit", "--duration"), surface)
+        self.assertFalse([x for x in surface if x[0] == "spelling" and not x[2].startswith("-")],
+                         "a positional has no spelling: its schema says \"positional\"")
 
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
