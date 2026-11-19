@@ -110,8 +110,13 @@ function which(cmd, env, platform, isFile) {
   const plat = platform || process.platform;
   const p = plat === 'win32' ? path.win32 : path.posix;
   const e = env || process.env;
+  // On POSIX a file this user may not execute is passed over, as the OS's own search would.
   const exists = isFile || ((f) => {
-    try { return fs.statSync(f).isFile(); } catch (_) {
+    try {
+      if (!fs.statSync(f).isFile()) return false;
+      if (plat !== 'win32') fs.accessSync(f, fs.constants.X_OK);
+      return true;
+    } catch (_) {
       // a Windows App Execution Alias (winget.exe, python.exe in WindowsApps) is a reparse point
       // that stat may not follow; lstat still sees it, and spawning it by its full path works
       try { return plat === 'win32' && Boolean(fs.lstatSync(f)); } catch (__) { return false; }

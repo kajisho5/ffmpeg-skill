@@ -2913,23 +2913,39 @@ sys.exit(fit.main())
         # Every program the installer starts is found on PATH's absolute entries and run by its full
         # path: a bare name would let Windows look in the current directory first, so a winget.exe
         # in the project would run. Nothing is run to find it.
-        bindir = self.out("which_bin")
-        bindir.mkdir()
-        (bindir / "tool").write_text("", encoding="utf-8")
-        here = self.out("which_cwd")
-        here.mkdir()
-        (here / "tool").write_text("", encoding="utf-8")
+        exe = ".exe" if os.name == "nt" else ""
+        bindir, later, here = self.out("which_bin"), self.out("which_later"), self.out("which_cwd")
+        for d in (bindir, later, here):
+            d.mkdir()
+            (d / f"tool{exe}").write_text("", encoding="utf-8")
+            os.chmod(d / f"tool{exe}", 0o755)
         found = subprocess.run(
-            ["node", "-e", "const i = require(process.argv[1]); const [abs, cwd] = process.argv.slice(2);\n"
-             "const r = (p) => i.which('tool', { PATH: p }, 'linux');\n"
-             "const win = (p, have) => i.which('winget', { PATH: p }, 'win32', (f) => have.includes(f));\n"
-             "process.stdout.write(JSON.stringify([r(abs), r('.'), r(''), r(`.:${abs}`), r('which_cwd'), i.which('nothing-here', { PATH: abs }, 'linux'),\n"
-             "  win('C:\\\\bin;.', ['C:\\\\bin\\\\winget.exe']), win('.;C:\\\\bin', ['C:\\\\bin\\\\winget.cmd']), win('rel', ['rel\\\\winget.exe'])]));",
-             str(ROOT / "bin" / "install.js"), str(bindir), str(here)],
+            ["node", "-e", "const i = require(process.argv[1]); const path = require('path'); const [abs, later, cwd] = process.argv.slice(2);\n"
+             "const D = path.delimiter; const r = (p) => i.which('tool', { PATH: p });\n"
+             "process.stdout.write(JSON.stringify([r(abs), r('.'), r(''), r(`.${D}${abs}`), r('which_cwd'), i.which('nothing-here', { PATH: abs }), r(`${abs}${D}${later}`)]));",
+             str(ROOT / "bin" / "install.js"), str(bindir), str(later), str(here)],
             cwd=str(here), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(found.returncode, 0, found.stderr)
         self.assertEqual(json.loads(found.stdout),
-                         [str(bindir / "tool"), None, None, str(bindir / "tool"), None, None, "C:\\bin\\winget.exe", None, None])
+                         [str(bindir / f"tool{exe}"), None, None, str(bindir / f"tool{exe}"), None, None, str(bindir / f"tool{exe}")])
+        if os.name != "nt":
+            # a file this user may not execute is passed over, as the OS's own search does
+            os.chmod(bindir / "tool", 0o644)
+            skipped = subprocess.run(["node", "-e", "const i = require(process.argv[1]);"
+                                      "process.stdout.write(String(i.which('tool', { PATH: `${process.argv[2]}:${process.argv[3]}` }, 'linux')));",
+                                      str(ROOT / "bin" / "install.js"), str(bindir), str(later)],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(skipped.stdout, str(later / "tool"), skipped.stderr)
+        # Windows rules on made-up paths, with the file check given: .exe and .com only, absolute entries only
+        win = subprocess.run(
+            ["node", "-e", "const i = require(process.argv[1]);\n"
+             "const w = (p, have) => i.which('winget', { PATH: p }, 'win32', (f) => have.includes(f));\n"
+             "process.stdout.write(JSON.stringify([w('C:\\\\bin;.', ['C:\\\\bin\\\\winget.exe']), w('.;C:\\\\bin', ['C:\\\\bin\\\\winget.cmd']),\n"
+             "  w('rel', ['rel\\\\winget.exe']), w('C:\\\\a;D:\\\\b', ['D:\\\\b\\\\winget.com'])]));",
+             str(ROOT / "bin" / "install.js")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(win.returncode, 0, win.stderr)
+        self.assertEqual(json.loads(win.stdout), ["C:\\bin\\winget.exe", None, None, "D:\\b\\winget.com"])
         js = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
         self.assertNotRegex(js, r"spawn(Sync)?\('(ffmpeg|python3?|py|brew|winget|apt-get|sudo)'", "a program is spawned by its bare name")
 
