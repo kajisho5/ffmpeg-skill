@@ -1911,6 +1911,62 @@ sys.exit(fit.main())
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
 
+    def test_release_version_resolver_does_not_depend_on_a_pr_title(self):
+        """3.13.2 (2026-11-19): four PRs titled without a fix/feat prefix carried only `chore`
+        (the autolabeler reads the title, and every PR touches a .md), so a new flag, a new result
+        field and two fixes stayed on main unreleased. The tree sets a floor under the labels: a
+        commit that changes shipped code is at least a patch, and a contract that gained a tool,
+        a flag or a result field makes the release a minor."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "resolve_version", ROOT / ".github" / "scripts" / "resolve_version.py")
+        rv = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rv)
+        chore = lambda n: ["chore"]
+        paths = {"a": ["scripts/look.py", "CHANGELOG.md"], "b": ["README.md", "scripts/README.md"],
+                 "c": ["tests/test_contract.py", ".github/workflows/ci.yml"], "d": ["mcp/server.py"],
+                 "e": ["package.json", "scripts/_contract.py"]}.get
+        # the incident: chore-only labels, shipped code changed -> a patch, and the decision says why
+        v, d = rv.resolve("3.13.2", ["Compare a cut (#614)"], chore, ["a"], None, paths)
+        self.assertEqual((v, d[0]["bump"], d[0].get("floor")), ("3.13.3", "patch", "shipped_code"))
+        # documents (even under scripts/), tests and workflows are not shipped code: still nothing
+        v, d = rv.resolve("3.13.2", ["Explain (#586)", "ci: retry (#587)"], chore, ["b", "c"], None, paths)
+        self.assertIsNone(v)
+        self.assertNotIn("floor", d[0])
+        # Dependabot and the release's own bump commit are exempt, whatever they touch
+        v, _ = rv.resolve("3.13.2", ["Build(deps): bump x (#472)"], lambda n: ["dependencies", "chore"], ["d"], None, paths)
+        self.assertIsNone(v)
+        v, _ = rv.resolve("3.13.2", ["chore(release): bump version to 3.13.2 [skip ci]"], chore, ["e"], None, paths)
+        self.assertIsNone(v)
+        # a direct push titled chore: that changes shipped code ships too
+        v, _ = rv.resolve("3.13.2", ["chore: tidy"], chore, ["d"], None, paths)
+        self.assertEqual(v, "3.13.3")
+        # the labels still win upwards, and without paths the old answer stands
+        v, _ = rv.resolve("3.13.2", ["Add x (#1)"], lambda n: ["feature"], ["a"], None, paths)
+        self.assertEqual(v, "3.14.0")
+        v, _ = rv.resolve("3.13.2", ["Compare a cut (#614)"], chore)
+        self.assertIsNone(v)
+
+        # the contract floor: names a caller can depend on, compared between two documents
+        old = {"tools": [{"name": "look", "input_schema": {"properties": {"at": {}}},
+                          "output_schema": {"properties": {"outputs": {}}}}]}
+        new = {"tools": [{"name": "look", "input_schema": {"properties": {"at": {}, "compare_at": {}}},
+                          "output_schema": {"properties": {"outputs": {}, "comparisons": {}}}},
+                         {"name": "new", "input_schema": {}, "output_schema": {}}]}
+        added = rv.contract_additions(old, new)
+        self.assertEqual(added, [("field", "look", "comparisons"), ("flag", "look", "compare_at"), ("tool", "new", "")])
+        self.assertEqual(rv.contract_additions(new, old), [], "a removal is not an addition")
+        self.assertEqual(rv.contract_additions(None, new), [], "an unread contract applies no floor")
+        v, _ = rv.resolve("3.13.2", ["Compare a cut (#614)"], chore, ["a"], None, paths, added)
+        self.assertEqual(v, "3.14.0", "a new flag or field is a minor whatever the labels say")
+        # ... but it never makes a release out of nothing releasable
+        v, _ = rv.resolve("3.13.2", ["Explain (#586)"], chore, ["b"], None, paths, added)
+        self.assertIsNone(v)
+        # and this tree's own contract reads as a surface with every tool in it
+        surface = rv.contract_surface(rv._contract_at(None))
+        self.assertIn(("tool", "cut", ""), surface)
+        self.assertIn(("flag", "fit", "duration"), surface)
+
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
         """FFmpeg 6.1 is the floor since 3.0.0, so drawtext's per-side `boxborderw=v|h` and
