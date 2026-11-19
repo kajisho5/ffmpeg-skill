@@ -811,6 +811,7 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
         # an empty sample (a dry run before transcription) asks for no face; a language the
         # caller names that is not Vietnamese (Igbo, Yoruba share these letters) keeps its own
         # font: the letters cannot tell them apart, the tag can (review of #636)
+        tag = "vi" if tag == "vie" else tag  # the three-letter form caption.py also accepts
         if (tag == "vi" and normalized.strip()) or (tag in ("", "vi") and (marked or combined)):
             key = "vi"
     if key == "latin":

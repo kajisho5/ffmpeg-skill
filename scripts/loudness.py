@@ -73,7 +73,7 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     # FFmpeg measured the track with the default disposition or the most channels, and the gain
     # for that track was applied to a:0 (A110)
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
-           "-af", f"loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
+           "-af", f"aresample=async=1,loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
     # Pass 1 is a measurement: it runs under --dry-run too, so the planned pass-2 command and
     # the reported input_i are real (before 1.4.6 a dry run returned a made-up -20 LUFS).
     proc = run_analysis(cmd, check=False, record=True)

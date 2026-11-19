@@ -4161,7 +4161,7 @@ class ScriptFontTests(unittest.TestCase):
 
         entry = ("/test/vi.ttf", "Test Vietnamese")
         cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None),
-                 ("đã ăn", None), ("Xin chao", "vi-VN"))
+                 ("đã ăn", None), ("Xin chao", "vi-VN"), ("Tiếng Việt", "vie"))
         with unittest.mock.patch.object(fonts, "_script_font_entry", return_value=entry) as resolve:
             for sample, lang in cases:
                 with self.subTest(sample=sample, lang=lang):
