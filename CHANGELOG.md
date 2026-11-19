@@ -111,6 +111,7 @@ Closes: #548, #569, #606, #623
 - Send live FFmpeg encode updates to MCP callers that request progress (#574).
 - Check Vietnamese font coverage separately and use it for tone-marked captions (#608).
 - Draw still waveforms around supplied cut points with `waveform.py --at` (#450).
+- Crop checks report sampled review times for inspecting discarded motion or detail (#570).
 
 ## 3.13.2
 
@@ -163,7 +164,7 @@ _Automated release: version and notes generated from pull requests merged since 
 - feat(doctor): report the FFmpeg build license (#603)
 - fix: bind parsed side inputs in saved plans (#601)
 
-Closes: #518, #578
+Closes: #518, #564, #578
 
 ## 3.12.1
 

@@ -1501,6 +1501,12 @@ sys.exit(fit.main())
         self.assertTrue(os.path.exists(out))
         cc = doc["crop_check"]
         self.assertEqual((cc["verdict"], cc["axis"], cc["basis"]), ("review", "x", "luma_motion_proxy"), cc)
+        times = [point["output_time_estimate"] for point in cc["review_points"]]
+        self.assertTrue(times)
+        self.assertEqual(times, sorted(set(times)))
+        first_frame = self.out("crop_left_review.png")
+        tool("look", out, "--at", str(times[0]), "--no-timecode", "-o", first_frame, "--json")
+        self.assertTrue(os.path.exists(first_frame))
         self.assertGreater(cc["samples"], 0)
         self.assertGreaterEqual(cc["motion_outside"], 0.5)
         self.assertLessEqual(cc["suggested_anchor"], 0.15)

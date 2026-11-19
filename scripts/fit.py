@@ -49,10 +49,10 @@ from fractions import Fraction
 from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis
-from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
-from _common.emit import input_length, refuse, refuse_still, warn
+from _common.emit import input_length, own_length, refuse, refuse_still, warn
 from _common.probe import fingerprint
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
@@ -186,7 +186,7 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
     [start, start + length] at (i + 0.5) / CROP_SAMPLES, two 8-bit grey frames CROP_SAMPLE_GAP s
     apart at each, in the displayed frame the crop is cut from (autorotated, then the run's own
     --rotate/--flip filters `orient`) scaled to CROP_SAMPLE_LONG px on the long axis. Returns
-    ([(first, second), ...], width, height), or None when no point gave two whole frames. A
+    ([(seek_seconds, (first, second)), ...], width, height), or None when no point gave two whole frames. A
     point that fails (past the end, a decode error) is left out; the others still count."""
     if not (sw and sh) or length <= CROP_SAMPLE_GAP:
         return None
@@ -198,9 +198,13 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
     filters = [f"fps={1 / CROP_SAMPLE_GAP:g}"] + list(orient) + [f"scale={w}:{h}:flags=area", "format=gray"]
     last = start + max(0.0, length - CROP_SAMPLE_GAP - 0.1)  # room for the second frame
     frames = []
+    previous_seek = None
     for i in range(CROP_SAMPLES):
         t = min(start + length * (i + 0.5) / CROP_SAMPLES, last)
         seek = f"{t:.6f}"
+        if seek == previous_seek:
+            continue
+        previous_seek = seek
         remaining = start + length - float(seek)
         chain = ",".join([f"trim=end={remaining:.6f}"] + filters)
         cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -209,7 +213,7 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
         proc = run_analysis(cmd, check=False, text=False, timeout_is_fatal=False)
         out = proc.stdout or b""
         if proc.returncode == 0 and len(out) == 2 * size:
-            frames.append((out[:size], out[size:]))
+            frames.append((float(seek), (out[:size], out[size:])))
     return (frames, w, h) if frames else None
 
 
@@ -285,10 +289,11 @@ def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
              "motion_outside": None if m_out is None else round(m_out, 4),
              "detail_outside": None if d_out is None else round(d_out, 4),
              "centroid": None, "suggested_anchor": None, "samples": used,
-             "basis": "luma_motion_proxy", "verdict": "unmeasured"}
+             "basis": "luma_motion_proxy", "signal": None, "verdict": "unmeasured"}
     if not (has_motion or has_detail):
         return check
     profile = motion if has_motion else detail
+    check["signal"] = "motion" if has_motion else "detail"
     centroid = sum((k + 0.5) / n * e for k, e in enumerate(profile)) / sum(profile)
     check["centroid"] = round(centroid, 4)
     if discarded > 1e-9:
@@ -301,35 +306,63 @@ def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
     return check
 
 
-def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: float, length: float) -> dict:
+def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: float, length: float,
+               *, speed: float = 1.0, output_video: Optional[dict] = None) -> dict:
     """crop_check for a --fit crop that cut something away: samples the kept source range,
     measures it with crop_loss and records crop_content_off_centre when the verdict is review.
     Advisory: nothing here changes the output or the exit status. A measurement that fails is
     verdict unmeasured with a note, never another diagnostic code."""
     axis, w0, w1 = window
+    output_video = output_video or {}
+    fps = output_video.get("fps")
+    video_length = own_length(output_video)
+    # A duration includes the last frame's hold. Accurate seeking past that frame's
+    # timestamp would find nothing, even when an audio tail keeps the container open.
+    last_seek = (video_length - 1 / ntsc_rate(fps)
+                 if fps and video_length and not output_video.get("variable_frame_rate_suspected") else None)
+    points = []
+    measurement_error = None
     try:
         got = sample_crop_frames(path, orient, sw, sh, start, length)
-        frames, fw, fh = got if got else ([], 1, 1)
-        check = crop_loss(frames, fw, fh, (w0, w1), axis)
+        samples, fw, fh = got if got else ([], 1, 1)
+        check = crop_loss([pair for _, pair in samples], fw, fh, (w0, w1), axis)
+        for source_time, pair in samples:
+            sample = crop_loss([pair], fw, fh, (w0, w1), axis)
+            if sample["verdict"] != "review":
+                continue
+            estimate = round(max(0.0, (source_time - start) / speed), 6)
+            point = {key: sample[key] for key in ("signal", "motion_outside", "detail_outside",
+                                                   "centroid", "suggested_anchor")}
+            point["source_time"] = source_time
+            point["output_time_estimate"] = estimate if last_seek is not None and estimate <= last_seek else None
+            points.append(point)
     except Exception as exc:  # a measurement, never the run's failure
-        note(f"crop check: not measured: {exc}")
-        return crop_loss([], 1, 1, (w0, w1), axis)
+        measurement_error = str(exc)
+        check = crop_loss([], 1, 1, (w0, w1), axis)
+        points = []
+    check["kept"] = {"start": round(w0, 6), "end": round(w1, 6)}
+    check["review_points"] = points
+    aggregate_review = check["verdict"] == "review"
+    if points:
+        check["verdict"] = "review"
     if check["verdict"] == "unmeasured":
-        note("crop check: not measured: " + ("no sample gave two frames" if not check["samples"]
-                                             else "the sampled frames have no luma motion or detail"))
+        reason = measurement_error or ("no sample gave two frames" if not check["samples"]
+                                       else "the sampled frames have no luma motion or detail")
+        note(f"crop check: not measured: {reason}")
         return check
     if check["verdict"] == "review":
-        moving = check["motion_outside"] is not None and check["motion_outside"] >= CROP_MOTION_OUTSIDE_WARN
-        share = check["motion_outside"] if moving else check["detail_outside"]
-        flag = f"--crop-{axis}"
-        anchor = check["suggested_anchor"]
-        remedy = (f"{flag} {anchor:g} centres the kept window on it" if anchor is not None else f"{flag} moves the kept window")
-        warn(f"--fit crop: {share:.0%} of the sampled luma {'motion' if moving else 'detail'} lies in the "
-             f"{check['discarded_fraction']:.0%} of the frame ({axis} axis) the crop cuts away. This is a "
-             f"luma motion/detail proxy, not subject detection. {remedy}; --fit pad or --fit blur crop nothing",
-             "crop_content_off_centre",
-             **{k: check[k] for k in ("axis", "discarded_fraction", "motion_outside", "detail_outside",
-                                      "centroid", "suggested_anchor", "samples", "basis")})
+        if aggregate_review:
+            signal = check["signal"]
+            share = check[f"{signal}_outside"]
+            advice = f"{share:.0%} of the sampled luma {signal} lies outside the kept window."
+            if check["suggested_anchor"] is not None:
+                advice += f" --crop-{axis} {check['suggested_anchor']:g} centres the window on the aggregate signal."
+        else:
+            advice = "Some samples have substantial luma motion or detail outside the kept window."
+        if points:
+            advice += f" Inspect {len(points)} flagged point(s) in crop_check.review_points."
+        warn(f"--fit crop ({axis} axis): {advice} --fit pad or --fit blur keeps the whole frame.",
+             "crop_content_off_centre", **{key: value for key, value in check.items() if key != "verdict"})
     return check
 
 
@@ -668,7 +701,9 @@ def main() -> int:
     if crop_window and not STATE.dry_run:
         # the source range the output shows: a trim's window, else the whole source (speed retimes all of it)
         k0, klen = kept if kept else (0.0, src_dur or (meta.get("duration") or 0.0))
-        extra["crop_check"] = check_crop(args.input, orient, sw, sh, crop_window, k0, klen)
+        extra["crop_check"] = check_crop(
+            args.input, orient, sw, sh, crop_window, k0, klen,
+            speed=factor if abs(factor - 1.0) > 1e-4 else 1.0, output_video=result.get("video"))
     emit(output, dropped_non_av_streams=dropped_streams, **extra)
     return 0
 

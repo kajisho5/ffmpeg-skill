@@ -982,9 +982,18 @@ For these export and render results, `unverified` still includes `picture_conten
 
 `fit.py --fit crop` also reports `crop_check` after writing a crop with a discarded
 margin. Its `basis` is `luma_motion_proxy`. The `verdict` is `ok`, `review`, or
-`unmeasured`. A `review` verdict adds a `crop_content_off_centre` warning with
-the affected axis and the suggested anchor where available. A sampling timeout
-counts as `unmeasured` and the tool reports the written output.
+`unmeasured`. The verdict is `review` when the aggregate or an individual sampled
+point crosses the motion or detail threshold. The `crop_content_off_centre` warning
+includes the affected axis, suggested anchor and `review_points`. `kept.start` and
+`kept.end` are fractions of the displayed source along that axis.
+
+Each `review_points` entry has `source_time` (the sample seek time in seconds),
+`output_time_estimate` (the corresponding seek after trimming and retiming, or
+`null` when the output frame rate or length is uncertain or the seek would fall after
+the last frame's start), `signal` (`motion` or `detail`),
+`motion_outside`, `detail_outside`, `centroid` and `suggested_anchor`. The times
+are review positions for `look.py --at`. A sampling timeout counts as `unmeasured`.
+`subject_framing` remains in `unverified`.
 
 Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on an alpha source without `--keep-alpha` is the one change to an existing run, see below):
 
