@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.15.0
+
+_Automated release: version and notes generated from pull requests merged since 3.14.1._
+
+- feat: add npx ffmpeg-skill setup, one command for a new machine (#634)
+
 ## 3.14.1
 
 _Automated release: version and notes generated from pull requests merged since 3.14.0._
