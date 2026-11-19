@@ -1171,6 +1171,14 @@ public script, a removed one, or a changed parser therefore changes the MCP surf
 with no edit to `mcp/`; `tests/test_contract.py` proves this by copying the skill,
 adding, removing and editing scripts, and reading `tools/list` again.
 
+A `tools/call` request can opt in with `params._meta.progressToken` (string or
+integer). `notifications/progress` echoes the token and carries a strictly
+increasing notification count as `progress`. Its `message` reports the current
+FFmpeg step's percent and estimated time remaining when the step knows its
+duration, or media seconds processed otherwise. Each step has its own clock, so
+the server omits an overall `total`. Updates arrive before the final response,
+at most twice a second. Dry runs and calls without a token have no updates.
+
 ### Translation, and what JSON Schema cannot say
 
 | ToolSpec.input_schema | MCP inputSchema |

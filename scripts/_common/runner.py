@@ -34,6 +34,9 @@ INSTALL_HINTS = {
     ),
 }
 
+MCP_PROGRESS_ENV = "FFMPEG_SKILL_MCP_PROGRESS"
+_PROGRESS_PREFIX = "[ffmpeg-skill progress] "
+
 # For an FFmpeg that is on PATH but older than MIN_FFMPEG (#467 A226): reinstalling the
 # distribution's package gives the same old version back (Ubuntu 22.04's is 4.4, Debian 12's 5.1),
 # so the hint names a newer build instead.
@@ -526,7 +529,7 @@ def apply_common(args: "argparse.Namespace") -> None:
         # check, cropdetect, silence --list, report and verify printed text (or a bare document,
         # or a document and then a path) under --json-brief alone (review of #521)
         args.json = STATE.json
-    STATE.progress = bool(getattr(args, "progress", False))
+    STATE.progress = bool(getattr(args, "progress", False) or os.environ.get(MCP_PROGRESS_ENV) == "1")
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
     if STATE.plan and os.environ.get("FFMPEG_SKILL_READ_ONLY", "") not in ("", "0"):
@@ -2768,40 +2771,87 @@ def _stop_child(child: subprocess.Popen, communicate: bool = True) -> "Tuple[boo
     return False, wait()
 
 
+def _capture_tool_progress(child: subprocess.Popen, limit: Optional[float],
+                           report: Callable[[str], None]) -> Tuple[str, str, Optional[bool]]:
+    """Drain both pipes while the tool runs. Only tagged progress is sent to the caller."""
+    import threading
+
+    out, err = [], []
+    assert child.stdout is not None and child.stderr is not None
+
+    def stdout_reader() -> None:
+        out.append(child.stdout.read())
+
+    def stderr_reader() -> None:
+        for line in child.stderr:
+            if line.startswith(_PROGRESS_PREFIX):
+                try:
+                    report(line[len(_PROGRESS_PREFIX):].strip())
+                except OSError:
+                    # A closed transport must not leave the child's stderr pipe undrained.
+                    pass
+            else:
+                err.append(line)
+
+    readers = [threading.Thread(target=reader, daemon=True) for reader in (stdout_reader, stderr_reader)]
+    for reader in readers:
+        reader.start()
+    stopped = None
+    try:
+        child.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        stopped, _ = _stop_child(child, communicate=False)
+    for reader in readers:
+        reader.join()
+    child.stdout.close()
+    child.stderr.close()
+    return "".join(out), "".join(err), stopped
+
+
+def _relay_progress(message: str) -> None:
+    sys.stderr.write(_PROGRESS_PREFIX + message + "\n")
+    sys.stderr.flush()
+
+
 def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
              env: Optional[Dict[str, str]] = None,
-             on_start: "Optional[Callable[[subprocess.Popen], None]]" = None) -> subprocess.CompletedProcess:
+             on_start: "Optional[Callable[[subprocess.Popen], None]]" = None,
+             on_progress: "Optional[Callable[[str], None]]" = None) -> subprocess.CompletedProcess:
     """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
     child is stopped (_stop_child()) and a CompletedProcess is returned whose stdout is this skill's own failure
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
     exactly as they would from the child itself. `env` replaces the inherited environment.
     `on_start(child)` is called once the child is running (the MCP server keeps it to stop a call
-    the client cancels)."""
+    the client cancels). Tagged progress is streamed to `on_progress` or relayed to the MCP
+    process through a parent tool such as render.py."""
     limit = child_limit(per_call)
     child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     if on_start is not None:
         on_start(child)
+    report = on_progress
+    if report is None and (os.environ if env is None else env).get(MCP_PROGRESS_ENV) == "1":
+        report = _relay_progress
     try:
-        out, err = child.communicate(timeout=limit)
-        _unwatch(child)
-        return subprocess.CompletedProcess(child.args, child.returncode, out, err)
+        if report is None:
+            out, err = child.communicate(timeout=limit)
+            stopped_cleanly = None
+        else:
+            out, err, stopped_cleanly = _capture_tool_progress(child, limit, report)
     except subprocess.TimeoutExpired:
-        # A183: the child is asked to stop first. A sibling script's SIGTERM handler stops its
-        # ffmpeg, removes the partial output and releases its output lock before it exits; a
-        # SIGKILL left the partial file under the final output name and a stale lock beside it,
-        # under a document that said kind timeout. Killed only when it has not exited in
-        # STOP_GRACE seconds (and at once on Windows, where terminate() is a kill).
-        stopped_cleanly, rest = _stop_child(child)
+        stopped_cleanly, err = _stop_child(child)
+    finally:
         _unwatch(child)
-        name = os.path.basename(str(argv[0]))
-        msg = (f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was "
-               + ("stopped" if stopped_cleanly else "killed"))
-        doc = {"status": "failed", "exit_code": 124,
-               "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
-               "commands": []}
-        # communicate() after a timeout returns everything the child wrote, the part read before too
-        return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), rest + f"\nerror: {msg}\n")
+    if stopped_cleanly is None:
+        return subprocess.CompletedProcess(child.args, child.returncode, out, err)
+    # Keep the same failure document and SIGTERM cleanup as the non-streaming path (A183).
+    name = os.path.basename(str(argv[0]))
+    msg = (f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was "
+           + ("stopped" if stopped_cleanly else "killed"))
+    doc = {"status": "failed", "exit_code": 124,
+           "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
+           "commands": []}
+    return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), err + f"\nerror: {msg}\n")
 
 
 def option_args(flag: str, value: Any) -> List[str]:
@@ -3172,9 +3222,10 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     err_thread = threading.Thread(target=pump_err, daemon=True)
     err_thread.start()
     last = ""
+    mcp_progress = os.environ.get(MCP_PROGRESS_ENV) == "1"
 
     def clear_line() -> None:
-        if last:
+        if last and not mcp_progress:
             sys.stderr.write("\r" + " " * len(last) + "\r")
 
     def timed_out() -> None:
@@ -3200,8 +3251,12 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
                 continue
             msg = _progress_line(done, total, time.time() - t0)
             if msg != last:
-                sys.stderr.write(msg)
-                sys.stderr.flush()
+                if mcp_progress:
+                    message = msg.strip() if total > 0 else f"{max(0.0, done):.1f}s processed"
+                    _relay_progress(message)
+                else:
+                    sys.stderr.write(msg)
+                    sys.stderr.flush()
                 last = msg
     try:
         proc.wait(timeout=(max(5.0, limit - (time.time() - t0)) if limit else None))
