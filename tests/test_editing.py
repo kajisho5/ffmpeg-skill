@@ -5696,7 +5696,7 @@ class FitPictureTests(unittest.TestCase):
                 if name == "cached":
                     self.assertIn("fit", doc["cache"]["hits"])
             spec = json.loads(project.read_text(encoding="utf-8"))
-            spec["export"] = {"preset": "reels", "fit": "pad"}
+            spec["export"] = {"preset": "ig", "fit": "pad"}
             project.write_text(json.dumps(spec), encoding="utf-8")
             doc = json.loads(script("render.py", project, "--fast", "--stop-after", "export",
                                     "-o", root / "reframed.mp4", "--json").stdout)

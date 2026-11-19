@@ -2275,7 +2275,8 @@ def main() -> int:
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
         sh("export.py", *argv, stage="export")
-        if PRESETS[ex["preset"]]["w"]:
+        preset = PRESETS.get(ex["preset"]) or PRESETS[resolve_platform(ex["preset"])]
+        if preset["w"]:
             # An older cached export (or a width-only preset) can resize without a report.
             # Keep the fit-stage report, but never claim it measures that delivery.
             picture_fields.pop("picture", None)
