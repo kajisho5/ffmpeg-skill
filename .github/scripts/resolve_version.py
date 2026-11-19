@@ -197,17 +197,21 @@ def _contract_at(rev: Optional[str]) -> Optional[Dict[str, object]]:
     """`_contract.py --json` of the working tree (rev None) or of a tag, read from an export of
     that tag's scripts/. None when it cannot be produced: the caller then applies no floor."""
     import tempfile
+
+    def read(script: str) -> Dict[str, object]:
+        # UTF-8 both ways: the document holds non-ASCII text, and a Windows console code page
+        # cannot print it (the child failed there with the default encoding)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        return json.loads(subprocess.run([sys.executable, script, "--json"], capture_output=True, text=True,
+                                         encoding="utf-8", env=env, check=True, timeout=120).stdout)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     try:
         if rev is None:
-            script = os.path.join("scripts", "_contract.py")
-            return json.loads(subprocess.run([sys.executable, script, "--json"], capture_output=True,
-                                             text=True, check=True, timeout=120).stdout)
+            return read(os.path.join(root, "scripts", "_contract.py"))
         with tempfile.TemporaryDirectory() as tmp:
-            archive = subprocess.run(["git", "archive", rev, "scripts"], capture_output=True, check=True).stdout
+            archive = subprocess.run(["git", "-C", root, "archive", rev, "scripts"], capture_output=True, check=True).stdout
             subprocess.run(["tar", "-x", "-C", tmp], input=archive, check=True)
-            return json.loads(subprocess.run(
-                [sys.executable, os.path.join(tmp, "scripts", "_contract.py"), "--json"],
-                capture_output=True, text=True, check=True, timeout=120).stdout)
+            return read(os.path.join(tmp, "scripts", "_contract.py"))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"  contract at {rev or 'HEAD'} not read ({type(exc).__name__}): no contract floor")
         return None
