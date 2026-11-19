@@ -453,6 +453,21 @@ def _video_packets(path: str, limit: "Optional[int]" = None) -> "List[str]":
     return (proc.stdout or "").split() if proc.returncode == 0 else []
 
 
+def _aac_priming_seconds(path: str, sample_rate: int) -> Optional[float]:
+    """Measure the samples to skip when decoding the input's first AAC packet."""
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
+           "-read_intervals", "%+#1", "-show_entries", "packet=pts:packet_side_data=skip_samples",
+           "-of", "json", path]
+    proc = run(cmd, quiet=True, check=False)
+    if proc.returncode != 0 or not sample_rate:
+        return None
+    try:
+        packet = json.loads(proc.stdout or "{}")["packets"][0]
+        return sum(int(side.get("skip_samples", 0)) for side in packet.get("side_data_list", [])) / sample_rate
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
 SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B-frame reordering
 SPAN_TAIL_SECONDS = 10.0   # read from this far before the end, so a seek that lands early still reaches it
 
@@ -510,6 +525,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
     guard_sidecar(output, *args.inputs)
     refuse_list_as_output(args, output)
     ext = os.path.splitext(output)[1].lower()
+    mov_output = ext in (".mp4", ".mov", ".m4v")
     n = len(args.inputs)
     pending = any(m.get("dry_run") for m in metas)
     if pending:
@@ -567,6 +583,27 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                    f"--copy: picture and sound start or end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",
                    clips=[{"path": g["path"], "differs": {"video_span": g["video"], "audio_span": g["audio"]}} for g in gaps])
+        if mov_output and (metas[0].get("audio") or {}).get("codec") == "aac":
+            # Subsequent clips' leading AAC padding can play at the seam when MP4/MOV remuxes
+            # the packets as one track. The input's skip marker describes what a decoder should
+            # discard there. Bound the cumulative risk by the same budget as the A/V span check.
+            priming = []
+            for index, (path, meta) in enumerate(zip(args.inputs[1:], metas[1:]), start=1):
+                seconds = _aac_priming_seconds(path, (meta.get("audio") or {}).get("sample_rate") or 0)
+                if seconds is None:
+                    refuse("input", "join_copy_mismatch", f"--copy: could not measure AAC priming in {path}",
+                           hint="drop --copy to re-encode the join",
+                           clips=[{"index": index, "path": path, "differs": {"aac_priming_ms": None}}])
+                if seconds > 0:
+                    priming.append((index, path, seconds))
+            total = sum(seconds for _, _, seconds in priming)
+            if total > COPY_AV_GAP:
+                refuse("input", "join_copy_mismatch",
+                       f"--copy: AAC priming at the joins totals {total * 1000:.1f} ms and can delay the sound",
+                       hint="drop --copy so each AAC clip is decoded and its leading padding removed",
+                       aac_priming_ms=round(total * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000,
+                       clips=[{"index": i, "path": p, "differs": {"aac_priming_ms": round(s * 1000, 3)}}
+                              for i, p, s in priming])
     fps = (metas[0].get("video") or {}).get("fps") or 30.0
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     place_silent([m.get("duration") or 0.0 for m in metas], 0.0)
@@ -577,7 +614,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                 fh.write(concat_list_line(os.path.abspath(p)) + "\n")
         joined = sibling_temp(output, "join") if not STATE.dry_run else output
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-map", "0:V:0", "-map", "0:a:0?", "-c", "copy"]
-        if ext in (".mp4", ".mov", ".m4v"):
+        if mov_output:
             cmd += ["-movflags", "+faststart"]
         try:
             run(cmd + [joined])

@@ -951,6 +951,10 @@ before its start with an edit list, every clip must lay out its streams as the f
 picture and sound must start, and end (start plus length), within 50 ms of each other (the demuxer starts the next clip where this one's container ends, so the shorter
 stream would leave that gap). Anything else is refused before ffmpeg runs (`kind: input`,
 `reason: join_copy_mismatch`, `details.clips: [{index?, path, differs}]` naming what differs).
+For AAC in MP4/MOV/M4V output, the preflight also measures the leading samples to skip
+on each clip after the first. A copy join can retain that padding at the seams. When the
+marked padding totals more than 50 ms, the copy is refused and `details.aac_priming_ms`
+reports the total. Drop `--copy` to decode each clip before joining independently encoded AAC.
 The join is written beside the output and measured before it is renamed into place: its video
 packet count must equal the clips' total and its video length their summed length. `mode` is
 `copy`. `--copy` does not take `--width`, `--height`, `--fps`, `--sample-rate`, `--channels` or a transition, and an
