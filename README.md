@@ -495,11 +495,12 @@ python3 scripts/export.py vertical.mp4 --preset reels --normalize -o reels.mp4
 python3 scripts/check.py reels.mp4 --platform reels
 ```
 
-When an export returns a `loudness` block, `lufs` is the reading from the written
-file. `loudness.normalized` records whether export applied correction, and
-`loudness.ok` records whether the final reading meets the target. If the measured
-file misses the target and no correction ran, use `export.py --normalize` or
-the recommended `loudness.py` command in the warning.
+When an export returns a `loudness` block, `lufs` is the written file's reading,
+or `null` if unavailable. `loudness.normalized` records whether export applied
+correction. `loudness.ok` is true or false when the target can be evaluated, and
+`null` when it cannot. If measured, non-silent audio misses the target and no
+correction ran, use `export.py --normalize` or the `loudness.py` command in the warning.
+A silent track needs usable source audio before its level can be corrected.
 
 ### Are silence removal and captions stable?
 

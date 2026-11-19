@@ -496,7 +496,9 @@ A project may now carry `"template"` (the name it was filled from) and `"frame":
 A `fit.py --aspect 9:16 --fit crop` result uses source-derived dimensions unless
 width or height was requested. The Reels preset delivers 1080×1920. When a platform export returns
 `loudness`, `loudness.normalized` records whether export ran the correction pass,
-and `loudness.ok` records whether the delivered audio meets the target.
+and `loudness.ok` records whether the delivered audio meets the target. An unreadable or
+too-short reading has `loudness.ok: null`. A silent track is reported with `silent: true`
+and receives no correction.
 
 ## Capabilities
 

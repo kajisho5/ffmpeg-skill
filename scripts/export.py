@@ -871,7 +871,7 @@ def main() -> int:
                 notes.append(f"loudness {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP is outside {platform}'s {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP; "
                              f"run loudness.py -I {spec['lufs']:g} --tp {spec['tp']:g} on this file, or export with --normalize")
                 warn(notes[-1], "loudness_outside_spec", platform=platform, lufs=m["lufs"], tp=m["tp"], normalized=False)
-        if m and math.isfinite(m["lufs"]):
+        if m:
             correction = "after correction" if extra["loudness"]["normalized"] else "without export correction"
             info(f"loudness measured {correction}: {m['lufs']:.1f} LUFS / {m['tp']:+.1f} dBTP "
                  f"(target {spec['lufs']:g} LUFS / {spec['tp']:g} dBTP)")

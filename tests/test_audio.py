@@ -1193,6 +1193,8 @@ class AudiogramTests(MediaFixtures):
                 self.assertEqual(doc["loudness"]["lufs"], "-inf")
                 self.assertTrue(doc["loudness"]["silent"])
                 self.assertFalse(doc["loudness"]["ok"])
+                self.assertFalse(doc["loudness"]["normalized"])
+                self.assertIn("loudness measured without export correction: -inf LUFS", proc.stderr)
                 self.assertTrue(any(n.startswith("output audio is silent") for n in doc["notes"]))
                 self.assertFalse(any("run loudness.py" in n for n in doc["notes"]))
 
