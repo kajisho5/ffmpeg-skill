@@ -748,6 +748,17 @@ class OrchestrationTests(MediaFixtures):
         }), encoding="utf-8")
         data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
+        # 4.0.0: export.py normalises a platform preset by default (#579); a project's own loudness
+        # stage keeps its level, so render passes --no-normalize (the -24 LUFS fails x's -14)
+        proj.write_text(json.dumps({
+            "output": "render_normalize_own_stage.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "loudness": {"lufs": -24},
+            "export": {"preset": "x"},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
 
     def test_render_project(self):
         proj = OUT / "project.json"

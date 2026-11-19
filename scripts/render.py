@@ -2274,6 +2274,10 @@ def main() -> int:
                  "normalize_on_by_default", preset=ex["preset"])
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
+        elif ex["preset"] in PLATFORM_OF:
+            # export.py normalises a platform preset by default since 4.0.0 (#579): an opt-out, or a
+            # loudness stage of the project's own, has to say so or its level is overwritten
+            argv += ["--no-normalize"]
         sh("export.py", *argv, stage="export")
         preset = PRESETS.get(ex["preset"]) or PRESETS[resolve_platform(ex["preset"])]
         if preset["w"]:
