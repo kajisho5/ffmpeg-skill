@@ -83,6 +83,10 @@ _Automated release: version and notes generated from pull requests merged since 
 
 - Label platform-export loudness measurements with their correction status (#609).
 
+### Changed
+
+- Read drop-frame caption cues and warn when a cue rate disagrees with the video probe (#580).
+
 ### Fixed
 
 - Preserve reading order and edge punctuation in generated right-to-left captions (#623).

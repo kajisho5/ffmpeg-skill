@@ -569,6 +569,7 @@ DIAGNOSTIC_CODES = {
     "report_section_missing": ("warnings", "report.py: a loudness, compliance or contact-sheet section could not be built (also a failing verification step naming the section)"),
     "report_section_dry_run": ("skipped", "report.py --dry-run draws no contact sheet"),
     "check_dry_run": ("skipped", "render.py --dry-run does not run a check stage or a plan's check step"),
+    "caption_timecode_rate_mismatch": ("warnings", "caption.py: an SMPTE cue rate differs from the probed video rate; {cue_fps, source_fps, cue_timecode, drift_seconds}. Drift compares the chosen time to reading the same label at the source rate, or null when that reading is unavailable or the source is suspected VFR"),
     "caption_srt_not_delivered": ("skipped", "render.py: the captions stage's generated SRT is not delivered beside the output: the stage was served from --cache (reason cached), or a later stage changed the timeline (reason timeline_changed: the export trimmed the delivery); {reason, path, trimmed}"),
     "batch_cache_inputs_changed": ("skipped", "batch.py: an item's source or a side input changed while it was processed (its cache key, made again when the item ends, is not the one it was looked up with), so its output is not stored in the cache; {file}"),
     "batch_side_file_not_delivered": ("skipped", "batch.py: a step before the last wrote side files beside its intermediate (caption.py's .srt, an .ass), which go with the item's work directory; only the last step's side files land beside the output; {file, step, tool, files}"),
