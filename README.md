@@ -478,6 +478,8 @@ Every command a tool records as run is in its `--json` `commands` (`batch.py` li
 
 It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
 
+When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
+
 A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
 position beside the output start with
 `python3 scripts/look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png`.

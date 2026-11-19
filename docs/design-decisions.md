@@ -5503,7 +5503,8 @@ the slot at 0.519 s, "After 3.8.14").
   fills its frame) have nothing to measure; `render.py`'s frame stage runs fit.py and does not
   pass its result on, and `export.py`'s presets that reframe (`--fit pad` with any `--pad-fill`,
   `--fit crop`) build the same `pad_filters()` frame but are not measured: both report no
-  `picture`, left for a change of their own rather than a guess at the rectangle. Tested against
+  `picture` in that release. #548 extends the measurement to those export presets and carries each
+  fit and export report in the render result. The original fit behavior was tested against
   the written file on a white source (black or red bars, the darkened blur, a 4:2:2 ProRes line, an
   RGB source, three crop anchors, a portrait source's rows cut) on 6.1.1 only. Code: `fit.measure_picture()`. Tests:
   `test_fit_reports_the_picture_rectangle_it_wrote`,
