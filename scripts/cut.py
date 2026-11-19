@@ -63,7 +63,7 @@ from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT
 from _common import require_tool
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
 from _common.runner import subtitle_codec_for, subtitle_container_holds
-from _common.decision import SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
 from _common.decision import UNWRITTEN_AUDIO_EXT
@@ -976,7 +976,8 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             # silence from 0, as the --segments re-cut pads it (av_trim), not rebased to its own
             # first sample, which moved it earlier and made the cut shorter than asked (#462 A46)
             cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=False)
-            cmd += ["-af", f"atrim=end={dur:.6f},aresample=async=1:first_pts=0"]
+            pad = PAD_SOUND_FROM_ZERO if audio_codec_for(dst)[1] == "flac" else "aresample=async=1:first_pts=0"
+            cmd += ["-af", f"atrim=end={dur:.6f},{pad}"]
         else:
             # Seek SEEK_MARGIN early, then drop the margin on the output side, which decodes and
             # discards it from both streams alike. An input seek straight to `start` can land (the

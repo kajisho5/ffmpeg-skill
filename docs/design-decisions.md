@@ -5910,13 +5910,12 @@ before it was changed. Five classes are changed, two are left for a decision.
 - **Left for a decision: `caption.py`'s burn and `waveform.py` drop the source's subtitle track**
   (item 4). Reproduced; nothing changed. The timeline is kept, so the rule above would keep the
   track, but a burn may be of the very cues the track holds, and then keeping it shows them twice.
-- **Left for a decision: `cut.py -o x.mka`** (item 7). Reproduced every time, not once: `.mka` is
-  not an audio extension to the skill, so the cut is planned as a video cut, but FFmpeg's default
-  stream selection for the Matroska audio muxer takes no picture. The stream copy holds sound
-  only, the check sees `stream_lost`, and the re-encode, which maps its streams, writes H.264 and
-  AAC into the `.mka` (`reencoded: true`, verified). What `.mka` should mean is open: an audio
-  extension (the sound is extracted, the read and write sets and the contract grow), a refusal, or
-  a video container (the copy maps its picture and the needless re-encode goes).
+- **Matroska audio uses `.mka`** (item 7). Before this decision, a cut to `.mka` planned
+  to keep picture. FFmpeg's default stream selection kept only sound, so `stream_lost` triggered
+  a re-encode that explicitly mapped picture into the `.mka`. The audio extension table now
+  treats `.mka` as sound-only. Every re-encoded `.mka` cut uses FLAC. Copy mode can retry
+  after a recoverable muxing error, a missing stream, or a missed length tolerance. A terminal
+  failure such as a full disk stops the run. Use `.mkv` to keep the picture.
 - **What the review of #554 found in the five changes above, each measured on FFmpeg 6.1.1 first.**
   `waveform.py`'s older refusal of an audio extension had no `reason` while README named
   `output_extension_audio_only` for every picture tool; it gives that reason now, from its own
