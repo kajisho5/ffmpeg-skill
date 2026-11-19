@@ -141,7 +141,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
         af = (
-            f"loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
+            f"aresample=async=1,loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
         )
@@ -150,10 +150,10 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # 0.1 s after a stretch of digital silence (FFmpeg 6.1) while the samples ran on: every
             # sound after the jump played 89 ms late against a copied picture, and atrim, which
             # counts time, cut as much off the end. The samples are restamped in order from the
-            # first one's time (a late start keeps its lead); a gap in the source does not survive
-            # dynamic mode either way. Linear mode is left alone: there the sound keeps the
-            # times this build's loudnorm gives it (6.1 keeps a source gap, 8.0 closes it)
-            # (review of #636).
+            # first one's time (a late start keeps its lead). A gap in the source's sound is
+            # filled with silence before loudnorm (aresample=async=1, both modes): the restamp
+            # closed it, and so does 8.0's loudnorm in linear mode, which played everything after
+            # the gap that much early (review of #636).
             af += ",asetpts=N/SR/TB+STARTPTS"
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
