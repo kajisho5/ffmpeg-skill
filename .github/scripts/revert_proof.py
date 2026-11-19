@@ -141,7 +141,13 @@ def main() -> int:
         return 0
     budget = json.loads(git("show", f"{args.head}:.github/code-budget.json"))
     # the freeze is about the contract, not about a title: it is checked before the exemption
-    if budget.get("feature_freeze"):
+    exception = budget.get("feature_freeze_exception") or {}
+    version_at = lambda rev: json.loads(git("show", f"{rev}:package.json")).get("version")
+    # the one exception the owner decided (#632) is the change that makes that version, not any later one
+    excepted = bool(exception.get("version")) and version_at(args.head) == exception["version"] != version_at(base)
+    if excepted:
+        print(f"feature freeze: excepted for the change that makes {exception['version']} ({exception.get('decided', '')})")
+    if budget.get("feature_freeze") and not excepted:
         before, after = RESOLVER._contract_at(base), RESOLVER._contract_at(args.head)
         if before is None or after is None:
             print("feature freeze (.github/code-budget.json): the contract could not be read at "

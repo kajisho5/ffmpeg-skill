@@ -2,23 +2,10 @@
 
 > `main` moves ahead of the last published npm/GitHub release; a dependent repo should pin a tagged version, not `main`. See README § Development, "Releasing".
 
-## Unreleased
+## 4.0.0
 
 The third deliberate break (4.0.0). What changed and how to migrate: docs/contract.md, "What 4.0 changed".
 
-## 3.15.1
-
-_Automated release: version and notes generated from pull requests merged since 3.15.0._
-
-- ci: checks that stop fixes from fixing earlier fixes (#632) (#635)
-
-## 3.15.0
-
-_Automated release: version and notes generated from pull requests merged since 3.14.1._
-
-- feat: add npx ffmpeg-skill setup, one command for a new machine (#634)
-
-## 3.14.1
 ### Added
 
 - **A review page for a render project, for standalone use (#633).** `npx ffmpeg-skill review project.json --result run.json` (or `python3 scripts/_review.py`) writes a folder with an `index.html`: stills at each clip's in point, middle and out point, the dry run's stages, what the run measured (duration, size, frame rate, sound, failed steps, check rows, stills of the output), and fields for each clip's in, out and speed, the frame, captions and loudness. "Save project" writes the edited project; rendering it again is `render.py` as before. The page needs no network and runs nothing. It is not a contract tool and the MCP server does not list it, so a caller that owns the review (Velisa) never reaches it.
@@ -70,6 +57,12 @@ _Automated release: version and notes generated from pull requests merged since 
   `-- -dash.mp4` failed in ffprobe, and `-report` left an `ffprobe-*.log` in the working
   directory. Such a name reaches ffmpeg and ffprobe as `./name`; the default output named after it
   is written too, and `verify.py` and `report.py` pass it on as a file.
+
+## 3.15.1
+
+_Automated release: version and notes generated from pull requests merged since 3.15.0._
+
+- ci: checks that stop fixes from fixing earlier fixes (#632) (#635)
 
 ## 3.15.0
 
