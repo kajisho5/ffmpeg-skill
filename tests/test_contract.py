@@ -2639,6 +2639,49 @@ sys.exit(fit.main())
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return [json.loads(line) for line in proc.stdout.strip().splitlines()]
 
+    def test_mcp_progress_is_opt_in_and_relays_a_nested_encode(self):
+        project = self.out("progress.project.json")
+        output = self.out("progress.mp4")
+        project.write_text(json.dumps({"output": str(output), "clips": [{"src": str(self.src)}],
+                                       "fit": {"width": 96, "height": 64}}), encoding="utf-8")
+        params = {"name": "render", "arguments": {"argv": [str(project), "--fast", "--overwrite"]}}
+        requests = [{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                     "params": {**params, "_meta": {"progressToken": 0}}},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "render", "_meta": {"progressToken": "plan"},
+                                "arguments": {"argv": [str(project), "--dry-run", "--overwrite"]}}}]
+        replies = self._rpc(requests)
+        self.assertEqual([reply["id"] for reply in replies if "id" in reply], [1, 2, 3])
+        updates = [reply["params"] for reply in replies if reply.get("method") == "notifications/progress"]
+        self.assertTrue(updates, replies)
+        self.assertEqual([row["progress"] for row in updates], list(range(1, len(updates) + 1)))
+        for row in updates:
+            self.assertEqual(row["progressToken"], 0)
+            self.assertNotIn("total", row)
+            self.assertRegex(row["message"], r"%(?:\s|$)|s processed$")
+        self.assertEqual(replies[0]["id"], 1)
+        self.assertEqual(replies[-2]["id"], 2)
+        self.assertTrue(replies[-2]["result"]["structuredContent"]["verified"])
+        self.assertTrue(replies[-1]["result"]["structuredContent"]["dry_run"])
+
+    def test_mcp_progress_advances_across_stages_and_stops_when_cancelled(self):
+        req = {"jsonrpc": "2.0", "params": {"_meta": {"progressToken": "render-1"}}}
+        entry, out = {"cancelled": False}, io.BytesIO()
+        report = mcp_server._progress_reporter(req, entry, out)
+        with unittest.mock.patch.object(mcp_server.time, "monotonic", side_effect=(1, 1.1, 1.6, 2.5)):
+            report("90.0%")
+            report("95.0%")  # too close to the first update
+            report("0.1s processed")  # the next stage starts on its own clock
+            entry["cancelled"] = True
+            report("1.0s processed")
+        rows = [json.loads(line)["params"] for line in out.getvalue().splitlines()]
+        self.assertEqual(rows, [{"progressToken": "render-1", "progress": 1, "message": "90.0%"},
+                                {"progressToken": "render-1", "progress": 2, "message": "0.1s processed"}])
+        for invalid in (True, 1.5, {}):
+            req["params"]["_meta"]["progressToken"] = invalid
+            self.assertIsNone(mcp_server._progress_reporter(req, entry, out))
+
     @staticmethod
     def _norm(obj):
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
@@ -3993,6 +4036,17 @@ sys.exit(fit.main())
         doc = json.loads(proc.stdout)
         self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["code"]), ("failed", "timeout", "TIMEOUT"))
         self.assertIn("sleeper.py", doc["error"]["message"])
+        sleeper.write_text("import sys, time\n"
+                           "print('[ffmpeg-skill progress] 1.0s encoded', file=sys.stderr, flush=True)\n"
+                           "print('diagnostic tail', file=sys.stderr, flush=True)\n"
+                           "time.sleep(30)\n")
+        updates = []
+        streamed = _common.run_tool([str(sleeper)], per_call=-14.5, on_progress=updates.append)
+        self.assertEqual(streamed.returncode, 124)
+        self.assertEqual(json.loads(streamed.stdout)["error"]["kind"], "timeout")
+        self.assertEqual(updates, ["1.0s encoded"])
+        self.assertIn("diagnostic tail", streamed.stderr)
+        self.assertNotIn("[ffmpeg-skill progress]", streamed.stderr)
         _common.STATE.reset()
 
     def test_mcp_argv_timeout_zero_clears_the_outer_ceiling(self):

@@ -108,6 +108,7 @@ _Automated release: version and notes generated from pull requests merged since 
 - Compare a requested cut in-point with the output start (#614)
 
 Closes: #548, #569, #606, #623
+- Send live FFmpeg encode updates to MCP callers that request progress (#574).
 
 ## 3.13.2
 
