@@ -3086,6 +3086,24 @@ sys.exit(fit.main())
             doc = _contract.doctor()
         self.assertEqual(sorted(x.split()[1] for x in doc["unsupported"] if "5.1" in x), ["FFmpeg", "ffprobe"])
 
+    def test_shipped_code_does_not_grow(self):
+        """.github/code-budget.json: the shipped code has a ceiling. A fix that adds a refusal, a
+        reason and a result field is the code the next fix repairs (the file records the numbers
+        that led here), so a change that adds lines removes as many, and the ceiling is lowered
+        when code goes. Counted: non-blank, non-comment lines of scripts/ and mcp/ Python."""
+        budget = json.loads((ROOT / ".github" / "code-budget.json").read_text(encoding="utf-8"))
+        lines = 0
+        for base in ("scripts", "mcp"):
+            for path in sorted((ROOT / base).rglob("*.py")):
+                lines += sum(1 for line in path.read_text(encoding="utf-8").splitlines()
+                             if line.strip() and not line.strip().startswith("#"))
+        self.assertLessEqual(
+            lines, budget["max_lines"],
+            f"shipped code is {lines} lines, {lines - budget['max_lines']} over the ceiling in "
+            ".github/code-budget.json: remove as much as this change adds (a refusal in place of a "
+            "new behaviour, a shared helper in place of a copy), or raise the ceiling with the reason "
+            "in the PR body")
+
     def test_ci_parts_cover_every_test_module_exactly_once(self):
         """CI runs `run_parallel.py --part I/3` on three machines and each passes on its own exit
         code, so a shard dropped or doubled by split_parts would go unnoticed: every item lands
