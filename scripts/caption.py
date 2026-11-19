@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import (PLATFORMS, PLATFORM_CHOICES, ASS_SCRIPT_HEIGHT, ass_units,
                         resolve as resolve_platform)
-from _ass_overlay import (EMOJI_SENTINEL, emoji_placeholder, ass_escape_markup,
+from _ass_overlay import (EMOJI_SENTINEL, ass_base_encoding, emoji_placeholder, ass_escape_markup,
                           strip_srt_markup, reinsert_srt_markup, carry_srt_markup, srt_alignment)
 from _common.emit import refuse  # noqa: E402
 from _common.emoji import emoji_missing_asset_note, emoji_mono_on_colour_note
@@ -879,6 +879,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
     # libass to honour only those explicit breaks and never re-wrap: with WrapStyle: 0 (the sweep
     # default, unchanged), scaling the active word up would re-flow the line and it would visibly
     # jump every time the highlight advances (the trap the issue this implements is filed against).
+    encoding = ass_base_encoding(strip_srt_markup(text) for _, _, text in cues)
     header = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {play_w}", f"PlayResY: {play_h}",
         # YCbCr Matrix: None -- the colours are RGB, to be put in the video's own matrix: FFmpeg 8.x's
@@ -886,7 +887,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         f"WrapStyle: {2 if word_style else 0}", "ScaledBorderAndShadow: yes", "YCbCr Matrix: None", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin_l},{margin_r},{margin},1",
+        f"Style: Default,{ass_font_name(args.font)},{size},{primary},{secondary},{outline},{back},{-1 if args.bold else 0},0,0,0,100,100,0,0,{3 if args.box else 1},{args.outline * scale:.1f},{args.shadow * scale:.1f},{ALIGN[args.position]},{margin_l},{margin_r},{margin},{encoding}",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     lines = []
@@ -2078,6 +2079,8 @@ def main() -> int:
             f"Alignment={FORCE_STYLE_ALIGN[args.position]}",
             f"MarginV={args.margin}",
         ]
+        if ass_base_encoding(strip_srt_markup(text) for _, _, text in (burn_cues or ())) == -1:
+            style.append("Encoding=-1")
         force = ",".join(style).replace("\\", "\\\\").replace("'", "\\'")
         vf = f"subtitles=filename={escape_filter_path(srt_path)}:force_style='{force}'"
         if args.fonts_dir:

@@ -14,6 +14,10 @@
 
 - Label platform-export loudness measurements with their correction status (#609).
 
+### Fixed
+
+- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
+
 ## 3.13.2
 
 _Automated release: version and notes generated from pull requests merged since 3.13.1._
