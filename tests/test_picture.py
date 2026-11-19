@@ -4027,6 +4027,20 @@ class ScriptFontTests(unittest.TestCase):
                 self.assertEqual(fc_list.call_args.args[0], ["fc-list", ":lang=vi:family=Narrow Font", "file"])
                 self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), (code, "vi"))
 
+    def test_vietnamese_explicit_folder_face_is_checked_before_installed_fonts(self):
+        from _common import fonts
+
+        with unittest.mock.patch.object(fonts, "fonts_dir_face", return_value=("/fonts/custom.ttf", True)) as face, \
+             unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
+             unittest.mock.patch.object(fonts.subprocess, "run",
+                                        return_value=subprocess.CompletedProcess([], 0, stdout="en|vi\n")) as scan, \
+             unittest.mock.patch.object(fonts, "warn") as warn:
+            self.assertEqual(fonts.script_font_for_text("đã ăn", font="Custom", font_explicit=True,
+                                                        fonts_dir="/fonts", font_bold=True), ("latin", None, None))
+            face.assert_called_once_with("/fonts", "Custom", bold=True)
+            self.assertEqual(scan.call_args.args[0], ["fc-scan", "--format", "%{lang}\n", "/fonts/custom.ttf"])
+            warn.assert_not_called()
+
     def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
         family = font_family_for_script("vi")
         if not family:

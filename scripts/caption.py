@@ -1907,7 +1907,7 @@ def main() -> int:
         sample = "\n".join(t for _, _, t in parse_srt(srt_path)) if os.path.exists(srt_path or "") else ""
     _script, font_file, font_family = script_font_for_text(
         sample, lang=args.language, font=args.font, font_explicit=font_explicit,
-        fonts_dir=args.fonts_dir)
+        fonts_dir=args.fonts_dir, font_bold=args.bold)
     # the font libass draws with, reported as `font_used`: a --fonts-dir (or a brand's font
     # file) is searched first for the family, by libass itself; otherwise fontconfig resolves it
     if args.ass:

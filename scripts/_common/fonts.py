@@ -572,11 +572,16 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     """
     if script not in FC_LANG or not fonts_dir or not os.path.isdir(fonts_dir):
         return None
+    return _scan_font_coverage(fonts_dir, script)
+
+
+def _scan_font_coverage(path: str, script: str) -> Optional[bool]:
+    """Check coverage in one file or a directory of font files with fc-scan."""
     exe = _safe_which("fc-scan")
     if not exe:
         return None
     try:
-        proc = subprocess.run([exe, "--format", "%{lang}\n", fonts_dir],
+        proc = subprocess.run([exe, "--format", "%{lang}\n", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -729,7 +734,7 @@ def _is_last_resort(entry: "Tuple[str, str]") -> bool:
 
 
 def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Optional[str]" = None,
-                         font_explicit: bool = False, font_file: "Optional[str]" = None,
+                         font_explicit: bool = False, font_file: "Optional[str]" = None, font_bold: bool = False,
                          fonts_dir: "Optional[str]" = None
                          ) -> "Tuple[str, Optional[str], Optional[str]]":
     """(script, font file, family) to draw `text` with, resolving by script when nothing explicit
@@ -764,11 +769,17 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     diagnostic_script = key if key == "vi" else script
     if font_explicit and font:
         if key == "vi":
-            coverage = _fontconfig_family_coverage(font, key)
-            if coverage is None and platform.system() == "Windows" and not _safe_which("fc-list"):
-                known = _script_font_entry(key, font)
-                if known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold():
-                    coverage = True
+            local_file, local_found = fonts_dir_face(fonts_dir, font, bold=font_bold) if fonts_dir else (None, False)
+            if local_file:
+                coverage = _scan_font_coverage(local_file, key)
+            elif local_found is not False:
+                coverage = None  # the selected folder face is ambiguous or the folder was unreadable
+            else:
+                coverage = _fontconfig_family_coverage(font, key)
+                if coverage is None and platform.system() == "Windows" and not _safe_which("fc-list"):
+                    known = _script_font_entry(key, font)
+                    if known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold():
+                        coverage = True
         else:
             coverage = font_covers_script(font, key)
         if coverage is None:
