@@ -10,6 +10,10 @@
 - Keep common two-character words together in Chinese phrase wrapping (#569).
 - Report measured picture placement after reframing in export and render results (#548).
 
+### Fixed
+
+- Ask for a duration method before making a large implicit retime in `fit.py` (#582).
+
 ## 3.13.2
 
 _Automated release: version and notes generated from pull requests merged since 3.13.1._

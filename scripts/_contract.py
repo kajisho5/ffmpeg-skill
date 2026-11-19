@@ -442,6 +442,7 @@ ERROR_REASONS = {
     "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}. sequence.py: a frame of the sequence that does not decode (every frame is decoded once before the encode; when that check cannot be made, a note says so and nothing is refused); details: {path (the first), frames, frames_unreadable, frames_total}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart; details: {clips: [{index?, path, differs}]}",
+    "fit_method_required": "fit.py --duration would retime the clip beyond 1.15x in either direction without a method or an explicit slow-motion filter; details: {factor, threshold, source_duration, target_duration}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
@@ -496,7 +497,7 @@ DIAGNOSTIC_CODES = {
     # encoder decisions
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),
-    "large_speed_change": ("warnings", "fit.py --method speed: the whole picture and sound were retimed by a factor beyond 1.15x in either direction to reach --duration, and nothing was cut. A large retime is easy to ask for by accident -- speed is the default method -- when a cut was wanted, so it is never silent; {factor, threshold, source_duration, target_duration}"),
+    "large_speed_change": ("warnings", "fit.py: the requested whole-clip retime is beyond 1.15x in either direction; {factor, threshold, source_duration, target_duration}"),
     # fonts and text
     "emoji_not_drawn": ("warnings", "caption.py / graphics.py --emoji auto: no glyph, colour path or PNG asset draws these emoji here (doctor fonts.emoji mode none), so they were left out of the drawn text; also graphics.py --text-render drawtext, which has no font fallback; {count, reason}"),
     "emoji_mono_drawn_in_colour": ("warnings", "caption.py / graphics.py --emoji mono on a build whose libass draws the emoji face in colour: nothing makes the glyph monochrome, so the result's emoji.mode is color (graphics.py --text-render drawtext draws none: mode none, emoji_not_drawn)"),

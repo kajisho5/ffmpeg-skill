@@ -448,7 +448,7 @@ class AudioTests(MediaFixtures):
         script("cut.py", mp3, "--start", "2", "--end", "6", "-o", cut_mp3)
         self.assertClose(probe(str(cut_mp3))["duration"], 4.0, 0.1)
         # picture-only scripts refuse clearly instead of failing inside ffmpeg
-        for argv in (("fit.py", "--duration", "5"), ("export.py", "--preset", "youtube"), ("look.py",)):
+        for argv in (("fit.py", "--duration", "5", "--method", "speed"), ("export.py", "--preset", "youtube"), ("look.py",)):
             proc = script(argv[0], self.mic, *argv[1:], "-o", OUT / "nope.out", expect_fail=True)
             self.assertIn("no video stream", proc.stderr)
 

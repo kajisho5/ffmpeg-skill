@@ -244,7 +244,7 @@ class OrchestrationTests(MediaFixtures):
     def test_dry_run_and_json_on_every_script(self):
         cases = [
             ("cut.py", [self.src, "--start", "1", "--end", "3"]),
-            ("fit.py", [self.src, "--duration", "6"]),
+            ("fit.py", [self.src, "--duration", "6", "--method", "speed"]),
             ("caption.py", [self.src, "--srt", OUT / "cues.srt"]),
             ("overlay.py", [self.src, "--image", self.logo]),
             ("export.py", [self.src, "--preset", "x"]),
@@ -1520,7 +1520,7 @@ class OrchestrationTests(MediaFixtures):
         recipe = folder / "batch.json"
         recipe.write_text(json.dumps({
             "glob": "*.mp4", "output_dir": "out", "suffix": "_j",
-            "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+            "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         return folder, recipe
 
     def test_jobs_summary_is_identical_to_serial(self):
@@ -1555,7 +1555,7 @@ class OrchestrationTests(MediaFixtures):
                 recipe = folder / "batch.json"
                 recipe.write_text(json.dumps({
                     "glob": "*.mp4", "output_dir": "out", "suffix": "_o",
-                    "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                    "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
                 first = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
                                           "--jobs", jobs, "--json").stdout)
                 self.assertEqual([Path(r["file"]).name for r in first["results"]],
@@ -1814,7 +1814,7 @@ class OrchestrationTests(MediaFixtures):
             (folder / name).write_bytes(Path(self.src).read_bytes())
         recipe = folder / "batch.json"
         recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_final",
-                                      "steps": [["fit.py", "{in}", "--duration", "5", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+                                      "steps": [["fit.py", "{in}", "--duration", "5", "--method", "speed", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
         data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
         self.assertEqual(data["processed"], 2)
         self.assertFalse(any(r.get("cached") for r in data["results"]))
@@ -1878,7 +1878,7 @@ class OrchestrationTests(MediaFixtures):
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"
         recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
-                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertIsNone(data2["cut_stream_copy"])
         self.assertNotIn("cut_reencoded", data2["results"][0])
@@ -1918,7 +1918,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(cached["cut_reencode_reasons"], {"unknown": 1})
         recipe2 = folder / "batch_no_cut.json"
         recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
-                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--dry-run", "--json").stdout)
         self.assertIsNone(data2["cut_reencode_reasons"])
         self.assertIsNone(data2["cut_stream_copy"])
@@ -3451,7 +3451,7 @@ class Issue429DecidedTests(unittest.TestCase):
 
     def test_a_batch_step_that_writes_without_out_stops_the_batch(self):
         folder = self._folder("no_out")
-        recipe = self._recipe(folder, [["metadata.py", "{in}", "--title", "T"], ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+        recipe = self._recipe(folder, [["metadata.py", "{in}", "--title", "T"], ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]])
         stray = folder / "in" / "a_meta.mp4"
         for dry in (True, False):
             with self.subTest(dry_run=dry):
@@ -3465,7 +3465,7 @@ class Issue429DecidedTests(unittest.TestCase):
                 self.assertFalse(list((folder / "out").glob("*.mp4")))
         # a step that only reads (output null) is untouched, as is one that names its own -o
         recipe = self._recipe(folder, [["check.py", "{in}"], ["look.py", "{in}", "-o", "{in}.png"],
-                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]], "r2.json")
+                                       ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]], "r2.json")
         shutil.rmtree(folder / "in")
         (folder / "in").mkdir()
         shutil.copy(self.clip, folder / "in" / "a.mp4")
@@ -3508,7 +3508,7 @@ class Issue429DecidedTests(unittest.TestCase):
     def test_a_batch_records_a_side_file_lost_with_an_intermediate(self):
         folder = self._folder("side", n=1)
         recipe = self._recipe(folder, [["caption.py", "{in}", "--text", str(self.cues), "-o", "{out}"],
-                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+                                       ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]])
         rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe)
         self.assertEqual(rc, 0, err[-800:])
         lost = [s for s in doc["diagnostics"]["skipped"] if s["code"] == "batch_side_file_not_delivered"]
@@ -3536,7 +3536,7 @@ class Issue429DecidedTests(unittest.TestCase):
         self.assertFalse(edited.get("cached"), "an edited side input is a change the cache must see")
         self.assertNotEqual(red, blue)
         # a side input built from a later step's {in} (an intermediate) cannot be keyed: never served
-        recipe = self._recipe(folder, [["fit.py", "{in}", "--duration", "1", "-o", "{out}"],
+        recipe = self._recipe(folder, [["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"],
                                        ["check.py", "{in}", "--compare", "{in}.ref.mp4"]], "r2.json")
         rc, doc, _ = self._run("batch.py", folder / "in", "--recipe", recipe, "--overwrite")
         self.assertEqual(doc["results"][0]["cache_miss"], {"reason": "side_input_unresolved", "step": 1, "argument": "{in}.ref.mp4"})
@@ -3625,7 +3625,7 @@ class Issue429DecidedTests(unittest.TestCase):
         self.assertEqual(with_flags(["a", "--", "b"], ["--json"]), ["a", "--json", "--", "b"])
         self.assertEqual(with_flags(["a", "b"], ["--json"]), ["a", "b", "--json"])
         folder = self._folder("dashdash", n=1)
-        recipe = self._recipe(folder, [["fit.py", "--duration", "1", "-o", "{out}", "--", "{in}"]])
+        recipe = self._recipe(folder, [["fit.py", "--duration", "1", "--method", "speed", "-o", "{out}", "--", "{in}"]])
         rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--dry-run")
         self.assertEqual((rc, doc["status"]), (0, "completed"), err[-800:])
 

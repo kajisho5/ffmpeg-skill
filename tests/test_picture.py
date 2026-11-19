@@ -2295,7 +2295,7 @@ class PictureTests(MediaFixtures):
         sys.path.insert(0, str(SCRIPTS))
         from _platforms import PLATFORMS
         vertical = OUT / "safe_vertical.mp4"
-        script("fit.py", self.src, "--duration", "4", "--aspect", "9:16", "--fit", "crop",
+        script("fit.py", self.src, "--duration", "4", "--method", "speed", "--aspect", "9:16", "--fit", "crop",
                "--width", "540", "--fast", "-o", vertical)
         base = self._region_stats(vertical, "iw:60:0:0", at=1.0)
 

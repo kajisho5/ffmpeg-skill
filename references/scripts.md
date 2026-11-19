@@ -318,9 +318,11 @@ fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
 ```
-`speed` retimes video and audio together (pitch-preserving `atempo`). It
-reports `large_speed_change` for factors above 1.15 or below 1/1.15, and
-refuses factors beyond `--max-speed`. For slow motion add `--smooth blend`
+`speed` retimes video and audio together (pitch-preserving `atempo`). For
+factors above 1.15 or below 1/1.15, choose an explicit `--method speed`
+or a slow-motion filter when stretching. The result reports `large_speed_change`.
+An implicit large retime fails with `fit_method_required`. The separate
+`--max-speed` limit still applies. For slow motion add `--smooth blend`
 (frame blending, fast) or `--smooth interpolate` (motion-compensated
 `minterpolate`, fluid but roughly 10-20x slower than realtime; its frames are
 made at `--fps` when given, else at the source's rate). `trim` keeps

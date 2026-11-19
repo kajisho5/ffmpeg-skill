@@ -1035,10 +1035,14 @@ strings. `retryable` is currently always `false`: none of the kinds are distingu
 today from a deterministic failure that would fail identically on a blind retry, so nothing
 here claims otherwise until real exit-code/stderr sniffing exists to back that up.
 
-`fit.py --method speed` reports `large_speed_change` in `diagnostics.warnings`
-for speed factors above 1.15 or below 1/1.15, including in a dry run. The
-warning carries `factor`, `threshold`, `source_duration` and `target_duration`
-(durations in seconds).
+`fit.py --duration` refuses an implicit speed factor above 1.15 or below 1/1.15
+with `error.reason: fit_method_required`. Choose `--method speed` to retime or
+`--method trim` to trim. For stretching, `--smooth blend` and `--smooth interpolate`
+also express a choice to retime. A large retime that proceeds reports
+`large_speed_change` in `diagnostics.warnings`. The warning and refusal details
+carry `factor`, `threshold`, `source_duration` and `target_duration` (seconds).
+These rules also apply to dry runs with a known source duration. A pending source
+is checked when its duration can be read.
 
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
