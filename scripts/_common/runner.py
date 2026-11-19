@@ -15,7 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 
 INSTALL_HINTS = {
@@ -1112,6 +1112,20 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "output_dir_not_writable", f"output directory {parent!r} is not writable", output=output, directory=parent)
 
 
+class Shape(NamedTuple):
+    """What an ffmpeg command line reads and writes, found once: the checks below each used to
+    search the argument list for `-i` and take the last argument as the output themselves."""
+    inputs: Tuple[str, ...]        # every `-i` value, in order
+    output: str                    # the last argument
+    output_opts: Tuple[str, ...]   # what follows the last input's path, before the output
+
+
+def shape_of(cmd: Sequence[str]) -> Shape:
+    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
+    return Shape(tuple(str(cmd[i + 1]) for i, tok in enumerate(cmd[:-1]) if tok == "-i"),
+                 str(cmd[-1]) if cmd else "", tuple(str(a) for a in cmd[last_input + 2:-1]))
+
+
 def _check_output_extension(cmd: Sequence[str]) -> None:
     """An ffmpeg output with no file extension and no `-f` after its last input leaves the muxer
     nothing to choose a container by: refused as `kind: input` before anything runs, dry runs
@@ -1125,8 +1139,7 @@ def _check_output_extension(cmd: Sequence[str]) -> None:
     if len(os.path.splitext(output)[1]) > 1:
         refuse_unwritten_output(output, cmd)
         return
-    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
-    if "-f" in cmd[last_input + 2:-1]:
+    if "-f" in shape_of(cmd).output_opts:
         return
     refuse("input", "output_extension_missing",
            f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
@@ -1224,7 +1237,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
     to refuse: cut.py names -c:a aac for a silent source too. Anything not known counts as present."""
     if any(tok in ("-filter_complex", "-lavfi", "-filter_complex_script") for tok in cmd):
         return True
-    paths = [cmd[i + 1] for i, tok in enumerate(cmd[:-1]) if tok == "-i"]
+    paths = shape_of(cmd).inputs
     if not paths:
         return True
     for i, tok in enumerate(cmd[:-1]):
@@ -1295,8 +1308,7 @@ def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:
     ext = os.path.splitext(output)[1].lower()
     if ext not in AUDIO_MEDIA_EXT:
         return
-    last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
-    if "-vn" in cmd[last_input + 2:-1]:
+    if "-vn" in shape_of(cmd).output_opts:
         return
     encoders = []
     for i, tok in enumerate(cmd[:-2]):
@@ -1392,7 +1404,7 @@ def _check_build_components(cmd: Sequence[str]) -> None:
     encoders: List[str] = []
     streams: Dict[str, set] = {}  # encoder -> the stream kinds ("v", "a", "s") it is named for
     filters: List[str] = []
-    output_opts = {str(tok) for tok in cmd[last_input + 2:-1]}
+    output_opts = set(shape_of(cmd).output_opts)
     for i in range(1, len(cmd) - 1):
         tok, value = str(cmd[i]), str(cmd[i + 1])
         m = _ENCODER_OPTION_RE.match(tok)
@@ -2432,8 +2444,7 @@ def _record_media_write(ctx: Context, cmd: Sequence[str], output: str) -> None:
     identity = owned_identity(output)
     if not identity:
         return
-    last_input = max((i for i, arg in enumerate(cmd[:-1]) if arg == "-i"), default=-1)
-    options = cmd[last_input + 2:-1]
+    options = shape_of(cmd).output_opts
     codecs = [(arg, value) for arg, value in zip(options, options[1:])
               if re.fullmatch(r"-(?:(?:c|codec)(?::\S+)?|[vasdt]codec)", arg)]
     if any(arg in ("-c", "-codec") for arg, _ in codecs) and all(value == "copy" for _, value in codecs):
@@ -2837,7 +2848,7 @@ def child_args() -> List[str]:
 def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     """Whether the command's first input has a subtitle or data stream (True when it cannot be
     told: the retry then runs as before)."""
-    src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
+    src = next(iter(shape_of(cmd).inputs), None)
     if not src or not os.path.isfile(src):
         return True
     try:
@@ -3035,7 +3046,7 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
     so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
     the new one; the MOV/MP4 muxer builds the track again from the label."""
     skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
-    src = next((str(cmd[i + 1]) for i, a in enumerate(cmd[:-1]) if a == "-i"), None)
+    src = next(iter(shape_of(cmd).inputs), None)
     sub_args = ["-map", "0:s?"] + carried_stream_maps(src, output, chapters=False) + subtitle_codec_args(src, output)
     data_args = ["-map", "0:d?"] + skip_tmcd + carried_stream_maps(src, output, attachments=False) + ["-c:d", "copy"]
     first = run(cmd + sub_args + data_args + [output], check=False)
