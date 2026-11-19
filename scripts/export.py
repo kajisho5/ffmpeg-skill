@@ -51,7 +51,7 @@ from _common.runner import carried_stream_maps, child_exit_code, fail_if_classif
 from _common.color import hdr_rgb_matrix_args
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
 from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
-from _common.emit import note, record_fallback, record_skip, refuse, warn
+from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
 from _common.emit import file_identity, input_length, own_length, refuse_still
@@ -72,6 +72,47 @@ def _loudness_step(ok: bool, platform: str, spec: dict, m: dict) -> dict:
     return {"step": "loudness", "ok": ok, "platform": platform, "property": "loudness",
             "expected": expected, "measured": measured, "delta": delta,
             "tolerance": {"lufs": spec["lufs_tol"], "tp": TP_TOLERANCE_DB}, "provenance": "specification"}
+
+def _verify_delivery(args, preset: dict, source: dict, output: str, streams: dict,
+                     encoder: Optional[str], extra: dict) -> None:
+    """Enforce requested delivery properties using the final file, including after normalization."""
+    if STATE.dry_run:
+        return
+    written = probe(output, role="output")
+    video = written.get("video") or {}
+    steps = extra.setdefault("verification", [])
+    codec = preset.get("codec") or (preset.get("expect") or {}).get("codec")
+    codec = codec or {"libx264": "h264", "h264_videotoolbox": "h264", "libx265": "hevc",
+                      "hevc_videotoolbox": "hevc"}.get(encoder)
+    if encoder == "copy":
+        codec = source["video"].get("codec")
+    if codec and not any(step["step"] == "codec" for step in steps):
+        measured = video.get("codec")
+        steps.append({"step": "codec", "property": "video_codec", "ok": measured == codec,
+                      "expected": codec, "measured": measured, "provenance": "specification"})
+    if preset["w"] and preset["h"] and not args.no_scale:
+        expected = [preset["w"], preset["h"]]
+        measured = [video.get("width"), video.get("height")]
+        steps.append({"step": "frame_size", "property": "frame_size", "ok": measured == expected,
+                      "expected": expected, "measured": measured, "provenance": "specification"})
+    if "-r" in preset["video"]:
+        expected = float(Fraction(preset["video"][preset["video"].index("-r") + 1]))
+        measured = video.get("fps")
+        tolerance = 0.005  # accommodate probe rounding while distinguishing 29.97 from 30
+        steps.append({"step": "frame_rate", "property": "fps",
+                      "ok": measured is not None and abs(measured - expected) <= tolerance,
+                      "expected": expected, "measured": measured, "tolerance": tolerance,
+                      "provenance": "specification"})
+    inventory = stream_inventory_step(written, streams)
+    hard = {"streams", "codec", "frame_size", "frame_rate", "duration", "file_size"}
+    failed = [step["step"] for step in [*steps, inventory] if step["step"] in hard and step.get("ok") is not True]
+    if failed:
+        checked = [{**step, "attribution": step.get("attribution") or "unresolved"} if step.get("ok") is False
+                   else step for step in [*steps, inventory]]
+        details = dict(extra, verification=checked, output=output, probe=written, verified=False,
+                       dry_run=False, output_identity=file_identity(output))
+        die(f"export verification failed ({', '.join(failed)}); kept {output}", kind="verification", **details)
+
 
 def _from_table(dest: str, **over) -> Dict:
     """A preset's w/h/max read from PLATFORMS[dest], with the encoder settings given here.
@@ -769,8 +810,9 @@ def main() -> int:
         # and says so (#415)
         mark_delivered(output)
     result = probe(output, role="output")
-    v = result["video"]
-    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
+    v = result.get("video") or {}
+    if v:
+        info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']}, {v['codec']})")
     extra: Dict[str, object] = {"trimmed": trimmed} if trimmed else {}
     encoder = video[video.index("-c:v") + 1] if "-c:v" in video else None
     if p.get("expect") and not STATE.dry_run and encoder == p["video"][p["video"].index("-c:v") + 1]:
@@ -925,7 +967,9 @@ def main() -> int:
     if notes:
         extra["notes"] = notes
     # the delivery keeps the source's picture and, except as a GIF, its sound
-    extra["expect_streams"] = {"video": int(bool(meta.get("video"))), "audio": int(bool(has_audio and args.preset != "gif"))}
+    streams = {"video": 1, "audio": int(has_audio)}
+    _verify_delivery(args, p, meta, output, streams, encoder, extra)
+    extra["expect_streams"] = streams
     extra["stream_reference"] = [meta]
     if trimmed:  # only the kept 0..max of the source can have handed its gap to the output
         extra["stream_windows"] = [(0.0, float(p["max"]))]

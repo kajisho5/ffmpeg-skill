@@ -2436,8 +2436,9 @@ re-encoding preset decodes past them).
 `--max-mb MB` (2.24) fits the file under MB MiB: the preset's x264 line gets the video bitrate the
 running time leaves after the preset's audio bitrate (97% of the budget; the rest is container
 overhead) in place of its CRF, and the encode runs in two passes. The written size is measured: a
-`file_size` verification step, and a `size_over_limit` warning with a `notes` line when the encoder
-overshot. Refused for a preset that does not encode with x264 (and under `--hw`), with `--crf`,
+`file_size` verification step. If the encoder overshoots, the export exits nonzero and
+retains the file with a `size_over_limit` warning. Refused for a preset that does not encode
+with x264 (and under `--hw`), with `--crf`,
 for a source with no duration, and when the budget leaves under 100 kb/s for the picture.
 Scales into the preset frame (pad by default), tags BT.709 (a BT.601-matrix or RGB source is converted to it, as by every re-encode), sets `+faststart`,
 trims to the table's platform maximums (Reels 90 s, X 140 s; the table's as of its date, and

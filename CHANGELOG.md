@@ -8,6 +8,10 @@
 
 - Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
 
+### Fixed
+
+- Return a verification failure when a video delivery misses a required export property (#620).
+
 ## 3.13.2
 
 _Automated release: version and notes generated from pull requests merged since 3.13.1._
