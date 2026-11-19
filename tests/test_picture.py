@@ -5810,7 +5810,7 @@ class FitCropLossTests(unittest.TestCase):
         with patch.object(self.fit, "sample_crop_frames", return_value=(samples, self.W, self.H)), \
              patch.object(self.fit, "warn") as warn:
             result = self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 4, 2,
-                                         speed=2, output_duration=1)
+                                         speed=2, output_video={"duration": 1, "fps": 25})
         self.assertLess(result["motion_outside"], 0.5)
         self.assertEqual(result["verdict"], "review")
         first, = result["review_points"]
@@ -5818,6 +5818,14 @@ class FitCropLossTests(unittest.TestCase):
         self.assertEqual(first["signal"], "motion")
         self.assertGreaterEqual(first["motion_outside"], 0.5)
         self.assertEqual(warn.call_args.kwargs["review_points"], result["review_points"])
+
+        # At 1 fps, a 4-second video has no frame to seek to after 3.0.
+        with patch.object(self.fit, "sample_crop_frames",
+                          return_value=([(2.7, outside), (3.7, outside)], self.W, self.H)), \
+             patch.object(self.fit, "warn"):
+            result = self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 0, 4,
+                                         output_video={"duration": 4, "fps": 1})
+        self.assertEqual([p["output_time_estimate"] for p in result["review_points"]], [2.7, None])
 
     def test_left_heavy_motion_is_review_anchor_near_0(self):
         c = self.fit.crop_loss(self.moving(2, 7, 6, 13), self.W, self.H, self.WINDOW, "x")

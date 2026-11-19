@@ -927,7 +927,8 @@ includes the affected axis, suggested anchor and `review_points`. `kept.start` a
 
 Each `review_points` entry has `source_time` (the sample seek time in seconds),
 `output_time_estimate` (the corresponding seek after trimming and retiming, or
-`null` without a usable output time), `signal` (`motion` or `detail`),
+`null` when the output frame rate or length is uncertain or the seek would fall after
+the last frame's start), `signal` (`motion` or `detail`),
 `motion_outside`, `detail_outside`, `centroid` and `suggested_anchor`. The times
 are review positions for `look.py --at`. A sampling timeout counts as `unmeasured`.
 `subject_framing` remains in `unverified`.

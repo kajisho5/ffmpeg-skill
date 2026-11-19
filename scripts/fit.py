@@ -50,10 +50,10 @@ from fractions import Fraction
 from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis
-from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, stream_starts
+from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
-from _common.emit import input_length, refuse_still, warn
+from _common.emit import input_length, own_length, refuse_still, warn
 from _common.probe import fingerprint
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
@@ -308,12 +308,19 @@ def crop_loss(frames, width: int, height: int, window, axis: str) -> dict:
 
 
 def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: float, length: float,
-               *, speed: float = 1.0, output_duration: Optional[float] = None) -> dict:
+               *, speed: float = 1.0, output_video: Optional[dict] = None) -> dict:
     """crop_check for a --fit crop that cut something away: samples the kept source range,
     measures it with crop_loss and records crop_content_off_centre when the verdict is review.
     Advisory: nothing here changes the output or the exit status. A measurement that fails is
     verdict unmeasured with a note, never another diagnostic code."""
     axis, w0, w1 = window
+    output_video = output_video or {}
+    fps = output_video.get("fps")
+    video_length = own_length(output_video)
+    # A duration includes the last frame's hold. Accurate seeking past that frame's
+    # timestamp would find nothing, even when an audio tail keeps the container open.
+    last_seek = (video_length - 1 / ntsc_rate(fps)
+                 if fps and video_length and not output_video.get("variable_frame_rate_suspected") else None)
     points = []
     measurement_error = None
     try:
@@ -328,7 +335,7 @@ def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: fl
             point = {key: sample[key] for key in ("signal", "motion_outside", "detail_outside",
                                                    "centroid", "suggested_anchor")}
             point["source_time"] = source_time
-            point["output_time_estimate"] = estimate if output_duration and estimate < output_duration else None
+            point["output_time_estimate"] = estimate if last_seek is not None and estimate <= last_seek else None
             points.append(point)
     except Exception as exc:  # a measurement, never the run's failure
         measurement_error = str(exc)
@@ -690,7 +697,7 @@ def main() -> int:
         k0, klen = kept if kept else (0.0, src_dur or (meta.get("duration") or 0.0))
         extra["crop_check"] = check_crop(
             args.input, orient, sw, sh, crop_window, k0, klen,
-            speed=factor if abs(factor - 1.0) > 1e-4 else 1.0, output_duration=result.get("duration"))
+            speed=factor if abs(factor - 1.0) > 1e-4 else 1.0, output_video=result.get("video"))
     emit(output, dropped_non_av_streams=dropped_streams, **extra)
     return 0
 
