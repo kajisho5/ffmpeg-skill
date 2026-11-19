@@ -176,7 +176,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "grade it but keep the alpha" | `color.py logo.mov --correct --exposure 0.3 --keep-alpha -o graded.mov` |
 | "lower third as a transparent layer" | `background.py --transparent -o canvas.mov --duration 5 --width 1920 --height 1080`, then `graphics.py canvas.mov --template lower-third --name "Ada" --keep-alpha -o lt.mov` |
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
-| "waveform video for this track" | `waveform.py ep.wav -o waveform.mp4` |
+| "waveform video" or "waveform at the cut" | `waveform.py ep.wav -o waveform.mp4` or `waveform.py ep.wav --at 12.4 -o cut.png` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
 | "cut to the product shot", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16 --audio b\|mix` |
 | "add chapters", "set the title / artist" | `metadata.py ep.mp4 --chapters chapters.txt` (`--title`, `--auto-chapters`) |

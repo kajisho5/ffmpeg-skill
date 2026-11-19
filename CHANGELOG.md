@@ -110,6 +110,7 @@ _Automated release: version and notes generated from pull requests merged since 
 Closes: #548, #569, #606, #623
 - Send live FFmpeg encode updates to MCP callers that request progress (#574).
 - Check Vietnamese font coverage separately and use it for tone-marked captions (#608).
+- Draw still waveforms around supplied cut points with `waveform.py --at` (#450).
 
 ## 3.13.2
 

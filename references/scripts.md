@@ -577,7 +577,7 @@ PNG) is refused, `kind: input`, `reason: still_unreadable`, with the frames
 named. When ffprobe fails on the frame list or reads back no frame, the frames
 are not checked: a note says so and the encode runs.
 
-### waveform.py — audio waveform/spectrum visualization video
+### waveform.py — audio visualization and cut-review PNGs
 ```
 waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
                    [--color C] [--background C] [--waveform-mode M] [--split-channels]
@@ -585,6 +585,7 @@ waveform.py INPUT [--style waveform|spectrum] [--width W] [--height H] [--fps N]
                    [--position bottom|centre|top|strip] [--vis-height FRAC] [--opacity 0..1]
                    [--platform NAME] [--srt FILE | --text FILE] [--title TEXT] [--brand brand.json]
                    [--on-silent warn|fail] [--silence-threshold -50] [-o OUT]
+waveform.py INPUT --at TIME [--at TIME ...] [--window SECONDS] [-o OUT.png]
 ```
 Renders the input's audio as a video: `--style waveform` (default, FFmpeg's
 `showwaves`) draws amplitude over time; `--style spectrum` (`showspectrum`)
@@ -594,6 +595,14 @@ carries the audio it visualizes. The default output of an audio input is
 `<name>_waveform.mp4` (an audio extension cannot hold the picture), and `-o` with an audio
 extension is refused. For an audio-only input (no video stream
 needed) or any file with an audio track worth visualizing.
+
+For cut review, `--at` draws one waveform PNG per supplied time. The orange line marks
+that time and the label states the selected window length. `--window` is the full span
+around each point (default 2 seconds, maximum 30). Near either end it is clipped to the
+source. For multiple points, the file names use `_01.png`, `_02.png`, and so on.
+Use `--audio-stream` to choose the track. The JSON lists the written paths and windows in
+`waveforms`, or planned paths and windows in `planned_waveforms` on a dry run.
+Listen to the cut when deciding whether it interrupted speech.
 
 **Audiogram (1.16).** `--image PATH` puts a local still behind the
 visualisation, which is what turns a podcast episode into something postable.

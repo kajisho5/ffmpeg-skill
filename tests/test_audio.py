@@ -12,12 +12,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, integrated_lufs,  # noqa: E402
+from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, frame_rgb, integrated_lufs,  # noqa: E402
                        make_multistream, script, sh, written_track)
 from _common import probe  # noqa: E402
 from _common.decision import AUDIO_CODECS  # noqa: E402
@@ -53,6 +54,62 @@ class AudioTests(MediaFixtures):
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
         self.assertIsNotNone(m["audio"])
         self.assertClose(m["duration"], 12.0, 0.3)
+
+    def test_waveform_stills_mark_the_requested_clock_and_verify_each_png(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            source = root / "step.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               r"aevalsrc=0.4*sin(2*PI*230*t)*if(lt(t\,2)\,0.2\,0.85):s=48000:d=4", source)
+            output = root / "points.png"
+            flags = ("--at", "0", "--at", "2", "--at", "4", "--window", "2", "--width", "480",
+                     "--height", "160", "-o", output, "--json")
+            dry = json.loads(script("waveform.py", source, *flags, "--dry-run").stdout)
+            self.assertFalse(dry["verified"])
+            self.assertNotIn("waveforms", dry)
+            self.assertFalse(any(root.glob("*.png")))
+            doc = json.loads(script("waveform.py", source, *flags).stdout)
+            self.assertTrue(doc["verified"], doc["verification"])
+            self.assertEqual(doc["waveforms"], dry["planned_waveforms"])
+            self.assertEqual([Path(p).name for p in doc["outputs"]],
+                             ["points_01.png", "points_02.png", "points_03.png"])
+            self.assertEqual([(r["start"], r["end"]) for r in doc["waveforms"]], [(0, 1), (1, 3), (3, 4)])
+            self.assertEqual(sum(s["step"] == "waveform_image" and s["ok"] for s in doc["verification"]), 3)
+            middle = doc["waveforms"][1]
+            x = middle["marker_x"]
+            self.assertEqual(x, 240)
+            red, green, blue = frame_rgb(middle["output"], 0, x, 55)
+            self.assertTrue(red > 240 and 145 < green < 190 and 45 < blue < 90)
+            self.assertLess(frame_rgb(middle["output"], 0, 180, 87)[1], 20)
+            self.assertGreater(frame_rgb(middle["output"], 0, 300, 87)[1], 200)
+            for last in ("5", "2"):
+                stem = root / f"check_{last}.png"
+                protected = root / "check_2_02.png"
+                if last == "2":
+                    protected.write_bytes(b"keep me")
+                proc = sh(sys.executable, SCRIPTS / "waveform.py", source, "--at", "1", "--at", last,
+                          "-o", stem, "--json", expect_fail=True)
+                error = json.loads(proc.stdout)["error"]
+                if last == "2":
+                    self.assertEqual(error["reason"], "output_exists")
+                    self.assertEqual(protected.read_bytes(), b"keep me")
+                else:
+                    self.assertIn("outside the input", error["message"])
+                self.assertFalse((root / f"check_{last}_01.png").exists())
+
+    def test_waveform_still_marker_aligns_with_nondisible_sample_bins(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            source = root / "step.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               r"aevalsrc=0.8*between(t\,2\,2.005):s=44100:d=4", source)
+            output = root / "marker.png"
+            result = json.loads(script("waveform.py", source, "--at", "2", "--window", "2",
+                                       "--height", "160", "-o", output, "--json").stdout)
+            marker = result["waveforms"][0]["marker_x"]
+            self.assertEqual(marker, 980)
+            self.assertGreater(frame_rgb(output, 0, marker + 3, 87)[1], 200)
+            self.assertLess(frame_rgb(output, 0, marker - 3, 87)[1], 20)
 
     def test_waveform_spectrum_style(self):
         out = OUT / "waveform2.mp4"
