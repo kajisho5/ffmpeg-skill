@@ -73,7 +73,7 @@ def measure(path: str, I: float, tp: float, lra: float) -> dict:
     # FFmpeg measured the track with the default disposition or the most channels, and the gain
     # for that track was applied to a:0 (A110)
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
-           "-af", f"aresample=async=1,loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
+           "-af", f"aresample=async=1:min_hard_comp=0.01,loudnorm=I={I}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"]
     # Pass 1 is a measurement: it runs under --dry-run too, so the planned pass-2 command and
     # the reported input_i are real (before 1.4.6 a dry run returned a made-up -20 LUFS).
     proc = run_analysis(cmd, check=False, record=True)
@@ -141,7 +141,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
         af = (
-            f"aresample=async=1,loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
+            f"aresample=async=1:min_hard_comp=0.01,loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
         )
@@ -151,7 +151,8 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # sound after the jump played 89 ms late against a copied picture, and atrim, which
             # counts time, cut as much off the end. The samples are restamped in order from the
             # first one's time (a late start keeps its lead). A gap in the source's sound is
-            # filled with silence before loudnorm (aresample=async=1, both modes): the restamp
+            # filled with silence before loudnorm (aresample=async=1, both modes; from 10 ms
+            # up, swresample's own threshold of 100 ms left an 80 ms gap closed): the restamp
             # closed it, and so does 8.0's loudnorm in linear mode, which played everything after
             # the gap that much early (review of #636).
             af += ",asetpts=N/SR/TB+STARTPTS"

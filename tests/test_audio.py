@@ -250,6 +250,18 @@ class AudioTests(MediaFixtures):
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
             text=True).split()]
         self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
+        # a short gap too: 80 ms of sound missing before the second beep is under swresample's
+        # default threshold (100 ms), and every later beep played 80 ms early (review of #636)
+        short = OUT / "loud_flash_beep_gap80.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", "aselect='not(between(t,0.70,0.78))'", "-c:v", "copy", "-c:a", "aac", short)
+        self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, "fixture: the gapped source is in sync")
+        for target in ("-14", "-30"):
+            with self.subTest(short_gap_target=target):
+                fixed = OUT / f"loud_flash_beep_gap80_{target[1:]}.mp4"
+                script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite")
+                offsets = av_offsets_ms(fixed)
+                self.assertEqual(len(offsets), 4, offsets)
+                self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
         # a gap in the source's sound (8-10 s here) stays where it is, in both modes and on every
         # build: it is filled with silence before loudnorm. The dynamic-mode restamp closed it,
         # and FFmpeg 8.0's loudnorm closes it in linear mode, so the sound after it played 2 s
