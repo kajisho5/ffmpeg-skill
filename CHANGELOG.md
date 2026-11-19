@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+### Added
+
+- Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
 - Check Vietnamese font coverage separately and use it for tone-marked captions (#608).
 
 ## 3.13.2

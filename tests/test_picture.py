@@ -4784,6 +4784,40 @@ class LookInkTests(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertTrue(frames[0]["has_ink"])  # the hstacked image: busy half lights it up
 
+    def test_compare_uses_the_cut_in_point_and_the_output_start(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as work:
+            root = Path(work)
+            source, cut, image = (root / name for name in ("source.mp4", "cut.mp4", "compare.png"))
+            tiny_clip(source, "color=black:s=160x90:r=10",
+                      "-vf", "drawbox=color=white:t=fill:enable='gte(t,2)'", seconds=3)
+            script("cut.py", source, "--start", "2.2", "--end", "2.9", "--accurate", "-o", cut)
+            cmd = ("look.py", source, "--at", "2.2", "--compare", cut, "--compare-at", "0",
+                   "--no-timecode", "--width", "320", "-o", image, "--json")
+            dry = json.loads(script(*cmd, "--dry-run").stdout)
+            expected = [{"output": str(image), "input_seek": 2.2, "compare_seek": 0.0}]
+            self.assertEqual(dry["comparisons"], expected)
+            self.assertFalse(dry["verified"])
+            self.assertFalse(image.exists())
+            result = json.loads(script(*cmd).stdout)
+            self.assertEqual(result["comparisons"], expected)
+            self.assertLess(max(frame_rgb(source, 0, 80, 45)), 10)
+            self.assertGreater(min(frame_rgb(image, 0, 80, 45)), 245)
+            self.assertGreater(min(frame_rgb(image, 0, 240, 45)), 245)
+
+    def test_compare_validates_every_timestamp_before_writing(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as work:
+            output = Path(work) / "review.png"
+            args = ("look.py", self.busy, "--compare", self.blank, "--at", "1", "--at", "2",
+                    "--no-timecode", "-o", output, "--json")
+            for times, message in ((("0",), "one --compare-at"), (("0", "4"), "beyond")):
+                with self.subTest(times=times):
+                    flags = [arg for time in times for arg in ("--compare-at", time)]
+                    proc = script(*args, *flags, expect_fail=True)
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual(doc["error"]["kind"], "input")
+                    self.assertIn(message, doc["error"]["message"])
+                    self.assertEqual(list(Path(work).glob("*.png")), [])
+
     def test_compare_with_repeated_at_and_o_writes_distinct_files(self):
         """-o given alongside --compare --at T1 --at T2 must not collapse onto one file: each
         timestamp needs its own comparison image, or ink.frames (and any other per-frame
