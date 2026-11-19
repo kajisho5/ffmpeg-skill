@@ -2366,6 +2366,38 @@ class EditingTests(MediaFixtures):
                                 OUT / "copy_with_quiet.mp4", "--overwrite", "--json").stdout)
         self.assertEqual([(s["at"], s["end"]) for s in doc["silent"]], [(2.0, 4.0)], doc.get("silent"))
 
+    def test_join_copy_refuses_aac_priming_that_accumulates_at_seams(self):
+        clips = []
+        for i in range(4):
+            clip = OUT / f"primed_aac_{i}.mp4"
+            sound = r"aevalsrc=if(between(t\,0.2\,0.35)\,0.6*sin(2*PI*440*t)\,0):s=48000:d=1"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=25:d=1",
+               "-f", "lavfi", "-i", sound, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", clip)
+            clips.append(clip)
+
+        output = OUT / "primed_aac_copy.mp4"
+        output.unlink(missing_ok=True)
+        for flags in ((), ("--dry-run",)):
+            proc = script("join.py", *clips, "--transition", "none", "--copy", "-o", output,
+                          "--json", *flags, expect_fail=True)
+            report = json.loads(proc.stdout)
+            self.assertEqual(report["status"], "failed", report)
+            self.assertIsNot(report.get("verified"), True, report)
+            self.assertEqual(report["error"]["reason"], "join_copy_mismatch", report)
+            self.assertGreater(report["error"]["details"]["aac_priming_ms"], 50)
+            self.assertFalse(output.exists())
+
+        encoded = OUT / "primed_aac_encoded.mp4"
+        report = json.loads(script("join.py", *clips, "--transition", "none", "-o", encoded,
+                                   "--overwrite", "--json").stdout)
+        self.assertTrue(report["verified"], report)
+        raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(encoded),
+                                       "-map", "0:a:0", "-f", "s16le", "-"])
+        samples = array.array("h", raw)
+        for i in range(len(clips)):
+            start = next(j / 48000 for j in range(i * 48000, (i + 1) * 48000) if abs(samples[j]) > 4000)
+            self.assertClose(start, i + 0.2, 0.01)
+
     def test_join_copy_measures_stream_spans_in_every_container(self):
         """2.24.1: the A/V end check read stated stream lengths, which Matroska/WebM never state (a
         1.5 s hole in the sound passed as verified) and MPEG-TS only estimate (every AAC .ts was
