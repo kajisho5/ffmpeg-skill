@@ -22,3 +22,9 @@
   reviewer made on earlier PRs into twenty questions (path guards against every input and output,
   a failed measurement reported as not measured, a claim as narrow as the code, the right stream,
   ...). A finding that fits none of them adds a question in the PR that answers it.
+- **A defect changes a mechanism, not only a line (#632).** Every fix adds one line to
+  `docs/defect-ledger.jsonl`: the defect's class, why the checks that exist let it through, and
+  what was changed so the class cannot recur (a shared step, a type, generated text, a test that
+  runs over every tool). Patching the reported place alone is allowed once per class, with the
+  reason; the second defect of that class means the mechanism is wrong and is what gets rebuilt.
+  `.github/scripts/revert_proof.py` and `test_every_defect_names_its_class_...` enforce it.

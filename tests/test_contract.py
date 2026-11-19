@@ -3086,6 +3086,38 @@ sys.exit(fit.main())
             doc = _contract.doctor()
         self.assertEqual(sorted(x.split()[1] for x in doc["unsupported"] if "5.1" in x), ["FFmpeg", "ffprobe"])
 
+    DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
+                      "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
+                      "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
+                      "ffmpeg_version", "new")
+
+    def test_every_defect_names_its_class_and_what_changed_so_it_cannot_recur(self):
+        """docs/defect-ledger.jsonl (#632): a defect is not closed by repairing the one place it
+        was reported. Each fix adds a line: the class (the twenty review questions, an FFmpeg
+        version difference, or `new`), why the checks that exist let it through, and the
+        mechanism changed so the class cannot come back (a shared step, a type, a generated
+        text, a test over every tool). `mechanism: null` needs `why_none`, and a class gets that
+        answer once: the second defect of a class with no mechanism behind it is the evidence
+        that the mechanism is what has to change."""
+        seen_without = {}
+        path = ROOT / "docs" / "defect-ledger.jsonl"
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            where = f"{path.name}:{n}"
+            for key in ("date", "issue", "class", "what", "escaped", "mechanism"):
+                self.assertIn(key, entry, where)
+            self.assertIn(entry["class"], self.DEFECT_CLASSES, where)
+            self.assertTrue(str(entry["what"]).strip() and str(entry["escaped"]).strip(), where)
+            if entry["mechanism"]:
+                continue
+            self.assertTrue(str(entry.get("why_none") or "").strip(), f"{where}: no mechanism needs why_none")
+            self.assertNotIn(entry["class"], seen_without,
+                             f"{where}: class {entry['class']!r} already had a defect closed with no mechanism "
+                             f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
+            seen_without[entry["class"]] = n
+
     def test_shipped_code_does_not_grow(self):
         """.github/code-budget.json: the shipped code has a ceiling. A fix that adds a refusal, a
         reason and a result field is the code the next fix repairs (the file records the numbers

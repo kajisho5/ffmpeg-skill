@@ -20,6 +20,7 @@ import sys
 import tempfile
 
 SHIPPED = ("scripts/", "mcp/")
+LEDGER = "docs/defect-ledger.jsonl"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
 ADDED_TEST = re.compile(r"^\+\s+def (test_\w+)\(")
@@ -49,6 +50,7 @@ def main() -> int:
     ap.add_argument("--base", required=True)
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--title", default="")
+    ap.add_argument("--no-ledger", action="store_true", help="do not ask for a ledger line (history before #632)")
     args = ap.parse_args()
     base = git("merge-base", args.base, args.head).strip()
     names = git("diff", "--name-only", base, args.head).splitlines()
@@ -59,6 +61,12 @@ def main() -> int:
     if EXEMPT_TITLE.match(args.title):
         print(f"title {args.title!r} declares no behaviour change: not judged")
         return 0
+    fixes = re.match(r"fix\b", args.title, re.I) or any(
+        line.startswith("+- ") for line in git("diff", base, args.head, "--", "CHANGELOG.md").splitlines())
+    if fixes and LEDGER not in names and not args.no_ledger:
+        print(f"a fix adds a line to {LEDGER}: the defect's class, why it got through, and the mechanism "
+              "changed so the class cannot recur (#632)")
+        return 1
     tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"))
     if not tests:
         print(f"{len(shipped)} shipped file(s) changed and no test was added or edited")
