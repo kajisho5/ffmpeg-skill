@@ -5,6 +5,7 @@
     python3 tests/test_all.py            # every group
 """
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -141,6 +142,7 @@ class OrchestrationTests(MediaFixtures):
         # through: the input keeps its bytes (review of #636)
         linked = work / "linked"
         (linked / "stills").mkdir(parents=True, exist_ok=True)
+        (linked / "index.html").write_text("<html>earlier page</html>", encoding="utf-8")  # so the marker check is reached
         precious = work / "precious.txt"
         precious.write_text("keep me", encoding="utf-8")
         try:  # a Windows runner without symlink rights cannot make one: that half is skipped there
@@ -151,13 +153,26 @@ class OrchestrationTests(MediaFixtures):
             refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(linked),
                                       "--overwrite"], capture_output=True, text=True, cwd=str(work))
             self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertIn("was not made by the review page", refused.stderr)
             self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+            # a link already standing at the temporary name the page used to be written through
+            # is not followed: the temporary file is created exclusively
+            if str(SCRIPTS) not in sys.path:
+                sys.path.insert(0, str(SCRIPTS))
+            review = importlib.import_module("_review")
+            target = linked / "page.html"
+            (linked / f".page.html.{os.getpid()}.tmp").symlink_to(precious)
+            review.write_new(target, "new page")
+            self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+            self.assertEqual(target.read_text(encoding="utf-8"), "new page")
         hard = work / "hard"
         hard.mkdir(exist_ok=True)
         os.link(precious, hard / "index.html")
         sh(sys.executable, SCRIPTS / "_review.py", proj, "-o", hard, "--overwrite")
         self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
         self.assertIn("<html", (hard / "index.html").read_text(encoding="utf-8"))
+        if os.name == "posix":  # the page is as readable as any file, not owner-only like a temporary file
+            self.assertEqual((hard / "index.html").stat().st_mode & 0o044, 0o044)
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

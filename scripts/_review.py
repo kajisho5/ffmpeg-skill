@@ -23,6 +23,7 @@ import shlex
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -44,10 +45,7 @@ def still(src: str, at: float, out: Path) -> bool:
     an old picture; a name that is a source of this project is never written (review of #636)."""
     if os.path.realpath(out) in SOURCES:
         return False
-    try:
-        out.unlink()
-    except FileNotFoundError:
-        pass
+    out.unlink(missing_ok=True)
     try:
         proc = subprocess.run([found_exe("ffmpeg"), "-v", "error", "-y", "-ss", f"{max(at, 0):.3f}", "-i", src, "-frames:v", "1",
                                "-vf", "scale=320:-2", "-q:v", "4", str(out)], capture_output=True, timeout=STILL_TIMEOUT)
@@ -57,11 +55,15 @@ def still(src: str, at: float, out: Path) -> bool:
 
 
 def write_new(path: Path, text: str) -> None:
-    """Write `path` as a new file: into a temporary name beside it, then renamed over it. Writing
-    in place followed a symlink or a hard link at that name into whatever it pointed to (a project
-    input), and truncated it; a rename replaces the name only (review of #636)."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
+    """Write `path` as a new file: into a temporary file created beside it, then renamed over it.
+    Writing in place followed a symlink or a hard link at that name into whatever it pointed to (a
+    project input), and truncated it; a rename replaces the name only. The temporary file is
+    created exclusively, so a link already standing at a guessable name is never written through
+    either (review of #636)."""
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o644)  # mkstemp makes it owner-only; a page and its marker are ordinary files
     os.replace(tmp, path)
 
 
@@ -236,11 +238,8 @@ def main(argv=None) -> int:
     def strings(value):
         if isinstance(value, str):
             yield value
-        elif isinstance(value, dict):
-            for v in value.values():
-                yield from strings(v)
-        elif isinstance(value, list):
-            for v in value:
+        elif isinstance(value, (dict, list)):
+            for v in (value.values() if isinstance(value, dict) else value):
                 yield from strings(v)
     for text in list(strings(project)) + ([str(result["output"])] if result and result.get("output") else []):
         try:
