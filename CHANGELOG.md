@@ -79,6 +79,10 @@ _Automated release: version and notes generated from pull requests merged since 
 - Report measured picture placement after reframing in export and render results (#548).
 - Treat `.mka` as audio-only. Audio encodes use FLAC, and compatible cuts can copy the original audio codec (#539).
 
+### Changed
+
+- Label platform-export loudness measurements with their correction status (#609).
+
 ### Fixed
 
 - Preserve reading order and edge punctuation in generated right-to-left captions (#623).

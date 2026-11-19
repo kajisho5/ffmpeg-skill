@@ -515,6 +515,25 @@ position beside the output start with
 Open the PNG to check the two frames. For several cuts, pair the source in-points with their
 positions in the output by repeating both time flags.
 
+### How do I finish a vertical crop for Reels?
+
+On a 1920×1080 source, the first command below centre-crops to **608×1080**.
+The Reels preset scales it to the **1080×1920** delivery frame and applies audio
+correction if required. To do the whole delivery in one project, use `render.py --template reels`.
+
+```bash
+python3 scripts/fit.py source.mp4 --aspect 9:16 --fit crop -o vertical.mp4
+python3 scripts/export.py vertical.mp4 --preset reels --normalize -o reels.mp4
+python3 scripts/check.py reels.mp4 --platform reels
+```
+
+When an export returns a `loudness` block, `lufs` is the written file's reading,
+or `null` if unavailable. `loudness.normalized` records whether export applied
+correction. `loudness.ok` is true or false when the target can be evaluated, and
+`null` when it cannot. If measured, non-silent audio misses the target and no
+correction ran, use `export.py --normalize` or the `loudness.py` command in the warning.
+A silent track needs usable source audio before its level can be corrected.
+
 ### Are silence removal and captions stable?
 
 They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.

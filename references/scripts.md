@@ -2483,7 +2483,10 @@ platform export is one command instead of export, loudness, export again. A
 measurement that cannot be read is `loudness.measured: false` (values null) with
 a failing `{step: loudness, ok: false, reason: not_measured}` and a
 `loudness_not_measured` warning, so the export is `verified: false` rather than
-unchecked.
+unchecked. When a platform export returns `loudness`, `normalized: false` means the
+export did not apply a correction pass. The human-readable measurement also states
+whether export applied correction. For a vertical crop, run the Reels,
+TikTok or Shorts preset to reach that platform's explicit frame size.
 
 Subtitle and data streams (a soft-subtitle track muxed upstream, a camera's timecode) are kept
 when the container can hold them: copied as they are, or a text track converted to the
