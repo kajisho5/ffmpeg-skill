@@ -3086,6 +3086,112 @@ sys.exit(fit.main())
             doc = _contract.doctor()
         self.assertEqual(sorted(x.split()[1] for x in doc["unsupported"] if "5.1" in x), ["FFmpeg", "ffprobe"])
 
+    DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
+                      "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
+                      "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
+                      "ffmpeg_version", "new")
+
+    def test_every_defect_names_its_class_and_what_changed_so_it_cannot_recur(self):
+        """docs/defect-ledger.jsonl (#632): a defect is not closed by repairing the one place it
+        was reported. Each fix adds a line: the class (the twenty review questions, an FFmpeg
+        version difference, or `new`), why the checks that exist let it through, and the
+        mechanism changed so the class cannot come back (a shared step, a type, a generated
+        text, a test over every tool). `mechanism: null` needs `why_none`, and a class gets that
+        answer once: the second defect of a class with no mechanism behind it is the evidence
+        that the mechanism is what has to change."""
+        seen_without = {}
+        path = ROOT / "docs" / "defect-ledger.jsonl"
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            where = f"{path.name}:{n}"
+            for key in ("date", "issue", "class", "what", "escaped", "mechanism"):
+                self.assertIn(key, entry, where)
+            self.assertIn(entry["class"], self.DEFECT_CLASSES, where)
+            self.assertTrue(str(entry["what"]).strip() and str(entry["escaped"]).strip(), where)
+            if entry["mechanism"]:
+                continue
+            self.assertTrue(str(entry.get("why_none") or "").strip(), f"{where}: no mechanism needs why_none")
+            self.assertNotIn(entry["class"], seen_without,
+                             f"{where}: class {entry['class']!r} already had a defect closed with no mechanism "
+                             f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
+            seen_without[entry["class"]] = n
+
+    def test_the_632_scripts_read_what_a_change_did(self):
+        """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the
+        `def` is a context line) and not a helper between two tests; fix_origins.kind_of lets a
+        fix or feature label decide before the subject's prefix (a `chore` label alone does not
+        decide); and the revert-proof workflow runs again when a title is edited, apart from
+        ci.yml so that an edit does not cancel the test matrix."""
+        import importlib.util
+
+        def load(name):
+            spec = importlib.util.spec_from_file_location(name, ROOT / ".github" / "scripts" / f"{name}.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        proof, origins = load("revert_proof"), load("fix_origins")
+        diff = ("+++ b/tests/test_x.py\n@@ -10,6 +10,6 @@ class T:\n     def test_a(self):\n         x = 1\n"
+                "-        y = 2\n+        y = 3\n     def helper(self):\n-        z = 1\n+        z = 2\n"
+                "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
+                "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
+        self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
+        # with the head's source the class is kept: U.test_d, not any test_d (review of #635)
+        source = "class T:\n" + "\n" * 28 + "class U:\n"
+        self.assertEqual(proof.changed_tests(diff, lambda module: source),
+                         {"test_x": ["T.test_a", "T.test_c", "U.test_d"]})
+        # a helper defined inside a test keeps the test; a sibling helper ends it
+        nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
+                  "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
+        self.assertEqual(proof.changed_tests(nested), {"test_x": ["test_a"]})
+        # only the test's own line counts: a failed setUpClass or import never ran it
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a)\nA docstring. ... FAIL\n\n=====\n"
+                                       "FAIL: test_a (tests.test_x.T.test_a)\nA docstring.\n", "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ERROR\n\n=====\nERROR: test_a (tests.test_x.T.test_a)\n",
+                                       "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ok\n", "test_a"), "passes")
+        self.assertEqual(proof.outcome("setUpClass (tests.test_x.T) ... ERROR\n", "test_a"), "unclear")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... skipped 'no ffmpeg'\n", "test_a"), "unclear")
+        # a failing subTest prints no status on the test's own line, only in the failure list
+        sub = ("test_a (tests.test_x.T.test_a) ... \n  test_a (tests.test_x.T.test_a) (i=1) ... FAIL\n\n"
+               "======\nFAIL: test_a (tests.test_x.T.test_a) (i=1)\n")
+        self.assertEqual(proof.outcome(sub, "test_a"), "fails")
+        self.assertEqual(proof.outcome("ERROR: setUpClass (tests.test_x.T)\n", "test_a"), "unclear")
+        # an unexpected success held on the base: it is not a failure there
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... unexpected success\n", "test_a"), "passes")
+        self.assertEqual(origins.kind_of("Add missing validation (#700)", {"fix"}), "fix")
+        self.assertEqual(origins.kind_of("fix: x (#701)", {"feature", "chore"}), "feature")
+        self.assertEqual(origins.kind_of("fix: x (#702)", {"chore"}), "fix")
+        self.assertEqual(origins.kind_of("Keep words together (#703)", {"chore"}), "other")
+        self.assertEqual(origins.kind_of("chore(release): bump version to 3.15.0 [skip ci]", set()), "release")
+        wf = (ROOT / ".github" / "workflows" / "revert-proof.yml").read_text(encoding="utf-8")
+        self.assertIn("types: [opened, synchronize, reopened, edited]", wf)
+        self.assertIn("--no-overlay", (ROOT / ".github" / "scripts" / "revert_proof.py").read_text(encoding="utf-8"))
+        self.assertNotIn("revert_proof", (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+
+    def test_shipped_code_does_not_grow(self):
+        """.github/code-budget.json: the shipped code has a ceiling. A fix that adds a refusal, a
+        reason and a result field is the code the next fix repairs (the file records the numbers
+        that led here), so a change that adds lines removes as many, and the ceiling is lowered
+        when code goes. Counted: non-blank, non-comment lines of scripts/ and mcp/ Python."""
+        budget = json.loads((ROOT / ".github" / "code-budget.json").read_text(encoding="utf-8"))
+        # the same file holds the fix-size limit and the error budget the freeze follows (#632)
+        self.assertIsInstance(budget["feature_freeze"], bool)
+        self.assertGreater(budget["fix_max_net_lines"], 0)
+        self.assertEqual(set(budget["budget"]) - {"rule", "measured_by"}, {"fix_of_fix_share_max", "median_net_lines_per_fix_max"})
+        lines = 0
+        for base in ("scripts", "mcp"):
+            for path in sorted((ROOT / base).rglob("*.py")):
+                lines += sum(1 for line in path.read_text(encoding="utf-8").splitlines()
+                             if line.strip() and not line.strip().startswith("#"))
+        self.assertLessEqual(
+            lines, budget["max_lines"],
+            f"shipped code is {lines} lines, {lines - budget['max_lines']} over the ceiling in "
+            ".github/code-budget.json: remove as much as this change adds (a refusal in place of a "
+            "new behaviour, a shared helper in place of a copy), or raise the ceiling with the reason "
+            "in the PR body")
+
     def test_ci_parts_cover_every_test_module_exactly_once(self):
         """CI runs `run_parallel.py --part I/3` on three machines and each passes on its own exit
         code, so a shard dropped or doubled by split_parts would go unnoticed: every item lands
@@ -3098,6 +3204,21 @@ sys.exit(fit.main())
         finally:
             sys.path.remove(str(ROOT / "tests"))
         names = [m.__name__ for m in test_all.MODULES] + ["test_contract"]
+        # a tests/test_*.py that is in neither list is run by nothing: CI would stay green on a
+        # file of tests nobody listed (the list is kept by hand)
+        on_disk = sorted(p.stem for p in (ROOT / "tests").glob("test_*.py") if p.stem != "test_all")
+        self.assertEqual(on_disk, sorted(names), "add the new module to test_all.MODULES and run_parallel.ROUGH_SECONDS")
+        # a plain local run covers the same modules as the CI parts together (#635: it once left
+        # test_contract out and still printed "all OK")
+        self.assertEqual(sorted(run_parallel.all_modules()), sorted(names))
+        # a skipped test is reported, not only counted as passed: the summary names each reason
+        self.assertEqual(run_parallel.skip_summary({}), "\nskipped: none")
+        self.assertEqual(run_parallel.skip_summary({"no drawtext": 2, "Windows": 5}).splitlines()[1:],
+                         ["skipped: 7 test(s), 2 reason(s)", "    5  Windows", "    2  no drawtext"])
+        # a skipped setUpClass is a class, not one test
+        whole = "setUpClass (test_x.T)" + run_parallel.CLASS_SKIP + "no ffmpeg"
+        self.assertEqual(run_parallel.skip_summary({whole: 1, "Windows": 2}).splitlines()[1],
+                         "skipped: 2 test(s), and 1 whole class(es) whose tests did not run, 2 reason(s)")
         work = [(n, k, run_parallel.SHARDS.get(n, 1)) for n in names for k in range(run_parallel.SHARDS.get(n, 1))]
         self.assertEqual(set(run_parallel.ROUGH_SECONDS), set(names), "every module needs a cost to be balanced")
         for n in (1, 2, 3, 5, len(work)):

@@ -1,0 +1,77 @@
+# #632: a pull request that changes shipped code shows that one of its own tests fails on the
+# base's code (.github/scripts/revert_proof.py; also the defect ledger, the fix-size limit and the
+# feature freeze). Its own workflow, not a job of ci.yml: the verdict depends on the PR's title,
+# so it runs again when the title is edited, and an edit must not cancel ci.yml's test matrix.
+name: revert proof
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  revert-proof-ffmpeg-6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      code: ${{ steps.proof.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - id: proof
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ffmpeg -version | head -1
+          git fetch --no-tags origin "$BASE_REF"
+          set +e
+          python3 .github/scripts/revert_proof.py --base FETCH_HEAD --title "$PR_TITLE"
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+  revert-proof-ffmpeg-8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      code: ${{ steps.proof.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - id: proof
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ffmpeg -version | head -1
+          git fetch --no-tags origin "$BASE_REF"
+          set +e
+          python3 .github/scripts/revert_proof.py --base FETCH_HEAD --title "$PR_TITLE"
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+  revert-proof:
+    if: always()
+    needs: [revert-proof-ffmpeg-6, revert-proof-ffmpeg-8]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SIX: ${{ needs.revert-proof-ffmpeg-6.outputs.code }}
+          EIGHT: ${{ needs.revert-proof-ffmpeg-8.outputs.code }}
+        run: |
+          echo "FFmpeg 6.1: exit ${SIX:-none}; FFmpeg 8.0.1: exit ${EIGHT:-none}"
+          [ "$SIX" = "0" ] || [ "$EIGHT" = "0" ]
+

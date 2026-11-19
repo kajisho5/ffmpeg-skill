@@ -77,6 +77,11 @@ would have caught the original bug isn't done yet.
 
 ## Pull requests
 
+- **Shipped code has a ceiling** (`.github/code-budget.json`, `test_shipped_code_does_not_grow`).
+  A change that adds lines to `scripts/` or `mcp/` removes as many. Prefer the fix that adds least:
+  a refusal over a new behaviour, a shared helper over a copy, deleting a mode over guarding it.
+  Lower the ceiling when code is removed; raising it needs the reason in the PR body.
+
 - Keep PRs focused — one fix or one small feature per PR.
 - Run `npm test` locally before opening; CI runs on Linux, macOS, and Windows, and
   all three must pass.
