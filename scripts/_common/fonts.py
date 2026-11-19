@@ -551,6 +551,31 @@ def font_covers_script(font_name: str, script: str) -> bool:
     return _fontconfig_family_coverage(font_name, script) is not False
 
 
+def _installed_face_coverage(family: str, script: str, bold: bool) -> Optional[bool]:
+    """Ask fontconfig for the requested style without steering it toward the language."""
+    if platform.system() == "Windows":
+        return None  # libass resolves the name through the Windows font backend
+    exe = _safe_which("fc-match")
+    if not exe:
+        return None
+    pattern = family + (":bold" if bold else "")
+    try:
+        proc = subprocess.run([exe, "--format", "%{family}\t%{lang}\n", pattern],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                              encoding="utf-8", errors="replace", timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    families, separator, languages = proc.stdout.rstrip("\r\n").partition("\t")
+    if not (separator and families):
+        return None
+    names = {name.strip().casefold() for name in families.split(",")}
+    if _family_key(family) not in _GENERIC_FAMILIES and family.strip().casefold() not in names:
+        return None  # a fallback family does not establish coverage of the requested one
+    return FC_LANG[script].lower() in languages.lower().split("|")
+
+
 # Named flags differ per tool: overlay.py and graphics.py take a font FILE, caption.py takes a
 # directory of faces plus the family name -- naming a flag the tool does not have is worse than
 # naming none, so the hint says both (review 10).
@@ -575,23 +600,28 @@ def fonts_dir_covers_script(fonts_dir: str, script: str) -> "Optional[bool]":
     return _scan_font_coverage(fonts_dir, script)
 
 
-def _scan_font_coverage(path: str, script: str) -> Optional[bool]:
+def _scan_font_coverage(path: str, script: str, *, face_index: Optional[int] = None) -> Optional[bool]:
     """Check coverage in one file or a directory of font files with fc-scan."""
     exe = _safe_which("fc-scan")
     if not exe:
         return None
     try:
-        proc = subprocess.run([exe, "--format", "%{lang}\n", path],
+        proc = subprocess.run([exe, "--format", "%{index}\t%{lang}\n", path],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if proc.returncode != 0:
         return None
     want = FC_LANG[script].lower()
+    matched_face = False
     for line in proc.stdout.splitlines():
-        if want in [tag.strip().lower() for tag in line.split("|")]:
+        index, separator, languages = line.partition("\t")
+        if not separator or (face_index is not None and index != str(face_index)):
+            continue
+        matched_face = True
+        if want in [tag.strip().lower() for tag in languages.split("|")]:
             return True
-    return False
+    return None if face_index is not None and not matched_face else False
 
 
 # FreeType's font formats whose PostScript name libass 0.17 matches (`check_postscript`); for any
@@ -664,6 +694,12 @@ def fonts_dir_face(fonts_dir: str, family: str, bold: bool = False) -> "Tuple[Op
     family name, here fontconfig's first, when the file has no such record); the full name counts
     for a TrueType outline and the PostScript name for a PostScript one (CFF, Type 1), not the other
     way round. Checked by drawing on libass 0.17.1."""
+    face, found = _fonts_dir_face(fonts_dir, family, bold)
+    return (face[0] if face else None), found
+
+
+def _fonts_dir_face(fonts_dir: str, family: str, bold: bool) -> "Tuple[Optional[Tuple[str, int]], Optional[bool]]":
+    """The selected file and face index. A collection can hold faces with different coverage."""
     exe = _safe_which("fc-scan")
     if not exe or not fonts_dir or not os.path.isdir(fonts_dir):
         return None, None
@@ -716,13 +752,13 @@ def fonts_dir_face(fonts_dir: str, family: str, bold: bool = False) -> "Tuple[Op
         if wanted and wanted in {n.strip().lower() for n in families}:
             upright = (slant or "0").strip() in ("", "0")
             if upright and weight == want_weight:
-                exact.append(path)
+                exact.append((path, index))
             else:
                 other_styles = True
             continue
         names = {psname.strip().lower()} if fontformat in _POSTSCRIPT_FORMATS else {n.strip().lower() for n in fullnames}
         if wanted and wanted in names:
-            named.append(path)
+            named.append((path, index))
     if named or exact:
         return (named or exact)[0], True
     return None, (True if other_styles else False)
@@ -769,17 +805,14 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
     diagnostic_script = key if key == "vi" else script
     if font_explicit and font:
         if key == "vi":
-            local_file, local_found = fonts_dir_face(fonts_dir, font, bold=font_bold) if fonts_dir else (None, False)
-            if local_file:
-                coverage = _scan_font_coverage(local_file, key)
+            local_face, local_found = _fonts_dir_face(fonts_dir, font, font_bold) if fonts_dir else (None, False)
+            if local_face:
+                path, index = local_face
+                coverage = _scan_font_coverage(path, key, face_index=index)
             elif local_found is not False:
                 coverage = None  # the selected folder face is ambiguous or the folder was unreadable
             else:
-                coverage = _fontconfig_family_coverage(font, key)
-                if coverage is None and platform.system() == "Windows" and not _safe_which("fc-list"):
-                    known = _script_font_entry(key, font)
-                    if known and known is not FC_UNKNOWN and known[1].casefold() == font.casefold():
-                        coverage = True
+                coverage = _installed_face_coverage(font, key, font_bold)
         else:
             coverage = font_covers_script(font, key)
         if coverage is None:

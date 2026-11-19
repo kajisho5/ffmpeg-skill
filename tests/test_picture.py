@@ -4039,31 +4039,47 @@ class ScriptFontTests(unittest.TestCase):
                     resolve.assert_called_with("vi")
             for sample in ("hello", "Mănăstire", "rođen"):
                 self.assertEqual(fonts.script_font_for_text(sample), ("latin", None, None))
-        with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-list"), \
-             unittest.mock.patch.object(fonts.subprocess, "run") as fc_list, \
+        with unittest.mock.patch.object(fonts.platform, "system", return_value="Linux"), \
+             unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-match"), \
+             unittest.mock.patch.object(fonts.subprocess, "run") as fc_match, \
              unittest.mock.patch.object(fonts, "warn") as warn:
-            for result, code in ((subprocess.CompletedProcess([], 0, stdout=""), "font_lacks_script"),
+            for result, code in ((subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten\n"), "font_lacks_script"),
+                                 (subprocess.CompletedProcess([], 0, stdout="Fallback\ten|vi\n"), "font_coverage_unverified"),
                                  (subprocess.CompletedProcess([], 1), "font_coverage_unverified"),
-                                 (subprocess.TimeoutExpired("fc-list", 10), "font_coverage_unverified")):
-                fc_list.side_effect = [result]
-                self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True),
+                                 (subprocess.TimeoutExpired("fc-match", 10), "font_coverage_unverified")):
+                fc_match.side_effect = [result]
+                self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True, font_bold=True),
                                  ("latin", None, None))
-                self.assertEqual(fc_list.call_args.args[0], ["fc-list", ":lang=vi:family=Narrow Font", "file"])
+                self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font:bold")
                 self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), (code, "vi"))
+            warn.reset_mock()
+            fc_match.side_effect = [subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten|vi\n")]
+            self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True),
+                             ("latin", None, None))
+            self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font")
+            warn.assert_not_called()
 
     def test_vietnamese_explicit_folder_face_is_checked_before_installed_fonts(self):
         from _common import fonts
 
-        with unittest.mock.patch.object(fonts, "fonts_dir_face", return_value=("/fonts/custom.ttf", True)) as face, \
-             unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
-             unittest.mock.patch.object(fonts.subprocess, "run",
-                                        return_value=subprocess.CompletedProcess([], 0, stdout="en|vi\n")) as scan, \
-             unittest.mock.patch.object(fonts, "warn") as warn:
-            self.assertEqual(fonts.script_font_for_text("đã ăn", font="Custom", font_explicit=True,
-                                                        fonts_dir="/fonts", font_bold=True), ("latin", None, None))
-            face.assert_called_once_with("/fonts", "Custom", bold=True)
-            self.assertEqual(scan.call_args.args[0], ["fc-scan", "--format", "%{lang}\n", "/fonts/custom.ttf"])
-            warn.assert_not_called()
+        with tempfile.TemporaryDirectory() as root:
+            collection = Path(root) / "custom.ttc"
+            collection.touch()
+            faces = (f"{collection}\t0\tCustom\tCustom-Regular\tTrueType\t80\t0\tCustom Regular\n"
+                     f"{collection}\t1\tCustom\tCustom-Bold\tTrueType\t200\t0\tCustom Bold\n")
+            with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
+                 unittest.mock.patch.object(fonts.subprocess, "run") as scan, \
+                 unittest.mock.patch.object(fonts, "warn") as warn:
+                for bold in (False, True):
+                    warn.reset_mock()
+                    scan.side_effect = [subprocess.CompletedProcess([], 0, stdout=faces),
+                                        subprocess.CompletedProcess([], 0, stdout="0\ten|vi\n1\ten\n")]
+                    self.assertEqual(fonts.script_font_for_text("đã ăn", font="Custom", font_explicit=True,
+                                                                fonts_dir=root, font_bold=bold), ("latin", None, None))
+                    if bold:
+                        self.assertEqual(warn.call_args.args[1], "font_lacks_script")
+                    else:
+                        warn.assert_not_called()
 
     def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
         family = font_family_for_script("vi")
