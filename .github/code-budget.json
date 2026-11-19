@@ -7,8 +7,9 @@
   "budget": {
     "fix_of_fix_share_max": 0.3,
     "median_net_lines_per_fix_max": 50,
-    "rule": "Error budget (after Google SRE): over either limit, no change that adds a name to the contract merges; fixes, tests, docs and deletions do. The freeze lifts after two consecutive weekly measurements under both limits (#632)."
+    "rule": "Error budget (after Google SRE): over either limit, no change that adds a name to the contract merges; fixes, tests, docs and deletions do. The freeze lifts after two consecutive weekly measurements under both limits (#632).",
+    "measured_by": "python3 .github/scripts/fix_origins.py --since <first day of the window> --labels <PR labels TSV>"
   },
   "feature_freeze": true,
-  "feature_freeze_since": "2026-11-19: fix-of-fix share 47% (limit 30%), median net lines per fix 118 (limit 50)"
+  "feature_freeze_since": "2026-11-19: fix-of-fix share 41% (limit 30%), median net lines per fix 121 (limit 50); python3 .github/scripts/fix_origins.py --since 2026-11-01 with PR labels, 57 fixes"
 }
