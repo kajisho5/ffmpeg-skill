@@ -923,6 +923,12 @@ Keys added after 3.8.20, additive (#519):
 |---|---|---|
 | `picture` | `fit.py` with `--aspect`, `--width` or `--height` (not under `--dry-run`) | where the picture sits in the frame written, measured, not judged: `{measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}`. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format, and the picture is the rectangle where the two differ; no frame of the source is decoded, and `frame_width`/`frame_height` are the written file's. `frame_share`: the picture's area over the frame's (1.0 for `--fit crop`). `scale`: the picture's width over the source's displayed width (for `--fit crop`, the width it was scaled to before the crop), with a note when it is below 1 and no `--width`/`--height` was given. `cropped`: source pixels `--fit crop` cut on each side, each axis at its own scale (all 0 otherwise). `{measured: false, reason}` and a note when the measurement gave no frame of the written size. `subject_framing` stays in `unverified`: whether the subject is in the rectangle is still a look |
 
+`export.py` emits the same `picture` object when a real export scales into a preset's fixed width and
+height. `render.py` carries the fit and export reports in `stage_pictures` keyed by stage and exposes
+the last sizing stage's report as `picture` when available. Each report's crop margins refer to that
+stage's input. A cache entry replays geometry when it recorded a report. Dry runs omit both fields.
+For these export and render results, `unverified` still includes `picture_content` and `subject_framing`.
+
 `fit.py --fit crop` also reports `crop_check` after writing a crop with a discarded
 margin. Its `basis` is `luma_motion_proxy`. The `verdict` is `ok`, `review`, or
 `unmeasured`. A `review` verdict adds a `crop_content_off_centre` warning with
