@@ -3327,6 +3327,15 @@ sys.exit(fit.main())
         in_body = ("+++ b/tests/test_x.py\n@@ -3,3 +3,2 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
                    "-        @header\n         self.assertTrue(True)\n")
         self.assertEqual(proof.changed_tests(in_body, lambda module: head), {"test_x": ["A.test_guard"]})
+        # an `@` line at column zero inside a string: only the base's parsed module tells it from a
+        # decorator (review of #636)
+        base_src = ("import unittest\nclass T(unittest.TestCase):\n    def test_example(self):\n"
+                    "        expected = \"\"\"first\n@header\nlast\"\"\"\n        self.assertIn('first', expected)\n")
+        head_src = base_src.replace("@header\n", "")
+        in_string = ("+++ b/tests/test_x.py\n@@ -3,4 +3,3 @@ class T(unittest.TestCase):\n     def test_example(self):\n"
+                     "         expected = \"\"\"first\n-@header\n last\"\"\"\n")
+        self.assertEqual(proof.changed_tests(in_string, lambda module: head_src, lambda module: base_src),
+                         {"test_x": ["T.test_example"]})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")

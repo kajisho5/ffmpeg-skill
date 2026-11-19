@@ -57,7 +57,18 @@ def test_lines(source: str) -> "dict[int, tuple[str, str]]":
     return owner
 
 
-def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
+def decorator_lines(source: str) -> "set[int] | None":
+    """The line numbers of every decorator in `source` (None when it does not parse): a line that
+    starts with `@` inside a string is text, which only the parsed module can tell (review of #636)."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    return {n for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            for d in node.decorator_list for n in range(d.lineno, (d.end_lineno or d.lineno) + 1)}
+
+
+def changed_tests(diff: str, read=lambda module: "", read_base=None) -> "dict[str, list[str]]":
     """module -> tests the diff adds or edits, as "Class.test_name". With `read(module)`, the
     head's source, each changed line is placed by the parsed module: two classes can hold a test
     of the same name and only the edited one is evidence, a decorator belongs to the test below
@@ -65,12 +76,14 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
     (or one that does not parse) the enclosing `def test_` of each hunk is used, bare."""
     found: "dict[str, list[str]]" = {}
     module, current, depth, lineno, owner, old, old_depth = None, None, 0, 0, {}, None, 0
+    old_lineno, decorators = 0, None  # the base side's line number, and its decorator lines
     pending = None  # a deleted decorator: its test is the def below it on the base's side
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
             module, current = (m.group(1) if m else None), None
             owner = test_lines(read(module)) if module else {}
+            decorators = decorator_lines(read_base(module)) if module and read_base else None
         elif not module:
             continue
         elif line.startswith("@@"):
@@ -78,7 +91,8 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
             # the hunk header names the def it starts inside (a test method: four spaces deep)
             current, depth = (m.group(1), 4) if m else (None, 0)
             old, old_depth = current, depth
-            lineno = int(re.match(r"@@ -\S+ \+(\d+)", line).group(1))
+            hunk = re.match(r"@@ -(\d+)\S* \+(\d+)", line)
+            old_lineno, lineno = int(hunk.group(1)), int(hunk.group(2))
         else:
             m = DEF_LINE.match(line)
             # a def line, unchanged or added, opens the method the next lines belong to; one deeper
@@ -101,9 +115,13 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
                     # a deleted line sits between head lines lineno-1 and lineno: a decorator
                     # belongs to the def below the gap, anything else to the line above it
                     body = line[1:]
-                    if (line[0] == "-" and body.lstrip().startswith("@")
-                            and len(body) - len(body.lstrip()) <= (old_depth if old else 4)):
+                    # a deleted decorator: by the base's parsed module when it is known, else by
+                    # indent (an `@` line at the method's own depth)
+                    decorator = (old_lineno in decorators if decorators is not None else
+                                 body.lstrip().startswith("@") and len(body) - len(body.lstrip()) <= (old_depth if old else 4))
+                    if line[0] == "-" and decorator:
                         pending = line  # placed when its def is read; a deleted line moves no head line
+                        old_lineno += 1
                         continue
                     at = lineno if line[0] == "+" else lineno - 1
                     hit = owner.get(at)
@@ -118,7 +136,15 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
                     found[module].append(name)
             if line[:1] != "-":
                 lineno += 1
+            if line[:1] != "+":
+                old_lineno += 1
     return {k: v for k, v in found.items() if v}
+
+
+def base_source(base: str, module: str) -> str:
+    """The test module as the base has it ("" for a module the change adds)."""
+    proc = subprocess.run(["git", "show", f"{base}:tests/{module}.py"], capture_output=True, text=True)
+    return proc.stdout if proc.returncode == 0 else ""
 
 
 def outcome(stderr: str, case: str) -> str:
@@ -191,7 +217,8 @@ def main() -> int:
                   f"or give the reason as size_reason in its {LEDGER} line")
             return 1
     tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"),
-                          lambda module: git("show", f"{args.head}:tests/{module}.py"))
+                          lambda module: git("show", f"{args.head}:tests/{module}.py"),
+                          lambda module: base_source(base, module))
     if not tests:
         print(f"{len(shipped)} shipped file(s) changed and no test was added or edited")
         return 1
