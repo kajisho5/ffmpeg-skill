@@ -7,6 +7,7 @@
 ### Added
 
 - Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
+- Draw still waveforms around supplied cut points with `waveform.py --at` (#450).
 
 ## 3.13.2
 

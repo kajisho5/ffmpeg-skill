@@ -105,9 +105,10 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                    required=FF + [X264, AAC, "filter:boxblur"],
                    optional=[HDR_X265, {"capability": "filter:delogo", "when": "--mode delogo"}],
                    video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "waveform": dict(role="execution", inputs=["audio or video asset (audio track only)"], outputs=["generated waveform or spectrum visualization video artifact"],
+    "waveform": dict(role="execution", inputs=["audio or video asset (audio track only)"], outputs=["waveform or spectrum video, or waveform PNGs at supplied times"],
                      required=FF + [X264, AAC, "filter:showwaves"], optional=[{"capability": "filter:showspectrum", "when": "--style spectrum"},
-                                                                                {"capability": "filter:drawtext", "when": "--title (graphics.py draws it)"},
+                                                                                {"capability": "filter:showwavespic", "when": "--at"},
+                                                                                {"capability": "filter:drawtext", "when": "--title (graphics.py draws it) or --at"},
                                                                                 {"capability": "filter:subtitles", "when": "--srt (caption.py burns it)"}],
                      video_required=False, audio_only=True, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "sphere": dict(role="execution", inputs=["360/spherical video asset"], outputs=["flat rectilinear video artifact of the chosen viewport"],
@@ -754,7 +755,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "auto_chapters": {"type": "object", "description": "--auto-chapters: {source, min_chapter, max_chapters, proposed, kept, titles, chapters, description_block, files}. titles is always 'placeholder' -- the skill proposes where a chapter starts, never what it is called (1.16)"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "waveform":
-        extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} -- present on every run, so a plain waveform answers background 'color' (1.16)"},
+        extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} on visualization video runs"},
+                 "waveforms": {"type": "array", "description": "--at: one row per written PNG {output, time, start, end, window_seconds, marker_x}; seconds are on the input's clock"},
+                 "planned_waveforms": {"type": "array", "description": "--at under --dry-run: the paths and planned windows, with no PNG written"},
+                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "--at: PNG paths in request order, planned under --dry-run"},
                  "silent": {"type": ["boolean", "null"], "description": "true when the input audio's whole-file peak is at or below --silence-threshold (default -50 dBFS) and --on-silent warn (default) rendered the flat line anyway, with a notes line; false when audible; null under --dry-run (nothing measured). --on-silent fail refuses as kind input instead; verified is unaffected"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "scenes":
