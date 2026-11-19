@@ -14,12 +14,18 @@ allowed beside one that fails. A change that is meant to alter no behaviour says
 (refactor:, chore:, docs:, ci:, test:, build:), given as --title, and is not judged.
 """
 import argparse
+import importlib.util
+import json
+import pathlib
 import re
 import subprocess
 import sys
 import tempfile
 
 SHIPPED = ("scripts/", "mcp/")
+_spec = importlib.util.spec_from_file_location("resolve_version", pathlib.Path(__file__).with_name("resolve_version.py"))
+RESOLVER = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(RESOLVER)
 LEDGER = "docs/defect-ledger.jsonl"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
@@ -67,6 +73,23 @@ def main() -> int:
         print(f"a fix adds a line to {LEDGER}: the defect's class, why it got through, and the mechanism "
               "changed so the class cannot recur (#632)")
         return 1
+    budget = json.loads(git("show", f"{args.head}:.github/code-budget.json"))
+    if fixes:
+        net = sum(int(a) - int(r) for a, r, name in (line.split("\t") for line in git(
+            "diff", "--numstat", base, args.head, "--", *SHIPPED).splitlines()) if name.endswith(".py") and a != "-")
+        limit = budget.get("fix_max_net_lines")
+        reasons = [json.loads(line[1:]).get("size_reason") for line in git("diff", base, args.head, "--", LEDGER).splitlines()
+                   if line.startswith("+{")]
+        if limit is not None and net > limit and not any(reasons) and not args.no_ledger:
+            print(f"this fix adds {net} net lines to shipped code (limit {limit}): prefer a refusal or removing a mode, "
+                  f"or give the reason as size_reason in its {LEDGER} line")
+            return 1
+    if budget.get("feature_freeze"):
+        added = RESOLVER.contract_additions(RESOLVER._contract_at(base), RESOLVER._contract_at(args.head))
+        if added:
+            print("feature freeze (.github/code-budget.json): this change adds to the contract: "
+                  + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))
+            return 1
     tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"))
     if not tests:
         print(f"{len(shipped)} shipped file(s) changed and no test was added or edited")

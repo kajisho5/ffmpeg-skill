@@ -3124,6 +3124,10 @@ sys.exit(fit.main())
         that led here), so a change that adds lines removes as many, and the ceiling is lowered
         when code goes. Counted: non-blank, non-comment lines of scripts/ and mcp/ Python."""
         budget = json.loads((ROOT / ".github" / "code-budget.json").read_text(encoding="utf-8"))
+        # the same file holds the fix-size limit and the error budget the freeze follows (#632)
+        self.assertIsInstance(budget["feature_freeze"], bool)
+        self.assertGreater(budget["fix_max_net_lines"], 0)
+        self.assertEqual(set(budget["budget"]) - {"rule"}, {"fix_of_fix_share_max", "median_net_lines_per_fix_max"})
         lines = 0
         for base in ("scripts", "mcp"):
             for path in sorted((ROOT / base).rglob("*.py")):
