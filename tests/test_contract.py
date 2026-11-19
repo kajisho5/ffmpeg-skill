@@ -2850,6 +2850,90 @@ sys.exit(fit.main())
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
+    def test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager(self):
+        """`npx ffmpeg-skill setup` is the one command: the skill for every agent whose home
+        directory exists (Claude Code when none does), FFmpeg through brew / winget / apt-get when
+        `ffmpeg` does not run, then doctor, whose exit status it returns. It runs a package manager
+        only when ffmpeg is missing and --no-ffmpeg is absent, never guesses one it was not written
+        for, and refuses an argument it does not know before a file is copied."""
+        probe = self.out("setup_probe.js")
+        probe.write_text(
+            "const inst = require(process.argv[2]);\n"
+            "const eq = (a, b, n) => { if (JSON.stringify(a) !== JSON.stringify(b)) { console.error(n, JSON.stringify(a)); process.exit(n); } };\n"
+            "const on = (...have) => (c) => have.includes(c);\n"
+            "eq(inst.ffmpegInstallPlan('darwin', on('brew'), false).cmd, ['brew', 'install', 'ffmpeg-full'], 2);\n"
+            "eq(inst.ffmpegInstallPlan('darwin', on(), false).cmd, null, 3);\n"
+            "eq(inst.ffmpegInstallPlan('win32', on('winget'), false).cmd, ['winget', 'install', '--id', 'Gyan.FFmpeg', '-e'], 4);\n"
+            "eq(inst.ffmpegInstallPlan('linux', on('apt-get', 'sudo'), false).cmd, ['sudo', 'apt-get', 'install', '-y', 'ffmpeg'], 5);\n"
+            "eq(inst.ffmpegInstallPlan('linux', on('apt-get'), true).cmd, ['apt-get', 'install', '-y', 'ffmpeg'], 6);\n"
+            "eq(inst.ffmpegInstallPlan('linux', on('apt-get'), false).cmd, null, 7);\n"
+            "eq(inst.ffmpegInstallPlan('linux', on('dnf', 'sudo'), false).cmd, null, 8);\n"
+            "const home = (...dirs) => (p) => dirs.some((d) => p.endsWith(d));\n"
+            "eq(inst.detectAgents('/h', home('.cursor')), { claude: false, cursor: true, codex: false }, 9);\n"
+            "eq(inst.detectAgents('/h', home('.agents')), { claude: false, cursor: false, codex: true }, 10);\n"
+            "eq(inst.detectAgents('/h', home('.claude', '.codex')), { claude: true, cursor: false, codex: true }, 11);\n"
+            "// a machine: which programs exist, and whether ffmpeg runs once the install command has\n"
+            "function machine(programs, afterInstall) {\n"
+            "  const m = (cmd, args, opts) => {\n"
+            "    m.calls.push([cmd, ...args].join(' '));\n"
+            "    if (cmd === 'ffmpeg') return (m.ffmpeg === 'yes' || (m.ffmpeg === 'keg' && /ffmpeg-full/.test(opts.env.PATH || ''))) ? { status: 0, stdout: 'ffmpeg version 8.0' } : { error: new Error('ENOENT'), status: null };\n"
+            "    if (!programs.includes(cmd)) return { error: new Error('ENOENT'), status: null };\n"
+            "    if (args[0] === '--version') return { status: 0 };\n"
+            "    if (args[0] === '--prefix') return { status: 0, stdout: '/opt/homebrew/opt/ffmpeg-full\\n' };\n"
+            "    if (args.includes('install')) { if (afterInstall === 'fail') return { status: 1 }; m.ffmpeg = afterInstall; return { status: 0 }; }\n"
+            "    return { status: 0 };\n"
+            "  };\n"
+            "  m.calls = []; m.ffmpeg = 'no';\n"
+            "  return m;\n"
+            "}\n"
+            "const ran = (m) => m.calls.filter((c) => / install /.test(c));\n"
+            "let m = machine(['brew'], 'yes'); m.ffmpeg = 'yes';\n"
+            "eq(inst.setupFfmpeg('darwin', m, {}, false, () => {}, true).state, 'present', 20); eq(ran(m), [], 21);\n"
+            "m = machine(['apt-get', 'sudo'], 'yes');\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, false).state, 'skipped', 22); eq(ran(m), [], 23);\n"
+            "m = machine(['apt-get', 'sudo'], 'yes');\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'installed', 24); eq(ran(m), ['sudo apt-get install -y ffmpeg'], 25);\n"
+            "m = machine(['apt-get', 'sudo'], 'fail');\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'failed', 26);\n"
+            "m = machine(['dnf', 'sudo'], 'yes');\n"
+            "eq(inst.setupFfmpeg('linux', m, {}, false, () => {}, true).state, 'skipped', 27); eq(ran(m), [], 28);\n"
+            "m = machine(['brew'], 'keg'); let env = { PATH: '/usr/bin' };\n"
+            "let got = inst.setupFfmpeg('darwin', m, env, false, () => {}, true);\n"
+            "eq(got.state, 'installed', 29); if (!/ffmpeg-full.bin/.test(env.PATH) || !/export PATH=/.test(got.line)) process.exit(30);\n"
+            "m = machine(['winget'], 'no');\n"
+            "eq(inst.setupFfmpeg('win32', m, {}, false, () => {}, true).state, 'new_shell', 31); eq(ran(m), ['winget install --id Gyan.FFmpeg -e'], 32);\n",
+            encoding="utf-8")
+        proc = subprocess.run(["node", str(probe), str(ROOT / "bin" / "install.js")],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+
+        def setup(home, *flags):
+            env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+            return subprocess.run(["node", str(ROOT / "bin" / "install.js"), "setup", *flags], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        home = self.out("setup_home")
+        (home / ".cursor").mkdir(parents=True)
+        (home / ".codex").mkdir()
+        doctor = sh("node", ROOT / "bin" / "install.js", "doctor", "--json")
+        done = setup(home, "--no-ffmpeg")
+        self.assertEqual(done.returncode, doctor.returncode, done.stderr)
+        self.assertTrue((home / ".cursor" / "skills" / "ffmpeg-skill" / "SKILL.md").is_file(), done.stdout)
+        self.assertTrue((home / ".agents" / "skills" / "ffmpeg-skill" / "scripts" / "probe.py").is_file(), done.stdout)
+        self.assertFalse((home / ".claude").exists(), "an agent this machine does not have gets no folder")
+        self.assertIn("capabilities available", done.stdout, "setup ends with doctor's report")
+        bare = self.out("setup_bare")
+        bare.mkdir()
+        self.assertEqual(setup(bare, "--no-ffmpeg").returncode, doctor.returncode)
+        self.assertTrue((bare / ".claude" / "skills" / "ffmpeg-skill" / "SKILL.md").is_file(), "no agent found: Claude Code, as the plain installer")
+        refused = self.out("setup_refused")
+        (refused / ".cursor").mkdir(parents=True)
+        bad = setup(refused, "--all")
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("unknown argument --all for setup", bad.stderr)
+        self.assertFalse((refused / ".cursor" / "skills").exists(), "refused before a file is copied")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("npx ffmpeg-skill setup", readme)
+
     def test_3_0_removed_python_3_9_and_ffmpeg_5_on_every_surface(self):
         """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
         `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
