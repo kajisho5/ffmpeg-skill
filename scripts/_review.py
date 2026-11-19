@@ -39,11 +39,15 @@ STILLS_MARK = ".ffmpeg-skill-review-stills"
 STILL_TIMEOUT = 120  # seconds for one still or one probe: a stalled read is a missing still, not a hang
 
 
+def is_input(path) -> bool:  # by name and by file identity: a hard link to an input has another name
+    return os.path.realpath(path) in SOURCES or (os.path.exists(path) and any(os.path.samefile(path, s) for s in SOURCES))
+
+
 def still(src: str, at: float, out: Path) -> bool:
     """One 320 px wide JPEG of `src` at `at` seconds; False when ffmpeg could not write it. An
     earlier run's still is removed first, so a seek that writes nothing is a missing still, not
     an old picture; a name that is a source of this project is never written (review of #636)."""
-    if os.path.realpath(out) in SOURCES:
+    if is_input(out):
         return False
     out.unlink(missing_ok=True)
     try:
@@ -90,9 +94,7 @@ def length(src: str) -> "tuple[float | None, float]":
 
 
 def seconds(value, fps: float = 30.0) -> "float | None":
-    if value is None:
-        return None
-    try:
+    try:  # a null bound reads as "None", which is not a time
         return float(parse_time(str(value), fps))
     except (ValueError, TypeError):
         return None
@@ -251,7 +253,7 @@ def main(argv=None) -> int:
     # the two documents this run reads are inputs too
     SOURCES.update(os.path.realpath(p) for p in [proj_path] + ([a.result] if a.result else []))
     # nothing is written over an input: not the page, not a still (checked before any write)
-    if os.path.realpath(folder / "index.html") in SOURCES:
+    if is_input(folder / "index.html"):
         print(f"error: {folder / 'index.html'} is an input of this run; give another -o", file=sys.stderr)
         return 1
     stills = folder / STILLS
@@ -268,7 +270,7 @@ def main(argv=None) -> int:
         # only this tool's stills are removed, one by one: never the folder, never another file in it
         for entry in stills.iterdir():
             if (re.fullmatch(r"(clip\d+_\d|out_\d)\.jpg", entry.name) and entry.is_file() and not entry.is_symlink()
-                    and os.path.realpath(entry) not in SOURCES):
+                    and not is_input(entry)):
                 entry.unlink()
     stills.mkdir(parents=True, exist_ok=True)
     write_new(stills / STILLS_MARK, "made by scripts/_review.py; cleared on each run\n")

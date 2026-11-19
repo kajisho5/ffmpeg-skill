@@ -173,6 +173,17 @@ class OrchestrationTests(MediaFixtures):
         self.assertIn("<html", (hard / "index.html").read_text(encoding="utf-8"))
         if os.name == "posix":  # the page is as readable as any file, not owner-only like a temporary file
             self.assertEqual((hard / "index.html").stat().st_mode & 0o044, 0o044)
+        # a page name hard-linked to an input of this run is that input under another name:
+        # refused by file identity, and the input keeps its bytes (review of #636)
+        as_input = work / "as_input"
+        as_input.mkdir(exist_ok=True)
+        os.link(proj, as_input / "index.html")
+        kept = Path(proj).read_bytes()
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(as_input), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn("is an input of this run", refused.stderr)
+        self.assertEqual(Path(proj).read_bytes(), kept)
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")
