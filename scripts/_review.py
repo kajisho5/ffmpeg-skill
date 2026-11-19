@@ -45,7 +45,7 @@ def still(src: str, at: float, out: Path) -> bool:
 def length(src: str) -> "float | None":
     try:
         proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src],
-                              capture_output=True, text=True, timeout=STILL_TIMEOUT)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STILL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None
     try:
@@ -187,7 +187,7 @@ def main(argv=None) -> int:
     folder.mkdir(parents=True, exist_ok=True)
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
-                         capture_output=True, text=True, cwd=str(proj_path.parent))
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(proj_path.parent))
     try:
         doc = json.loads(dry.stdout)
         stages = (" → ".join(doc.get("stages") or []) if doc.get("status") == "completed"

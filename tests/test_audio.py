@@ -234,6 +234,23 @@ class AudioTests(MediaFixtures):
         plan = json.loads(script("audio.py", self.src, "--gain", "1", "-o", d / "plain.wav", "--dry-run", "--overwrite", "--json").stdout)
         self.assertNotIn("first_pts", str(plan["commands"][-1]))
 
+    def test_loudness_keeps_each_sound_where_its_picture_is(self):
+        """loudnorm's output frames jumped about 0.1 s in time after a stretch of digital silence
+        (FFmpeg 6.1) while its samples ran on: beside a copied picture every beep after the first
+        played 89 ms late, and atrim cut as much off the end. Since 4.0.0 export.py normalises
+        platform presets by default (#579), so every reels/youtube export with silent gaps did it."""
+        from _fixtures import av_offsets_ms, make_flash_beep
+        src = make_flash_beep(OUT / "loud_flash_beep.mp4")
+        out = OUT / "loud_flash_beep_norm.mp4"
+        script("loudness.py", src, "-I", "-14", "--tp", "-1", "-o", out, "--overwrite")
+        offsets = av_offsets_ms(out)
+        self.assertEqual(len(offsets), 4, offsets)
+        self.assertLessEqual(max(abs(o) for o in offsets), 18, f"flash minus beep {offsets} ms")
+        times = [float(t.strip(",")) for t in subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
+            text=True).split()]
+        self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
+
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"
         script("loudness.py", self.src, "-I", "-16", "--tp", "-1.5", "-o", out)

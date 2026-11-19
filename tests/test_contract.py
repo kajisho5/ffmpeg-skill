@@ -892,7 +892,9 @@ class ContractTests(unittest.TestCase):
         next `## `, so that release's notes were the three-line stub above the real section."""
         headings = re.findall(r"(?m)^## (\S+)", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
         self.assertEqual(sorted(h for h in set(headings) if headings.count(h) > 1), [])
-        self.assertEqual(headings[0], "Unreleased")
+        # a hand-bumped major writes its own section on top (#632, 4.0.0); otherwise Unreleased
+        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+        self.assertIn(headings[0], ("Unreleased", version))
 
     def test_every_fuzz_target_runs_on_its_seeds(self):
         """ClusterFuzzLite builds fuzz/*_fuzzer.py with atheris; without atheris each target runs
@@ -4662,7 +4664,7 @@ sys.exit(fit.main())
         self.assertIn("fade=t=in", doc["commands"][-1]); self.assertNotIn("fade=t=out", doc["commands"][-1])
         doc = json.loads(tool("overlay", self.src, "--image", self.logo, "--fade", "0.5", "--end", "4", "--dry-run", "--json", "-o", self.out("e6_ov2.mp4")).stdout)
         self.assertIn("fade=t=out:st=3.500", doc["commands"][-1])
-        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--json", "-o", self.out("e6_x.mp4")).stdout)
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "--json", "-o", self.out("e6_x.mp4")).stdout)
         self.assertEqual((doc["loudness"]["target_lufs"], doc["loudness"]["ok"]), (-14, False), doc["loudness"])
         self.assertTrue(any("loudness.py -I -14 --tp -1" in n for n in doc["notes"]), doc.get("notes"))
         norm = self.out("e6_norm.mp4")
@@ -4698,7 +4700,7 @@ sys.exit(fit.main())
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness", "duration"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
-        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vf_x.mp4"), "--json").stdout)
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "-o", self.out("vf_x.mp4"), "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]],
                          [("probe", True), ("loudness", False), ("duration", True), ("codec", True),
@@ -4774,7 +4776,7 @@ sys.exit(fit.main())
         proc = tool("render", plan, "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
         xplan = self.out("r6_x.json")
-        tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("r6_x.mp4"), "--plan", xplan)
+        tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "-o", self.out("r6_x.mp4"), "--plan", xplan)
         doc = json.loads(tool("render", xplan, "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertTrue(has_step(doc["verification"], {"step": "check", "ok": False, "platform": "x"}))
@@ -7179,7 +7181,7 @@ class SilentResultTests(unittest.TestCase):
         """design-decisions: a spec miss is completed + verified false, not a failure. The row
         said ok and nothing more; it now says verified: false and which step's check failed, and
         the batch's own verified is the conjunction of its items'."""
-        folder, recipe = self.batch_folder("bunver", [["export.py", "{in}", "--preset", "x", "-o", "{out}"]])
+        folder, recipe = self.batch_folder("bunver", [["export.py", "{in}", "--preset", "x", "--no-normalize", "-o", "{out}"]])
         doc = json.loads(tool("batch", folder, "--recipe", recipe, "--fast", "--json").stdout)
         row = doc["results"][0]
         self.assertEqual((row["ok"], row["verified"]), (True, False))

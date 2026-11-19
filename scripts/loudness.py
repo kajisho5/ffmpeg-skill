@@ -144,6 +144,12 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             f"loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
+            # loudnorm's output frames can jump in time (about 0.1 s after a stretch of digital
+            # silence on FFmpeg 6.1) while its samples run on unbroken: played by those times,
+            # every sound after the jump came 89 ms late against a copied picture, and atrim, which
+            # counts time, cut as much off the end. The samples are restamped in order from the
+            # first one's time, so a late start keeps its lead.
+            ",asetpts=N/SR/TB+STARTPTS"
         )
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
