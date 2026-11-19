@@ -10,6 +10,10 @@
 - Keep common two-character words together in Chinese phrase wrapping (#569).
 - Report measured picture placement after reframing in export and render results (#548).
 
+### Fixed
+
+- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
+
 ## 3.13.2
 
 _Automated release: version and notes generated from pull requests merged since 3.13.1._
