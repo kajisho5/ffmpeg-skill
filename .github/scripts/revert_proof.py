@@ -14,6 +14,7 @@ allowed beside one that fails. A change that is meant to alter no behaviour says
 (refactor:, chore:, docs:, ci:, test:, build:), given as --title, and is not judged.
 """
 import argparse
+import ast
 import importlib.util
 import json
 import pathlib
@@ -30,30 +31,52 @@ LEDGER = "docs/defect-ledger.jsonl"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
 DEF_LINE = re.compile(r"^[ +](\s+)def (\w+)\(")
+OLD_DEF_LINE = re.compile(r"^[ -](\s+)def (\w+)\(")
 
 
 def git(*args: str, cwd: str = ".") -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
 
 
+def test_lines(source: str) -> "dict[int, tuple[str, str]]":
+    """head line -> (class, test) for every line of a `test_` method, its decorators included,
+    from the parsed module: a `class` line inside a string is not a class (review of #635)."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    owner: "dict[int, tuple[str, str]]" = {}
+    # outer classes first, so a nested class's tests overwrite the lines they own
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test_"):
+                    start = min([d.lineno for d in item.decorator_list] + [item.lineno])
+                    for n in range(start, (item.end_lineno or item.lineno) + 1):
+                        owner[n] = (node.name, item.name)
+    return owner
+
+
 def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
-    """module -> tests the diff adds or edits (the enclosing `def test_` of each hunk), as
-    "Class.test_name" when `read(module)`, the head's source, shows the class: two classes can
-    hold a test of the same name, and only the edited one is evidence (review of #635)."""
+    """module -> tests the diff adds or edits, as "Class.test_name". With `read(module)`, the
+    head's source, each changed line is placed by the parsed module: two classes can hold a test
+    of the same name and only the edited one is evidence, a decorator belongs to the test below
+    it, and a deleted line belongs to the test around the gap (review of #635). Without a source
+    (or one that does not parse) the enclosing `def test_` of each hunk is used, bare."""
     found: "dict[str, list[str]]" = {}
-    module, current, depth, lineno, classes = None, None, 0, 0, []
+    module, current, depth, lineno, owner, old, old_depth = None, None, 0, 0, {}, None, 0
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
             module, current = (m.group(1) if m else None), None
-            classes = [(n, c) for n, c in enumerate((read(module) if module else "").splitlines(), 1)
-                       for c in re.findall(r"^class (\w+)", c)]
+            owner = test_lines(read(module)) if module else {}
         elif not module:
             continue
         elif line.startswith("@@"):
             m = HUNK_TEST.match(line)
             # the hunk header names the def it starts inside (a test method: four spaces deep)
             current, depth = (m.group(1), 4) if m else (None, 0)
+            old, old_depth = current, depth
             lineno = int(re.match(r"@@ -\S+ \+(\d+)", line).group(1))
         else:
             m = DEF_LINE.match(line)
@@ -61,11 +84,24 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
             # than the current test is a helper inside it and keeps the test (review of #635)
             if m and not (current and len(m.group(1)) > depth):
                 current, depth = (m.group(2), len(m.group(1))) if m.group(2).startswith("test_") else (None, 0)
-            # a changed line belongs to the test it sits in (a body-only edit counts, #635)
-            if line[:1] in "+-" and current:
-                owner = [c for n, c in classes if n <= lineno]
-                name = f"{owner[-1]}.{current}" if owner else current
-                if name not in found.setdefault(module, []):
+            m = OLD_DEF_LINE.match(line)
+            # the test a deleted line was in, read on the base's side (a removed def counts)
+            if m and not (old and len(m.group(1)) > old_depth):
+                old, old_depth = m.group(2), len(m.group(1))
+            if line[:1] in "+-":
+                if owner:
+                    # a deleted line sits between head lines lineno-1 and lineno: a decorator
+                    # belongs to the def below the gap, anything else to the line above it
+                    at = lineno if line[0] == "+" or line[1:].lstrip().startswith("@") else lineno - 1
+                    hit = owner.get(at)
+                    # a line of a test the change removed is no test's: the head's neighbour is not it
+                    if hit and line[0] == "-" and not line[1:].lstrip().startswith("@") and hit[1] != old:
+                        hit = None
+                    name = f"{hit[0]}.{hit[1]}" if hit else None
+                else:
+                    # a changed line belongs to the test it sits in (a body-only edit counts, #635)
+                    name = current
+                if name and name not in found.setdefault(module, []):
                     found[module].append(name)
             if line[:1] != "-":
                 lineno += 1
@@ -150,9 +186,13 @@ def main() -> int:
                 for case in cases:
                     # Class.test_name runs that one test; a bare name falls back to -k
                     target = [f"tests.{module}.{case}"] if "." in case else [f"tests.{module}", "-k", case]
-                    proc = subprocess.run([sys.executable, "-m", "unittest", "-v", *target],
-                                          cwd=tmp, capture_output=True, text=True, timeout=1800)
-                    verdict = outcome(proc.stderr, case.rsplit(".", 1)[-1])
+                    try:
+                        proc = subprocess.run([sys.executable, "-m", "unittest", "-v", *target],
+                                              cwd=tmp, capture_output=True, text=True, timeout=1800)
+                        verdict = outcome(proc.stderr, case.rsplit(".", 1)[-1])
+                    except subprocess.TimeoutExpired:
+                        # a test that did not finish proves nothing; the others still run (review of #635)
+                        verdict = "unclear"
                     {"fails": failing, "passes": passing}.get(verdict, unclear).append(f"{module}.{case}")
         finally:
             git("worktree", "remove", "--force", tmp)
@@ -161,7 +201,7 @@ def main() -> int:
     for name in passing:
         print(f"  passes without the change  {name}  (pins behaviour that was already there)")
     for name in unclear:
-        print(f"  did not run on the base    {name}  (import, setUpClass or a skip: not evidence either way)")
+        print(f"  did not run on the base    {name}  (import, setUpClass, a skip or a timeout: not evidence either way)")
     if failing:
         return 0
     print("no added or edited test fails on the base code: the change is not shown to do anything")

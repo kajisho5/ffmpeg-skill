@@ -3237,10 +3237,48 @@ sys.exit(fit.main())
                 "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
                 "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
         self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
-        # with the head's source the class is kept: U.test_d, not any test_d (review of #635)
-        source = "class T:\n" + "\n" * 28 + "class U:\n"
+        # with the head's source each line is placed by the parsed module (review of #635)
+        lines = ["import unittest", "class T(unittest.TestCase):"] + ["    pass"] * 7
+        lines += ["    def test_a(self):", "        x = 1", "        y = 3", "    def helper(self):",
+                  "        z = 2", "    def test_b(self):", "        pass", "    def test_c(self):", "        pass"]
+        lines += ["    s = 0"] * (38 - len(lines)) + ["class U(unittest.TestCase):", "    def test_d(self):", "        a = 2"]
+        source = "\n".join(lines) + "\n"
         self.assertEqual(proof.changed_tests(diff, lambda module: source),
                          {"test_x": ["T.test_a", "T.test_c", "U.test_d"]})
+        # a `class` line inside a string is not a class; a decorator-only edit is the test below
+        # it; a line deleted just above the next class is the test it was in, not the next
+        # class's same-named test; the lines of a removed test are nobody's
+        head = "\n".join([
+            "import unittest",                       # 1
+            "class A(unittest.TestCase):",           # 2
+            "    def test_guard(self):",             # 3
+            "        self.assertTrue(True)",         # 4
+            "    @unittest.skipIf(False, 'x')",      # 5
+            "    def test_b(self):",                 # 6
+            "        s = '''",                       # 7
+            "class B:",                              # 8
+            "'''",                                   # 9
+            "    def test_c(self):",                 # 10
+            "        pass  # edited",                # 11
+            "class B(unittest.TestCase):",           # 12
+            "    def test_guard(self):",             # 13
+            "        self.fail('other')",            # 14
+        ]) + "\n"
+        edits = ("+++ b/tests/test_x.py\n"
+                 "@@ -3,3 +3,2 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                 "         self.assertTrue(True)\n-        self.assertEqual(1, 2)\n"
+                 "@@ -6,2 +5,2 @@ def test_guard(self):\n-    @unittest.skipIf(True, 'x')\n+    @unittest.skipIf(False, 'x')\n"
+                 "     def test_b(self):\n"
+                 "@@ -11,3 +10,3 @@ class B:\n     def test_c(self):\n-        pass\n+        pass  # edited\n")
+        self.assertEqual(proof.changed_tests(edits, lambda module: head),
+                         {"test_x": ["A.test_guard", "A.test_b", "A.test_c"]})
+        boundary = ("+++ b/tests/test_x.py\n@@ -10,4 +10,3 @@ def test_b(self):\n     def test_c(self):\n"
+                    "         pass  # edited\n-        self.assertEqual(1, 2)\n class B(unittest.TestCase):\n")
+        self.assertEqual(proof.changed_tests(boundary, lambda module: head), {"test_x": ["A.test_c"]})
+        removed = ("+++ b/tests/test_x.py\n@@ -3,6 +3,4 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                   "         self.assertTrue(True)\n-    def test_gone(self):\n-        pass\n"
+                   "     @unittest.skipIf(False, 'x')\n")
+        self.assertEqual(proof.changed_tests(removed, lambda module: head), {})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
