@@ -82,13 +82,19 @@ class AudioTests(MediaFixtures):
             self.assertTrue(red > 240 and 145 < green < 190 and 45 < blue < 90)
             self.assertLess(frame_rgb(middle["output"], 0, 180, 87)[1], 20)
             self.assertGreater(frame_rgb(middle["output"], 0, 300, 87)[1], 200)
-            for last, reason in (("5", "outside the input"), ("2", "already exists")):
+            for last in ("5", "2"):
                 stem = root / f"check_{last}.png"
+                protected = root / "check_2_02.png"
                 if last == "2":
-                    (root / "check_2_02.png").write_bytes(b"keep me")
+                    protected.write_bytes(b"keep me")
                 proc = sh(sys.executable, SCRIPTS / "waveform.py", source, "--at", "1", "--at", last,
                           "-o", stem, "--json", expect_fail=True)
-                self.assertIn(reason, json.loads(proc.stdout)["error"]["message"])
+                error = json.loads(proc.stdout)["error"]
+                if last == "2":
+                    self.assertEqual(error["reason"], "output_exists")
+                    self.assertEqual(protected.read_bytes(), b"keep me")
+                else:
+                    self.assertIn("outside the input", error["message"])
                 self.assertFalse((root / f"check_{last}_01.png").exists())
 
     def test_waveform_spectrum_style(self):
