@@ -3142,11 +3142,18 @@ sys.exit(fit.main())
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
         self.assertEqual(proof.changed_tests(nested), {"test_x": ["test_a"]})
         # only the test's own line counts: a failed setUpClass or import never ran it
-        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a)\nA docstring. ... FAIL\n", "test_a"), "fails")
-        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ERROR\n", "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a)\nA docstring. ... FAIL\n\n=====\n"
+                                       "FAIL: test_a (tests.test_x.T.test_a)\nA docstring.\n", "test_a"), "fails")
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ERROR\n\n=====\nERROR: test_a (tests.test_x.T.test_a)\n",
+                                       "test_a"), "fails")
         self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... ok\n", "test_a"), "passes")
         self.assertEqual(proof.outcome("setUpClass (tests.test_x.T) ... ERROR\n", "test_a"), "unclear")
         self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... skipped 'no ffmpeg'\n", "test_a"), "unclear")
+        # a failing subTest prints no status on the test's own line, only in the failure list
+        sub = ("test_a (tests.test_x.T.test_a) ... \n  test_a (tests.test_x.T.test_a) (i=1) ... FAIL\n\n"
+               "======\nFAIL: test_a (tests.test_x.T.test_a) (i=1)\n")
+        self.assertEqual(proof.outcome(sub, "test_a"), "fails")
+        self.assertEqual(proof.outcome("ERROR: setUpClass (tests.test_x.T)\n", "test_a"), "unclear")
         self.assertEqual(origins.kind_of("Add missing validation (#700)", {"fix"}), "fix")
         self.assertEqual(origins.kind_of("fix: x (#701)", {"feature", "chore"}), "feature")
         self.assertEqual(origins.kind_of("fix: x (#702)", {"chore"}), "fix")
@@ -3202,6 +3209,10 @@ sys.exit(fit.main())
         self.assertEqual(run_parallel.skip_summary({}), "\nskipped: none")
         self.assertEqual(run_parallel.skip_summary({"no drawtext": 2, "Windows": 5}).splitlines()[1:],
                          ["skipped: 7 test(s), 2 reason(s)", "    5  Windows", "    2  no drawtext"])
+        # a skipped setUpClass is a class, not one test
+        whole = "setUpClass (test_x.T)" + run_parallel.CLASS_SKIP + "no ffmpeg"
+        self.assertEqual(run_parallel.skip_summary({whole: 1, "Windows": 2}).splitlines()[1],
+                         "skipped: 2 test(s), and 1 whole class(es) whose tests did not run, 2 reason(s)")
         work = [(n, k, run_parallel.SHARDS.get(n, 1)) for n in names for k in range(run_parallel.SHARDS.get(n, 1))]
         self.assertEqual(set(run_parallel.ROUGH_SECONDS), set(names), "every module needs a cost to be balanced")
         for n in (1, 2, 3, 5, len(work)):

@@ -66,12 +66,17 @@ def outcome(stderr: str, case: str) -> str:
     """"fails", "passes" or "unclear" for one test from `unittest -v` output. Only the test's own
     line counts: an import error or a failed setUpClass never reaches it, so the test did not run
     and proves nothing (review of #635); a skip proves nothing either."""
+    name = re.escape(case)
+    # unittest lists every failure of the test itself, a failing subTest included, as
+    # "FAIL: name (...)" or "ERROR: name (...)"; a failed setUpClass or import has another name there
+    if re.search(rf"^(FAIL|ERROR): {name} \(", stderr, flags=re.M):
+        return "fails"
     # -v prints a docstring's first line after the name, on a line of its own
-    m = re.search(rf"^{re.escape(case)} \([^)\n]*\)(?:\n[^\n]*?)? \.\.\. (ok|FAIL|ERROR|skipped|expected failure|unexpected success)",
+    m = re.search(rf"^{name} \([^)\n]*\)(?:\n[^\n]*?)? \.\.\. (ok|skipped|expected failure|unexpected success)",
                   stderr, flags=re.M)
     if not m:
         return "unclear"
-    return {"ok": "passes", "FAIL": "fails", "ERROR": "fails", "unexpected success": "fails"}.get(m.group(1), "unclear")
+    return {"ok": "passes", "unexpected success": "fails"}.get(m.group(1), "unclear")
 
 
 def main() -> int:

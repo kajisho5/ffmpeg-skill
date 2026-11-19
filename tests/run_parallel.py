@@ -65,6 +65,7 @@ def _flatten(suite):
 
 
 SKIP_MARK = "SKIPPED-TEST: "
+CLASS_SKIP = ", every test in it: "
 
 
 def skip_summary(skipped: "dict[str, int]") -> str:
@@ -73,7 +74,11 @@ def skip_summary(skipped: "dict[str, int]") -> str:
     if not skipped:
         return "\nskipped: none"
     rows = sorted(skipped.items(), key=lambda kv: (-kv[1], kv[0]))
-    return "\n".join([f"\nskipped: {sum(skipped.values())} test(s), {len(rows)} reason(s)"]
+    # a skipped setUpClass is a whole class, whose tests unittest never lists: counted apart
+    classes = sum(n for reason, n in skipped.items() if CLASS_SKIP in reason)
+    tests = sum(skipped.values()) - classes
+    whole = f", and {classes} whole class(es) whose tests did not run" if classes else ""
+    return "\n".join([f"\nskipped: {tests} test(s){whole}, {len(rows)} reason(s)"]
                      + [f"  {count:3d}  {reason}" for reason, count in rows])
 
 
@@ -88,7 +93,7 @@ def run_shard(name: str, k: int, n: int) -> int:
         print()  # a test's own output may have left the line open; the marker must start one
     for test, reason in result.skipped:
         # a skipped setUpClass is one entry for a whole class that did not run: say so (review of #635)
-        whole = f"{test.description}, every test in it: " if isinstance(test, unittest.suite._ErrorHolder) else ""
+        whole = f"{test.description}{CLASS_SKIP}" if isinstance(test, unittest.suite._ErrorHolder) else ""
         print(SKIP_MARK + whole + " ".join(str(reason).split()))
     return 0 if result.wasSuccessful() else 1
 
