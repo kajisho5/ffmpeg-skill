@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.15.1
+
+_Automated release: version and notes generated from pull requests merged since 3.15.0._
+
+- ci: checks that stop fixes from fixing earlier fixes (#632) (#635)
+
 ## 3.15.0
 
 _Automated release: version and notes generated from pull requests merged since 3.14.1._
