@@ -102,6 +102,25 @@ class OrchestrationTests(MediaFixtures):
                                  capture_output=True, text=True, cwd=str(work))
         self.assertEqual(refused.returncode, 1, refused.stderr)
         self.assertEqual((foreign / "stills" / "mine.jpg").read_bytes(), b"keep")
+        # the documents this run reads, kept in a marked stills folder, are inputs too; and only
+        # this tool's own stills are ever removed from it (review of #636)
+        marked = reused / "stills"
+        kept_json = marked / "run.json"
+        kept_json.write_text(json.dumps({"status": "completed", "output": "out.mp4"}), encoding="utf-8")
+        (marked / "notes.txt").write_text("mine", encoding="utf-8")
+        again = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(overlaid), "--result", str(kept_json),
+                                "-o", str(reused), "--overwrite"], capture_output=True, text=True, cwd="/")
+        self.assertEqual(again.returncode, 1, again.stderr)
+        self.assertTrue(kept_json.exists())
+        kept_json.unlink()
+        sh(sys.executable, SCRIPTS / "_review.py", overlaid, "-o", reused, "--overwrite")
+        self.assertEqual((marked / "notes.txt").read_text(encoding="utf-8"), "mine")
+        # a relative output is read from the project's folder, wherever the page is built from
+        rel = work / "rel.json"
+        rel.write_text(json.dumps({"status": "completed", "output": "out.mp4", "probe": run["probe"]}), encoding="utf-8")
+        subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "--result", str(rel), "-o",
+                        str(work / "rel_review")], check=True, capture_output=True, text=True, cwd="/")
+        self.assertTrue((work / "rel_review" / "stills" / "out_0.jpg").exists())
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

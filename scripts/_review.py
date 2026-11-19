@@ -20,7 +20,7 @@ import html
 import json
 import os
 import shlex
-import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +32,7 @@ from _common.decision import parse_time  # noqa: E402
 
 
 SOURCES: "set[str]" = set()  # every media path the project or the result names, resolved
+BASE = Path.cwd()             # the project's folder, set in main(): a relative output is read from there
 STILLS = "stills"             # the stills live in a folder of their own, which only this tool writes
 STILLS_MARK = ".ffmpeg-skill-review-stills"
 STILL_TIMEOUT = 120  # seconds for one still or one probe: a stalled read is a missing still, not a hang
@@ -148,7 +149,8 @@ def result_section(result: dict, folder: Path) -> str:
                    for r in check.get("checks") or [])
     sheet = ""
     path, dur = result.get("output"), probe.get("duration")
-    path = str(Path(path).resolve()) if path else path  # an absolute path is never read as an ffmpeg option
+    # read where the safety check read it (the project's folder), never against the caller's cwd
+    path = str((BASE / path).resolve()) if path else path
     if path and dur and os.path.isfile(path):
         sheet = "".join(figure(folder, f"out_{k}.jpg", path, dur * (k + 0.5) / 6, f"{dur * (k + 0.5) / 6:.1f} s") for k in range(6))
     return (f'<div class="facts">{out}</div>' + (f'<h3>Failed steps</h3><ul>{steps}</ul>' if steps else "")
@@ -204,6 +206,8 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    global BASE
+    BASE = proj_path.parent
     folder = Path(a.output).resolve() if a.output else proj_path.with_suffix(".review")
     if folder == proj_path:  # a project named x.review: its folder cannot be the project itself
         folder = proj_path.with_name(proj_path.name + "-review")
@@ -233,6 +237,8 @@ def main(argv=None) -> int:
         candidate = Path(text) if os.path.isabs(text) else proj_path.parent / text
         if candidate.exists():
             SOURCES.add(os.path.realpath(candidate))
+    # the two documents this run reads are inputs too
+    SOURCES.update(os.path.realpath(p) for p in [proj_path] + ([a.result] if a.result else []))
     stills = folder / STILLS
     if os.path.lexists(stills):
         # only a stills folder this tool made is cleared; anything else in its place is someone's
@@ -243,8 +249,12 @@ def main(argv=None) -> int:
         if inside:
             print(f"error: the project uses {inside[0]}, which is in {stills}; give another -o", file=sys.stderr)
             return 1
-        shutil.rmtree(stills)
-    stills.mkdir(parents=True)
+        # only this tool's stills are removed, one by one: never the folder, never another file in it
+        for entry in stills.iterdir():
+            if (re.fullmatch(r"(clip\d+_\d|out_\d)\.jpg", entry.name) and entry.is_file() and not entry.is_symlink()
+                    and os.path.realpath(entry) not in SOURCES):
+                entry.unlink()
+    stills.mkdir(parents=True, exist_ok=True)
     (stills / STILLS_MARK).write_text("made by scripts/_review.py; cleared on each run\n", encoding="utf-8")
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
