@@ -250,8 +250,10 @@ class AudioTests(MediaFixtures):
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
             text=True).split()]
         self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
-        # a gap the source has is its own: in linear mode loudnorm passes each frame's time
-        # through, and the restamp (dynamic mode only) does not close it (review of #636)
+        # a gap the source has is its own: the restamp runs in dynamic mode only, so in linear
+        # mode the sound keeps whatever times this build's loudnorm gives it (review of #636).
+        # FFmpeg 6.1 passes each frame's time through and the gap stays; 8.0's loudnorm closes
+        # it itself, with or without this tool
         gapped = OUT / "loud_gapped.mp4"
         sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=160x90:r=25:d=20", "-f", "lavfi",
            "-i", "anoisesrc=d=20:c=pink:a=0.05", "-filter_complex", "[1]aselect='not(between(t,8,10))'[a]",
@@ -259,12 +261,16 @@ class AudioTests(MediaFixtures):
         kept = OUT / "loud_gapped_norm.mp4"
         doc = json.loads(script("loudness.py", gapped, "-I", "-23", "--tp", "-1", "-o", kept, "--overwrite", "--json").stdout)
         self.assertEqual(doc["result"]["loudnorm_mode"], "linear", doc["result"])
+        encode = [str(c) for c in doc["commands"] if "linear=true" in str(c)]
+        self.assertEqual(len(encode), 1, doc["commands"])
+        self.assertNotIn("asetpts", encode[0])
         times = [float(t.strip(",")) for t in subprocess.check_output(
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(kept)],
             text=True).split()]
         jumps = [(a, b) for a, b in zip(times, times[1:]) if b - a > 0.5]
-        self.assertEqual(len(jumps), 1, jumps)
-        self.assertAlmostEqual(jumps[0][1], 10.0, delta=0.05)
+        self.assertLessEqual(len(jumps), 1, jumps)
+        if jumps:
+            self.assertAlmostEqual(jumps[0][1], 10.0, delta=0.05)
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"

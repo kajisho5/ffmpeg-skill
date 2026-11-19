@@ -151,8 +151,9 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # sound after the jump played 89 ms late against a copied picture, and atrim, which
             # counts time, cut as much off the end. The samples are restamped in order from the
             # first one's time (a late start keeps its lead); a gap in the source does not survive
-            # dynamic mode either way. Linear mode passes each frame's own time through, gaps
-            # included, so it is left alone (review of #636).
+            # dynamic mode either way. Linear mode is left alone: there the sound keeps the
+            # times this build's loudnorm gives it (6.1 keeps a source gap, 8.0 closes it)
+            # (review of #636).
             af += ",asetpts=N/SR/TB+STARTPTS"
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
