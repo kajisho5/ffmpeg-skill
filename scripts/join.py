@@ -470,11 +470,13 @@ def _aac_priming_seconds(path: str, sample_rate: int) -> Optional[float]:
 
 def _decoded_audio_seconds(path: str) -> Optional[float]:
     """The length of the first sound stream as a decoder delivers it (priming already dropped),
-    by decoding it: packet spans miss the overhang a stream-copy join carries into the next clip."""
-    cmd = ffmpeg_base() + ["-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "48000",
-                           "-f", "s16le", "-"]
+    by decoding it: packet spans miss the overhang a stream-copy join carries into the next clip.
+    One byte per 1/8000 s (8-bit mono at 8 kHz): only the length is wanted, so an hour of sound
+    is 29 MB in memory rather than 345 MB at 48 kHz 16-bit, and 0.125 ms is well under COPY_AV_GAP."""
+    cmd = ffmpeg_base() + ["-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "8000",
+                           "-f", "u8", "-"]
     proc = run_analysis(cmd, check=False, text=False)
-    return len(proc.stdout or b"") / 2 / 48000 if proc.returncode == 0 else None
+    return len(proc.stdout or b"") / 8000 if proc.returncode == 0 else None
 
 
 SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B-frame reordering
@@ -614,12 +616,16 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                 rows.append({"index": index, "path": path, "differs": {"aac_priming_ms": round(priming * 1000, 3),
                                                                        "sound_delay_ms": round(drift * 1000, 3)}})
                 drift += decoded - (v_span[1] - v_span[0])
-            if max(at) > COPY_AV_GAP:
+            # either way: a clip whose sound ends before its picture pulls the next clips' sound ahead
+            worst = max(at, key=abs)
+            if abs(worst) > COPY_AV_GAP:
+                side = "behind" if worst > 0 else "ahead of"
                 refuse("input", "join_copy_mismatch",
-                       f"--copy: a copy join would put the sound {max(at) * 1000:.0f} ms behind the picture by clip "
-                       f"{at.index(max(at)) + 1} (AAC priming played at each seam, plus each clip's sound running past its picture)",
+                       f"--copy: a copy join would put the sound {abs(worst) * 1000:.0f} ms {side} the picture by clip "
+                       f"{at.index(worst) + 1} (AAC priming played at each seam, plus the difference between each "
+                       "clip's sound and its picture)",
                        hint="drop --copy, which decodes each clip and trims its sound to its picture",
-                       aac_drift_ms=round(max(at) * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000, clips=rows)
+                       aac_drift_ms=round(worst * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000, clips=rows)
     fps = (metas[0].get("video") or {}).get("fps") or 30.0
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     place_silent([m.get("duration") or 0.0 for m in metas], 0.0)

@@ -39,7 +39,8 @@ _Automated release: version and notes generated from pull requests merged since 
   into the next: on eight 4 s clips the beep came 32 ms later at every join (224 ms by clip 8) in
   `.mp4`, `.mov` and `.mkv` alike, and the result said `verified: true`. The delay is now predicted
   from each clip's priming and decoded sound length (it matched the measured delay at all eight
-  clips), and a copy join whose sound would be more than 50 ms behind at any clip is refused
+  clips), and a copy join whose sound would be more than 50 ms behind, or ahead (clips whose sound
+  is shorter than their picture pull it 10.7 ms earlier per join), at any clip is refused
   (`join_copy_mismatch`, `details.aac_drift_ms`); two such clips still join, three do not.
 - **A still image with a `%` in its name that is not a pattern can be used (#558).**
   `overlay.py --image 'a%20b.png'` (also `50%.png`, `insert.py`, `broll.py --insert`, `probe.py`)

@@ -2407,6 +2407,23 @@ class EditingTests(MediaFixtures):
                                    "--json", expect_fail=True).stdout)
         self.assertEqual((report["status"], report["error"]["reason"]), ("failed", "join_copy_mismatch"), report)
         self.assertFalse(mkv.exists())
+        # the other way: clips whose sound ends 40 ms before their picture (inside the 50 ms span
+        # check) pull the sound about 10.7 ms earlier per join, ahead of the picture by clip 8
+        short = []
+        for i in range(8):
+            clip = OUT / f"short_aac_{i}.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=25:d=1",
+               "-f", "lavfi", "-i", "sine=f=440:r=48000:d=0.96", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "aac", clip)
+            short.append(clip)
+        ahead = OUT / "short_aac_copy.mp4"
+        ahead.unlink(missing_ok=True)
+        report = json.loads(script("join.py", *short, "--transition", "none", "--copy", "-o", ahead,
+                                   "--json", expect_fail=True).stdout)
+        self.assertEqual(report["error"]["reason"], "join_copy_mismatch", report)
+        self.assertLess(report["error"]["details"]["aac_drift_ms"], -50, report)
+        self.assertIn("ahead of the picture", report["error"]["message"])
+        self.assertFalse(ahead.exists())
 
         encoded = OUT / "primed_aac_encoded.mp4"
         report = json.loads(script("join.py", *clips, "--transition", "none", "-o", encoded,
