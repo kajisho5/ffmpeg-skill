@@ -477,14 +477,17 @@ Every command a tool records as run is in its `--json` `commands` (`batch.py` li
 
 It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
 
-`check.py --content` measures black frames, freezes, flashes, silence and audio dropouts where
-the relevant stream exists. Delivery templates run those checks on the written file by default
-and include the rows in `check.checks` when a real render reaches its check stage. A dry run
+`check.py --content` looks for black frames, freezes, flashes, silence and audio dropouts where
+the relevant stream exists. Review WARN rows for checks that could not measure a property.
+Delivery templates run these checks on the written file by default. A single-template render
+includes the rows in `check.checks` when it reaches the check stage. A dry run
 records `check_dry_run` and leaves `check` null. A real check adds decode time. For an intentional exception,
 fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}`
 in the project before rendering. After a failed check, choose a new output or pass
 `--overwrite` to intentionally replace the retained file. JSON `commands` records
-the render's FFmpeg command lines. See `check.commands` for the content-check commands.
+the render's FFmpeg command lines. A single-template render lists content-check commands in
+`check.commands`. A social pack reports a verdict per output. Run `check.py FILE --platform NAME --content`
+on an individual file for its full rows and commands.
 For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to also
 request a drift measurement, which may be unavailable for short or low-confidence recordings.
 Review lip sync by watching and listening to the delivered file.
