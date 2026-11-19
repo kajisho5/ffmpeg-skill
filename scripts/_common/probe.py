@@ -303,6 +303,8 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0, "data_streams": 0}
         die(f"input not found: {path}")
     if role == "input":
+        if not required and (os.path.isdir(path) or (os.path.isfile(path) and os.path.getsize(path) == 0)):
+            return {}  # an optional probe reports "not usable" as {} (as a failed ffprobe did), never exits
         _refuse_unusable_input(path)
     ffprobe = require_tool("ffprobe")
     proc = run(

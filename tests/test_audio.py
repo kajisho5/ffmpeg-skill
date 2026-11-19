@@ -250,6 +250,21 @@ class AudioTests(MediaFixtures):
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
             text=True).split()]
         self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
+        # a gap the source has is its own: in linear mode loudnorm passes each frame's time
+        # through, and the restamp (dynamic mode only) does not close it (review of #636)
+        gapped = OUT / "loud_gapped.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=160x90:r=25:d=20", "-f", "lavfi",
+           "-i", "anoisesrc=d=20:c=pink:a=0.05", "-filter_complex", "[1]aselect='not(between(t,8,10))'[a]",
+           "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", gapped)
+        kept = OUT / "loud_gapped_norm.mp4"
+        doc = json.loads(script("loudness.py", gapped, "-I", "-23", "--tp", "-1", "-o", kept, "--overwrite", "--json").stdout)
+        self.assertEqual(doc["result"]["loudnorm_mode"], "linear", doc["result"])
+        times = [float(t.strip(",")) for t in subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(kept)],
+            text=True).split()]
+        jumps = [(a, b) for a, b in zip(times, times[1:]) if b - a > 0.5]
+        self.assertEqual(len(jumps), 1, jumps)
+        self.assertAlmostEqual(jumps[0][1], 10.0, delta=0.05)
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"

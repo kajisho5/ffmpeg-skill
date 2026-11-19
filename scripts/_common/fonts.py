@@ -605,8 +605,16 @@ def _scan_font_coverage(path: str, script: str, *, face_index: Optional[int] = N
     exe = _safe_which("fc-scan")
     if not exe:
         return None
+    targets = [path]
+    if os.path.isdir(path):
+        # libass loads the files directly in the folder it is given, not its subfolders or
+        # hidden files, while fc-scan walks them all (review of #636)
+        targets = sorted(os.path.join(path, n) for n in os.listdir(path)
+                         if not n.startswith(".") and os.path.isfile(os.path.join(path, n)))
+        if not targets:
+            return False
     try:
-        proc = subprocess.run([exe, "--format", "%{index}\t%{lang}\n", path],
+        proc = subprocess.run([exe, "--format", "%{index}\t%{lang}\n", *targets],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -796,7 +804,8 @@ def script_font_for_text(text: str, *, lang: "Optional[str]" = None, font: "Opti
         # Breve-a and stroked d also occur separately in other languages. Their combination
         # with each other or with Vietnamese tilde vowels is a stronger signal.
         combined = re.search(r"[Đđ]", normalized) and re.search(r"[ĂăÃãĨĩŨũ]", normalized)
-        if tag == "vi" or marked or combined:
+        # an empty sample (a dry run before transcription) asks for no face (review of #636)
+        if (tag == "vi" and normalized.strip()) or marked or combined:
             key = "vi"
     if key == "latin":
         return script, None, None

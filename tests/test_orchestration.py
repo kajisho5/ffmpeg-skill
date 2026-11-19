@@ -66,6 +66,22 @@ class OrchestrationTests(MediaFixtures):
         self.assertIn('<li class="pass">PASS codec: h264', page)
         self.assertIn("<b>sound</b><span>not measured</span>", page)
         self.assertNotIn("None", page.split('id="project"')[0])
+        # review of #636: the render command runs from anywhere and is quoted; a folder of other
+        # files is not a review folder; a null bound is an empty field
+        self.assertIn(json.dumps(str(SCRIPTS / "render.py")).strip('"'), page)
+        media = work / "media"
+        media.mkdir(exist_ok=True)
+        (media / "clip0_0.jpg").write_bytes(b"not ours")
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(media)],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual((media / "clip0_0.jpg").read_bytes(), b"not ours")
+        nulls = work / "nulls.json"
+        nulls.write_text(json.dumps({"output": "n.mp4", "clips": [{"src": "src.mp4", "in": None, "out": None}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", nulls, "-o", work / "nulls_review")
+        page = (work / "nulls_review" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-k="in" value=""', page)
+        self.assertIn('data-k="out" value=""', page)
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

@@ -65,6 +65,7 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
     (or one that does not parse) the enclosing `def test_` of each hunk is used, bare."""
     found: "dict[str, list[str]]" = {}
     module, current, depth, lineno, owner, old, old_depth = None, None, 0, 0, {}, None, 0
+    pending = None  # a deleted decorator: its test is the def below it on the base's side
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
@@ -88,14 +89,24 @@ def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
             # the test a deleted line was in, read on the base's side (a removed def counts)
             if m and not (old and len(m.group(1)) > old_depth):
                 old, old_depth = m.group(2), len(m.group(1))
+            if m and pending is not None:
+                # the def a deleted decorator stood on: a surviving test is the one it changed; a
+                # test removed with it is nobody's, not the neighbour below (review of #636)
+                hit = owner.get(lineno) if line[0] == " " else None
+                if hit and hit[1] == m.group(2) and f"{hit[0]}.{hit[1]}" not in found.setdefault(module, []):
+                    found[module].append(f"{hit[0]}.{hit[1]}")
+                pending = None
             if line[:1] in "+-":
                 if owner:
                     # a deleted line sits between head lines lineno-1 and lineno: a decorator
                     # belongs to the def below the gap, anything else to the line above it
-                    at = lineno if line[0] == "+" or line[1:].lstrip().startswith("@") else lineno - 1
+                    if line[0] == "-" and line[1:].lstrip().startswith("@"):
+                        pending = line  # placed when its def is read; a deleted line moves no head line
+                        continue
+                    at = lineno if line[0] == "+" else lineno - 1
                     hit = owner.get(at)
                     # a line of a test the change removed is no test's: the head's neighbour is not it
-                    if hit and line[0] == "-" and not line[1:].lstrip().startswith("@") and hit[1] != old:
+                    if hit and line[0] == "-" and hit[1] != old:
                         hit = None
                     name = f"{hit[0]}.{hit[1]}" if hit else None
                 else:

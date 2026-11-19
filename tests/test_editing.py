@@ -2318,6 +2318,7 @@ class EditingTests(MediaFixtures):
         # where each clip starts, so the prediction is checked on whichever build runs this
         third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 2000)  # far from 300 and 500 Hz: its band hears only it
         three = OUT / "copy_three.mp4"
+        three.unlink(missing_ok=True)  # a refusal is judged on this run's output only
         proc = subprocess.run([sys.executable, str(SCRIPTS / "join.py"), *map(str, clips), str(third), "--copy",
                                "--transition", "none", "-o", str(three), "--json", "--overwrite"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")

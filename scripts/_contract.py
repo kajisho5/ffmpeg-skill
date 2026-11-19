@@ -284,7 +284,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "denoise":   dict(video="always", audio="always", note="the hqdn3d filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "cropdetect": dict(video="never", audio="never", note="analysis only, no artifact"),
     "redact":    dict(video="always", audio="always", note="the boxblur, pixelate or delogo graph always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
-    "waveform":  dict(video="always", audio="always", note="always encodes a fresh generated visualization clip; the source audio is always re-encoded to AAC"),
+    "waveform":  dict(video="always", audio="conditional", note="a visualization clip is always encoded fresh, and the source audio re-encoded to AAC in it; --at writes waveform PNGs and no audio at all"),
     "sphere":   dict(video="always", audio="always", note="the v360 filter always forces a re-encode of the video stream; audio is passed through to AAC unchanged"),
     "straighten": dict(video="always", audio="always", note="the rotate filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "grid":      dict(video="always", audio="conditional", note="the xstack composite always forces a re-encode of the video stream; there is no audio at all unless --audio-from picks one input's track, which is then re-encoded to AAC"),
@@ -2405,7 +2405,9 @@ def _main_to_a_pipe() -> int:
     README's quick start, closes the pipe after 40 of the document's lines, and print() of the
     rest raised BrokenPipeError: a traceback and exit 1 for a command that had done its job.
     stdout is pointed at the null device so the interpreter's own flush at exit finds nothing to
-    report; a reader that left has what it asked for, so the exit code is 0."""
+    report; a reader that left has what it asked for, so the exit code is 0. `doctor` is a check
+    whose exit code is its verdict: a reader that left early does not turn a failed check into a
+    pass, so it is run again with its output discarded and keeps that exit code (review of #636)."""
     try:
         code = main()
         sys.stdout.flush()
@@ -2415,6 +2417,11 @@ def _main_to_a_pipe() -> int:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except (OSError, ValueError):
             pass
+        if "doctor" in sys.argv[1:]:
+            try:
+                return main()
+            except BrokenPipeError:
+                return 1
         return 0
 
 

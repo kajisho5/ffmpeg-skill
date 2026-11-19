@@ -1021,6 +1021,10 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
         values.append(last)
         if base.startswith("ffprobe"):  # ffprobe's input is its last argument
             _refuse_playlist(last)
+    elif base.startswith("ffprobe") and last != "-" and os.path.lexists(last):
+        # a file named like an option is still ffprobe's input: guard_input_names() writes it
+        # `./name`, so it is checked as a playlist like any other (review of #636)
+        _refuse_playlist(last)
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",

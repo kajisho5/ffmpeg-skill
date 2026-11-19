@@ -3193,6 +3193,25 @@ sys.exit(fit.main())
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
                       "ffmpeg_version", "new")
 
+    def test_an_optional_probe_and_a_dash_named_playlist_review_of_636(self):
+        """Review of #636: an optional probe of an empty file or a folder returns {} as a failed
+        ffprobe did, instead of exiting the caller; a playlist named like an option (-list.m3u8)
+        is refused as a playlist, while a media file named that way still opens."""
+        import tempfile
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        probe_mod = importlib.import_module("_common.probe")
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "empty.mp4"
+            empty.write_bytes(b"")
+            self.assertEqual(probe_mod.probe(str(empty), required=False), {})
+            self.assertEqual(probe_mod.probe(tmp, required=False), {})
+            (Path(tmp) / "-list.m3u8").write_text("#EXTM3U\n#EXTINF:1,\nhttp://example.invalid/a.ts\n", encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), "--json", "--", "-list.m3u8"],
+                                  capture_output=True, text=True, cwd=tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("playlist", proc.stdout + proc.stderr)
+
     def test_every_defect_names_its_class_and_what_changed_so_it_cannot_recur(self):
         """docs/defect-ledger.jsonl (#632): a defect is not closed by repairing the one place it
         was reported. Each fix adds a line: the class (the twenty review questions, an FFmpeg
@@ -3281,6 +3300,15 @@ sys.exit(fit.main())
                    "         self.assertTrue(True)\n-    def test_gone(self):\n-        pass\n"
                    "     @unittest.skipIf(False, 'x')\n")
         self.assertEqual(proof.changed_tests(removed, lambda module: head), {})
+        # a removed test's decorator is not its neighbour's; a decorator deleted from a surviving
+        # test is that test's (review of #636)
+        gone = ("+++ b/tests/test_x.py\n@@ -3,6 +3,3 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                "         self.assertTrue(True)\n-    @unittest.skip('x')\n-    def test_gone(self):\n-        pass\n"
+                "     @unittest.skipIf(False, 'x')\n")
+        self.assertEqual(proof.changed_tests(gone, lambda module: head), {})
+        undecorated = ("+++ b/tests/test_x.py\n@@ -5,3 +5,2 @@ def test_guard(self):\n     @unittest.skipIf(False, 'x')\n"
+                       "-    @unittest.skip('y')\n     def test_b(self):\n")
+        self.assertEqual(proof.changed_tests(undecorated, lambda module: head), {"test_x": ["A.test_b"]})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
@@ -13040,6 +13068,13 @@ class BasicsAudit558Tests(unittest.TestCase):
                 os.chmod(d, 0o755)
             os.chmod(locked, 0o700)
             os.chmod(base / "noread.mp4", 0o600)
+            # the checkout itself may sit under a folder nobody cannot enter (/root is 0700):
+            # then the tool never starts as nobody, and that is no answer about the input
+            reach = subprocess.run([*other_user, sys.executable, "-c", "import sys; open(sys.argv[1]).close(); "
+                                    "import os; os.listdir(sys.argv[2])", str(SCRIPTS / "probe.py"), str(base)],
+                                   capture_output=True, text=True)
+            if reach.returncode:
+                self.skipTest("nobody cannot reach this checkout's scripts or the test folder")
         else:
             os.chmod(locked, 0o000)
             os.chmod(base / "noread.mp4", 0o000)

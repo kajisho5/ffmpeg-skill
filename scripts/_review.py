@@ -19,6 +19,7 @@ import argparse
 import html
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -29,11 +30,20 @@ from _common.runner import found_exe  # noqa: E402
 from _common.decision import parse_time  # noqa: E402
 
 
+SOURCES: "set[str]" = set()  # every media path the project or the result names, resolved
 STILL_TIMEOUT = 120  # seconds for one still or one probe: a stalled read is a missing still, not a hang
 
 
 def still(src: str, at: float, out: Path) -> bool:
-    """One 320 px wide JPEG of `src` at `at` seconds; False when ffmpeg could not write it."""
+    """One 320 px wide JPEG of `src` at `at` seconds; False when ffmpeg could not write it. An
+    earlier run's still is removed first, so a seek that writes nothing is a missing still, not
+    an old picture; a name that is a source of this project is never written (review of #636)."""
+    if os.path.realpath(out) in SOURCES:
+        return False
+    try:
+        out.unlink()
+    except FileNotFoundError:
+        pass
     try:
         proc = subprocess.run([found_exe("ffmpeg"), "-v", "error", "-y", "-ss", f"{max(at, 0):.3f}", "-i", src, "-frames:v", "1",
                                "-vf", "scale=320:-2", "-q:v", "4", str(out)], capture_output=True, timeout=STILL_TIMEOUT)
@@ -42,16 +52,26 @@ def still(src: str, at: float, out: Path) -> bool:
     return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
 
 
-def length(src: str) -> "float | None":
+def length(src: str) -> "tuple[float | None, float]":
+    """The source's duration (None when unknown) and its frame rate (30 when unknown), which a
+    frame-based time such as 00:00:05:45 is read at."""
     try:
-        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src],
+        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "format=duration:stream=r_frame_rate", "-of", "json", src],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STILL_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return None
+        doc = json.loads(proc.stdout or "{}")
+    except (subprocess.TimeoutExpired, ValueError):
+        return None, 30.0
     try:
-        return float(proc.stdout.strip())
-    except ValueError:
-        return None
+        duration = float((doc.get("format") or {}).get("duration"))
+    except (TypeError, ValueError):
+        duration = None
+    try:
+        num, den = ((doc.get("streams") or [{}])[0].get("r_frame_rate") or "30/1").split("/")
+        fps = float(num) / float(den) if float(den) else 30.0
+    except (ValueError, ZeroDivisionError):
+        fps = 30.0
+    return duration, fps or 30.0
 
 
 def seconds(value, fps: float = 30.0) -> "float | None":
@@ -69,21 +89,27 @@ def figure(folder: Path, name: str, src: str, at: "float | None", label: str) ->
     return f'<figure><img src="{name}" alt=""><figcaption>{html.escape(label)}</figcaption></figure>'
 
 
+def field(value) -> str:
+    """A project value as a field's text: a missing or null bound is an empty field, which the
+    save leaves out, never the word None (review of #636)."""
+    return "" if value is None else html.escape(str(value))
+
+
 def plan_section(project: dict, base: Path, folder: Path) -> str:
     rows = []
     for i, clip in enumerate(project.get("clips") or []):
         src = str(clip.get("src", ""))
         path = src if os.path.isabs(src) else str(base / src)
-        total = length(path)
-        start = seconds(clip.get("in")) or 0.0
-        end = seconds(clip.get("out"))
+        total, fps = length(path)
+        start = seconds(clip.get("in"), fps) or 0.0
+        end = seconds(clip.get("out"), fps)
         end = end if end is not None else total
         figs = "" if end is None else "".join(figure(folder, f"clip{i}_{k}.jpg", path, t, lab) for k, (t, lab) in enumerate(
             ((start, f"in {start:.2f} s"), ((start + end) / 2, "middle"), (max(end - 0.05, start), f"out {end:.2f} s"))))
         rows.append(f'''<div class="clip" data-i="{i}"><h3>Clip {i + 1} <span>{html.escape(src)}</span></h3><div class="row">{figs}</div>
-<div class="fields"><label>in <input data-k="in" value="{html.escape(str(clip.get("in", "")))}"></label>
-<label>out <input data-k="out" value="{html.escape(str(clip.get("out", "")))}"></label>
-<label>speed <input data-k="speed" value="{html.escape(str(clip.get("speed", "")))}"></label></div></div>''')
+<div class="fields"><label>in <input data-k="in" value="{field(clip.get("in"))}"></label>
+<label>out <input data-k="out" value="{field(clip.get("out"))}"></label>
+<label>speed <input data-k="speed" value="{field(clip.get("speed"))}"></label></div></div>''')
     frame = project.get("frame") or {}
     caps = project.get("captions") or {}
     loud = project.get("loudness") or {}
@@ -154,7 +180,7 @@ const set=(o,k,v,num)=>{{if(v===''){{if(p[o])delete p[o][k];}}else{{p[o]=p[o]||{
 set('frame','aspect',document.getElementById('aspect').value.trim());set('frame','fit',document.getElementById('fit').value);
 set('loudness','lufs',document.getElementById('lufs').value.trim(),true);set('export','preset',document.getElementById('preset').value.trim());
 const c=document.getElementById('captions');if(c&&c.value.trim()){{p.captions.text=c.value.trim();}}return p;}}
-function show(){{document.getElementById('run').textContent='python3 scripts/render.py '+name+' --overwrite --json';
+function show(){{document.getElementById('run').textContent={run};
 document.getElementById('ask').textContent='Render '+name+' again with the project I saved, then report it.';}}
 document.getElementById('save').onclick=()=>{{const b=new Blob([JSON.stringify(edited(),null,2)+'\\n'],{{type:'application/json'}});
 const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();show();}};show();
@@ -184,6 +210,16 @@ def main(argv=None) -> int:
     if folder.exists() and not folder.is_dir():
         print(f"error: {folder} exists and is not a folder", file=sys.stderr)
         return 1
+    if folder.is_dir() and not (folder / "index.html").exists() and any(folder.iterdir()):
+        # a folder of other files (a media folder given as -o) is not a review folder: its files
+        # could share a still's name (review of #636)
+        print(f"error: {folder} holds other files and no review page; give an empty or new folder", file=sys.stderr)
+        return 1
+    for clip in project.get("clips") or []:
+        src = str(clip.get("src", ""))
+        SOURCES.add(os.path.realpath(src if os.path.isabs(src) else proj_path.parent / src))
+    if result and result.get("output"):
+        SOURCES.add(os.path.realpath(result["output"]))
     folder.mkdir(parents=True, exist_ok=True)
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
@@ -198,7 +234,10 @@ def main(argv=None) -> int:
                        plan=plan_section(project, proj_path.parent, folder),
                        result=result_section(result, folder) if result else '<p style="color:var(--mut)">Not rendered yet: '
                        'give --result with a render.py --json document to see what was measured.</p>',
-                       project_json=json.dumps(project).replace("</", "<\\/"), name=json.dumps(proj_path.name))
+                       project_json=json.dumps(project).replace("</", "<\\/"), name=json.dumps(proj_path.name),
+                       # runnable from anywhere: this copy's render.py, both paths quoted for a shell
+                       run=json.dumps(f"python3 {shlex.quote(str(HERE / 'render.py'))} {shlex.quote(str(proj_path))} "
+                                      "--overwrite --json").replace("</", "<\\/"))
     (folder / "index.html").write_text(page, encoding="utf-8")
     print(folder / "index.html")
     return 0

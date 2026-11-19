@@ -2265,7 +2265,7 @@ def main() -> int:
         if ex.get("crf") is not None:
             argv += option_args("--crf", ex["crf"])
         normalize = ex.get("normalize")
-        if normalize is None and ex["preset"] in PLATFORM_OF and not proj.get("loudness"):
+        if normalize is None and resolve_platform(ex["preset"]) in PLATFORM_OF and not proj.get("loudness"):
             # eval 8: a reels project without the key rendered fully, failed the loudness check and
             # was rendered again; a platform preset with no loudness stage of its own gets the
             # one-export behaviour by default ("normalize": false opts out)
@@ -2274,7 +2274,7 @@ def main() -> int:
                  "normalize_on_by_default", preset=ex["preset"])
         if normalize:
             argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
-        elif ex["preset"] in PLATFORM_OF:
+        elif resolve_platform(ex["preset"]) in PLATFORM_OF:  # an alias (youtube-shorts) too
             # export.py normalises a platform preset by default since 4.0.0 (#579): an opt-out, or a
             # loudness stage of the project's own, has to say so or its level is overwritten
             argv += ["--no-normalize"]

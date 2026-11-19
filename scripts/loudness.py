@@ -144,13 +144,16 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             f"loudnorm=I={lufs}:TP={tp}:LRA={args.lra}"
             f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}:measured_LRA={stats['input_lra']}"
             f":measured_thresh={stats['input_thresh']}:offset={stats['target_offset']}:linear=true:print_format=summary"
-            # loudnorm's output frames can jump in time (about 0.1 s after a stretch of digital
-            # silence on FFmpeg 6.1) while its samples run on unbroken: played by those times,
-            # every sound after the jump came 89 ms late against a copied picture, and atrim, which
-            # counts time, cut as much off the end. The samples are restamped in order from the
-            # first one's time, so a late start keeps its lead.
-            ",asetpts=N/SR/TB+STARTPTS"
         )
+        if loudnorm_mode(stats, lufs, tp, args.lra) == "dynamic":
+            # In dynamic mode loudnorm stamps the frames it buffers itself, and they jumped about
+            # 0.1 s after a stretch of digital silence (FFmpeg 6.1) while the samples ran on: every
+            # sound after the jump played 89 ms late against a copied picture, and atrim, which
+            # counts time, cut as much off the end. The samples are restamped in order from the
+            # first one's time (a late start keeps its lead); a gap in the source does not survive
+            # dynamic mode either way. Linear mode passes each frame's own time through, gaps
+            # included, so it is left alone (review of #636).
+            af += ",asetpts=N/SR/TB+STARTPTS"
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
         if lead:
