@@ -1919,6 +1919,9 @@ or `00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode` (`hh:mm:ss:ff`, f
 converted with `--fps`, or the input video's own fps when `--input` is given and `--fps` is
 not — a timecode-shaped cue with no fps available is refused rather than misread as plain text).
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
+For Hebrew, Arabic and other right-to-left cues, generated styles use libass's
+whole-line bidirectional layout so edge punctuation and karaoke retain their reading order.
+An authored `--ass` file uses the styles in that file.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` across the cue; `--karaoke-timing

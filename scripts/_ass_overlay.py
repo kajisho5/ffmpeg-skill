@@ -21,12 +21,18 @@ milliseconds relative to the line's own start; `fade` is (in_ms, out_ms); `scale
 (t1_ms, t2_ms, percent) for a pop.
 """
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from unicodedata import bidirectional
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 # One sentinel character stands in drawn text where an emoji was, so the placeholder is inserted
 # AFTER the brace-stripping that keeps caller-supplied text from injecting override commands.
 EMOJI_SENTINEL = "\ue000"
+
+
+def ass_base_encoding(texts: Iterable[str]) -> int:
+    """Use libass's whole-event bidi layout when the generated style has RTL text."""
+    return -1 if any(bidirectional(ch) in ("R", "AL") for text in texts for ch in text) else 1
 
 
 def emoji_placeholder(box_px: float, back_alpha: int = 0) -> str:
@@ -366,7 +372,7 @@ def text_overlay_ass(elements: Sequence[Dict[str, Any]], *, play_w: int, play_h:
             f"Style: {name},{ass_field(el.get('font') or 'Sans')},{int(round(el['size']))},"
             f"{colour},{colour},{outline_colour},{back},{-1 if el.get('bold') else 0},0,0,0,"
             f"100,100,0,0,{3 if box else 1},{float(el.get('outline', 0)):.1f},"
-            f"{float(el.get('shadow', 0)):.1f},{int(el.get('align', 7))},0,0,0,1")
+            f"{float(el.get('shadow', 0)):.1f},{int(el.get('align', 7))},0,0,0,{ass_base_encoding((el['text'],))}")
         tags = [f"\\an{int(el.get('align', 7))}"]
         move = el.get("move")
         if move:

@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
 - Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 
 ## 3.13.2
