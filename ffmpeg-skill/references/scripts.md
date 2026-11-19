@@ -992,6 +992,10 @@ A real render first runs its own dry run; when that is refused because a stage n
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
 title or captions does the same).
+The optional `stage_pictures` object keeps the fit and export stages' frame geometry under
+their stage names. Each report measures its own stage's frame and counts cropped pixels
+from that stage's input. `picture` carries the last sizing stage's report when available.
+Cache hits replay recorded geometry. Dry runs omit both fields.
 A `captions` block with `text` (a cue file) delivers the SRT the captions stage generates as
 `<output>.srt` beside the output (`caption_srt`), guarded with the output before the first stage;
 it is not delivered (a `caption_srt_not_delivered` skip) when the stage came from `--cache` or the
@@ -1774,6 +1778,7 @@ seen before, and fix or report what fails.
 look.py INPUT [--tiles 4x3] [--width 1280] [-o sheet.png]         # contact sheet with timecodes (-o basename -> basename_sheet.png)
 look.py INPUT --at 2.5 [--at 7] [-o basename]                     # single frames -> basename_2.500s.png
 look.py BEFORE --compare AFTER --at 4 [-o cmp.png]                # side-by-side frame (-o basename -> basename_vs_AFTER_0_4.000s.png)
+look.py SOURCE --at 12.5 --compare CUT --compare-at 0 -o start.png # requested in-point beside cut start
 look.py INPUT --safe tiktok [--at 3]                              # shade what the app's UI covers
 look.py INPUT --guides title,action,4:3 [--at 3]                  # broadcast safe-area outlines
 ```
@@ -1782,8 +1787,11 @@ reaches a delivery): `action` 93 % and `title` 90 % of the frame (SMPTE ST 2046-
 centre 4:3 window of a wider frame with SD's 90 % action and 80 % title safe inside it (refused on
 a frame that is not wider than 4:3). It combines with `--safe PLATFORM` (the app's own UI zones)
 and works on a contact sheet's tiles as on a single frame; the result's `guides` lists them.
-An `--at` past the end of either picture is refused (`kind: input`); a still picture has one,
-at `--at 0`.
+`--compare-at` sets the right-hand seek on the comparison file's clock. Repeat it once per
+`--at`, in the same order. The default uses each `--at` seek on both sides. Each seek is
+checked against its own file's duration (`kind: input` if past the end). A still picture
+has one seek position, at zero. `comparisons`
+pairs each PNG with its two requested seek times. Inspect the frames to judge the cut.
 Outputs PNG. View it with the Read tool (or any image viewer) and judge the
 frame like an editor would. Use `--compare` to show before/after to the user. `--safe NAME` (1.14) shades the zones that
 destination's own UI covers -- TikTok's description block and like column, the Reels/Shorts
@@ -1909,6 +1917,9 @@ or `00:00:03:15 --> 00:00:06:00 SMPTE non-drop-frame timecode` (`hh:mm:ss:ff`, f
 converted with `--fps`, or the input video's own fps when `--input` is given and `--fps` is
 not — a timecode-shaped cue with no fps available is refused rather than misread as plain text).
 Lines without a time run for `--auto-seconds` (3 s) after the previous cue. `|` is a line break.
+For Hebrew, Arabic and other right-to-left cues, generated styles use libass's
+whole-line bidirectional layout so edge punctuation and karaoke retain their reading order.
+An authored `--ass` file uses the styles in that file.
 `--animate`/`--karaoke` generate a styled ASS (PlayRes = video size) from the
 SRT/text cues: `pop` is the short-form "bouncy" entrance, `--karaoke` fills each
 word from `--color` to `--highlight-color` across the cue; `--karaoke-timing
@@ -1980,6 +1991,10 @@ frozen table, matched case-folded; `--lang`, else the script detector, picks the
 set, and with no language the union of the six is used). `--wrap measured` is 1.15's
 width-only wrap exactly, kept so an older split can be reproduced. The result's
 `caption` object carries the layout counts plus `wrap` and `phrase_breaks`.
+For Chinese cues, phrase wrapping keeps a short list of common two-character words,
+including `视频`/`視頻`, `效果` and `功能`, on the same line when they fit.
+This list works in Simplified and Traditional captions, including when the script is
+inferred. Use manual line breaks for other words that should stay together.
 graphics.py takes the same flag for the labels that can hold more than one line
 (the hook card, the meme lines, the sticker chip). The breaker never rewrites,
 shortens or translates the text: a cue that cannot fit `--max-lines` is split
@@ -2400,6 +2415,9 @@ export.py --list
 ```
 A still picture is refused (`kind: input`) by every preset: a delivery has a length, and
 `insert.py` makes a clip of it.
+Presets with a fixed width and height report `picture` after a real scaled export. It
+describes the foreground rectangle and crop using the same fields as `fit.py`. It is
+absent with `--no-scale` or under `--dry-run`. Inspect the written frame to judge framing.
 Editing masters (`prores`, `dnxhr-lb/sq/hq/hqx/444`, and the alpha presets) keep the source's size,
 rate and colour tags and read the written codec and profile back (`codec` verification step).
 The alpha presets `prores4444`, `prores4444xq` (16-bit alpha), `qtrle`, `vp9-alpha` (WebM, Opus)

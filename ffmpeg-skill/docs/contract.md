@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`3.13.2`) | any release |
+| `skill.version` | the npm / package.json version (`3.14.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -154,7 +154,7 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "3.13.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "3.14.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -906,6 +906,7 @@ Keys added after 3.1.8, additive (delivery masters and versions, #417-#423):
 | `versions`, `outputs` | `loudness.py --versions` | one row per target `{target, output, targets, result}` (top-level `output` is null) and the files written; each version's `loudness` and `duration` steps carry `version`, and `verified` holds only when every version met its own target. An empty list is refused; a `--plan` path that is one of the version files is refused (`output_path_taken`) |
 | `crossfade`, `expected_duration`, `seam` | `loop.py` | `crossfade`: the fade in seconds, whole frames; `expected_duration`: the length asked for, checked by the `duration` step within 1.5 frames; `seam`: the first seam measured (`video_step` against `video_typical_step`, `audio_level_step_db`) |
 | `guides` | `look.py --guides` | each outline drawn on the PNG (`action` 0.93, `title` 0.90 of the frame, or the `4:3` centre cut with its own); a frame (either clip under `--compare`) no wider than 4:3 refuses `4:3` |
+| `comparisons` | `look.py --compare` | One `{output, input_seek, compare_seek}` row per PNG, with requested positions in seconds on each input's clock. Repeat `--compare-at` once per `--at` to give the right side separate times. Otherwise both sides use `--at`. A dry run reports the planned image paths and seeks. The tool leaves the visual match to the reviewer. |
 | `levels`; row `legal levels` | `check.py --levels bt709\|ebu-r103` | `{standard, reference, bit_depth, legal {y, c}, window_seconds, frames, out_of_range_pct {y, u, v, chroma}, brng_pct, worst_frame {time, y_pct, chroma_pct}, min {y, u, v}, max {y, u, v}, windows [{start, end, ...the same}]}`: `legal` is the inclusive code range at the file's bit depth, the shares are percentages of samples (chroma: Cb and Cr together, at their own resolution), counted exactly per frame, and `brng_pct` is signalstats' BRNG (pixels with any component outside the fixed nominal range) |
 | `legalize`; step `legal_levels` | `color.py --legalize bt709\|ebu-r103` (with `--to-sdr`, `--lut` or `--correct`) | `{standard, reference, legal, output}`: `output` is the `levels` document of the written file; the step fails (`verified: false`, status `completed`) when one frame keeps more than 1 % of its luma or chroma samples out of range after the encode, with a `legalize_residual` warning whenever any sample is out |
 | `smart`; `mode` `smart`; `reencode_reason` `smart` / `smart_fallback`; steps `smart_frames`, `smart_packets`, `smart_decode`, `smart_params` | `cut.py --smart` | `{applied, parts [{segment, kind: reencode\|copy, start, end, frames}], reencoded_frames, copied_frames, matched, encoder, checks {frames, grid_worst_seconds, copied_packets_equal, frames_decoded_equal, time_base}, time_base}`: only the partial GOPs at the cut points are re-encoded (libx264 matched to the source's profile, level, pixel format, reorder depth, size, SAR and colour tags), the rest is the source's packets, and the output is checked against the source before it is moved into place. When it cannot be made or does not verify: `{applied: false, reason, reason_code}`, `mode: accurate`, the whole cut re-encoded |
@@ -916,6 +917,12 @@ Keys added after 3.8.20, additive (#519):
 | key | tool | what it holds |
 |---|---|---|
 | `picture` | `fit.py` with `--aspect`, `--width` or `--height` (not under `--dry-run`) | where the picture sits in the frame written, measured, not judged: `{measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}`. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format, and the picture is the rectangle where the two differ; no frame of the source is decoded, and `frame_width`/`frame_height` are the written file's. `frame_share`: the picture's area over the frame's (1.0 for `--fit crop`). `scale`: the picture's width over the source's displayed width (for `--fit crop`, the width it was scaled to before the crop), with a note when it is below 1 and no `--width`/`--height` was given. `cropped`: source pixels `--fit crop` cut on each side, each axis at its own scale (all 0 otherwise). `{measured: false, reason}` and a note when the measurement gave no frame of the written size. `subject_framing` stays in `unverified`: whether the subject is in the rectangle is still a look |
+
+`export.py` emits the same `picture` object when a real export scales into a preset's fixed width and
+height. `render.py` carries the fit and export reports in `stage_pictures` keyed by stage and exposes
+the last sizing stage's report as `picture` when available. Each report's crop margins refer to that
+stage's input. A cache entry replays geometry when it recorded a report. Dry runs omit both fields.
+For these export and render results, `unverified` still includes `picture_content` and `subject_framing`.
 
 `fit.py --fit crop` also reports `crop_check` after writing a crop with a discarded
 margin. Its `basis` is `luma_motion_proxy`. The `verdict` is `ok`, `review`, or
