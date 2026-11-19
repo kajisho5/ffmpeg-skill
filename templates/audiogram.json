@@ -35,6 +35,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "youtube"
+    "platform": "youtube",
+    "content": true
   }
 }

@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -1172,6 +1173,44 @@ class OrchestrationTests(MediaFixtures):
             rows[flag] = {r["check"] for r in data["check"]["checks"]}
         self.assertTrue({"black", "frozen", "silence"} <= rows[True], rows)
         self.assertFalse({"black", "frozen", "silence"} & rows[None], rows)
+
+    def test_delivery_templates_check_written_content_and_allow_project_opt_out(self):
+        templates = SCRIPTS.parent / "templates"
+        for path in templates.glob("*.json"):
+            with self.subTest(template=path.stem):
+                self.assertIs(json.loads(path.read_text(encoding="utf-8"))["check"].get("content"), True)
+
+        tmp = tempfile.TemporaryDirectory(dir=OUT)
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name)
+        source = tiny_clip(folder / "black.mp4", "color=black:s=160x90:r=30", seconds=3, audio=True)
+        output = folder / "checked.mp4"
+        args = ("render.py", source, "--template", "youtube", "--fast", "-o", output, "--json")
+        dry = json.loads(script(*args, "--dry-run").stdout)
+        self.assertFalse(dry["verified"])
+        self.assertIsNone(dry["check"])
+        skip = next(d for d in dry["diagnostics"]["skipped"] if d["code"] == "check_dry_run")
+        self.assertIs(skip["content"], True)
+        self.assertFalse(output.exists())
+
+        result = json.loads(script(*args, expect_fail=True).stdout)
+        self.assertEqual(result["error"]["kind"], "verification")
+        self.assertIn("black", [r["check"] for r in result["check"]["checks"] if r["status"] == "FAIL"])
+        self.assertTrue(output.is_file())
+
+        project_file = folder / "project.json"
+        script(*args, "--write-project", project_file)
+        project = json.loads(project_file.read_text(encoding="utf-8"))
+        self.assertIs(project["check"]["content"], True)
+        project["check"]["content"] = False
+        project["output"] = str(folder / "opt_out.mp4")
+        project_file.write_text(json.dumps(project), encoding="utf-8")
+        opt_out = json.loads(script("render.py", project_file, "--fast", "--json").stdout)
+        self.assertTrue(opt_out["verified"])
+        self.assertEqual(opt_out["check"]["platform"], "youtube")
+        rows = {row["check"] for row in opt_out["check"]["checks"]}
+        self.assertIn("loudness", rows)
+        self.assertNotIn("black", rows)
 
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""

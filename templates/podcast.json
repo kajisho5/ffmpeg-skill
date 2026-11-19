@@ -17,6 +17,7 @@
   },
   "chapters": "$CHAPTERS",
   "check": {
-    "platform": "podcast"
+    "platform": "podcast",
+    "content": true
   }
 }

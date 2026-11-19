@@ -42,6 +42,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "x"
+    "platform": "x",
+    "content": true
   }
 }

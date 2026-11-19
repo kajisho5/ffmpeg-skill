@@ -42,6 +42,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "shorts"
+    "platform": "shorts",
+    "content": true
   }
 }

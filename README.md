@@ -490,6 +490,21 @@ video codec, dimensions or fixed frame rate differ from the preset, or the outpu
 The written file stays available for diagnosis. When a platform preset specifies loudness, a failed loudness check
 marks the export unverified so the caller can decide whether to normalize or retry.
 
+`check.py --content` looks for black frames, freezes, flashes, silence and audio dropouts where
+the relevant stream exists. Review WARN rows for checks that could not measure a property.
+Delivery templates run these checks on the written file by default. A single-template render
+includes the rows in `check.checks` when it reaches the check stage. A dry run
+records `check_dry_run` and leaves `check` null. A real check adds decode time. For an intentional exception,
+fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}`
+in the project before rendering. After a failed check, choose a new output or pass
+`--overwrite` to intentionally replace the retained file. JSON `commands` records
+the render's FFmpeg command lines. A single-template render lists content-check commands in
+`check.commands`. A social pack reports a verdict per output. Run `check.py FILE --platform NAME --content`
+on an individual file for its full rows and commands.
+For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to also
+request a drift measurement, which may be unavailable for short or low-confidence recordings.
+Review lip sync by watching and listening to the delivered file.
+
 When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
 
 A contact sheet surveys one file. To inspect a cut's first frame, put the requested source

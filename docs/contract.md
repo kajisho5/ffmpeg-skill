@@ -493,6 +493,17 @@ which fills a `templates/<name>.json` project shipped with the skill. `--templat
 comma-separated list renders every named destination and writes a `<stem>_pack.md` table.
 A project may now carry `"template"` (the name it was filled from) and `"frame": {"fit": ...}`.
 
+Shipped delivery templates set `check.content: true`. When the render reaches the check stage,
+it runs `check.py --content`
+on the written file in addition to its platform checks. Content rows only apply to present
+streams. A FAIL verdict keeps the written file and returns `kind: verification` with the check
+report. A template dry run that reaches the check stage reports `check_dry_run` and leaves
+`check` null. To run only the
+platform checks, use `--write-project` and set `check.content` to false before rendering.
+When retrying after a failed content check, choose a new output or pass `--overwrite`
+to intentionally replace the retained file.
+Ordinary projects still enable content checks with their own `check.content` setting.
+
 ## Capabilities
 
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `decoder:<name>`, `filter:<name>`, `bsf:<name>`,
