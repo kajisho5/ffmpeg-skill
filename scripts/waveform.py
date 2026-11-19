@@ -54,7 +54,7 @@ from _common.probe import AUDIO_MEDIA_EXT
 WAVEFORM_MODES = ["point", "line", "p2p", "cline"]
 
 
-def _waveform_stills(args, meta: dict) -> int:
+def _waveform_stills(args, meta: dict, rate: int) -> int:
     if (args.style != "waveform" or args.image or args.srt or args.text or args.title
             or args.platform or args.background != "black" or args.waveform_mode != "line"
             or args.on_silent != "warn"):
@@ -66,6 +66,8 @@ def _waveform_stills(args, meta: dict) -> int:
     duration = input_length(meta)
     if duration <= 0:
         die("--at needs a source with a known positive duration")
+    if not rate:
+        die("--at needs a known sample rate for the selected audio stream")
     marked = [time_arg(t, "--at", (meta.get("video") or {}).get("fps")) for t in args.at]
     output = Path(args.output or default_output(args.input, "waveform_review", "png"))
     if output.suffix.lower() != ".png":
@@ -77,10 +79,12 @@ def _waveform_stills(args, meta: dict) -> int:
         start = round(max(0.0, time - args.window / 2), 6)
         end = round(min(duration, time + args.window / 2), 6)
         length = round(end - start, 6)
-        if length <= 0:
-            die(f"--at {time:g}: window is too short to read")
+        # showwavespic uses fixed integer sample bins and puts the remainder in the final bin.
+        samples_per_column = round(length * rate) // args.width
+        if not samples_per_column:
+            die(f"--at {time:g}: window holds fewer samples than the image has columns; increase --window or reduce --width")
         image = output if len(marked) == 1 else output.with_name(f"{output.stem}_{index:02d}.png")
-        marker = min(args.width - 2, max(0, round((time - start) / length * (args.width - 1))))
+        marker = min(args.width - 1, round((time - start) * rate) // samples_per_column)
         rows.append({"output": str(image), "time": round(time, 6), "start": start, "end": end,
                      "window_seconds": length, "marker_x": marker})
     paths = [row["output"] for row in rows]
@@ -96,7 +100,7 @@ def _waveform_stills(args, meta: dict) -> int:
         out, start, length = row["output"], row["start"], row["window_seconds"]
         label = f"Cut {row['time']:.3f} s  |  Window {length:.3f} s"
         chain = (
-            f"[0:a:{args.audio_stream}]aresample=async=1:first_pts=0,apad,atrim=duration={length:.6f},"
+            f"[0:a:{args.audio_stream}]aresample=async=1:first_pts=0,apad,atrim=end_sample={round(length * rate)},"
             f"showwavespic=s={args.width}x{args.height - 32}:split_channels={int(args.split_channels)}:colors={args.color},"
             "format=rgb24,pad=iw:ih+32:0:32:color=black,"
             f"drawbox=x={row['marker_x']}:y=32:w=2:h=ih-32:c=0xFFAA44:t=fill,"
@@ -231,12 +235,12 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("audio"):
         die("input has no audio stream")
-    audio_streams = meta.get("audio_streams") or []
-    if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
+    audio_streams = meta.get("audio_streams") or [meta["audio"]]
+    if not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
     if args.at:
         args.window = 2.0 if args.window is None else args.window
-        return _waveform_stills(args, meta)
+        return _waveform_stills(args, meta, audio_streams[args.audio_stream].get("sample_rate") or 0)
     if args.window is not None:
         die("--window needs --at")
     if args.silence_threshold >= 0:

@@ -241,7 +241,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `reverse.py` | Reverse playback (video and, unless `--no-audio`, audio) |
 | `stabilize.py` | Two-pass motion stabilisation (`vidstabdetect`/`vidstabtransform`) |
 | `sequence.py` | Numbered (`frame_%04d.png`) or glob-matched still images into a video |
-| `waveform.py` | Render an audio track as a waveform or spectrum visualization video (`showwaves`/`showspectrum`) — for audio-only inputs with no picture worth showing; `--image` puts the visualisation over a still plate (an audiogram), with `--platform`, `--title` and burnt-in captions |
+| `waveform.py` | Render an audio track as a waveform or spectrum video. Use `--at` for a waveform PNG at a cut time, or `--image` for a video audiogram with `--platform`, `--title` and burnt-in captions |
 | `freeze.py` | Hold a frame for N seconds (`--at`, `--hold`, `--mode insert/extend`) — an end-card hold or a comedic beat |
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
 | `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |

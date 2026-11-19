@@ -704,6 +704,18 @@ python3 scripts/waveform.py demos/out/fixtures/music.m4a --style waveform --widt
 
 **Look for:** An audio-only file has nothing to show; showwaves draws the amplitude as it plays, and the rendered clip carries the same audio it is drawing.
 
+### Inspect a cut on the source and edited waveforms
+
+![Inspect a cut on the source and edited waveforms](demos/cut_waveform.gif)
+
+```bash
+python3 scripts/cut.py demos/out/cut_waveform_source.wav --start 2 --accurate -o demos/out/cut_waveform_trimmed.wav
+python3 scripts/waveform.py demos/out/cut_waveform_source.wav --at 2 --window 2 --width 960 --height 288 -o demos/out/cut_waveform_before.png
+python3 scripts/waveform.py demos/out/cut_waveform_trimmed.wav --at 0 --window 2 --width 960 --height 288 -o demos/out/cut_waveform_after.png
+```
+
+**Look for:** The source tone gets louder at 2 s. After trimming away the quiet opening, the same cut is at 0 s on the edited audio. Each waveform PNG marks the cut on its own timeline.
+
 ### Audio episode as a shareable audiogram
 
 ![Audio episode as a shareable audiogram](demos/audiogram.gif)

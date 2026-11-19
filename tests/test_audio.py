@@ -97,6 +97,20 @@ class AudioTests(MediaFixtures):
                     self.assertIn("outside the input", error["message"])
                 self.assertFalse((root / f"check_{last}_01.png").exists())
 
+    def test_waveform_still_marker_aligns_with_nondisible_sample_bins(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            source = root / "step.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               r"aevalsrc=0.8*between(t\,2\,2.005):s=44100:d=4", source)
+            output = root / "marker.png"
+            result = json.loads(script("waveform.py", source, "--at", "2", "--window", "2",
+                                       "--height", "160", "-o", output, "--json").stdout)
+            marker = result["waveforms"][0]["marker_x"]
+            self.assertEqual(marker, 980)
+            self.assertGreater(frame_rgb(output, 0, marker + 3, 87)[1], 200)
+            self.assertLess(frame_rgb(output, 0, marker - 3, 87)[1], 20)
+
     def test_waveform_spectrum_style(self):
         out = OUT / "waveform2.mp4"
         script("waveform.py", self.src, "--style", "spectrum", "--width", "640", "--height", "360", "-o", out)
