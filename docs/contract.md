@@ -542,6 +542,14 @@ and receives no correction.
 
 ## Capabilities
 
+`doctor --json` reports `fonts.scripts.vi` separately for Vietnamese. Its
+`available`/ `missing`/ `unknown` status reflects a fontconfig Vietnamese
+coverage match or a known Windows font. Caption font selection uses that lookup
+for Latin cues marked `--lang vi` or containing common Vietnamese diacritics.
+For an explicit family, the coverage diagnostic uses the selected regular or
+bold face when it can be identified, including its index in a font collection.
+If the selected face cannot be checked, the result records `font_coverage_unverified`.
+
 Names: `ffmpeg`, `ffprobe`, `encoder:<name>`, `decoder:<name>`, `filter:<name>`, `bsf:<name>`,
 `external:whisper`, `external:parakeet`. `capabilities.required` is the union of every tool's required list;
 `optional` the union of the conditional ones. With detection (the default)

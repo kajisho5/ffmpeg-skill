@@ -546,6 +546,16 @@ They are the most used tools here, and they are tested on every pull request and
 
 `caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
 
+#### Vietnamese captions
+
+Check `doctor --json` → `fonts.scripts.vi` for Vietnamese font coverage.
+Use `caption.py input.mp4 --srt vi.srt --lang vi` to burn reviewed UTF-8 captions.
+The font lookup also recognizes common Vietnamese accents in unlabelled cues.
+For local speech recognition, use
+`caption.py input.mp4 --transcribe --lang vi --engine faster-whisper --model base`.
+Use a multilingual Whisper model and review its transcript before delivery.
+The Vietnamese regression tests cover font selection and burn-in from SRT.
+
 ### Which engine provides word timestamps for karaoke?
 
 With `caption.py --transcribe --karaoke`, the speech engine supplies word timestamps for the highlights. In `--engine auto`, eligible English speech can use Parakeet first. Auto prefers Whisper engines in this order: whisper.cpp, faster-whisper, OpenAI Whisper. An engine's failure can stop automatic selection, for example when the language is known and whisper.cpp fails to produce word timings. Use `--engine` to select an engine explicitly and `--model` to choose a model. Some engines download the selected model on first use. Whisper.cpp needs a local model file.

@@ -4154,6 +4154,86 @@ class ColourAuditGTests(unittest.TestCase):
 class ScriptFontTests(unittest.TestCase):
     """1.12: which script text is written in, and a font file that actually covers it."""
 
+    def test_vietnamese_font_coverage_checks_decomposed_text_and_explicit_language(self):
+        import unicodedata
+        from _common import fonts
+
+        entry = ("/test/vi.ttf", "Test Vietnamese")
+        cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None),
+                 ("đã ăn", None), ("Xin chao", "vi-VN"))
+        with unittest.mock.patch.object(fonts, "_script_font_entry", return_value=entry) as resolve:
+            for sample, lang in cases:
+                with self.subTest(sample=sample, lang=lang):
+                    self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", *entry))
+                    resolve.assert_called_with("vi")
+            for sample in ("hello", "Mănăstire", "rođen"):
+                self.assertEqual(fonts.script_font_for_text(sample), ("latin", None, None))
+        with unittest.mock.patch.object(fonts.platform, "system", return_value="Linux"), \
+             unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-match"), \
+             unittest.mock.patch.object(fonts.subprocess, "run") as fc_match, \
+             unittest.mock.patch.object(fonts, "warn") as warn:
+            for result, code in ((subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten\n"), "font_lacks_script"),
+                                 (subprocess.CompletedProcess([], 0, stdout="Fallback\ten|vi\n"), "font_coverage_unverified"),
+                                 (subprocess.CompletedProcess([], 1), "font_coverage_unverified"),
+                                 (subprocess.TimeoutExpired("fc-match", 10), "font_coverage_unverified")):
+                fc_match.side_effect = [result]
+                self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True, font_bold=True),
+                                 ("latin", None, None))
+                self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font:bold")
+                self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), (code, "vi"))
+            warn.reset_mock()
+            fc_match.side_effect = [subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten|vi\n")]
+            self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True),
+                             ("latin", None, None))
+            self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font")
+            warn.assert_not_called()
+
+    def test_vietnamese_explicit_folder_face_is_checked_before_installed_fonts(self):
+        from _common import fonts
+
+        with tempfile.TemporaryDirectory() as root:
+            collection = Path(root) / "custom.ttc"
+            collection.touch()
+            faces = (f"{collection}\t0\tCustom\tCustom-Regular\tTrueType\t80\t0\tCustom Regular\n"
+                     f"{collection}\t1\tCustom\tCustom-Bold\tTrueType\t200\t0\tCustom Bold\n")
+            with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
+                 unittest.mock.patch.object(fonts.subprocess, "run") as scan, \
+                 unittest.mock.patch.object(fonts, "warn") as warn:
+                for bold in (False, True):
+                    warn.reset_mock()
+                    scan.side_effect = [subprocess.CompletedProcess([], 0, stdout=faces),
+                                        subprocess.CompletedProcess([], 0, stdout="0\ten|vi\n1\ten\n")]
+                    self.assertEqual(fonts.script_font_for_text("đã ăn", font="Custom", font_explicit=True,
+                                                                fonts_dir=root, font_bold=bold), ("latin", None, None))
+                    if bold:
+                        self.assertEqual(warn.call_args.args[1], "font_lacks_script")
+                    else:
+                        warn.assert_not_called()
+
+    def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
+        family = font_family_for_script("vi")
+        if not family:
+            self.skipTest("no known Vietnamese-capable font")
+        OUT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=OUT) as work:
+            d = Path(work)
+            source = tiny_clip(d / "blank.mp4", "color=black:s=480x270:r=10", seconds=2)
+            cue = "Tiếng Việt: ă ơ ư ạ ẫ ữ"
+            srt = d / "vi.srt"
+            srt.write_text(f"1\n00:00:00,000 --> 00:00:01,900\n{cue}\n", encoding="utf-8")
+            for name, flags in (("default", ()), ("explicit", ("--font", family, "--lang", "vi"))):
+                with self.subTest(name=name):
+                    out, ass = d / f"{name}.mp4", d / f"{name}.ass"
+                    result = json.loads(script("caption.py", source, "--srt", srt, "--animate", "fade",
+                                               "--write-ass", ass, "-o", out, "--json", *flags).stdout)
+                    self.assertTrue(result["verified"])
+                    self.assertEqual(result["caption"]["cues_burned"], 1)
+                    self.assertEqual(result["font_used"]["family"], family)
+                    if name == "default":
+                        self.assertEqual(result["font_used"]["how"], "script")
+                    self.assertIn(cue, ass.read_text(encoding="utf-8").replace(r"\N", " "))
+                    self.assertGreater(_frame_ink(out), _frame_ink(source))
+
     def test_detect_script_reads_the_characters_not_the_locale(self):
         cases = {
             "こんにちは世界": "ja",          # kana + han -> Japanese

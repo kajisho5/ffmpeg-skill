@@ -1589,6 +1589,14 @@ above the cap is clamped with a note, not refused, and both `jobs` and
   `render.py` reads them: each item's copy of the project carries them absolute.
 
 ### caption.py --transcribe — optional local speech-to-text
+
+For Vietnamese, run `doctor --json` and inspect `fonts.scripts.vi`. Use an installed
+multilingual Whisper model, for example
+`caption.py input.mp4 --transcribe --lang vi --engine faster-whisper --model base`.
+To use reviewed captions, pass `--srt vi.srt --lang vi`; keep the SRT in UTF-8.
+If automatic lookup cannot verify the font, inspect the burned accents or point
+`--fonts-dir` and `--font` at a known face such as Noto Sans or DejaVu Sans.
+The burn-in tests use supplied cues and leave speech-recognition accuracy for review.
 If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` (whisper.cpp),
 `faster-whisper` or `whisper` is installed,
 `caption.py input.mp4 --transcribe [--language ja] [--model base] [--engine auto]` writes the
