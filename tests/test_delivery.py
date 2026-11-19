@@ -27,6 +27,39 @@ class DeliveryTests(MediaFixtures):
     """Export, proxy and the delivery templates."""
 
     # ---------------------------------------------------------------- export
+    def test_export_fails_if_the_written_frame_does_not_match_the_preset(self):
+        # Make the real encoder write the unscaled source by intercepting only the command.
+        # The requested preset and FFprobe are untouched.
+        shim = """
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+import export
+run = export.run
+def write_different_size(argv, *args, **kwargs):
+    argv = list(argv)
+    if "-vf" in argv:
+        argv[argv.index("-vf") + 1] = "fps=30"
+    return run(argv, *args, **kwargs)
+export.run = write_different_size
+raise SystemExit(export.main())
+"""
+        for flags in ([], ["--json"]):
+            with self.subTest(flags=flags):
+                out = OUT / f"export_wrong_size_{bool(flags)}.mp4"
+                proc = sh(sys.executable, "-c", shim, SCRIPTS, self.src, "--preset", "reels",
+                          "--fast", "--overwrite", "-o", out, *flags, expect_fail=True)
+                self.assertTrue(out.is_file(), proc.stderr)
+                self.assertIn("frame_size", proc.stderr)
+                if flags:
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual((doc["status"], doc["error"]["kind"], doc["verified"]),
+                                     ("failed", "verification", False))
+                    step = next(s for s in doc["verification"] if s["step"] == "frame_size")
+                    self.assertEqual(step["expected"], [1080, 1920])
+                    self.assertEqual(step["measured"], [1280, 720])
+                else:
+                    self.assertEqual(proc.stdout.strip(), "")
+
     def test_export_presets(self):
         cases = {
             "youtube": ("mp4", "h264", (1920, 1080)),

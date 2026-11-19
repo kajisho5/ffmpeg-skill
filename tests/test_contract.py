@@ -4552,7 +4552,8 @@ sys.exit(fit.main())
         doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vf_x.mp4"), "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]],
-                         [("probe", True), ("loudness", False), ("duration", True), ("streams", True),
+                         [("probe", True), ("loudness", False), ("duration", True), ("codec", True),
+                          ("frame_size", True), ("frame_rate", True), ("streams", True),
                           ("stream_lengths", True), ("decode", True)])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_dry.mp4"), "--dry-run", "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (False, []))
@@ -5950,7 +5951,13 @@ def garbage_payload(p):
                     "export.probe = lambda path, role=None, **k: dict(real(path, role=role, **k), duration=%s) "
                     "if role == 'output' and path == %r else real(path, role=role, **k); sys.exit(export.main())"
                     % (str(SCRIPTS), str(self.src), str(out), seeded, str(out)))
-            doc = json.loads(sh(sys.executable, "-c", seed).stdout)
+            proc = sh(sys.executable, "-c", seed, check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"], doc["verified"]),
+                             ("failed", "verification", False))
+            self.assertEqual(doc["output"], str(out))
+            self.assertTrue(out.is_file())
             step = next(s for s in doc["verification"] if s["step"] == "duration")
             self.assertFalse(step["ok"], seeded)
             self.assertFalse(doc["verified"], seeded)
