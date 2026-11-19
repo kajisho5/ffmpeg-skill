@@ -3,7 +3,7 @@
 
 --pattern accepts either a printf-style numbered pattern (`frame_%04d.png`,
 resolved relative to --dir) or a glob (`*.png`, matched and sorted
-alphabetically) -- detected by whether the pattern contains a `%`. Either
+in natural name order) -- detected by whether the pattern contains a `%`. Either
 way, the actual frame list is resolved and checked on disk before ffmpeg
 runs (an empty match or a missing first frame is refused here, not
 discovered from an opaque ffmpeg error), then fed to ffmpeg as an explicit
@@ -15,16 +15,22 @@ Examples:
   python3 sequence.py --dir frames --pattern "*.png" --fps 30 --start-number 1
 """
 import argparse
+import hashlib
+import json
+import os
 import re
 import sys
 import tempfile
 from fractions import Fraction
 from pathlib import Path
 
-from _common import add_common, apply_common, default_output, die, emit, ffmpeg_base, info, probe, require_tool, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
+from _common import STATE, add_common, apply_common, default_output, die, emit, ffmpeg_base, fingerprint, info, probe, refuse_output_is_input, require_tool, run, video_args, X264_PRESETS, concat_list_line, fmt_secs
 from _common.emit import note, refuse, warn
 from _common.probe import display_size, square_pixels_note
+from _common.runner import register_plan_input
 from _common.timeline import TimelineError, exact_rate
+
+SEQUENCE_PLAN_ENV = "FFMPEG_SKILL_REPLAY_SEQUENCE_FRAMES"
 
 
 def even(n: float) -> int:
@@ -104,7 +110,7 @@ def _frames_after(directory: Path, pattern: str, index: int) -> list:
     return [f for _n, f in sorted(found)]
 
 
-def main() -> int:
+def argument_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", required=True, help="directory containing the frames")
     ap.add_argument("--pattern", required=True, help="printf pattern (frame_%%04d.png) or glob (*.png)")
@@ -116,7 +122,43 @@ def main() -> int:
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
-    args = ap.parse_args()
+    return ap
+
+
+def frame_paths(directory: Path, pattern: str, start: int) -> "tuple[list[Path], int | None]":
+    """Select the frames the encoder sees. The next printf index marks the first gap."""
+    if "%" not in pattern:
+        # Natural order, with a deterministic tie-break for names like frame2 and frame02.
+        return sorted(directory.glob(pattern), key=lambda p: (natural_key(p.name), str(p))), None
+    frames = []
+    i = start
+    while (directory / (pattern % i)).exists():
+        frames.append(directory / (pattern % i))
+        i += 1
+    return frames, i
+
+
+def frame_digest(records: list[dict]) -> str:
+    """Bind exact frame fingerprints in order with a compact value for the replay child."""
+    digest = hashlib.sha256()
+    for frame in records:
+        digest.update(json.dumps(frame, sort_keys=True).encode("ascii") + b"\n")
+    return digest.hexdigest()
+
+
+def replay_frame_digest(argv: list[str]) -> "str | None":
+    """Check the current sequence without running a probe or an encode during replay's dry run."""
+    try:
+        args = argument_parser().parse_args(argv)
+        frames, _ = frame_paths(Path(args.dir), args.pattern, args.start_number)
+        paths = [f.resolve(strict=True) for f in frames]
+        return frame_digest([fingerprint(str(f), complete=True) for f in paths])
+    except (OSError, RuntimeError, TypeError, ValueError, SystemExit):
+        return None
+
+
+def main() -> int:
+    args = argument_parser().parse_args()
     apply_common(args)
 
     if args.fps <= 0:
@@ -130,39 +172,60 @@ def main() -> int:
     except TimelineError as exc:
         die(f"--fps: {exc}")
     directory = Path(args.dir)
+    expected = os.environ.get(SEQUENCE_PLAN_ENV)
     if not directory.is_dir():
+        if expected:
+            refuse("input", "plan_inputs_changed", f"the planned frame directory is unavailable: {args.dir}")
         die(f"--dir not found or not a directory: {args.dir}")
-
-    is_glob = "%" not in args.pattern
-    if is_glob:
-        # natural order: img2 before img10 (a lexical sort put every img1x before img2 and the
-        # frames came out shuffled); a printf pattern never had this problem
-        frames = sorted(directory.glob(args.pattern), key=lambda p: natural_key(p.name))
+    try:
+        frames, next_index = frame_paths(directory, args.pattern, args.start_number)
+        resolved = [f.resolve(strict=True) for f in frames]
+        for frame in resolved:
+            if not frame.is_file():
+                reason = "plan_inputs_changed" if expected else "media_path_not_a_file"
+                refuse("input", reason, f"{str(frame)!r} is not a regular image file", path=str(frame))
+        records = [fingerprint(str(f), complete=True) for f in resolved] if STATE.plan or expected else []
+        digest = frame_digest(records) if STATE.plan or expected else None
+    except (OSError, RuntimeError) as exc:
+        if expected:
+            refuse("input", "plan_inputs_changed", f"could not read the planned sequence: {exc}")
+        die(f"could not read the frame sequence: {exc}")
+    except (TypeError, ValueError):
+        die(f"bad frame pattern '{args.pattern}'")
+    if expected and digest != expected:
+        refuse("input", "plan_inputs_changed",
+               "the ordered sequence frames differ from what was planned; make a new plan",
+               expected_frame_digest=expected, actual_frame_digest=digest)
+    if next_index is None:
         if not frames:
             die(f"no files in {args.dir} match glob '{args.pattern}'")
         info(f"found {len(frames)} frames matching '{args.pattern}'")
     else:
-        try:
-            args.pattern % args.start_number
-        except (TypeError, ValueError):
-            die(f"bad printf pattern '{args.pattern}'")
-        frames = []
-        i = args.start_number
-        while (directory / (args.pattern % i)).exists():
-            frames.append(directory / (args.pattern % i))
-            i += 1
         if not frames:
             die(f"first frame not found: {directory / (args.pattern % args.start_number)} (check --pattern / --start-number)")
         info(f"found {len(frames)} consecutive frames from index {args.start_number}")
         # 2.2.1: frames past a gap in the numbering (one render or export step that failed) used
         # to be dropped silently, giving a shorter video; name the gap and what was left out
-        later = _frames_after(directory, args.pattern, i)
+        later = _frames_after(directory, args.pattern, next_index)
         if later:
-            warn(f"frame {args.pattern % i} is missing; {len(later)} later frame(s) "
+            warn(f"frame {args.pattern % next_index} is missing; {len(later)} later frame(s) "
                  f"(from {later[0].name}) are NOT in the sequence -- fill the gap or rename them", "sequence_gap",
-                 missing=args.pattern % i, frames_left_out=len(later), first_left_out=later[0].name)
+                 missing=args.pattern % next_index, frames_left_out=len(later), first_left_out=later[0].name)
 
-    frame_meta = probe(str(frames[0]))
+    # For --dir . or .., use the resolved name so the default is next to the frame folder.
+    named = directory if directory.name not in ("", ".", "..") else directory.resolve()
+    output = args.output or default_output(str(named).rstrip("/\\") or "sequence", "sequence", "mp4")
+    # Keep both the chosen entry names and their targets safe, including hard links.
+    sources = list(map(str, frames + resolved))
+    refuse_output_is_input(output, *sources)
+    if STATE.plan:
+        refuse_output_is_input(STATE.plan, *sources)
+        for frame in resolved:
+            register_plan_input(frame)
+        STATE.measured_plan_inputs.update((record["path"], record) for record in records)
+        STATE.sequence_frames_sha256 = digest
+
+    frame_meta = probe(str(resolved[0]))
     if not frame_meta.get("video"):
         die(f"{frames[0]} is not a readable image")
     # the displayed frame: an EXIF rotation applied, non-square pixels squared (#411)
@@ -181,14 +244,11 @@ def main() -> int:
     else:
         out_w, out_h = even(sw), even(sh)
 
-    # beside the folder, named after it: `--dir .` (run inside the frames folder) or `--dir ..` has
-    # no name of its own, so the folder's resolved name is used (A108: "." was a ValueError
-    # traceback); the filesystem root, which has none either, still names it sequence_sequence.mp4
-    named = directory if directory.name not in ("", ".", "..") else directory.resolve()
-    output = args.output or default_output(str(named).rstrip("/\\") or "sequence", "sequence", "mp4")
     with tempfile.TemporaryDirectory(prefix="ffmpeg-skill-sequence-") as tmp:
         list_path = Path(tmp) / "frames.txt"
-        list_path.write_text(concat_list([f.resolve() for f in frames], rate), encoding="utf-8")
+        if STATE.plan:
+            STATE.plan_generated_inputs.add(str(list_path))
+        list_path.write_text(concat_list(resolved, rate), encoding="utf-8")
         # every frame decodes, or the run is refused before the encode (a dry run too: ffprobe runs
         # under --dry-run, as every probe does), naming the frames that do not
         bad = undecodable_frames(list_path, frames, rate)

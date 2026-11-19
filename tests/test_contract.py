@@ -6,6 +6,7 @@ verification policy) holds when the tool actually runs.
     python3 tests/test_contract.py
 """
 import contextlib
+import importlib.metadata
 import io
 import json
 import os
@@ -7818,6 +7819,125 @@ class FfmpegSecurityTableTests(unittest.TestCase):
             self.assertNotRegex(src, rf"(?m)^\s*(import|from) {re.escape(mod)}\b", mod)
 
 
+class DoctorSpeechTests(unittest.TestCase):
+    def test_broken_faster_whisper_is_optional_and_reports_the_import_error(self):
+        from _common import runner
+
+        real_which = runner.safe_which
+
+        def which(name, *args):
+            if name in {"whisper-cli", "whisper-cpp", "whisper", "main"}:
+                return None
+            return real_which(name, *args)
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "faster_whisper.py").write_text(
+                "raise ImportError('mock PyAV ABI mismatch')\n", encoding="utf-8"
+            )
+            with unittest.mock.patch.object(runner, "safe_which", side_effect=which), \
+                    unittest.mock.patch.dict(os.environ, {"PYTHONPATH": directory}), \
+                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]), \
+                    unittest.mock.patch("importlib.metadata.version", return_value="17.0.0"):
+                report = _contract.doctor()
+        self.assertIn("external:whisper", report["missing_optional"])
+        self.assertNotIn("external:whisper", report["available"])
+        engine = report["speech_engines"]["faster-whisper"]
+        self.assertFalse(engine["usable"])
+        self.assertEqual(engine["av_version"], "17.0.0")
+        self.assertIn("mock PyAV ABI mismatch", engine["detail"])
+
+    def test_whisper_cli_probe_is_bounded(self):
+        from _common import runner
+
+        executable = Path("tools", "bin", "whisper")
+        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: str(executable) if name == "whisper" else None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 10)) as run:
+            engine = _contract._whisper_engines()["openai-whisper"]
+        self.assertFalse(engine["usable"])
+        self.assertIn("timed out", engine["detail"])
+        self.assertEqual(run.call_args.args[0], [str(executable.absolute()), "--help"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_whisper_cpp_probe_reports_a_loader_failure(self):
+        from _common import runner
+
+        executable = Path("tools", "bin", "whisper-cli")
+        failure = subprocess.CompletedProcess([], 1, "", "shared library unavailable")
+        with unittest.mock.patch.object(runner, "safe_which", side_effect=lambda name, *args: str(executable) if name == "whisper-cli" else None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError), \
+                unittest.mock.patch("subprocess.run", return_value=failure) as run:
+            engine = _contract._whisper_engines()["whisper.cpp"]
+        self.assertEqual(engine["checked"], "cli_startup")
+        self.assertFalse(engine["usable"])
+        self.assertIn("shared library unavailable", engine["detail"])
+        self.assertEqual(run.call_args.args[0], [str(executable.absolute()), "--help"])
+
+    def test_unreadable_pyav_metadata_preserves_the_startup_error(self):
+        from _common import runner
+
+        for metadata_error in (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"), KeyError("Version")):
+            def distribution(name):
+                if name == "av":
+                    raise metadata_error
+                raise importlib.metadata.PackageNotFoundError(name)
+
+            with self.subTest(metadata_error=metadata_error), \
+                    unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                    unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "faster_whisper" or None), \
+                    unittest.mock.patch("importlib.metadata.version", side_effect=distribution), \
+                    unittest.mock.patch.object(_contract, "_speech_startup_error", return_value="cannot import av"):
+                engine = _contract._whisper_engines()["faster-whisper"]
+            self.assertEqual(engine["detail"], "cannot import av")
+            self.assertIsNone(engine["av_version"])
+
+    def test_working_faster_whisper_still_reports_pyav_version(self):
+        from _common import runner
+
+        def distribution(name):
+            if name == "av":
+                return "17.0.0"
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "faster_whisper" or None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=distribution), \
+                unittest.mock.patch.object(_contract, "_speech_startup_error", return_value=None):
+            engine = _contract._whisper_engines()["faster-whisper"]
+        self.assertTrue(engine["usable"])
+        self.assertEqual(engine["av_version"], "17.0.0")
+        self.assertNotIn("detail", engine)
+
+    def test_whisper_module_alone_is_not_the_openai_whisper_distribution(self):
+        from _common import runner
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", side_effect=lambda name: name == "whisper" or None), \
+                unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
+            self.assertNotIn("openai-whisper", _contract._whisper_engines())
+
+        with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                unittest.mock.patch("importlib.util.find_spec", return_value=None), \
+                unittest.mock.patch("importlib.metadata.version", return_value="20250625"):
+            self.assertIn("not found on PATH", _contract._whisper_engines()["openai-whisper"]["detail"])
+
+    def test_faster_whisper_import_does_not_create_a_model(self):
+        from _common import runner
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "faster_whisper.py").write_text(
+                "class WhisperModel:\n    def __init__(self):\n        raise RuntimeError('model initialized')\n",
+                encoding="utf-8",
+            )
+            with unittest.mock.patch.object(runner, "safe_which", return_value=None), \
+                    unittest.mock.patch.dict(os.environ, {"PYTHONPATH": directory}), \
+                    unittest.mock.patch.object(sys, "path", [directory, *sys.path]), \
+                    unittest.mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
+                engine = _contract._whisper_engines()["faster-whisper"]
+        self.assertEqual(engine, {"usable": True, "checked": "import", "av_version": None})
+
+
 class DoctorLicenseTests(unittest.TestCase):
     def test_reports_the_license_from_the_selected_binary(self):
         exe = str(Path("selected", "ffmpeg").absolute())
@@ -8904,6 +9024,129 @@ class SideFileGuardTests(unittest.TestCase):
                                                  "--overwrite", "--json", check=False))
                     self.assertEqual(collision["reason"], "output_is_input")
                     self.assertEqual(side.read_bytes(), before)
+
+    def test_sequence_protects_frames_from_output_and_plan_collisions(self):
+        frames = self.tmp / "protected_frames"
+        frames.mkdir()
+        first, second = (frames / f"frame{i:02}.png" for i in range(2))
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(first))
+        second.write_bytes(first.read_bytes())
+        alias = self.tmp / "hardlink.png"
+        os.link(second, alias)
+        out = self.tmp / "sequence.mp4"
+        for flags in (("--pattern", first.name, "-o", first),
+                      ("--pattern", "frame%02d.png", "-o", alias),
+                      ("--pattern", "*.png", "-o", out, "--plan", alias),
+                      ("--pattern", "*.png", "-o", out, "--plan", second, "--dry-run")):
+            with self.subTest(flags=flags):
+                before = [p.read_bytes() for p in (first, second, alias)]
+                result = self.failed(tool("sequence", "--dir", frames, *flags, "--overwrite",
+                                          "--json", check=False))
+                self.assertEqual(result["reason"], "output_is_input")
+                self.assertEqual([p.read_bytes() for p in (first, second, alias)], before)
+                self.assertFalse(out.exists())
+
+    def test_sequence_plan_binds_and_rechecks_the_ordered_frames(self):
+        frames = self.tmp / "planned_frames"
+        frames.mkdir()
+        first, second, extra = (frames / f"frame{i:02}.png" for i in range(3))
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(first))
+        content = first.read_bytes()
+        second.write_bytes(content)
+        for mode_name, pattern in (("glob", "*.png"), ("printf", "frame%02d.png")):
+            with self.subTest(pattern=pattern):
+                out, plan = self.tmp / f"{mode_name}.mp4", self.tmp / f"{mode_name}.json"
+                tool("sequence", "--dir", frames, "--pattern", pattern, "-o", out, "--plan", plan, "--json")
+                saved = json.loads(plan.read_text(encoding="utf-8"))
+                self.assertCountEqual([Path(row["path"]) for row in saved["inputs"]],
+                                      [first.resolve(), second.resolve()])
+                self.assertEqual(saved["unbound_inputs"], [])
+                self.assertFalse(out.exists())
+                second.write_bytes(content + b"changed")
+                error = self.failed(tool("render", plan, "--json", check=False))
+                self.assertEqual(error["reason"], "plan_inputs_changed")
+                second.unlink()
+                error = self.failed(tool("render", plan, "--json", check=False))
+                self.assertEqual(error["reason"], "plan_inputs_changed")
+                second.write_bytes(content)
+                extra.write_bytes(content)
+                for mode in ((), ("--dry-run",)):
+                    error = self.failed(tool("render", plan, *mode, "--json", check=False))
+                    self.assertEqual(error["reason"], "plan_inputs_changed")
+                    self.assertFalse(out.exists())
+                extra.unlink()
+                result = json.loads(tool("render", plan, "--json").stdout)
+                self.assertTrue(result["verified"], result)
+                self.assertTrue(out.is_file())
+
+    def test_sequence_plan_rejects_a_middle_only_edit_to_a_large_frame(self):
+        frames = self.tmp / "large_frames"
+        frames.mkdir()
+        frame = frames / "frame.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(frame))
+        # A PNG decoder stops at IEND. The extra bytes exercise the middle of a large file.
+        with frame.open("ab") as out:
+            out.truncate(24 * 1024 * 1024)
+        plan, output = self.tmp / "large_plan.json", self.tmp / "large_sequence.mp4"
+        tool("sequence", "--dir", frames, "--pattern", "*.png", "-o", output, "--plan", plan, "--json")
+        saved = json.loads(plan.read_text(encoding="utf-8"))
+        with frame.open("r+b") as out:
+            out.seek(12 * 1024 * 1024)
+            out.write(b"x")
+        replay = self.failed(tool("render", plan, "--dry-run", "--json", check=False))
+        self.assertEqual(replay["reason"], "plan_inputs_changed")
+        self.assertEqual(replay["details"]["inputs"][0]["status"], "changed")
+        self.assertEqual(len(saved["inputs"][0]["sha256_full"]), 64)
+        self.assertFalse(output.exists())
+
+    def test_sequence_plan_refuses_a_nonregular_frame(self):
+        frames = self.tmp / "special_frames"
+        frames.mkdir()
+        (frames / "frame.png").mkdir()
+        plan = self.tmp / "special_plan.json"
+        args = ("sequence", "--dir", frames, "--pattern", "*.png", "-o", self.tmp / "special.mp4",
+                "--plan", plan, "--json")
+        err = self.failed(tool(*args, check=False))
+        self.assertEqual(err["reason"], "media_path_not_a_file")
+        self.assertFalse(plan.exists())
+        if hasattr(os, "mkfifo"):
+            fifo = frames / "frame_fifo.png"
+            os.mkfifo(fifo)
+            cp = subprocess.run([sys.executable, str(SCRIPTS / "sequence.py"), "--dir", str(frames),
+                                 "--pattern", fifo.name, "-o", str(self.tmp / "fifo.mp4"),
+                                 "--plan", str(plan), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(self.failed(cp)["reason"], "media_path_not_a_file")
+            self.assertFalse(plan.exists())
+
+    def test_sequence_refuses_to_save_a_plan_when_a_frame_changes_during_measurement(self):
+        frames = self.tmp / "moving_frames"
+        frames.mkdir()
+        frame = frames / "frame.png"
+        ffmpeg("-f", "lavfi", "-i", "color=red:s=32x32", "-frames:v", "1", str(frame))
+        plan = self.tmp / "moving_plan.json"
+        code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv.pop(1))
+import sequence
+frame = Path(sys.argv.pop(1))
+sys.argv[0] = "sequence.py"
+check = sequence.undecodable_frames
+def check_then_change(*args):
+    result = check(*args)
+    with frame.open("ab") as out:
+        out.write(b"changed")
+    return result
+sequence.undecodable_frames = check_then_change
+sys.exit(sequence.main())
+"""
+        cp = sh(sys.executable, "-c", code, SCRIPTS, frame, "--dir", frames, "--pattern", "*.png",
+                "-o", self.tmp / "moving.mp4", "--plan", plan, "--json", check=False)
+        error = self.failed(cp)
+        self.assertEqual(error["kind"], "input")
+        self.assertIn("changed since measurement", error["message"])
+        self.assertFalse(plan.exists())
 
     def test_plan_binds_brand_json_and_ignores_path_shaped_title_text(self):
         brand = self.tmp / "actual_brand.json"
