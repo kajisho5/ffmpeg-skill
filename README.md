@@ -104,6 +104,14 @@ Kajiyama, S. (2026). *What Is Verification-Driven Coding? — A Discipline for N
 
 ## Quick start
 
+One command does steps 0 to 2 below: `npx ffmpeg-skill setup` installs the skill for every agent it finds on the machine (`~/.claude`, `~/.cursor`, `~/.codex` or `~/.agents`; Claude Code when it finds none), installs FFmpeg when `ffmpeg` does not run (`brew install ffmpeg-full`, `winget install --id Gyan.FFmpeg -e` or `sudo apt-get install -y ffmpeg`, printed before it runs; `--no-ffmpeg` never runs a package manager), and ends with `doctor`, whose exit status it returns. On a system with none of those three package managers it installs the skill, says FFmpeg is still missing, and exits non-zero. It needs Node 16+ and Python 3.10+, and installs neither.
+
+```bash
+npx ffmpeg-skill setup
+```
+
+The same steps one at a time:
+
 ```bash
 # 0. FFmpeg itself, once (Ubuntu/Debian shown; macOS and Windows are in the Install table below)
 sudo apt install ffmpeg
@@ -641,6 +649,7 @@ npx ffmpeg-skill              # Claude Code   → ~/.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --cursor     # Cursor        → ~/.cursor/skills/ffmpeg-skill
 npx ffmpeg-skill --codex      # Codex         → ~/.agents/skills/ffmpeg-skill (Cursor reads this location too)
 npx ffmpeg-skill --all        # all three
+npx ffmpeg-skill setup        # every agent found on this machine, plus FFmpeg when missing, then doctor
 npx ffmpeg-skill --project    # this project  → ./.claude/skills/ffmpeg-skill
 npx ffmpeg-skill --dir ./my-skills
 npx ffmpeg-skill --uninstall  # remove from the selected targets (--codex also clears the older ~/.codex/skills location)

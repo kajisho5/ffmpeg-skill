@@ -107,6 +107,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.9.3 — the timeline of several clips takes its size from fit (#526)](#after-393--the-timeline-of-several-clips-takes-its-size-from-fit-526)
 - [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
 - [After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)](#after-3101--an-hdr-or-bt2020-rgb-source-is-made-yuv-with-the-matrix-its-line-tags-544)
+- [After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine](#after-3141--npx-ffmpeg-skill-setup-one-command-for-a-new-machine)
 <!-- contents:end -->
 
 ## Time limits
@@ -6064,3 +6065,25 @@ before it was changed. Five classes are changed, two are left for a decision.
   fails 13 of its 15 rows, the two bt2020nc-tagged ones passing as they should),
   `test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source` (tests/test_contract.py: the
   helpers, every `--codec` line, the fold).
+
+## After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine
+
+- **`setup` installs FFmpeg only through brew, winget or apt-get, and only when `ffmpeg` does not
+  run.** Those are the three commands the README already gave by hand. On any other system (dnf,
+  pacman, a machine without Homebrew) it installs the skill, says FFmpeg is still missing and
+  exits with doctor's non-zero status: a package name guessed for a manager nobody here has run
+  is worse than the manual line. `--no-ffmpeg` never runs a package manager.
+- **It does not edit a shell profile.** Homebrew's `ffmpeg-full` is keg-only; `setup` puts its
+  `bin` on PATH for its own process (so its doctor run sees the build) and prints the `export`
+  line. After winget, the terminal that ran it has the old PATH, so `setup` says to open a new one
+  and exits non-zero; that is a correct report of this terminal, not a failed install.
+- **It does not register the MCP server**, for the reason under "The plugin does not register the
+  MCP server": the agents it installs for have a shell. It installs neither Node nor Python.
+- **It takes no target flags.** The targets are the agents whose home directories exist
+  (`~/.claude`, `~/.cursor`, `~/.codex` or `~/.agents`), Claude Code when none does; choosing them
+  is what the plain installer's flags are for, and `setup --all` is refused before a file is
+  copied.
+- Code: `bin/install.js` (`detectAgents`, `ffmpegInstallPlan`, `setupFfmpeg`). Test:
+  `test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager`
+  (tests/test_contract.py). The three install commands are tested against a stand-in for the
+  package manager; none has been run by this test on a machine without FFmpeg.
