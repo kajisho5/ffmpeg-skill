@@ -27,6 +27,7 @@ _Automated release: version and notes generated from pull requests merged since 
 
 - **The stability promise is split by tool.** `contract --json` gives each tool `stability`: the 12 core tools are `stable` (the 3.x promise, for the whole of 4.x), the other 30 `beta` (an argument or output key may change in a minor release after one minor in `deprecated`).
 - Delivery templates include the applicable `check.py --content` rows by default (#575).
+- **`export.py`'s platform presets meet the platform's loudness by default (#579).** A quiet source exported with `--preset reels` was delivered at about -56 LUFS with a warning; it is now corrected in the same call (-14.06 LUFS on that source, `loudness.normalized: true`). `--no-normalize` keeps 3.x's measure-and-report behaviour; `--normalize` is still accepted.
 - Return a verification failure when a video delivery misses a required export property (#620).
 - Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 

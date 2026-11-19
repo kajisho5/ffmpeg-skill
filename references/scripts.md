@@ -2455,7 +2455,7 @@ integrated loudness ended more than 1 LU from the target because of it.
 ### export.py — delivery presets
 ```
 export.py INPUT --preset youtube|youtube4k|reels|tiktok|shorts|linkedin|facebook|x|youtube-hdr|youtube-av1|prores|dnxhr-lb|dnxhr-sq|dnxhr-hq|dnxhr-hqx|dnxhr-444|prores4444|prores4444xq|qtrle|vp9-alpha|hap-alpha|key-fill|h265|gif|copy
-                [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize] [-o OUT]
+                [--fit pad|crop] [--no-scale] [--allow-long] [--crf N | --max-mb MB] [--normalize | --no-normalize] [-o OUT]
 export.py INPUT --preset copy --repair [-o OUT]
 export.py --list
 ```
@@ -2507,8 +2507,8 @@ so: `trimmed: {from, to}` and a `notes` line. It
 does not touch levels: for youtube / youtube4k / reels / x the written file is
 measured and the result's `loudness` (and a `notes` line) says when it is
 outside the platform's LUFS / true-peak spec, naming the `loudness.py` call
-that fixes it -- or pass `--normalize`, which runs that call on the written
-file itself (audio re-encoded, video copied; `loudness.normalized: true`) so a
+that fixes it. Since 4.0.0 it runs that call on the written file by default
+(`--no-normalize` reports only, 3.x's behaviour; `--normalize` is still accepted; audio re-encoded, video copied; `loudness.normalized: true`) so a
 platform export is one command instead of export, loudness, export again. A
 measurement that cannot be read is `loudness.measured: false` (values null) with
 a failing `{step: loudness, ok: false, reason: not_measured}` and a

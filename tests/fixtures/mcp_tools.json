@@ -434,6 +434,7 @@
    "list",
    "max_mb",
    "no_hw",
+   "no_normalize",
    "no_scale",
    "normalize",
    "output",

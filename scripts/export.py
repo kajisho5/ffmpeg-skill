@@ -30,7 +30,7 @@ Presets:
 Examples:
   python3 export.py final.mp4 --preset youtube
   python3 export.py final.mp4 --preset reels --fit crop
-  python3 export.py final.mp4 --preset reels --normalize   # meet the platform's loudness in the same call
+  python3 export.py final.mp4 --preset reels --no-normalize   # report the loudness, deliver the sound as it is
   python3 export.py final.mp4 --preset prores -o master.mov
   python3 export.py final.mp4 --preset dnxhr-hq -o master.mov
   python3 export.py final.mp4 --preset copy -o delivered.mp4
@@ -583,8 +583,12 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
-    ap.add_argument("--normalize", action="store_true",
-                    help="platform presets only: normalize audio when it misses the loudness spec. Video is copied.")
+    # 4.0.0 (#579): a platform preset promises the platform's loudness, so it meets it by default
+    norm = ap.add_mutually_exclusive_group()
+    norm.add_argument("--normalize", action="store_true",
+                      help="platform presets: normalize audio when it misses the loudness spec (the default since 4.0.0). Video is copied.")
+    norm.add_argument("--no-normalize", action="store_true",
+                      help="platform presets: measure and report the loudness but deliver the sound as it is (3.x's default)")
     ap.add_argument("--alpha-mode", choices=["straight", "premultiplied"],
                     help="alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): write the colour straight "
                          "(default, as decoded) or premultiplied by the alpha; written to the result as alpha_mode")
@@ -602,9 +606,11 @@ def main() -> int:
     if not args.input or not args.preset:
         die("input and --preset are required (or use --list)")
     validate_color(args.pad_color, "--pad-color")
-    if args.normalize and args.preset not in PLATFORM_OF:
-        die(f"--normalize applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",
-            hint="drop --normalize, or run loudness.py with your own target")
+    if (args.normalize or args.no_normalize) and args.preset not in PLATFORM_OF:
+        flag = "--normalize" if args.normalize else "--no-normalize"
+        die(f"{flag} applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",
+            hint=f"drop {flag}, or run loudness.py with your own target")
+    args.normalize = args.preset in PLATFORM_OF and not args.no_normalize
 
     p = PRESETS[args.preset]
     meta = probe(args.input)

@@ -1169,13 +1169,20 @@ raise SystemExit(export.main())
         self.assertEqual(d["error"]["kind"], "input")
         d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
         self.assertTrue(any("--normalize" in n for n in d.get("notes", [])), d)
-        # without the flag the same file is reported, not fixed
-        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
+        # 4.0.0 (#579): a platform preset meets its loudness without the flag; --no-normalize
+        # (3.x's default) reports the same file and does not fix it
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertTrue(d["loudness"]["ok"], d["loudness"])
+        self.assertIs(d["loudness"]["normalized"], True)
+        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--no-normalize", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertFalse(d["loudness"]["ok"])
         self.assertIs(d["loudness"]["normalized"], False)
         self.assertIn("loudness measured without export correction", proc.stderr)
         self.assertIn("--normalize", " ".join(d["notes"]))
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--no-normalize", "-o", OUT / "export_norm_h265.mp4",
+                              "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
 
     def test_vertical_crop_and_reels_export_report_distinct_sizes_and_loudness(self):
         with tempfile.TemporaryDirectory(dir=OUT) as tmp:
@@ -1188,11 +1195,11 @@ raise SystemExit(export.main())
                                      "-o", vertical, "--json").stdout)
             self.assertEqual((crop["probe"]["video"]["width"], crop["probe"]["video"]["height"]), (608, 1080))
             cli = ("export.py", vertical, "--preset", "reels", "--fast", "-o", delivery, "--json")
-            measured = json.loads(script(*cli).stdout)
+            measured = json.loads(script(*cli, "--no-normalize").stdout)
             self.assertEqual((measured["probe"]["video"]["width"], measured["probe"]["video"]["height"]), (1080, 1920))
             self.assertIs(measured["loudness"]["normalized"], False)
             self.assertFalse(measured["loudness"]["ok"])
-            corrected = json.loads(script(*cli, "--normalize").stdout)
+            corrected = json.loads(script(*cli).stdout)
             self.assertIs(corrected["loudness"]["normalized"], True)
             self.assertTrue(corrected["loudness"]["ok"])
 

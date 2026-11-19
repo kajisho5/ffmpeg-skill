@@ -530,15 +530,16 @@ correction if required. To do the whole delivery in one project, use `render.py 
 
 ```bash
 python3 scripts/fit.py source.mp4 --aspect 9:16 --fit crop -o vertical.mp4
-python3 scripts/export.py vertical.mp4 --preset reels --normalize -o reels.mp4
+python3 scripts/export.py vertical.mp4 --preset reels -o reels.mp4
 python3 scripts/check.py reels.mp4 --platform reels
 ```
 
 When an export returns a `loudness` block, `lufs` is the written file's reading,
 or `null` if unavailable. `loudness.normalized` records whether export applied
 correction. `loudness.ok` is true or false when the target can be evaluated, and
-`null` when it cannot. If measured, non-silent audio misses the target and no
-correction ran, use `export.py --normalize` or the `loudness.py` command in the warning.
+`null` when it cannot. Since 4.0.0 a platform preset corrects a miss by default
+(`--no-normalize` measures and reports only, as 3.x did); with `--no-normalize`, use the
+`loudness.py` command in the warning.
 A silent track needs usable source audio before its level can be corrected.
 
 ### Are silence removal and captions stable?
