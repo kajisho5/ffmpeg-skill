@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 3.14.1
+
+_Automated release: version and notes generated from pull requests merged since 3.14.0._
+
+- fix: treat Matroska .mka output as audio (#595)
+
 ## 3.14.0
 
 _Automated release: version and notes generated from pull requests merged since 3.13.2._
