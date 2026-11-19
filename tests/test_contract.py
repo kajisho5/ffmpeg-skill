@@ -3156,6 +3156,9 @@ sys.exit(fit.main())
         # file of tests nobody listed (the list is kept by hand)
         on_disk = sorted(p.stem for p in (ROOT / "tests").glob("test_*.py") if p.stem != "test_all")
         self.assertEqual(on_disk, sorted(names), "add the new module to test_all.MODULES and run_parallel.ROUGH_SECONDS")
+        # a plain local run covers the same modules as the CI parts together (#635: it once left
+        # test_contract out and still printed "all OK")
+        self.assertEqual(sorted(run_parallel.all_modules()), sorted(names))
         # a skipped test is reported, not only counted as passed: the summary names each reason
         self.assertEqual(run_parallel.skip_summary({}), "\nskipped: none")
         self.assertEqual(run_parallel.skip_summary({"no drawtext": 2, "Windows": 5}).splitlines()[1:],

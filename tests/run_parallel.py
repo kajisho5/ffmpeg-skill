@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Run test_all.py's nine group modules in parallel, in separate processes.
+"""Run the whole suite in parallel, in separate processes: test_all.py's group modules and test_contract.
 
     python3 tests/run_parallel.py            # processes at once = CPU count
     python3 tests/run_parallel.py --jobs 2
-    python3 tests/run_parallel.py --part 2/3  # CI: the second of three machines' share, test_contract included
+    python3 tests/run_parallel.py --part 2/3  # CI: the second of three machines' share
 
-The same tests as `python3 tests/test_all.py`, in the same modules; only the wall time changes.
+The tests of `python3 tests/test_all.py` and `python3 -m unittest tests.test_contract`, in the same
+modules; only the wall time changes. test_contract used to run only under --part, so a local run
+without it reported "all OK" for a suite that had not run its 460 contract tests (#635).
 Each module runs in its own interpreter with its own OUT directory (tests/out/<module>), because
 the modules share output names (cap_mux.mp4 is written by three tests) and must not overwrite
 each other's files. A module's output is printed whole when it finishes, never interleaved, and
@@ -101,17 +103,20 @@ def run_job(job: "tuple", out_root: Path) -> "tuple":
     return label, proc.returncode, time.time() - t0, proc.stdout
 
 
+def all_modules() -> "list":
+    """Every test module a run covers, with or without --part."""
+    return [m.__name__ for m in test_all.MODULES] + ["test_contract"]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--jobs", type=int, default=0, help="processes run at once (default: CPU count)")
-    ap.add_argument("--part", metavar="I/N", help="run only part I of N (1-based), test_contract included; for CI jobs")
+    ap.add_argument("--part", metavar="I/N", help="run only part I of N (1-based); for CI jobs")
     ap.add_argument("--shard", nargs=3, metavar=("MODULE", "K", "N"), help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.shard:
         return run_shard(args.shard[0], int(args.shard[1]), int(args.shard[2]))
-    names = [m.__name__ for m in test_all.MODULES]
-    if args.part:
-        names.append("test_contract")
+    names = all_modules()
     work = sorted(((n, k, SHARDS.get(n, 1)) for n in names for k in range(SHARDS.get(n, 1))),
                   key=lambda j: -ROUGH_SECONDS.get(j[0], 0) / j[2])
     if args.part:
