@@ -2347,7 +2347,7 @@ The typed dynamics flags speak dB where the filter takes a linear value: a knee
 (2.82843); the defaults `--help` gives are ffmpeg's own, in the flag's unit (A135).
 `--bitrate` is the AAC rate beside a picture (192k) and the rate of a lossy audio output's
 codec (`.m4a`/`.aac` 256k, `.mp3` `-q:a 0`, `.ogg` `-q:a 6`, `.opus` 128k when it is not given);
-`.wav`, `.flac`, `.aif`/`.aiff` and `.caf` (16-bit PCM) refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
+`.wav`, `.aif`/`.aiff` and `.caf` (PCM), and `.flac` and `.mka` (FLAC), refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
 not `--music-loop`ed) ends where the bed ends (A142).
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
@@ -2392,9 +2392,10 @@ requested lufs / tp / lra.
 
 Two-pass `loudnorm`: measure, then apply with measured values (linear mode when
 the true-peak ceiling allows). An audio output of a source whose sound starts after its picture
-holds that lead as silence, so the sound keeps its place (as in `audio.py` and `cut.py --accurate`). Video and any subtitle/data track are
-stream-copied (`dropped_non_av_streams` reports a track the container refused); audio becomes AAC in
-video containers or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac, .mp3).
+holds that lead as silence, so the sound keeps its place (as in `audio.py` and `cut.py --accurate`). A video output
+stream-copies the picture and carries subtitle/data tracks where supported (`dropped_non_av_streams` reports a track the container refused).
+Audio-only outputs such as `.mka` keep the sound. Audio becomes AAC in
+video containers or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac/.mka → FLAC, .mp3).
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
 +3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
@@ -2402,7 +2403,7 @@ did not pass `--audio-bitrate` (an `.m4a`/`.aac` output starts at its 256k, so o
 left), then with the loudnorm ceiling lowered by the overshoot -- until the file itself meets
 `--tp`. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
 container's AAC (through 3.8.8 an `.m4a` was 256k whatever was asked, and its retries too);
-`.wav`/`.flac`/`.aif`/`.aiff`/`.caf` refuse it. `result` reports
+`.wav`/`.flac`/`.aif`/`.aiff`/`.caf`/`.mka` refuse it. `result` reports
 `tp_ceiling_used`, `audio_bitrate_used`, `encodes`, and a `note` when the
 integrated loudness ended more than 1 LU from the target because of it.
 

@@ -1374,10 +1374,11 @@ AUDIO_CODECS = {
     ".aif": ["-c:a", "pcm_s16be"],
     ".aiff": ["-c:a", "pcm_s16be"],
     ".caf": ["-c:a", "pcm_s16be"],
+    ".mka": ["-c:a", "flac"],
 }
 
 
-LOSSLESS_AUDIO_EXT = {".wav", ".flac", ".aif", ".aiff", ".caf"}  # the AUDIO_CODECS whose codec takes no bitrate
+LOSSLESS_AUDIO_EXT = {".wav", ".flac", ".aif", ".aiff", ".caf", ".mka"}  # the AUDIO_CODECS whose codec takes no bitrate
 
 # Every audio-only extension this skill reads (AUDIO_MEDIA_EXT) that has no codec above: a run
 # that would encode into an output named so is refused before ffmpeg runs, and only a stream copy
@@ -1408,10 +1409,9 @@ def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str
 
 def is_audio_output(output_path: str) -> bool:
     """True when the output extension is an audio-only container this skill writes (AUDIO_CODECS:
-    .wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf).
+    .wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka).
 
-    Such a file cannot hold a video stream and, for .wav, cannot hold compressed audio: scripts use
-    this to drop the picture (-vn) and to pick the codec from the extension instead of AAC.
+    Scripts use this to drop the picture (-vn) and to pick the output codec from the extension.
     """
     return os.path.splitext(output_path)[1].lower() in AUDIO_CODECS
 
