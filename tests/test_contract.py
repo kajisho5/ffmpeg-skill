@@ -3127,7 +3127,7 @@ sys.exit(fit.main())
         # the same file holds the fix-size limit and the error budget the freeze follows (#632)
         self.assertIsInstance(budget["feature_freeze"], bool)
         self.assertGreater(budget["fix_max_net_lines"], 0)
-        self.assertEqual(set(budget["budget"]) - {"rule"}, {"fix_of_fix_share_max", "median_net_lines_per_fix_max"})
+        self.assertEqual(set(budget["budget"]) - {"rule", "measured_by"}, {"fix_of_fix_share_max", "median_net_lines_per_fix_max"})
         lines = 0
         for base in ("scripts", "mcp"):
             for path in sorted((ROOT / base).rglob("*.py")):
