@@ -3038,12 +3038,13 @@ class PictureTests(MediaFixtures):
         `a`. A relative path whose first segment has a colon is written `./...` again; an
         absolute path and a Windows drive path are not touched."""
         from _common import decision
-        self.assertEqual(escape_filter_path("a:b.srt", bind=False), "./a\\\\:b.srt")
-        self.assertEqual(escape_filter_path("./a:b.srt", bind=False), "./a\\\\:b.srt")
-        self.assertEqual(escape_filter_path("d:e/c.srt", bind=False), "./d\\\\:e/c.srt")
-        self.assertEqual(escape_filter_path("sub/a:b.srt", bind=False), "sub/a\\\\:b.srt")
         self.assertEqual(escape_filter_path("plain.srt", bind=False), "plain.srt")
         if os.name != "nt":
+            # POSIX names: on Windows `a:` is drive A and a name cannot hold a colon
+            self.assertEqual(escape_filter_path("a:b.srt", bind=False), "./a\\\\:b.srt")
+            self.assertEqual(escape_filter_path("./a:b.srt", bind=False), "./a\\\\:b.srt")
+            self.assertEqual(escape_filter_path("d:e/c.srt", bind=False), "./d\\\\:e/c.srt")
+            self.assertEqual(escape_filter_path("sub/a:b.srt", bind=False), "sub/a\\\\:b.srt")
             self.assertEqual(escape_filter_path("/abs/a:b.srt", bind=False), "/abs/a\\\\:b.srt")
             # the POSIX backslash escape (#408) still applies to a name that also has a colon: the
             # first port of this fix put it under the colon branch's `else`, and `a:b\\x.srt` opened
