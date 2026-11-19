@@ -26,6 +26,42 @@ from _common import font_for_script, probe, shell_quote  # noqa: E402
 class OrchestrationTests(MediaFixtures):
     """Render, batch and multicam, plus the toolkit-wide invariants every script has to satisfy."""
 
+    def test_the_review_page_shows_the_plan_and_the_result_and_saves_an_edited_project(self):
+        """#633, 4.0.0: scripts/_review.py writes a folder with an index.html for a render project:
+        stills at each clip's in point, middle and out point, the dry run's stages, the measured
+        result of a run, and fields whose edited project the page saves. Standalone use only: it
+        is not a contract tool and the MCP server does not list it, so a caller that owns the
+        review (Velisa) never reaches it."""
+        work = OUT / "review_page"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        tiny_clip(work / "src.mp4", "testsrc2=s=320x180:r=30", seconds=6, audio=True)
+        proj = work / "proj.json"
+        proj.write_text(json.dumps({"output": "out.mp4", "clips": [{"src": "src.mp4", "in": 1, "out": 3}, {"src": "src.mp4", "in": 4}]}),
+                        encoding="utf-8")
+        run = json.loads(sh(sys.executable, SCRIPTS / "render.py", proj, "--json", "--overwrite", cwd=work).stdout)
+        (work / "run.json").write_text(json.dumps(run), encoding="utf-8")
+        page_path = Path(sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "run.json").stdout.strip())
+        self.assertEqual(page_path, work / "proj.review" / "index.html")
+        page = page_path.read_text(encoding="utf-8")
+        stills = sorted(p.name for p in page_path.parent.glob("*.jpg"))
+        self.assertEqual([n for n in stills if n.startswith("clip")], [f"clip{i}_{k}.jpg" for i in range(2) for k in range(3)])
+        self.assertEqual(len([n for n in stills if n.startswith("out_")]), 6, stills)
+        self.assertIn("stages: clips → join", page, "the dry run ran even though out.mp4 is already there")
+        self.assertIn(f"{run['probe']['duration']:.3f} s", page)
+        self.assertIn('data-k="out"', page)
+        # the project the page embeds is the project as given, and </script> in it cannot end the script
+        hostile = work / "hostile.json"
+        hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", hostile, "-o", work / "hostile_review")
+        self.assertNotIn("</script><b>", (work / "hostile_review" / "index.html").read_text(encoding="utf-8"))
+        # standalone only: not a contract tool, not on the MCP server, reached through npx review
+        contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
+        self.assertNotIn("_review", [t["name"] for t in contract["tools"]])
+        self.assertNotIn("_review", (ROOT / "mcp" / "server.py").read_text(encoding="utf-8"))
+        self.assertIn("args[0] === 'review'", (ROOT / "bin" / "install.js").read_text(encoding="utf-8"))
+        self.assertIn("scripts/_review.py", (ROOT / "SKILL.md").read_text(encoding="utf-8"))
+
     # ------------------------------------------- 1.17: a project may ask for beat-snapped clips
     def test_render_forwards_snap_to_the_clip_cut(self):
         proj = OUT / "snap_project.json"

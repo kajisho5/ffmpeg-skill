@@ -19,6 +19,10 @@ _Automated release: version and notes generated from pull requests merged since 
 - feat: add npx ffmpeg-skill setup, one command for a new machine (#634)
 
 ## 3.14.1
+### Added
+
+- **A review page for a render project, for standalone use (#633).** `npx ffmpeg-skill review project.json --result run.json` (or `python3 scripts/_review.py`) writes a folder with an `index.html`: stills at each clip's in point, middle and out point, the dry run's stages, what the run measured (duration, size, frame rate, sound, failed steps, check rows, stills of the output), and fields for each clip's in, out and speed, the frame, captions and loudness. "Save project" writes the edited project; rendering it again is `render.py` as before. The page needs no network and runs nothing. It is not a contract tool and the MCP server does not list it, so a caller that owns the review (Velisa) never reaches it.
+
 ### Changed
 
 - **The stability promise is split by tool.** `contract --json` gives each tool `stability`: the 12 core tools are `stable` (the 3.x promise, for the whole of 4.x), the other 30 `beta` (an argument or output key may change in a minor release after one minor in `deprecated`).

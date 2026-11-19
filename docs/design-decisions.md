@@ -109,6 +109,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)](#after-3101--an-hdr-or-bt2020-rgb-source-is-made-yuv-with-the-matrix-its-line-tags-544)
 - [After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine](#after-3141--npx-ffmpeg-skill-setup-one-command-for-a-new-machine)
 - [After 3.13.2 — file names and unusable inputs (#558)](#after-3132--file-names-and-unusable-inputs-558)
+- [4.0.0 — a review page for standalone use (#633)](#400--a-review-page-for-standalone-use-633)
 <!-- contents:end -->
 
 ## Time limits
@@ -6193,3 +6194,22 @@ is said about them is reasoned and marked so.
   `./`), and a `--font-file` starting with a dash is drawn but its family is not read by
   `fc-scan`. `./name` with a forward slash is a file to ffmpeg on Windows as well (reasoned, not
   run). Test: `test_an_input_name_starting_with_a_dash_is_read_as_a_file`.
+
+## 4.0.0 — a review page for standalone use (#633)
+
+- **It is not one of the tools.** `scripts/_review.py` and `npx ffmpeg-skill review` are the only
+  ways in; `contract --json` does not list it and the MCP server does not expose it. A caller that
+  owns the review (Velisa) reaches the skill through the contract or the MCP server, so it never
+  sees the page and needs no switch to turn it off. Nothing on the machine is searched for
+  Velisa: a check for another product's files would break when that product moves them.
+- **The page runs nothing.** Re-editing means editing the render project: the page saves the
+  edited JSON and shows the `render.py` command and a sentence to give the agent. A page that ran
+  ffmpeg would need a local server, and the run would bypass the agent that reports the result.
+- **A still that ffmpeg could not write says "no still"**, and a measurement the run did not make
+  says "not measured": the page shows what was measured, never a placeholder that looks like data.
+- **The plan's dry run passes `--overwrite`**: it writes nothing, and without the flag an output
+  left by the run being reviewed refused it, so the page said the plan had no stages.
+- Code: `scripts/_review.py`, `bin/install.js` (`review`). Test:
+  `test_the_review_page_shows_the_plan_and_the_result_and_saves_an_edited_project`
+  (tests/test_orchestration.py). The page's own script (saving the edited project) was checked in
+  Chromium by hand; CI has no browser.

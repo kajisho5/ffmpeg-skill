@@ -16,6 +16,7 @@
  *   npx ffmpeg-skill contract --json # machine-readable execution contract (see docs/contract.md)
  *   npx ffmpeg-skill doctor [--json] # which required ffmpeg capabilities this machine has
  *   npx ffmpeg-skill mcp              # stdio MCP server (python3 mcp/server.py); registry clients pass `mcp`
+ *   npx ffmpeg-skill review PROJECT.json [--result RUN.json]  # a review page for a render project (standalone use)
  *   npx ffmpeg-skill setup           # everything in one command: the skill for every agent found on this
  *                                    # machine, FFmpeg through the system package manager when it is
  *                                    # missing (--no-ffmpeg: never run a package manager), then doctor
@@ -65,7 +66,7 @@ function argumentError(argv) {
   }
   const unknown = argv.filter((a, i) => !FLAGS.includes(a) && !(dirAt !== -1 && i === dirAt + 1));
   if (unknown.length) {
-    return `error: unknown argument${unknown.length > 1 ? 's' : ''} ${unknown.join(' ')} (known: ${FLAGS.join(', ')}; or the commands contract, doctor, mcp). Nothing was installed or removed.`;
+    return `error: unknown argument${unknown.length > 1 ? 's' : ''} ${unknown.join(' ')} (known: ${FLAGS.join(', ')}; or the commands contract, doctor, mcp, review, setup). Nothing was installed or removed.`;
   }
   return null;
 }
@@ -244,6 +245,16 @@ function main() {
 // (server.json's packageArguments). Everything else installs.
 if (args[0] === 'contract' || args[0] === 'doctor') {
   const py = runWithPython([path.join(ROOT, 'scripts', '_contract.py'), ...args], process.platform, spawnSync);
+  if (py.missing) {
+    console.error(`error: could not find a Python 3.10+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.10+ and ensure it is on PATH.`);
+    process.exit(127);
+  }
+  process.exit(py.error ? 127 : (py.status == null ? 1 : py.status));
+}
+// `review`: scripts/_review.py, the standalone review page (#633). Not a contract tool and not on
+// the MCP server: a caller that owns the review never reaches it.
+if (args[0] === 'review') {
+  const py = runWithPython([path.join(ROOT, 'scripts', '_review.py'), ...args.slice(1)], process.platform, spawnSync);
   if (py.missing) {
     console.error(`error: could not find a Python 3.10+ interpreter (tried: ${py.candidates.join(', ')}). Install Python 3.10+ and ensure it is on PATH.`);
     process.exit(127);
