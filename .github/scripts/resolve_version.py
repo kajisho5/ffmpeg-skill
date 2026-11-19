@@ -21,6 +21,16 @@ reading the PR see the same thing):
   only chore / ci / docs / dependencies (or any other label) -> not releasable
   no label at all                    -> patch (a PR nobody labelled still ships)
 
+The labels are not the only evidence (3.13.2, 2026-11-19): the autolabeler reads a PR's title,
+and four PRs titled without a fix/feat prefix carried only `chore` (every PR touches a .md), so a
+new flag, a new result field and two fixes sat on main unreleased. Two facts of the tree now set
+a floor under the labels:
+
+  a commit that changes shipped code (SHIPPED_CODE, not a .md) -> at least patch, unless it is a
+                                        Dependabot PR or the release's own bump commit
+  the contract gained a tool, a flag or a result field since the last tag -> minor, when
+                                        anything is released at all
+
 A PR with `chore` AND `fix` is a fix. A commit on main that came from no PR is treated as
 patch unless its subject starts with chore/ci/docs/build (the autolabeler's own title rules).
 
@@ -48,6 +58,40 @@ MINOR = {"minor", "feature", "enhancement"}
 PATCH = {"patch", "fix", "bug"}
 NOT_RELEASABLE_TITLE = re.compile(r"^(chore|ci|docs|build)\b", re.I)
 PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
+# What `npm publish` ships and a user runs (package.json "files"), less the documents: a change
+# under one of these is a change to the product whatever the PR was titled or labelled.
+SHIPPED_CODE = ("scripts/", "mcp/", "bin/", "templates/")
+RELEASE_COMMIT = re.compile(r"^chore\(release\): bump version to ")
+
+
+def changes_shipped_code(paths: Iterable[str]) -> bool:
+    """True when one of a commit's changed paths is shipped code (not a document under it)."""
+    return any(p.startswith(SHIPPED_CODE) and not p.lower().endswith(".md") for p in paths)
+
+
+def contract_surface(doc: Dict[str, object]) -> set:
+    """The names a caller can depend on in a contract document (`_contract.py --json`): every
+    tool, every flag of its input schema with each spelling it accepts on the command line (a
+    second spelling of an existing flag is a new name too), and every field of its output schema."""
+    surface = set()
+    for tool in doc.get("tools") or []:
+        name = tool.get("name")
+        surface.add(("tool", name, ""))
+        for kind, key in (("flag", "input_schema"), ("field", "output_schema")):
+            for prop, spec in ((tool.get(key) or {}).get("properties") or {}).items():
+                surface.add((kind, name, prop))
+                cli = spec.get("cli") if kind == "flag" and isinstance(spec, dict) else None
+                for spelling in (cli if isinstance(cli, list) else []):  # a positional's is the marker "positional"
+                    surface.add(("spelling", name, spelling))
+    return surface
+
+
+def contract_additions(old: Optional[Dict[str, object]], new: Optional[Dict[str, object]]) -> List[Tuple[str, str, str]]:
+    """What the new contract has that the old one lacks, sorted. Empty when either is unknown:
+    a floor that cannot be measured is not applied (the shipped-code floor does not depend on it)."""
+    if not old or not new:
+        return []
+    return sorted(contract_surface(new) - contract_surface(old))
 
 
 def bump_for_labels(labels: Iterable[str]) -> Optional[str]:
@@ -70,6 +114,8 @@ def resolve(last_version: str, subjects: List[str],
             labels_for: Callable[[int], List[str]],
             shas: Optional[List[str]] = None,
             pr_for_sha: Optional[Callable[[str], Optional[int]]] = None,
+            paths_for: Optional[Callable[[str], List[str]]] = None,
+            contract_added: Optional[List[Tuple[str, str, str]]] = None,
             ) -> Tuple[Optional[str], List[Dict[str, object]]]:
     """Return (next_version or None, per-commit decisions).
 
@@ -78,6 +124,9 @@ def resolve(last_version: str, subjects: List[str],
     shas, pr_for_sha: the commits' SHAs (same order as subjects) and SHA -> the number of the
     merged PR it is the merge commit of (None when there is none). Asked only for a subject that
     does not end with "(#N)".
+    paths_for: SHA -> the paths that commit changed; a commit the labels call not releasable is a
+    patch when it changed shipped code (`floor: "shipped_code"` in its decision).
+    contract_added: contract_additions() over the range; non-empty turns a release into a minor.
     """
     decisions: List[Dict[str, object]] = []
     bumps: List[str] = []
@@ -90,9 +139,14 @@ def resolve(last_version: str, subjects: List[str],
             labels = labels_for(number)
             bump = bump_for_labels(labels)
             decisions.append({"subject": subject, "pr": number, "labels": sorted(labels), "bump": bump})
+            exempt = "dependencies" in {l.lower() for l in labels}
         else:
             bump = None if NOT_RELEASABLE_TITLE.match(subject) else "patch"
             decisions.append({"subject": subject, "pr": None, "labels": [], "bump": bump})
+            exempt = bool(RELEASE_COMMIT.match(subject))
+        if bump is None and not exempt and shas and paths_for and changes_shipped_code(paths_for(shas[i])):
+            bump = "patch"
+            decisions[-1].update(bump=bump, floor="shipped_code")
         if bump:
             bumps.append(bump)
     if not bumps:
@@ -105,7 +159,7 @@ def resolve(last_version: str, subjects: List[str],
     while len(parts) < 3:
         parts.append(0)
     major, minor, patch = parts[:3]
-    if "minor" in bumps:
+    if "minor" in bumps or contract_added:
         return f"{major}.{minor + 1}.0", decisions
     return f"{major}.{minor}.{patch + 1}", decisions
 
@@ -137,6 +191,36 @@ def _gh_pr_for_sha(repo: str) -> Callable[[str], Optional[int]]:
     return pr_for_sha
 
 
+def _git_paths(sha: str) -> List[str]:
+    out = subprocess.run(["git", "show", "--format=", "--name-only", sha],
+                         capture_output=True, text=True, check=True).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def _contract_at(rev: Optional[str]) -> Optional[Dict[str, object]]:
+    """`_contract.py --json` of the working tree (rev None) or of a tag, read from an export of
+    that tag's scripts/. None when it cannot be produced: the caller then applies no contract floor."""
+    import tempfile
+
+    def read(script: str) -> Dict[str, object]:
+        # UTF-8 both ways: the document holds non-ASCII text, and a Windows console code page
+        # cannot print it (the child failed there with the default encoding)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        return json.loads(subprocess.run([sys.executable, script, "--json"], capture_output=True, text=True,
+                                         encoding="utf-8", env=env, check=True, timeout=120).stdout)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        if rev is None:
+            return read(os.path.join(root, "scripts", "_contract.py"))
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = subprocess.run(["git", "-C", root, "archive", rev, "scripts"], capture_output=True, check=True).stdout
+            subprocess.run(["tar", "-x", "-C", tmp], input=archive, check=True)
+            return read(os.path.join(tmp, "scripts", "_contract.py"))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"  contract at {rev or 'HEAD'} not read ({type(exc).__name__}): no contract floor")
+        return None
+
+
 def main() -> int:
     last = os.environ["LAST_VERSION"]
     repo = os.environ["GITHUB_REPOSITORY"]
@@ -147,9 +231,15 @@ def main() -> int:
     pairs = [p for p in pairs if len(p) == 2 and p[1].strip()]
     subjects = [p[1] for p in pairs]
     shas = [p[0] for p in pairs]
-    version, decisions = resolve(last, subjects, _gh_labels(repo), shas, _gh_pr_for_sha(repo))
+    added = contract_additions(_contract_at(f"v{last}"), _contract_at(None)) if last != "0.0.0" else []
+    version, decisions = resolve(last, subjects, _gh_labels(repo), shas, _gh_pr_for_sha(repo),
+                                 _git_paths, added)
+    if added:
+        print(f"  contract gained {len(added)} name(s) since v{last}: "
+              + ", ".join(f"{kind} {tool} {name}".strip() for kind, tool, name in added[:8])
+              + (" ..." if len(added) > 8 else ""))
     for d in decisions:
-        tag = d["bump"] or "-"
+        tag = (d["bump"] or "-") + ("*" if d.get("floor") else "")
         print(f"  {tag:6} {'#' + str(d['pr']) if d['pr'] else '(no PR)':8} {','.join(d['labels']) or '(unlabeled)':30} {d['subject']}")
     print(f"last tag v{last} -> {'no release' if version is None else version}")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
