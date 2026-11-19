@@ -669,6 +669,23 @@ limit. The error message names the fix. For a long master, pass `--timeout 0` (n
 larger value, or `--fast`, which at the measured rate takes about 16 minutes for the hour.
 Analysis tools and stream-copy cuts stay far below the limit.
 
+### Plan a long edit or batch
+
+1. Probe the master and make one lightweight copy for review with
+   `python3 scripts/proxy.py master.mp4 --width 640 -o review.mp4`. Use the
+   master for the final cut and check the chosen boundaries on its timeline.
+2. Run whole-file analysis once and save the results. For example,
+   `python3 scripts/silence.py master.mp4 --list --json > silence.json` lists
+   the ranges to review. Pass the chosen ranges to `cut.py --segments`. When
+   the delivery uses only selected material, trim before reframing, adding
+   captions, or applying effects.
+3. Time a representative segment at the final resolution, codec, and quality
+   to set the export timeout. Watch peak memory across the tool and its FFmpeg
+   children. For a batch, start with `--jobs 1` and increase to `--jobs 2` on the
+   same sample only if throughput improves and the workstation has memory
+   headroom. Each concurrent encode has its own decoder, filter buffers, and
+   encoder threads. A parallel batch shares one timeout across its items.
+
 ## Install
 
 Where it can be installed from today. Each route is spelled out below the table.
