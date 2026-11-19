@@ -36,20 +36,25 @@ def git(*args: str, cwd: str = ".") -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
 
 
-def changed_tests(diff: str) -> "dict[str, list[str]]":
-    """module -> test names the diff adds or edits (the enclosing `def test_` of each hunk)."""
+def changed_tests(diff: str, read=lambda module: "") -> "dict[str, list[str]]":
+    """module -> tests the diff adds or edits (the enclosing `def test_` of each hunk), as
+    "Class.test_name" when `read(module)`, the head's source, shows the class: two classes can
+    hold a test of the same name, and only the edited one is evidence (review of #635)."""
     found: "dict[str, list[str]]" = {}
-    module, current, depth = None, None, 0
+    module, current, depth, lineno, classes = None, None, 0, 0, []
     for line in diff.splitlines():
         if line.startswith("+++ "):
             m = re.match(r"\+\+\+ b/tests/(test_\w+)\.py$", line)
             module, current = (m.group(1) if m else None), None
+            classes = [(n, c) for n, c in enumerate((read(module) if module else "").splitlines(), 1)
+                       for c in re.findall(r"^class (\w+)", c)]
         elif not module:
             continue
         elif line.startswith("@@"):
             m = HUNK_TEST.match(line)
             # the hunk header names the def it starts inside (a test method: four spaces deep)
             current, depth = (m.group(1), 4) if m else (None, 0)
+            lineno = int(re.match(r"@@ -\S+ \+(\d+)", line).group(1))
         else:
             m = DEF_LINE.match(line)
             # a def line, unchanged or added, opens the method the next lines belong to; one deeper
@@ -57,8 +62,13 @@ def changed_tests(diff: str) -> "dict[str, list[str]]":
             if m and not (current and len(m.group(1)) > depth):
                 current, depth = (m.group(2), len(m.group(1))) if m.group(2).startswith("test_") else (None, 0)
             # a changed line belongs to the test it sits in (a body-only edit counts, #635)
-            if line[:1] in "+-" and current and current not in found.setdefault(module, []):
-                found[module].append(current)
+            if line[:1] in "+-" and current:
+                owner = [c for n, c in classes if n <= lineno]
+                name = f"{owner[-1]}.{current}" if owner else current
+                if name not in found.setdefault(module, []):
+                    found[module].append(name)
+            if line[:1] != "-":
+                lineno += 1
     return {k: v for k, v in found.items() if v}
 
 
@@ -76,7 +86,8 @@ def outcome(stderr: str, case: str) -> str:
                   stderr, flags=re.M)
     if not m:
         return "unclear"
-    return {"ok": "passes", "unexpected success": "fails"}.get(m.group(1), "unclear")
+    # an unexpected success is an assertion that held on the base: not a failure (review of #635)
+    return {"ok": "passes", "unexpected success": "passes"}.get(m.group(1), "unclear")
 
 
 def main() -> int:
@@ -124,7 +135,8 @@ def main() -> int:
             print(f"this fix adds {net} net lines to shipped code (limit {limit}): prefer a refusal or removing a mode, "
                   f"or give the reason as size_reason in its {LEDGER} line")
             return 1
-    tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"))
+    tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"),
+                          lambda module: git("show", f"{args.head}:tests/{module}.py"))
     if not tests:
         print(f"{len(shipped)} shipped file(s) changed and no test was added or edited")
         return 1
@@ -136,9 +148,12 @@ def main() -> int:
             git("checkout", "--no-overlay", base, "--", *SHIPPED, cwd=tmp)
             for module, cases in tests.items():
                 for case in cases:
-                    proc = subprocess.run([sys.executable, "-m", "unittest", "-v", f"tests.{module}", "-k", case],
+                    # Class.test_name runs that one test; a bare name falls back to -k
+                    target = [f"tests.{module}.{case}"] if "." in case else [f"tests.{module}", "-k", case]
+                    proc = subprocess.run([sys.executable, "-m", "unittest", "-v", *target],
                                           cwd=tmp, capture_output=True, text=True, timeout=1800)
-                    {"fails": failing, "passes": passing}.get(outcome(proc.stderr, case), unclear).append(f"{module}.{case}")
+                    verdict = outcome(proc.stderr, case.rsplit(".", 1)[-1])
+                    {"fails": failing, "passes": passing}.get(verdict, unclear).append(f"{module}.{case}")
         finally:
             git("worktree", "remove", "--force", tmp)
     for name in failing:

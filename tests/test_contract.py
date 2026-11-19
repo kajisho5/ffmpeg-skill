@@ -3137,6 +3137,10 @@ sys.exit(fit.main())
                 "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
                 "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
         self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
+        # with the head's source the class is kept: U.test_d, not any test_d (review of #635)
+        source = "class T:\n" + "\n" * 28 + "class U:\n"
+        self.assertEqual(proof.changed_tests(diff, lambda module: source),
+                         {"test_x": ["T.test_a", "T.test_c", "U.test_d"]})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
@@ -3154,6 +3158,8 @@ sys.exit(fit.main())
                "======\nFAIL: test_a (tests.test_x.T.test_a) (i=1)\n")
         self.assertEqual(proof.outcome(sub, "test_a"), "fails")
         self.assertEqual(proof.outcome("ERROR: setUpClass (tests.test_x.T)\n", "test_a"), "unclear")
+        # an unexpected success held on the base: it is not a failure there
+        self.assertEqual(proof.outcome("test_a (tests.test_x.T.test_a) ... unexpected success\n", "test_a"), "passes")
         self.assertEqual(origins.kind_of("Add missing validation (#700)", {"fix"}), "fix")
         self.assertEqual(origins.kind_of("fix: x (#701)", {"feature", "chore"}), "feature")
         self.assertEqual(origins.kind_of("fix: x (#702)", {"chore"}), "fix")
