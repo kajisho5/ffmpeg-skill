@@ -1911,6 +1911,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
+        # 4.0.0: what the 4.x promise covers for this tool (docs/contract.md, Stability guarantee (4.x))
+        "stability": "stable" if name in STABLE_TOOLS else "beta",
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
                                                                                        + (ALPHA_LINE_OPTIONAL if name in ALPHA_LINE_TOOLS else []))},
         "inputs": list(meta["inputs"]),
@@ -2007,6 +2009,8 @@ READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # other 30 stay reachable by name through tools/call either way, and `contract --json` always
 # describes all 42.
 MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
+# 4.0.0: the tools whose surface 4.x promises not to break; the other 30 are "beta" (docs/contract.md).
+STABLE_TOOLS = MCP_CORE_TOOLS
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
                        "Media paths must be absolute.")

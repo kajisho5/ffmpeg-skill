@@ -40,12 +40,26 @@ from `scripts/` on every CI run instead — a stale count fails a test rather th
 silently. (`SKILL.md` was added to that check after its "the 28 scripts" sat stale through
 twelve tool additions while the other three files were correct.)
 
-## Stability guarantee (3.x)
+## Stability guarantee (4.x)
 
 1.0.0 was published on 2026-09-11 (by accident: see CHANGELOG.md's 1.0.0 entry; the number
 is kept rather than burned). From 1.0.3 on, the number is treated as the promise it implies;
-2.0.0 (2026-09-22) is the first deliberate break, listed under "What 2.0 changed" below, and
-3.0.0 is the second, listed under "What 3.0 changed". The same promise holds for the whole of 3.x:
+2.0.0 (2026-09-22) is the first deliberate break, listed under "What 2.0 changed" below,
+3.0.0 the second ("What 3.0 changed") and 4.0.0 the third ("What 4.0 changed").
+
+4.x splits the promise by tool. Each tool's `stability` in `contract --json` says which half it is
+under:
+
+- **`stable`**: the 12 core tools (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`,
+  `audio`, `loudness`, `graphics`, `silence`, `probe`; the MCP server's default `tools/list`). The
+  table below holds for them for the whole of 4.x, as it held for every tool in 3.x.
+- **`beta`**: the other 30. The same table holds, except that an argument or an output key may be
+  removed, renamed or made required in a minor release after it has been listed in `deprecated`
+  for one minor release (not the three steps below). Tool names and script names are not
+  removed in 4.x.
+
+A beta tool becomes stable in a minor release, with a CHANGELOG line; a stable tool does not
+become beta before 5.0.
 
 | Surface | Promise |
 |---|---|
@@ -146,6 +160,19 @@ JSON would have been rewritten for that. The flat keys, typed per tool in `outpu
 | `cut.py` defaults: `-avoid_negative_ts make_zero` on a single `.mp4`/`.mov` stream copy; x264 for an SDR HEVC source's re-encode; `--vfr-guard average` | decided in 2.x (`docs/design-decisions.md`) | the edit list is kept by default (`edit_list: true`, the picture starts at `--start`); an SDR HEVC source's re-encode stays HEVC; `--vfr-guard` defaults to `sampled`. `--edit-list` and `--keep-hevc` are still accepted | `--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore the 2.x behaviour |
 | `cut.py`'s `precision` and `keyframe_snapped` | decided in 2.x (`docs/design-decisions.md`) | `precision` is the least exact segment's, equal to `least_exact_precision` (which stays); `keyframe_snapped` equals `start_snapped`: a copied start really moved (boolean, or `null` under `--dry-run`). `contract_version` is `2.0` | Read `start_snapped`/`keyframe_snapped` for "did the start move"; a 2.x "stream copy end to end" test is `reencoded: false` |
 
+## What 4.0 changed
+
+Each row was a 3.x behaviour a caller could have relied on, so it waited for a major (#632). None
+removes a tool, a flag or an output key.
+
+| What changed in 4.0.0 | 3.x behaviour | 4.0 behaviour | Migrating from 3.x |
+|---|---|---|---|
+| The promise is split by tool (`stability`) | every tool under the same promise | 12 tools `stable`, 30 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
+| `export.py`, a single-file video delivery (not GIF) that misses a required property: a missing picture or sound stream, the wrong video codec, preset size or fixed frame rate, or a duration or `--max-mb` limit (#620) | exit 0 with `verified: false` | exit 1, `kind: verification`, the failed steps listed and the file kept. A failed loudness step still only sets `verified: false` | Read the exit status, or `status`, instead of `verified` alone |
+| `fit.py --duration` whose implicit speed factor is above 1.15 or below 1/1.15 (#582) | retimed, with `large_speed_change` among the warnings | refused before ffmpeg runs, `error.reason: fit_method_required` (`details: {factor, threshold, source_duration, target_duration}`), dry runs with a known length included | Pass `--method speed` to retime or `--method trim` to trim; `--smooth blend` or `--smooth interpolate` also chooses a retime |
+| Delivery templates (`render.py --template`) (#575) | platform checks only | the template's `check` also runs `check.py --content` (black frames, freezes, flashes, silence, dropouts); a failed row fails the render and keeps the file | Fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}` |
+| An input that is empty, a directory, not media, or unreadable by this user; an output extension the build has no muxer for (#558) | ffprobe's raw lines (`kind: input`, no reason), "input not found" for a permission error, and `kind: ffmpeg` after a completed dry run for `out.xyz` | `kind: input` with `error.reason` `input_empty`, `input_is_directory`, `input_not_media`, `input_permission_denied` or `output_extension_unknown`, dry runs included | Match on `error.reason`, not on the message |
+
 ## Skill
 
 ```json
@@ -189,6 +216,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `supports_json` | whether `--json` exists |
 | `supports_json_brief` | whether `--json-brief` exists (1.11.0): the same success document with `probe` replaced by a compact `summary` (`duration_s`, `width`, `height`, `fps`, `vcodec`, `acodec`, `channels`, and `lufs` when the tool measured one), `commands` replaced by the number of commands run, and the per-step `verification` list dropped (its verdict stays in `verified`). Tool-specific keys are unchanged, `--json`'s own output is unchanged, and a failure prints the same failure document either way |
 | `mutates_input` | always `false`: no tool overwrites its input |
+| `stability` | `stable` (the 12 core tools) or `beta` (the other 30); since 4.0.0, see "Stability guarantee (4.x)" |
 | `produces_artifact` | writes a file (media, PNG, HTML, EDL) |
 | `verification` | `{required, tools}`: which tools to run on the output afterwards |
 | `requires_visual_verification` | the picture changed; run `ffmpeg-skill/look` and inspect the PNG |

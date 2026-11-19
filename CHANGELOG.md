@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
+The third deliberate break (4.0.0). What changed and how to migrate: docs/contract.md, "What 4.0 changed".
 
 ## 3.15.1
 
@@ -19,35 +19,15 @@ _Automated release: version and notes generated from pull requests merged since 
 - feat: add npx ffmpeg-skill setup, one command for a new machine (#634)
 
 ## 3.14.1
+### Changed
 
-_Automated release: version and notes generated from pull requests merged since 3.14.0._
-
-- fix: treat Matroska .mka output as audio (#595)
-
-## 3.14.0
-
-_Automated release: version and notes generated from pull requests merged since 3.13.2._
-
-### Added
-
-- Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
+- **The stability promise is split by tool.** `contract --json` gives each tool `stability`: the 12 core tools are `stable` (the 3.x promise, for the whole of 4.x), the other 30 `beta` (an argument or output key may change in a minor release after one minor in `deprecated`).
 - Delivery templates include the applicable `check.py --content` rows by default (#575).
-- Keep common two-character words together in Chinese phrase wrapping (#569).
-- Report measured picture placement after reframing in export and render results (#548).
-- Treat `.mka` as audio-only. Audio encodes use FLAC, and compatible cuts can copy the original audio codec (#539).
+- Return a verification failure when a video delivery misses a required export property (#620).
+- Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 
 ### Fixed
 
-- Return a verification failure when a video delivery misses a required export property (#620).
-- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
-- ci(release): the version no longer depends on a PR's title (#631)
-- Preserve reading order in right-to-left captions (#625)
-- Report measured picture geometry from export and render (#618)
-- Keep common Chinese caption words together (#619)
-- Compare a requested cut in-point with the output start (#614)
-
-Closes: #548, #569, #606, #623
-- Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 - **A still image with a `%` in its name that is not a pattern can be used (#558).**
   `overlay.py --image 'a%20b.png'` (also `50%.png`, `insert.py`, `broll.py --insert`, `probe.py`)
   failed inside ffmpeg with "Option pattern_type not found". A still with a `%` in its name is now
@@ -75,6 +55,34 @@ Closes: #548, #569, #606, #623
   `-- -dash.mp4` failed in ffprobe, and `-report` left an `ffprobe-*.log` in the working
   directory. Such a name reaches ffmpeg and ffprobe as `./name`; the default output named after it
   is written too, and `verify.py` and `report.py` pass it on as a file.
+
+## 3.14.1
+
+_Automated release: version and notes generated from pull requests merged since 3.14.0._
+
+- fix: treat Matroska .mka output as audio (#595)
+
+## 3.14.0
+
+_Automated release: version and notes generated from pull requests merged since 3.13.2._
+
+### Added
+
+- Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
+- Keep common two-character words together in Chinese phrase wrapping (#569).
+- Report measured picture placement after reframing in export and render results (#548).
+- Treat `.mka` as audio-only. Audio encodes use FLAC, and compatible cuts can copy the original audio codec (#539).
+
+### Fixed
+
+- Preserve reading order and edge punctuation in generated right-to-left captions (#623).
+- ci(release): the version no longer depends on a PR's title (#631)
+- Preserve reading order in right-to-left captions (#625)
+- Report measured picture geometry from export and render (#618)
+- Keep common Chinese caption words together (#619)
+- Compare a requested cut in-point with the output start (#614)
+
+Closes: #548, #569, #606, #623
 
 ## 3.13.2
 

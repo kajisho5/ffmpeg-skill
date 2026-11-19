@@ -2885,6 +2885,23 @@ sys.exit(fit.main())
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
+    def test_4_0_splits_the_promise_by_tool(self):
+        """4.0.0: the 12 core tools are `stable`, the other 30 `beta`; the contract says which, the
+        two lists do not drift apart, and the docs describe both halves and every 4.0 change."""
+        stability = {t["name"]: t["stability"] for t in self.contract["tools"]}
+        self.assertEqual({n for n, s in stability.items() if s == "stable"}, set(_contract.MCP_CORE_TOOLS))
+        self.assertEqual(set(stability.values()), {"stable", "beta"})
+        self.assertEqual(sum(1 for s in stability.values() if s == "beta"), len(stability) - 12)
+        doc = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        self.assertIn("## Stability guarantee (4.x)", doc)
+        self.assertIn("## What 4.0 changed", doc)
+        for reason in ("fit_method_required", "input_empty", "input_is_directory", "input_not_media",
+                       "input_permission_denied", "output_extension_unknown"):
+            self.assertIn(reason, self.contract["json_output"]["error_reasons"], reason)
+            self.assertIn(reason, doc.split("## What 4.0 changed", 1)[1].split("\n## ", 1)[0], reason)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("contract.md#stability-guarantee-4x", readme)
+        self.assertIn("contract.md#what-40-changed", readme)
     def test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager(self):
         """`npx ffmpeg-skill setup` is the one command: the skill for every agent whose home
         directory exists (Claude Code when none does), FFmpeg through brew / winget / apt-get when
