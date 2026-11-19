@@ -10648,7 +10648,8 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         remux = self.work / "unread_remux.mkv"
         self.doc("export", n, "--preset", "copy", "-o", remux)
         self.assertGreater(json.loads(tool("probe", remux, "--json").stdout)["duration"], 1.9)
-        doc, _ = self.doc("fit", remux, "--duration", "1", "-o", self.work / "unread_fit.mp4")
+        doc, _ = self.doc("fit", remux, "--duration", "1", "--method", "speed",
+                          "-o", self.work / "unread_fit.mp4")
         self.assertEqual((doc["status"], doc["verified"]), ("completed", True))
         # a tool that does not compute with the length still runs on the file as it is
         doc, _ = self.doc("fit", n, "--width", "80", "-o", self.work / "unread_scaled.mp4")
