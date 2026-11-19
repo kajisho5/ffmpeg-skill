@@ -44,7 +44,7 @@ class OrchestrationTests(MediaFixtures):
         page_path = Path(sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "run.json").stdout.strip())
         self.assertEqual(page_path, work / "proj.review" / "index.html")
         page = page_path.read_text(encoding="utf-8")
-        stills = sorted(p.name for p in page_path.parent.glob("*.jpg"))
+        stills = sorted(p.name for p in (page_path.parent / "stills").glob("*.jpg"))
         self.assertEqual([n for n in stills if n.startswith("clip")], [f"clip{i}_{k}.jpg" for i in range(2) for k in range(3)])
         self.assertEqual(len([n for n in stills if n.startswith("out_")]), 6, stills)
         self.assertIn("stages: clips → join", page, "the dry run ran even though out.mp4 is already there")
@@ -82,6 +82,26 @@ class OrchestrationTests(MediaFixtures):
         page = (work / "nulls_review" / "index.html").read_text(encoding="utf-8")
         self.assertIn('data-k="in" value=""', page)
         self.assertIn('data-k="out" value=""', page)
+        # an existing review folder that also holds a project input: the input is never touched,
+        # and a stills folder the tool did not make is refused (review of #636)
+        reused = work / "reused"
+        reused.mkdir(exist_ok=True)
+        (reused / "index.html").write_text("old", encoding="utf-8")
+        (reused / "clip0_0.jpg").write_bytes(b"overlay")
+        overlaid = work / "overlaid.json"
+        overlaid.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "src.mp4"}],
+                                        "overlays": [{"image": str(reused / "clip0_0.jpg")}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", overlaid, "-o", reused, "--overwrite")
+        self.assertEqual((reused / "clip0_0.jpg").read_bytes(), b"overlay")
+        self.assertTrue((reused / "stills" / "clip0_0.jpg").stat().st_size > 0)
+        foreign = work / "foreign"
+        (foreign / "stills").mkdir(parents=True, exist_ok=True)
+        (foreign / "index.html").write_text("old", encoding="utf-8")
+        (foreign / "stills" / "mine.jpg").write_bytes(b"keep")
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(foreign), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual((foreign / "stills" / "mine.jpg").read_bytes(), b"keep")
         # the project the page embeds is the project as given, and </script> in it cannot end the script
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")

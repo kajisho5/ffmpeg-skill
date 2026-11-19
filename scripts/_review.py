@@ -20,6 +20,7 @@ import html
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,8 @@ from _common.decision import parse_time  # noqa: E402
 
 
 SOURCES: "set[str]" = set()  # every media path the project or the result names, resolved
+STILLS = "stills"             # the stills live in a folder of their own, which only this tool writes
+STILLS_MARK = ".ffmpeg-skill-review-stills"
 STILL_TIMEOUT = 120  # seconds for one still or one probe: a stalled read is a missing still, not a hang
 
 
@@ -84,9 +87,9 @@ def seconds(value, fps: float = 30.0) -> "float | None":
 
 
 def figure(folder: Path, name: str, src: str, at: "float | None", label: str) -> str:
-    if at is None or not still(src, at, folder / name):
+    if at is None or not still(src, at, folder / STILLS / name):
         return f'<figure class="miss"><div>no still</div><figcaption>{html.escape(label)}</figcaption></figure>'
-    return f'<figure><img src="{name}" alt=""><figcaption>{html.escape(label)}</figcaption></figure>'
+    return f'<figure><img src="{STILLS}/{name}" alt=""><figcaption>{html.escape(label)}</figcaption></figure>'
 
 
 def field(value) -> str:
@@ -215,12 +218,34 @@ def main(argv=None) -> int:
         # could share a still's name (review of #636)
         print(f"error: {folder} holds other files and no review page; give an empty or new folder", file=sys.stderr)
         return 1
-    for clip in project.get("clips") or []:
-        src = str(clip.get("src", ""))
-        SOURCES.add(os.path.realpath(src if os.path.isabs(src) else proj_path.parent / src))
-    if result and result.get("output"):
-        SOURCES.add(os.path.realpath(result["output"]))
-    folder.mkdir(parents=True, exist_ok=True)
+    # every string in the project that names a file (a clip, an overlay, a cue file, music) and
+    # the result's output: none of them may be in the stills folder (review of #636)
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for v in value.values():
+                yield from strings(v)
+        elif isinstance(value, list):
+            for v in value:
+                yield from strings(v)
+    for text in list(strings(project)) + ([str(result["output"])] if result and result.get("output") else []):
+        candidate = Path(text) if os.path.isabs(text) else proj_path.parent / text
+        if candidate.exists():
+            SOURCES.add(os.path.realpath(candidate))
+    stills = folder / STILLS
+    if os.path.lexists(stills):
+        # only a stills folder this tool made is cleared; anything else in its place is someone's
+        if not (stills.is_dir() and not stills.is_symlink() and (stills / STILLS_MARK).is_file()):
+            print(f"error: {stills} exists and was not made by the review page; move it or give another -o", file=sys.stderr)
+            return 1
+        inside = [p for p in SOURCES if Path(p).is_relative_to(stills.resolve())]
+        if inside:
+            print(f"error: the project uses {inside[0]}, which is in {stills}; give another -o", file=sys.stderr)
+            return 1
+        shutil.rmtree(stills)
+    stills.mkdir(parents=True)
+    (stills / STILLS_MARK).write_text("made by scripts/_review.py; cleared on each run\n", encoding="utf-8")
     # a dry run writes nothing, so --overwrite only keeps an output from an earlier run from refusing it
     dry = subprocess.run([sys.executable, str(HERE / "render.py"), str(proj_path), "--dry-run", "--overwrite", "--json"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(proj_path.parent))
