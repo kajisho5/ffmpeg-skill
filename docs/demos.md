@@ -282,6 +282,7 @@ python3 scripts/fit.py demos/out/fixtures/mandel.mp4 --aspect 9:16 --fit blur --
 ```bash
 python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --tolerance 5 --json -o demos/out/cut_accurate_before.mp4
 python3 scripts/cut.py demos/out/fixtures/mandel.mp4 --start 2.05 --duration 3 --accurate --preset veryfast -o demos/out/cut_accurate_after.mp4
+python3 scripts/look.py demos/out/fixtures/mandel.mp4 --at 2.05 --compare demos/out/cut_accurate_after.mp4 --compare-at 0 -o demos/out/cut_accurate_start.png
 ```
 
 **Look for:** Both sides asked for the same 2.05 s start. The stream copy could only snap to the nearest keyframe, so its first frame is from earlier in the clip; --accurate re-encodes and starts on the frame that was asked for.

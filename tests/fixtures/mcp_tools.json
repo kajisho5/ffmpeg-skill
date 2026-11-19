@@ -663,6 +663,7 @@
    "argv",
    "at",
    "compare",
+   "compare_at",
    "dry_run",
    "fast",
    "guides",

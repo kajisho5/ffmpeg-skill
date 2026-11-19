@@ -6,6 +6,7 @@
 
 ### Added
 
+- Compare a requested source in-point with the cut's first frame using `look.py --compare-at` (#606).
 - Delivery templates include the applicable `check.py --content` rows by default (#575).
 
 ## 3.13.2

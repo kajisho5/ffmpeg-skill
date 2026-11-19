@@ -492,6 +492,12 @@ For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to a
 request a drift measurement, which may be unavailable for short or low-confidence recordings.
 Review lip sync by watching and listening to the delivered file.
 
+A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
+position beside the output start with
+`python3 scripts/look.py source.mp4 --at 12.5 --compare cut.mp4 --compare-at 0 -o start.png`.
+Open the PNG to check the two frames. For several cuts, pair the source in-points with their
+positions in the output by repeating both time flags.
+
 ### Are silence removal and captions stable?
 
 They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.

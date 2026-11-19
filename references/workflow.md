@@ -18,6 +18,8 @@ lines per step; every rule below still applies.
    - **Judgement (report it, don't silently pass or fail):** whether a subject or face is cut off, text sits over a face, colours look washed out, a transition lands. These need deciding what the subject *is*, the calling agent's call — say what you see in one line; they judge.
    With no vision capability, write `Look: PATH (pixels not inspected; agent has no image view)` — never claim a picture was inspected when it wasn't, without stalling for a capability that isn't there.
 
+   To inspect a cut's start, run `look.py SOURCE --at IN --compare OUTPUT --compare-at 0` and compare the requested source frame with the first output frame.
+
 ## Before you run anything: what to ask, what to assume
 
 Ask a short question only when the answer changes the output materially and the request does not imply it. When several things are open at once (a vague "make it for social media" leaves destination, aspect, length and captions open), don't ask one per turn: propose one bundle with your defaults and let the user change any part ("Reels: 9:16 padded, 60 s, -14 LUFS, no captions — OK?"). One question, one answer, then the run. Never ask for what `probe.py` can tell you.
