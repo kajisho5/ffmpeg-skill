@@ -28,7 +28,7 @@ No cloud · No API keys · Python standard library</p>
 </p>
 
 <p align="center">
-  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v3: give your coding agent a video editor. An agent runs probe, cut, fit, export and check, and the final file is measured: 59.98 s, 1080x1920, 30 fps."></a>
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: Edit. Measure. Ship. 42 local FFmpeg tools, 12 stable; your agent does the work. A card shows final.mp4 measured: 59.98 s, 1080x1920, 30 fps, -14.0 LUFS, verified."></a>
 </p>
 
 ```bash
