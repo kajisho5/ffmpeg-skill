@@ -54,8 +54,6 @@ def main() -> int:
         die(f"--shakiness must be 1..10, got {args.shakiness}")
     if not 0 <= args.smoothing <= 1000:
         die(f"--smoothing must be 0..1000, got {args.smoothing}")
-    if not 0 <= args.zoom <= 100:
-        die(f"--zoom must be 0..100, got {args.zoom}")
 
     meta = probe(args.input)
     if not meta.get("video"):

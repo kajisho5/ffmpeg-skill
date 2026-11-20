@@ -432,8 +432,6 @@ def main() -> int:
         die("--denoise is off but --denoise-strength was given; add --denoise"
             + (f" (--voice {args.voice} then denoises at that strength)" if args.voice else ""))
     # afftdn's nf accepts -80..-20 only; 10..19.99 used to pass here and then fail inside ffmpeg.
-    if args.denoise and not 20 <= args.denoise_strength <= 60:
-        die(f"--denoise-strength must be 20..60 (afftdn noise floor in dB below full scale), got {args.denoise_strength:g}")
     for flag, value in (("--fade-in", args.fade_in), ("--fade-out", args.fade_out), ("--music-fade-out", args.music_fade_out)):
         if value < 0:  # a negative length reached afade, which refused it (kind ffmpeg)
             die(f"{flag} must be 0 or more seconds, got {value:g}")
@@ -444,8 +442,6 @@ def main() -> int:
                                 ("--duck-release", args.duck_release, 0.01, 9000.0)):
         if not (lo <= value <= hi):
             die(f"{flag} {value:g} is outside {lo:g}..{hi:g}")
-    if args.stereo_widen is not None and not (0.0 <= args.stereo_widen <= 1.0):
-        die(f"--stereo-widen must be 0..1 (0 = untouched, 1 = maximum), got {args.stereo_widen:g}")
 
     problems = preflight_beds(args)
     silent = find_silent_tracks(args, problems)

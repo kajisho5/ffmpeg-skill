@@ -46,8 +46,6 @@ def main() -> int:
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
 
-    if not -45 <= args.degrees <= 45:
-        die(f"--degrees must be -45..45, got {args.degrees:g}")
     if args.degrees == 0:
         die("--degrees must be nonzero (nothing to straighten)")
     validate_color(args.fill_color, "--fill-color")

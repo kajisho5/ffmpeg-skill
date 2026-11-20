@@ -154,8 +154,6 @@ def main() -> int:
 
     if args.seconds <= 0:
         die(f"--seconds must be > 0, got {args.seconds:g}")
-    if not 0 <= args.limit <= 1:
-        die(f"--limit must be 0..1, got {args.limit:g}")
     if args.round_to <= 0:
         die(f"--round must be > 0, got {args.round_to}")
 

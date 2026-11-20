@@ -11617,6 +11617,34 @@ class FlagValueTests(unittest.TestCase):
                 doc = json.loads(tool(name, *argv, "--dry-run", "--json", cwd=self.work).stdout)
                 self.assertEqual(doc["status"], "completed", label)
 
+    def test_an_output_ffmpeg_would_split_into_files_it_names_is_refused(self):
+        """#562: `-o out.m3u8` made ffmpeg write out0.ts, `-o out.mpd` init-stream0.m4s and
+        `-o frame%03d.png` frame001.png and on. None of those names had been checked, -y replaced
+        the ones that existed, and the run failed only afterwards. Refused before anything runs."""
+        clip, w = str(self.clip), self.work / "split"
+        w.mkdir(exist_ok=True)
+        kept = [w / n for n in ("out0.ts", "init-stream0.m4s", "frame001.png", "cut001.png")]
+        (w / "cues.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+        for path in kept:
+            path.write_bytes(b"KEEP")
+        cases = [("proxy", [clip, "--width", "80"], "out.m3u8"), ("proxy", [clip, "--width", "80"], "out.mpd"),
+                 ("proxy", [clip, "--width", "80"], "frame%03d.png"), ("cut", [clip, "--start", "0", "--end", "1", "--accurate"], "cut%03d.png"),
+                 ("cut", [clip, "--start", "0", "--end", "1"], "cut%03d.png"), ("caption", [clip, "--srt", "cues.srt"], "frame%03d.png"),
+                 ("cut", [clip, "--start", "0", "--end", "1", "--dry-run"], "out.m3u8")]
+        before = sorted(p.name for p in w.iterdir())
+        for name, argv, out in cases:
+            with self.subTest(tool=name, output=out, argv=argv[1:]):
+                doc = json.loads(tool(name, *argv, "-o", out, "--json", cwd=w, check=False).stdout)
+                self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"].get("reason")), ("failed", "input", "output_extension_unsupported"))
+                self.assertIn(out, doc["error"]["message"])
+                self.assertEqual(doc["commands"], [])
+        self.assertEqual(sorted(p.name for p in w.iterdir()), before, "nothing was written, a sidecar included")
+        self.assertEqual({p.read_bytes() for p in kept}, {b"KEEP"})
+        # a literal percent is a name like any other, and look.py's single image is written as named
+        self.assertEqual(json.loads(tool("cut", clip, "--start", "0", "--end", "1", "-o", "100%.mp4", "--json", cwd=w).stdout)["status"], "completed")
+        self.assertEqual(json.loads(tool("look", clip, "--at", "1", "-o", "50%d.png", "--json", cwd=w).stdout)["status"], "completed")
+        self.assertTrue((w / "50%d.png").is_file())
+
     def test_a_timeout_no_run_can_wait_for_is_never_an_overflow(self):
         """A8/A188: 1e300 s (or inf) reached select() as an OverflowError after the child had
         started, so the MCP call failed while the tool kept running and wrote its output."""
