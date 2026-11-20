@@ -484,7 +484,8 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
         else:
             words.append(b)
     if fix.get(""):
-        tips += "\ntry: " + shlex.join(["python3", sys.argv[0]] + words)
+        # a POSIX shell's single quotes mean nothing to cmd.exe, and a Windows path needs no quoting there
+        tips += "\ntry: " + (subprocess.list2cmdline if os.name == "nt" else shlex.join)(["python3", sys.argv[0]] + words)
     return tips
 
 
