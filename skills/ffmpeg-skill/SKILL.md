@@ -93,7 +93,7 @@ A failure starts `Failed:` and quotes `error.message`; with nothing to check or 
 These fillers are sentences, not labels: a Japanese report says `Check: 検証するものなし` / `Look: 不要`.
 Never describe a fix you did not run. Full Japanese example and more rules: `references/report.md`.
 
-Report the completed edit first. For standalone use, offer a review page when useful: `python3 scripts/_review.py project.json --result run.json` (the plan with stills, what was measured, and fields that save an edited project to render again). Prepare it only if the user requests or accepts it. Velisa and other callers that own the review handle their own presentation.
+Report the completed edit first. For standalone use, offer a review page when useful: `python3 scripts/_review.py project.json --result run.json` (a numbered editor screen: press what to change, copy the instruction it writes back to the agent). Prepare it only if the user requests or accepts it. Velisa and other callers that own the review handle their own presentation.
 
 ## Request → script
 

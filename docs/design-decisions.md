@@ -6205,11 +6205,27 @@ is said about them is reasoned and marked so.
 - **The page runs nothing.** Re-editing means editing the render project: the page saves the
   edited JSON and shows the `render.py` command and a sentence to give the agent. A page that ran
   ffmpeg would need a local server, and the run would bypass the agent that reports the result.
+- **It is one screen built from one document.** `_review.py` measures (ffprobe per source, three
+  stills per clip, six stills and a waveform of the output, the dry run's stages) and embeds one
+  JSON document with the project, the run's result as given, and each tool's flags from
+  `_contract.py --json --static`; `scripts/_review.html` holds the markup, styles and script and
+  derives everything it shows from that document. The page measures nothing and recomputes
+  nothing: a row is green only where the run's own `ok` is true or `check.py` said PASS.
+- **An instruction, not an edit.** Only a clip's in, out and speed change the saved project. A
+  tool flag, a caption's text, a marker or a range becomes a line of the instruction with the
+  element's number: the agent that runs the tools is the one that knows how a flag maps onto the
+  project, and it reports the result.
+- **The caption shown after a caption setting is changed is labelled a likeness** and is drawn
+  under the picture, not over it: the picture already carries the burned captions of the last run.
+- **A file the browser cannot play falls back to the six stills**, and the page says so. No proxy
+  is encoded: that would be a second render nobody asked for.
 - **A still that ffmpeg could not write says "no still"**, and a measurement the run did not make
   says "not measured": the page shows what was measured, never a placeholder that looks like data.
 - **The plan's dry run passes `--overwrite`**: it writes nothing, and without the flag an output
   left by the run being reviewed refused it, so the page said the plan had no stages.
-- Code: `scripts/_review.py`, `bin/install.js` (`review`). Test:
+- Code: `scripts/_review.py`, `scripts/_review.html`, `bin/install.js` (`review`). Test:
   `test_the_review_page_shows_the_plan_and_the_result_and_saves_an_edited_project`
-  (tests/test_orchestration.py). The page's own script (saving the edited project) was checked in
-  Chromium by hand; CI has no browser.
+  (tests/test_orchestration.py) checks the embedded document and every write guard. The page's own
+  script (selection, the instruction, clip edits, playback, the four languages) was checked in
+  Chromium at 1440x900 and 1920x1080 with `.claude/skills/review-page-ui/SKILL.md`; CI has no
+  browser, so a change to `_review.html` is checked that way before it is pushed.

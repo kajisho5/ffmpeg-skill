@@ -20,9 +20,13 @@ media.
   step. Third-party editor kits (Remotion, Editframe and the like) are out for
   this reason.
 - **Standalone only (#633).** Not a contract tool, not listed by the MCP server.
-- **Shipped Python is under a ceiling** (`.github/code-budget.json`). Keep the
-  page's markup, CSS and JS in a template file that `_review.py` fills, not in
-  Python string literals.
+- **Shipped Python is under a ceiling** (`.github/code-budget.json`). The page's
+  markup, CSS and JS are `scripts/_review.html`; `_review.py` only measures and
+  puts one JSON document where the template says `/*DATA*/`. A new thing the page
+  shows is derived in the template's script from that document; Python changes
+  only when something new must be measured.
+- **The page measures nothing.** A row is green only where the run's own `ok` is
+  true or `check.py` said PASS. A missing value reads "not measured".
 - **Every write is guarded.** The page, each still and the marker go through
   `write_new()` and `is_input()` in `_review.py`: staged beside the target,
   replaced by name, refused when the target is an input by name or by file
@@ -36,12 +40,18 @@ inside itself.
 | Column | Top | Bottom |
 | --- | --- | --- |
 | Left | Sources: one card per file, with its probe facts | Work steps: each tool that ran, in order |
-| Centre | Viewer: Source / Program / side by side, safe-area overlay, loudness meter, transport | Timeline: ruler, V, T, A tracks with waveforms, markers, ranges, playhead |
+| Centre | Viewer: Source / Program / side by side, safe-area overlay, transport | Timeline: ruler, V, T, A tracks with the waveform, markers, ranges, playhead, zoom |
 | Right | Inspector: the selected item's values and its options; measured against target; what a person must confirm | Instruction composer, always visible |
 
 The header carries the project, the output, the PASS and to-check counts, the
-run switch (this run against the one before) and Save project / Copy
-instruction.
+language switch and Save project. Under it, one strip holds every measured row:
+to-check first, then what a person must confirm, then the passes.
+
+Below 1440×860 the whole screen is scaled to fit; it never stacks into a phone
+layout, because it is a tool for a computer.
+
+Not built yet (do not describe them as present): a loudness meter, a switch
+between this run and the one before, a proxy for a file the browser cannot play.
 
 ## Every element has a number
 
@@ -76,19 +86,20 @@ from that step's result document, never recomputed by the page.
 
 The choices offered for a work step are that tool's real flags, read from
 `python3 scripts/_contract.py --json`: never a hand-kept list. The default shown
-is the value the run used. An option appears in the instruction only when it
-differs from that value. A flag the tool does not have is not offered.
+is the contract's. An option appears in the instruction only once the person
+sets it. A flag the tool does not have is not offered.
 
 ## Playback and waveforms
 
-- **Waveforms** are images from `waveform.py`, one per audio track.
+- **The waveform** is one image of the output's sound (`showwavespic`), written
+  into the stills folder through the same guarded call as a still.
 - **After a render**, the output plays in a `<video>` element. The playhead
   follows `currentTime`; clicking the ruler seeks; markers and ranges read the
   same clock.
 - **Before a render** there is no output: the page says so. A rough play of the
   sources in order is labelled as rough (no captions, no loudness pass).
-- **A format the browser cannot decode** (ProRes, some HEVC, MKV) needs a small
-  H.264 proxy made at build time. Say on the page that the picture is a proxy.
+- **A format the browser cannot decode** (ProRes, some HEVC, MKV): the page
+  falls back to the six stills of the output and says so.
 - Keys: Space play, J K L shuttle, I and O range, M marker. Every key action
   also has a button.
 
@@ -120,7 +131,9 @@ Japanese fallbacks, monospace for commands and measured values).
 
 ## Verifying a change
 
-1. Build the page from a real project and a real `render.py --json` result.
+1. Build the page from a real project and a real `render.py --json` result: a
+   tall one with captions and an export preset, a wide one, and one with no
+   `--result`.
 2. Open it with the pre-installed Playwright at 1440×900 and at 1920×1080.
    Take a screenshot of each and look at it.
 3. Assert in the same script: no horizontal scroll; no element outside the

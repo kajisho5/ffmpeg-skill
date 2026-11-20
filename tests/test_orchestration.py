@@ -44,14 +44,42 @@ class OrchestrationTests(MediaFixtures):
         (work / "run.json").write_text(json.dumps(run), encoding="utf-8")
         page_path = Path(sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "run.json").stdout.strip())
         self.assertEqual(page_path, work / "proj.review" / "index.html")
-        page = page_path.read_text(encoding="utf-8")
+        def embedded(path):  # the one document the page is built from
+            text = Path(path).read_text(encoding="utf-8")
+            return text, json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', text, re.S).group(1))
+        page, data = embedded(page_path)
         stills = sorted(p.name for p in (page_path.parent / "stills").glob("*.jpg"))
         self.assertEqual([n for n in stills if n.startswith("clip")], [f"clip{i}_{k}.jpg" for i in range(2) for k in range(3)])
         self.assertEqual(len([n for n in stills if n.startswith("out_")]), 6, stills)
-        self.assertIn("stages: clips → join", page, "the dry run ran even though out.mp4 is already there")
-        self.assertIn(f"{run['probe']['duration']:.3f} s", page)
-        self.assertIn('data-k="out"', page)
-        self.assertNotIn('id="captions"', page, "a project with no cue file shows no field that would add one")
+        self.assertEqual(data["stages"], ["clips", "join"], "the dry run ran even though out.mp4 is already there")
+        self.assertEqual(data["result"]["probe"]["duration"], run["probe"]["duration"])
+        self.assertEqual([(c["s"], c["a"]) for c in data["clips"]], [(0, 1.0), (0, 4.0)])
+        self.assertEqual(data["clips"][0]["b"], 3.0)
+        self.assertAlmostEqual(data["clips"][1]["b"], 6.0, delta=0.2, msg="a clip with no out ends where its source does")
+        self.assertEqual(data["clips"][0]["stills"], [f"stills/clip0_{k}.jpg" for k in range(3)])
+        self.assertEqual([s["path"] for s in data["sources"]], ["src.mp4"], "one card per file, however many clips use it")
+        self.assertEqual({s["codec_type"] for s in data["sources"][0]["probe"]["streams"]}, {"video", "audio"})
+        self.assertEqual((data["cue_file"], data["cues"]), (None, []), "a project with no cue file has no caption track")
+        # the output plays from where it is, and its sound is drawn from the file, not invented
+        self.assertEqual(data["out"]["video"], (work / "out.mp4").resolve().as_uri())
+        self.assertEqual(data["out"]["wave"], "stills/wave.png")
+        self.assertGreater((page_path.parent / "stills" / "wave.png").stat().st_size, 0)
+        # every tool's flags come from the contract, never a list kept in the page
+        contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
+        self.assertEqual({n: t["p"] for n, t in data["tools"].items()}, {t["name"]: t["input_schema"]["properties"] for t in contract["tools"]})
+        self.assertEqual(set(data["safe"]["reels"]), {"top", "bottom", "left", "right"})
+        self.assertNotIn("/*DATA*/", page)
+        for needed in ('id="app"', "data-clip", "data-prompt", "navigator.clipboard"):  # the screen, the clip fields, the instruction
+            self.assertIn(needed, page)
+        self.assertNotRegex(page, r'(src|href)="https?://', "the page asks the network for nothing")
+        # a cue file the project names is read into the caption track
+        (work / "cues.srt").write_text("1\n00:00:00,500 --> 00:00:01,500\nhello <b>\n", encoding="utf-8")
+        cued = work / "cued.json"
+        cued.write_text(json.dumps({"output": "c.mp4", "clips": [{"src": "src.mp4"}], "captions": {"srt": "cues.srt"}}), encoding="utf-8")
+        _, with_cues = embedded(sh(sys.executable, SCRIPTS / "_review.py", cued, "-o", work / "cued_review").stdout.strip())
+        self.assertEqual((with_cues["cue_file"], with_cues["cues"]), ("cues.srt", [[0.5, 1.5, "hello <b>"]]))
+        self.assertEqual(with_cues["result"], None)
+        self.assertEqual(with_cues["out"], {"video": None, "stills": [], "wave": None}, "not rendered: nothing to play, and it says so")
         # a second page into the same folder is refused unless --overwrite
         again = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj)], capture_output=True, text=True, cwd=str(work))
         self.assertEqual(again.returncode, 1, again.stderr)
@@ -62,14 +90,14 @@ class OrchestrationTests(MediaFixtures):
             {"check": "codec", "status": "PASS", "value": "h264", "expected": "h264"}]}}
         (work / "failed.json").write_text(json.dumps(failed), encoding="utf-8")
         sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "failed.json", "-o", work / "failed_review")
-        page = (work / "failed_review" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('<li class="fail">FAIL loudness: -30.1 LUFS (expected -14 LUFS)</li>', page)
-        self.assertIn('<li class="pass">PASS codec: h264', page)
-        self.assertIn("<b>sound</b><span>not measured</span>", page)
-        self.assertNotIn("None", page.split('id="project"')[0])
+        page, data = embedded(work / "failed_review" / "index.html")
+        self.assertEqual(data["result"], failed, "the run's document as it is: the page marks a missing probe as not measured")
+        self.assertEqual(data["out"], {"video": None, "stills": [], "wave": None})
+        self.assertIn('"output probe"', page)
         # review of #636: the render command runs from anywhere and is quoted; a folder of other
         # files is not a review folder; a null bound is an empty field
-        self.assertIn(json.dumps(str(SCRIPTS / "render.py")).strip('"'), page)
+        self.assertIn(str(SCRIPTS / "render.py"), data["run"])
+        self.assertIn(str(proj), data["run"])
         media = work / "media"
         media.mkdir(exist_ok=True)
         (media / "clip0_0.jpg").write_bytes(b"not ours")
@@ -80,9 +108,10 @@ class OrchestrationTests(MediaFixtures):
         nulls = work / "nulls.json"
         nulls.write_text(json.dumps({"output": "n.mp4", "clips": [{"src": "src.mp4", "in": None, "out": None}]}), encoding="utf-8")
         sh(sys.executable, SCRIPTS / "_review.py", nulls, "-o", work / "nulls_review")
-        page = (work / "nulls_review" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('data-k="in" value=""', page)
-        self.assertIn('data-k="out" value=""', page)
+        _, data = embedded(work / "nulls_review" / "index.html")
+        self.assertEqual(data["project"]["clips"][0], {"src": "src.mp4", "in": None, "out": None}, "null stays null, never the word None")
+        self.assertEqual(data["clips"][0]["a"], 0.0)
+        self.assertAlmostEqual(data["clips"][0]["b"], 6.0, delta=0.2)
         # an existing review folder that also holds a project input: the input is never touched,
         # and a stills folder the tool did not make is refused (review of #636)
         reused = work / "reused"
@@ -188,9 +217,11 @@ class OrchestrationTests(MediaFixtures):
         hostile = work / "hostile.json"
         hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")
         sh(sys.executable, SCRIPTS / "_review.py", hostile, "-o", work / "hostile_review")
-        self.assertNotIn("</script><b>", (work / "hostile_review" / "index.html").read_text(encoding="utf-8"))
+        page, data = embedded(work / "hostile_review" / "index.html")
+        self.assertNotIn("</script><b>", page)
+        self.assertNotIn("<b>.mp4", page, "no < of the data reaches the HTML parser")
+        self.assertEqual(data["project"]["clips"][0]["src"], "a</script><b>.mp4")
         # standalone only: not a contract tool, not on the MCP server, reached through npx review
-        contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
         self.assertNotIn("_review", [t["name"] for t in contract["tools"]])
         self.assertNotIn("_review", (ROOT / "mcp" / "server.py").read_text(encoding="utf-8"))
         self.assertIn("args[0] === 'review'", (ROOT / "bin" / "install.js").read_text(encoding="utf-8"))
