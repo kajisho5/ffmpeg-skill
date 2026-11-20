@@ -472,7 +472,7 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
     # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
     wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
     if wrong:
-        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), re.findall(r"'([^']+)'", wrong[2]), 1, 0.6) or [None])[0]
+        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
     words: List[str] = []
     for a in ([] if None in fix.values() else sys.argv[1:]):
         name, eq, rest = a.partition("=")
