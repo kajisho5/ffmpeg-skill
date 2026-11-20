@@ -546,14 +546,14 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         if i > 0 and d:
             spine.append(f'        <transition name="Cross Dissolve" offset="{_t(c["record_in"] - c["trim_head"], rate)}" '
                          f'duration="{_t(d, rate)}"/>')
-        src_start = c["src_in"] + int(round(c["trim_head"] * c["speed"]))
+        src_start = c["src_in"] + math.floor(c["trim_head"] * Fraction(c["speed"]) + Fraction(1, 2))
         inner: List[str] = []
         if abs(c["speed"] - 1.0) > 1e-6:
             # timeMap maps clip-local time to source time; two linear points give a constant speed
             inner.append("          <timeMap>")
             inner.append(f'            <timept time="0s" value="{_ts(base + Fraction(src_start) / rate)}" interp="linear"/>')
             inner.append(f'            <timept time="{_t(c["visible"], rate)}" '
-                         f'value="{_ts(base + Fraction(src_start + int(round(c["visible"] * c["speed"]))) / rate)}" interp="linear"/>')
+                         f'value="{_ts(base + Fraction(src_start + math.floor(c["visible"] * Fraction(c["speed"]) + Fraction(1, 2))) / rate)}" interp="linear"/>')
             inner.append("          </timeMap>")
             start_attr = "0s"
         else:
@@ -610,7 +610,7 @@ def to_otio(tl: Dict[str, Any]) -> str:
                           "transition_type": "SMPTE_Dissolve",
                           # OTIO: in_offset is the part before the cut, out_offset the part after
                           "in_offset": _rt(c["trim_head"], rate), "out_offset": _rt(tl["clips"][i - 1]["trim_tail"], rate)})
-        src_start = c["src_in"] + int(round(c["trim_head"] * c["speed"]))
+        src_start = c["src_in"] + math.floor(c["trim_head"] * Fraction(c["speed"]) + Fraction(1, 2))
         # the media's range starts at its start timecode (#414), in timeline frames
         base = c.get("tc_seconds", Fraction(0)) * rate
         clip = {"OTIO_SCHEMA": "Clip.2", "name": c["name"], "metadata": {}, "enabled": True,

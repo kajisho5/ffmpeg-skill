@@ -2546,6 +2546,14 @@ class TimelineExportTests(unittest.TestCase):
         # the start label's offset: 00:00:00:00 plus 0.02 s is half a frame at 25 fps
         meta = {"timecode": {"value": "00:00:00:00"}, "video": {"fps": 25.0}}
         self.assertEqual(tl_mod.output_timecode_args(meta, 0.02)[1], "timecode=00:00:00:01")
+        # the exporters count the same way: a 14-frame dissolve gives 7 frames of handle, and at 1.5x
+        # that is 10.5 source frames, so the clip's source start is frame 60 + 11 in FCPXML and in OTIO
+        probes = self._probes(**{"a.mp4": 8, "b.mp4": 8})
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 5}, {"src": "b.mp4", "in": 2, "out": 7, "speed": 1.5}],
+                           "transition": {"type": "fade", "duration": 14 / 30}}, probes, lambda p: f"/m/{p}")
+        self.assertEqual((tl["clips"][1]["trim_head"], tl["clips"][1]["visible"]), (7, 93))
+        self.assertEqual(re.findall(r'<timept time="[^"]*" value="([^"]*)"', tl_mod.to_fcpxml(tl)), ["71/30s", "211/30s"])
+        self.assertIn('"value": 71.0', tl_mod.to_otio(tl))
 
     def test_crop_only_sequence_uses_the_even_canvas_for_several_clips(self):
         probes = self._probes(**{"a.mp4": 2, "b.mp4": 2})
