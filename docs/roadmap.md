@@ -20,7 +20,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   later used for an unrelated release (the table above), and the items of it that did ship are
   listed there under the release that shipped them.
 
-The released version today is **4.2.1** (notes in CHANGELOG.md); **4.0.0** (notes in CHANGELOG.md), the third deliberate break: the 12 core tools keep
+The released version today is **4.2.2** (notes in CHANGELOG.md); **4.0.0** (notes in CHANGELOG.md), the third deliberate break: the 12 core tools keep
 the stable promise and the rest are `beta`; a platform export meets its loudness by default (`--no-normalize` keeps
 3.x's report-only); a stream-copy join of AAC clips that would drift more than 50 ms is refused; and a standalone
 review page shows a project's plan and result (docs/contract.md "What 4.0 changed"). Tool count still 42.
