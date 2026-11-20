@@ -4,8 +4,8 @@
 
 ## Unreleased
 
-- **The showcase is rebuilt from 1080p footage and plays in the page's language.** Nine clips AI-generated with Google Veo replace the four earlier ones: a talk laid out with its slides (side by side, picture in picture, a cutaway, a captioned vertical short), a pause removed, a green-screen composite in a new room, a levelled horizon, colour, and speed and reframing. The talk, the composite and the reel exist in English and Japanese, and the site plays the one for the language shown. `demos/showcase.py` builds all of it; `docs/showcase.md` has the commands and what the build showed.
-- **The site and the README show the review page**, with a screenshot made from real footage in each language.
+- **The showcase is rebuilt from 1080p footage and plays in the page's language.** Nine clips AI-generated with Google Veo and three shot on a phone (stabilised, a night shot lifted and denoised, 60 fps slowed down) replace the four earlier ones: a talk laid out with its slides (side by side, picture in picture, a cutaway, a captioned vertical short), a pause removed, a green-screen composite in a new room, a levelled horizon, colour, and speed and reframing. The talk, the composite and the reel exist in English and Japanese, and the site plays the one for the language shown. `demos/showcase.py` builds all of it; `docs/showcase.md` has the commands and what the build showed.
+- **The site and the README show the review page**, with a screenshot made from real footage in each language and the three steps to call it and send a change back.
 
 ## 4.0.1
 

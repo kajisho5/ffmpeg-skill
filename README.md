@@ -48,12 +48,12 @@ npx ffmpeg-skill
 
 <p align="center">
   <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase"><img src="site/media/showcase_talk_en.jpg" width="720" alt="a conference talk laid out with its slides on the left and the speaker on the right"></a><br>
-  <sub>Nine clips edited by asking: colour, slow motion and reframing, a talk laid out with its slides and cut into a captioned short, a pause removed, a green-screen composite, a levelled horizon. <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase">Watch them</a> (English and Japanese) · <a href="docs/showcase.md">the request and the exact commands</a>. The footage is AI-generated with Google Veo.</sub>
+  <sub>Twelve clips edited by asking: colour, slow motion and reframing, a talk laid out with its slides and cut into a captioned short, a pause removed, a green-screen composite, a levelled horizon, and three phone clips (stabilised, a night shot lifted and denoised, 60 fps slowed down). <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase">Watch them</a> (English and Japanese) · <a href="docs/showcase.md">the request and the exact commands</a>. Nine clips are AI-generated with Google Veo; three are shot on a phone.</sub>
 </p>
 
 ### Review page
 
-After an edit, ask for a review page: `python3 scripts/_review.py project.json --result run.json` writes one local HTML file. It shows the sources, every step with its checks, the result in a phone frame with the platform's safe area, and a timeline. Press the number of a clip or a caption, write what should change, and copy the instruction it builds back to your agent. Nothing is uploaded; the page speaks English, Japanese, Korean and Chinese.
+After an edit, ask your agent for the review page ("show me the review page"), or run `npx ffmpeg-skill review project.json --result run.json` yourself (`python3 scripts/_review.py` from a checkout). It writes one local HTML file. It shows the sources, every step with its checks, the result in a phone frame with the platform's safe area, and a timeline. Press the number of a clip or a caption, write what should change, and copy the instruction it builds back to your agent. Nothing is uploaded; the page speaks English, Japanese, Korean and Chinese.
 
 <p align="center">
   <a href="https://kajisho5.github.io/ffmpeg-skill/#review"><img src="site/media/review_en.png" width="820" alt="the review page: sources and work steps on the left, the source frames and the vertical result with a timeline in the middle, the selected caption and the instruction for the agent on the right"></a><br>

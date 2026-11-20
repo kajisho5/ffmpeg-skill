@@ -1,7 +1,8 @@
-# ffmpeg-skill showcase: nine clips, edited by asking
+# ffmpeg-skill showcase: twelve clips, edited by asking
 
-**The footage in these videos is AI-generated with Google Veo.** The people and places do not
-exist. The slides in the conference demo were made for it, and say so on the slide. Every edit is
+**Nine of the clips are AI-generated with Google Veo.** The people and places in them do not
+exist. Three (`real_*.mp4`: a city at night, a coast at night, fireworks) were shot on a phone by
+the maintainer. The slides in the conference demo were made for it, and say so on the slide. Every edit is
 a call to one of the skill's scripts, and each call verified what it wrote.
 
 Watch them on the site: <https://kajisho5.github.io/ffmpeg-skill/#showcase>. The conference and
@@ -16,9 +17,12 @@ language it is showing.
 | D. Green screen | "Remove the green, put her in the conference hall, smaller, on the right, add a title" | `greenscreen/composited_en.mp4` |
 | E. Pause | "Take the long pause out" | `pause/tight.mp4` (7.85 s to 5.9 s) |
 | F. Horizon | "Level the horizon" | `horizon/straightened.mp4` |
+| G. Handheld (phone) | "Take the shake out" | `steady/stabilized.mp4` |
+| H. Night shot (phone) | "It is too dark: brighten it and clean the noise" | `lowlight/clean.mp4` |
+| I. Fireworks (phone, 60 fps) | "Slow it down" | `slow/slow_motion.mp4` (2.5 times slower, every frame a real one) |
 
 `reel/showreel_en.mp4` and `showreel_ja.mp4` (50 s) join them, and say on the first and last card
-that the footage is AI-generated.
+what the footage is: AI-generated, and three clips shot on a phone.
 
 ## Build
 
@@ -69,6 +73,12 @@ python3 scripts/silence.py $SRC/veo_pause_en.mp4 --threshold -30 --margin 0.12 -
 # F. horizon
 python3 scripts/straighten.py $SRC/veo_sea.mp4 --degrees 5 -o crooked.mp4      # the "before" is made here
 python3 scripts/straighten.py crooked.mp4 --degrees=-5 -o straightened.mp4
+
+# G. handheld, H. night shot, I. 60 fps played at 24
+python3 scripts/stabilize.py $SRC/real_city.mp4 -o stabilized.mp4
+python3 scripts/color.py $SRC/real_sea.mp4 --correct --exposure 1.2 --gamma 1.25 -o lifted.mp4
+python3 scripts/denoise.py lifted.mp4 --strength high -o clean.mp4
+python3 scripts/fit.py $SRC/real_fireworks.mp4 --duration 8.235 --method speed --fps 24 -o slow_motion.mp4
 ```
 
 ## What the build showed
@@ -85,7 +95,9 @@ python3 scripts/straighten.py crooked.mp4 --degrees=-5 -o straightened.mp4
   degrees and then levels it; the site says so under the video.
 - **Loudness.** The talk measures -17.6 LUFS and is brought to -14.
 
+- **The shake and the dark shot are real.** The generated "shaky" and "noisy" clips came out steady
+  and clean, so those two demos use phone footage instead.
+
 ## Not shown
 
-Stabilisation and noise reduction on speech have no demo: the generated "shaky" and "noisy" clips
-came out steady and clean, so there was nothing true to show.
+Noise reduction on speech has no demo: there is no clip with a noisy voice.

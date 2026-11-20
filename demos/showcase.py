@@ -23,15 +23,17 @@ OUT = ROOT / "demos" / "out" / "showcase"
 MEDIA = ROOT / "site" / "media"
 LOGO = ROOT / "brand" / "app-icon-dark.png"
 KEY = "0x50b64f"  # the green of veo_greenscreen.mp4, read from its top-left corner
-TEXT = {"en": {"note": "Footage: AI-generated with Google Veo", "tag": "Ask for the edit. Get a verified video.",
+TEXT = {"en": {"note": "Footage: AI-generated with Google Veo, and three clips shot on a phone", "tag": "Ask for the edit. Get a verified video.",
                "labels": ("Colour: exposure, white balance, denoise, grade", "Speed ramp: 50% slow motion on the shot",
                           "Reframe 16:9 to 9:16", "A talk and its slides, side by side", "The same talk as a captioned short",
-                          "Dead air cut: 7.9 s to 5.9 s", "Green screen: key, new background, title", "Horizon straightened"),
+                          "Dead air cut: 7.9 s to 5.9 s", "Green screen: key, new background, title", "Horizon straightened",
+                          "Handheld, stabilised (phone footage)", "Night shot lifted and denoised (phone footage)"),
                "talk": "AI x Video Editing", "key": "Green screen, replaced"},
-        "ja": {"note": "映像は Google Veo による AI 生成です", "tag": "頼むだけで編集。仕上がりは測って確かめます。",
+        "ja": {"note": "映像は Google Veo による AI 生成と、スマホで撮った実写 3 本です", "tag": "頼むだけで編集。仕上がりは測って確かめます。",
                "labels": ("色: 露出・ホワイトバランス・ノイズ・グレード", "速度変化: シュートを 50% のスローに",
                           "16:9 を 9:16 に組み直す", "講演とスライドを横並びに", "同じ講演を字幕つきのショートに",
-                          "間を詰める: 7.9 秒を 5.9 秒に", "グリーンバック: 抜いて背景を差し替え", "水平線をまっすぐに"),
+                          "間を詰める: 7.9 秒を 5.9 秒に", "グリーンバック: 抜いて背景を差し替え", "水平線をまっすぐに",
+                          "手ぶれ補正（スマホの実写）", "暗い夜景を明るくしてノイズ除去（スマホの実写）"),
                "talk": "AI × 動画編集", "key": "グリーンバックを差し替え"}}
 
 
@@ -141,6 +143,29 @@ def horizon(d):
     side_by_side(d / "crooked.mp4", d / "straightened.mp4", d / "before_after.mp4", 960, 540, 0)
 
 
+def steady(d):
+    """Handheld phone footage of a city at night (real, not generated), stabilised."""
+    src = FOOTAGE / "real_city.mp4"
+    tool("stabilize", src, "-o", d / "stabilized.mp4")
+    side_by_side(src, d / "stabilized.mp4", d / "before_after.mp4", 960, 540, 0)
+
+
+def lowlight(d):
+    """A phone clip of a coast at night (real): lifted, then the noise the lift shows is cleaned."""
+    src = FOOTAGE / "real_sea.mp4"
+    tool("color", src, "--correct", "--exposure", 1.2, "--gamma", 1.25, "-o", d / "lifted.mp4")
+    tool("denoise", d / "lifted.mp4", "--strength", "high", "-o", d / "clean.mp4")
+    side_by_side(src, d / "clean.mp4", d / "before_after.mp4", 960, 540, 0)
+
+
+def slow(d):
+    """Fireworks shot at 60 fps (real): played at 24 fps every frame is a real one, 2.5 times slower."""
+    src = FOOTAGE / "real_fireworks.mp4"
+    tool("fit", src, "--duration", 8.235, "--method", "speed", "--fps", 24, "-o", d / "slow_motion.mp4")
+    tool("fit", src, "--fps", 24, "-o", d / "normal.mp4")
+    side_by_side(d / "normal.mp4", d / "slow_motion.mp4", d / "before_after.mp4", 960, 540, 0)
+
+
 def reel(d, lang):
     """Title card, a few seconds of each demo with a label, end card; both cards say the footage is AI-generated."""
     t = TEXT[lang]
@@ -154,7 +179,8 @@ def reel(d, lang):
     parts = (("a", OUT / "rain" / "before_after.mp4", 1, 6), ("b1", OUT / "basketball" / "highlight.mp4", 0.6, 6.2),
              ("b2", OUT / "basketball" / "before_after.mp4", 0, 5), ("c1", OUT / f"talk_{lang}" / "side_by_side.mp4", 0, 7.8),
              ("c2", OUT / f"talk_{lang}" / "before_after.mp4", 0, 7.8), ("e", OUT / "pause" / "tight.mp4", 0, 4.5),
-             ("d", OUT / "greenscreen" / f"before_after_{lang}.mp4", 0.5, 6.5), ("f", OUT / "horizon" / "before_after.mp4", 1, 5.5))
+             ("d", OUT / "greenscreen" / f"before_after_{lang}.mp4", 0.5, 6.5), ("f", OUT / "horizon" / "before_after.mp4", 1, 5.5),
+             ("g", OUT / "steady" / "before_after.mp4", 0, 4.8), ("h", OUT / "lowlight" / "before_after.mp4", 0, 4.5))
     for (name, src, start, end), label in zip(parts, t["labels"]):
         tool("cut", src, "--start", start, "--end", end, "--accurate", "-o", d / f"{name}_cut.mp4")
         tool("fit", d / f"{name}_cut.mp4", "--aspect", "16:9", "--fit", "pad", "--width", 1920, "--height", 1080, "-o", d / f"{name}_169.mp4")
@@ -165,12 +191,15 @@ def reel(d, lang):
 
 
 def main():
-    for name in ("rain", "basketball", "talk_en", "talk_ja", "pause", "greenscreen", "horizon", "reel"):
+    for name in ("rain", "basketball", "talk_en", "talk_ja", "pause", "greenscreen", "horizon", "steady", "lowlight", "slow", "reel"):
         (OUT / name).mkdir(parents=True, exist_ok=True)
     rain(OUT / "rain")
     basketball(OUT / "basketball")
     pause(OUT / "pause")
     horizon(OUT / "horizon")
+    steady(OUT / "steady")
+    lowlight(OUT / "lowlight")
+    slow(OUT / "slow")
     for lang in ("en", "ja"):
         talk(OUT / f"talk_{lang}", lang)
         greenscreen(OUT / "greenscreen", lang)
@@ -183,7 +212,9 @@ def web():
     MEDIA.mkdir(parents=True, exist_ok=True)
     wide, tall, full = (1280, 360), (1280, 640), (1280, 720)
     clips = [("colour", OUT / "rain" / "before_after.mp4", wide, "3"), ("reframe", OUT / "basketball" / "before_after.mp4", tall, "2.2"),
-             ("pause", OUT / "pause" / "before_after.mp4", full, "1"), ("horizon", OUT / "horizon" / "before_after.mp4", wide, "3")]
+             ("pause", OUT / "pause" / "before_after.mp4", full, "1"), ("horizon", OUT / "horizon" / "before_after.mp4", wide, "3"),
+             ("steady", OUT / "steady" / "before_after.mp4", wide, "2"), ("lowlight", OUT / "lowlight" / "before_after.mp4", wide, "2"),
+             ("slow", OUT / "slow" / "before_after.mp4", wide, "1.5")]
     for lang in ("en", "ja"):
         clips += [(f"reel_{lang}", OUT / "reel" / f"showreel_{lang}.mp4", full, "1.5"),
                   (f"talk_{lang}", OUT / f"talk_{lang}" / "side_by_side.mp4", full, "5"),

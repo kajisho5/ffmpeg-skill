@@ -26,3 +26,7 @@ its first and last card. `veo_talk_en.srt` and `veo_talk_ja.srt` hold the talks'
 `caption.py --transcribe` wrote them, corrected against what is said. `slide_en_*.png` and
 `slide_ja_*.png` are the slides of the conference demo, made for it.
 
+`real_city.mp4`, `real_sea.mp4` and `real_fireworks.mp4` are not generated: the maintainer shot
+them on a phone (a city at night, handheld; a coast at night; fireworks at 60 fps, scaled from 4K to
+1080p). They are re-encoded copies without the camera's metadata.
+
