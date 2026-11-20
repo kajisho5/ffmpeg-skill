@@ -13245,7 +13245,8 @@ class StumbleLedgerTests(unittest.TestCase):
     what came back, what was right. A line marked `taught` is replayed here, and the tool's answer
     must name the way out (`must_say`), so the next agent that types the same thing is told. A line
     marked `open` is a stumble with no answer yet (a result that is wrong and says nothing): it
-    stays listed until a change teaches it."""
+    stays listed until a change teaches it. A line marked `named` is a guess the tool now takes: the
+    name the agent reached for became a spelling of the option, and the replay keeps it one."""
 
     LEDGER = ROOT / "docs" / "stumbles.jsonl"
     CLASSES = {"flag_name", "flag_on_another_tool", "value_name", "value_shape", "silent_wrong_result",
@@ -13261,7 +13262,7 @@ class StumbleLedgerTests(unittest.TestCase):
             with self.subTest(row=row["argv"]):
                 self.assertEqual(set(row), {"seen", "tool", "argv", "class", "got", "right", "must_say", "status"})
                 self.assertIn(row["class"], self.CLASSES)
-                self.assertIn(row["status"], ("taught", "open"))
+                self.assertIn(row["status"], ("taught", "open", "named"))
                 self.assertTrue((ROOT / "scripts" / f"{row['tool']}.py").is_file())
                 self.assertEqual(bool(row["must_say"]), row["status"] == "taught", "a taught line says what the answer must name; an open one cannot yet")
 
@@ -13269,12 +13270,15 @@ class StumbleLedgerTests(unittest.TestCase):
         clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
         with tempfile.TemporaryDirectory() as tmp:
             for row in self.rows():
-                if row["status"] != "taught":
+                if row["status"] == "open":
                     continue
                 with self.subTest(tool=row["tool"], argv=row["argv"]):
                     argv = [clip if a == "{clip}" else a for a in row["argv"]]
-                    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4")],
+                    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4"), "--dry-run"],
                                           capture_output=True, text=True, timeout=120)
+                    if row["status"] == "named":  # the guessed name is the option's now; a value or a file may still be wrong
+                        self.assertNotIn("is not an option of this tool", proc.stderr)
+                        continue
                     self.assertNotEqual(proc.returncode, 0, "the wrong call must not run")
                     # the answer is what follows "error:": the usage block above it lists every option
                     # the tool has, so a name found there teaches nothing
@@ -13322,7 +13326,7 @@ class StumbleLedgerTests(unittest.TestCase):
                     proc = run(tool, *argv)
                     flag = next(a for a in argv if "=" in a).split("=")[0]
                     self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
-                    self.assertIn(f"{flag} ", proc.stderr)
+                    self.assertIn(f"{flag} ", proc.stderr)  # the spelling that was typed, not the option's first
                     self.assertIn("is outside what this option takes", proc.stderr)
             # what a help names is still taken: a negative level, an angle, -1 as "never", a long sample count
             for tool, argv in (("audio", ("--gain=-3", "-o", out)), ("cut", ("--start", "1", "--end", "2", "--tolerance=-1", "-o", out)),
@@ -13337,6 +13341,38 @@ class StumbleLedgerTests(unittest.TestCase):
                 span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", spec.get("description", ""))
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
+
+    def test_the_decided_name_and_the_older_one_are_the_same_option(self):
+        """The decided names (an angle is --angle, a length of time --duration, ...) were answered
+        with a hint by the tools that held an older name. They are spellings of the same option now:
+        both run, and the plan is the same command."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = ["-o", str(Path(tmp) / "o.mp4")]
+            cases = (("straighten", "--angle", "--degrees", ["2"], out), ("straighten", "--pad-color", "--fill-color", ["white", "--degrees", "2", "--fit", "pad"], out),
+                     ("freeze", "--duration", "--hold", ["2", "--at", "1"], out), ("cropdetect", "--duration", "--seconds", ["4"], []),
+                     ("caption", "--font-size", "--size", ["20", "--srt", str(ROOT / "demos" / "footage" / "veo_talk_en.srt")], out),
+                     ("metadata", "--min-silence", "--silence-min", ["1", "--auto-chapters"], out), ("stabilize", "--strength", "--shakiness", ["6"], out),
+                     ("grid", "--audio", "--audio-from", ["0", "--cols", "2", "--rows", "1"], out, [clip]),
+                     ("grid", "--pad-color", "--background", ["white", "--cols", "2", "--rows", "1"], out, [clip]),
+                     # the word most of nine models reached for, blind, where it means the same thing
+                     ("silence", "--padding", "--margin", ["0.3"], out), ("silence", "--min-duration", "--min-silence", ["0.5"], out),
+                     ("loudness", "--target", "--lufs", ["-16"], out), ("loudness", "--true-peak", "--tp", ["-1.5"], out),
+                     ("loop", "--count", "--times", ["3"], out), ("sphere", "--fov", "--h-fov", ["100"], out),
+                     ("broll", "--broll", "--insert", [clip, "--at", "2", "--duration", "1"], out),
+                     ("broll", "--start", "--at", ["2", "--insert", clip, "--duration", "1"], out))
+            for tool, decided, older, rest, o, *more in cases:
+                with self.subTest(tool=tool, decided=decided):
+                    plans = []
+                    for name in (decided, older):
+                        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *(more[0] if more else []), name, *rest, *o, "--dry-run", "--json"],
+                                              capture_output=True, text=True, encoding="utf-8", timeout=120)
+                        self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr[-300:]}")
+                        plans.append(re.sub(r"(?i)\S*(te?mp|stab-|meta_|loop_|text-)\S*", "TEMP", " ".join(json.loads(proc.stdout).get("commands"))))
+                    self.assertEqual(plans[0], plans[1])
+        # verify.py takes folders and writes a kit, so its two spellings are read from the contract
+        tools = {t["name"]: t["input_schema"]["properties"] for t in json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)["tools"]}
+        self.assertEqual(tools["verify"]["seconds"]["cli"], ["--duration", "--seconds"])
 
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
@@ -13361,10 +13397,10 @@ class StumbleLedgerTests(unittest.TestCase):
 
     def test_an_unknown_flag_is_named_even_when_a_required_one_is_missing(self):
         # argparse reports the missing required option first and never reaches the unknown one:
-        # `straighten.py --angle 5` said only that --degrees was required
-        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "straighten.py"), "in.mp4", "--angle", "5"], capture_output=True, text=True)
+        # `straighten.py --rotate 5` said only that --degrees was required
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "straighten.py"), "in.mp4", "--rotate", "5"], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("--angle is not an option of this tool", proc.stderr)
+        self.assertIn("--rotate is not an option of this tool", proc.stderr)
         # a flag the tool has, an abbreviation argparse accepts and a negative number are left alone
         proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "silence.py"), "--thresh", "-30", "--min-silence=0.4"], capture_output=True, text=True)
         self.assertNotIn("is not an option", proc.stderr)

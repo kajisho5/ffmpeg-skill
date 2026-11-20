@@ -6251,11 +6251,30 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   nine names of `overlay.py` or `X,Y` on every tool.
 - **A name two tools share has one type and one list of choices.** A shorter list on one tool is a
   defect to remove, not a variant.
-- **Nothing is renamed during the freeze.** The tools that hold an older name keep it
+- **Nothing is renamed; the decided name is added.** The tools that hold an older name keep it
   (`OLDER_NAMES`), and the names that already mean two things are listed (`SAME_NAME_TWO_MEANINGS`).
   Both lists may only shrink: a new option that takes an older name, or a shared name that splits,
-  fails `test_option_names_do_not_grow_apart`. When the freeze lifts, a tool takes the decided name
-  and keeps the older one as a deprecated alias for a major; a stable tool never loses a name.
+  fails `test_option_names_do_not_grow_apart`. A tool takes the decided name as a second spelling
+  of the option it has and keeps the older one; a stable tool never loses a name. The owner
+  allowed this during the freeze on 2026-11-20 (`feature_freeze_spellings` in
+  `.github/code-budget.json`): a spelling adds no code and no behaviour, and a guess that runs
+  beats a guess that is corrected. The first ten: `straighten --angle` and `--pad-color`,
+  `freeze --duration`, `cropdetect --duration`, `verify --duration`, `caption --font-size`,
+  `metadata --min-silence`, `stabilize --strength`, `grid --audio` and `--pad-color`. The MCP
+  argument names do not change (a caller there reads the schema and does not guess). A stumble
+  whose guess became a spelling is marked `named` in `docs/stumbles.jsonl` and replayed: the
+  tool must not call it unknown again.
+- **A word most models reach for is a spelling too.** The same 126 blind tasks were given to nine
+  models, from an 8B open model to the strongest; their calls used 300 distinct option names the
+  tools do not have. Where most of them used the same word for an option that exists and means
+  exactly that, the word is a second spelling: `silence --padding` (`--margin`) and
+  `--min-duration` (`--min-silence`), `loudness --target` (`--lufs`) and `--true-peak` (`--tp`),
+  `loop --count` (`--times`), `sphere --fov` (`--h-fov`), `broll --broll` (`--insert`) and
+  `--start` (`--at`). Here the tool's own name stays first. A word that would need a new value
+  shape (`redact --rect x:y:w:h`), a new behaviour (`proxy --height`, `reverse --start`) or that
+  means something else on the tool (`cropdetect --threshold`) is not added: that is a feature, and
+  the freeze holds for it. Calls that ran on the first try, before and after the eighteen
+  spellings: 33 to 39 of 126 for the strongest model, 22 to 29 for a 26B model, 2 to 6 for an 8B.
 - **Until then the answer teaches.** A usage error names, for each `--flag` the tool lacks, the
   options that share a word with it or are a near spelling, the options whose help uses the word,
   and the tools that take a flag of that name (`runner._teach`). A help-text match is reported as

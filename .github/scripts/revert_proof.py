@@ -206,6 +206,10 @@ def main() -> int:
                   + ("the base" if before is None else "the head") + ", so its additions are not known")
             return 1
         added = RESOLVER.contract_additions(before, after)
+        if budget.get("feature_freeze_spellings"):
+            # the owner's decision of 2026-11-20: a second spelling of an option a tool already has
+            # is the decided name arriving, not a feature; a new flag still adds its ("flag", ...) row
+            added = [x for x in added if x[0] != "spelling"]
         if added:
             print("feature freeze (.github/code-budget.json): this change adds to the contract: "
                   + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))

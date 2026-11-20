@@ -192,7 +192,7 @@ def main() -> int:
     ap.add_argument("--out", help="directory for outputs (default: temp dir, deleted unless --keep)")
     ap.add_argument("--keep", action="store_true", help="keep the outputs (without --out: in a new folder, named as out_dir and on stderr)")
     ap.add_argument("--quick", action="store_true", help="probe, copy cut, fit, caption, export only")
-    ap.add_argument("--seconds", type=float, default=6.0, help="length of the test cut taken from each file (default 6)")
+    ap.add_argument("--duration", "--seconds", dest="seconds", type=float, default=6.0, help="length of the test cut taken from each file (default 6)")
     ap.add_argument("--timeout", type=float, default=600.0, help="per-step timeout in seconds (default 600; 0 = no limit, as everywhere else)")
     ap.add_argument("--report", help="write a Markdown report here")
     add_common(ap)
