@@ -464,8 +464,6 @@ def main() -> int:
         # verified: true; --place already refuses the same case
         die(f"--start {start:g} is at or after the end of the video ({main_len:.3f} s): nothing would be drawn",
             hint="give a --start inside the clip")
-    if not 0 <= args.opacity <= 1:
-        die("--opacity must be within 0..1")
     # A190: a size of 0 or below drew nothing (--font-size -10 completed, verified: true, with no
     # text in the picture; --scale -1 is ffmpeg's "keep the size") and a negative fade was no fade
     if args.scale is not None and args.scale < 1:
@@ -485,8 +483,6 @@ def main() -> int:
     validate_color(args.box_color, "--box-color")
     if not 0 < args.chromakey_similarity <= 1:
         die("--chromakey-similarity must be within (0, 1]")
-    if not 0 <= args.chromakey_blend <= 1:
-        die("--chromakey-blend must be within 0..1")
     if args.place and not args.video:
         die("--place needs --video")
     if args.place and (args.start or args.end or args.fade):

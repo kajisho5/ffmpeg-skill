@@ -1145,6 +1145,12 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "media_path_is_url",
                f"output {output!r} would be opened by ffmpeg as a URL, not as a local file; pass a plain path "
                "(a local name containing a colon works as ./name)", path=output, scheme=output.split(":", 1)[0].lower())
+    if re.search(r"\.(m3u8?|mpd)$|%0?\d*d[^/\\]*\.(png|jpe?g|bmp|tiff?|webp|dpx|exr|tga|p[pg]m|jp2)$", output, re.I) and "-update" not in cmd:
+        # a playlist or a numbered pattern makes ffmpeg write files it names itself (out0.ts,
+        # frame001.png): no guard here has seen them, and -y replaced the ones that existed (#562)
+        refuse("input", "output_extension_unsupported",
+               f"output {output!r} would make ffmpeg write files it names itself (segments, numbered frames), over any that exist; this skill writes one file per -o",
+               output=output)
     if os.path.isdir(output):
         refuse("input", "output_is_directory",
                f"output {output!r} is a directory; pass a file path (e.g. {os.path.join(output, 'result.mp4')!r})", output=output)
