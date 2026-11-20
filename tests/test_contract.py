@@ -13424,6 +13424,26 @@ class StumbleLedgerTests(unittest.TestCase):
             with self.subTest(tool=tool, argv=argv):
                 self.assertNotIn("try:", run(tool, *argv))
 
+    def test_three_things_most_models_asked_for_are_options_now(self):
+        """Nine models were given the same blind tasks; these three shapes came from most of them and
+        no tool took them: a proxy by its height, a redaction rectangle in one value, and chapters
+        on the command line."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", timeout=300)
+            doc = json.loads(run("proxy", "--height", "360", "-o", str(Path(tmp) / "p.mp4")).stdout)
+            self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (640, 360))
+            one = json.loads(run("redact", "--rect", "100:40:180:60", "-o", str(Path(tmp) / "r.mp4"), "--dry-run").stdout)
+            four = json.loads(run("redact", "--x", "100", "--y", "40", "--width", "180", "--height", "60", "-o", str(Path(tmp) / "r.mp4"), "--dry-run").stdout)
+            self.assertEqual(one["commands"], four["commands"])
+            refused = run("redact", "--rect", "100:40", "-o", str(Path(tmp) / "r.mp4"))
+            self.assertIn("--rect X:Y:W:H", json.loads(refused.stdout)["error"]["message"])
+            out = Path(tmp) / "m.mp4"
+            self.assertEqual(run("metadata", "--chapter", "0:00=Intro", "--chapter", "0:04=Main part", "-o", str(out)).returncode, 0)
+            listed = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "json", str(out)], capture_output=True, text=True).stdout)["chapters"]
+            self.assertEqual([(float(c["start_time"]), c["tags"]["title"]) for c in listed], [(0.0, "Intro"), (4.0, "Main part")])
+
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
     # no other tool may take one, and a name two tools share means one thing and one type.

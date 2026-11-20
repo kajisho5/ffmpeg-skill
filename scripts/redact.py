@@ -25,6 +25,7 @@ Examples:
   python3 redact.py branded.mp4 --x 40 --y 20 --width 180 --height 60 --mode delogo
 """
 import argparse
+import re
 import sys
 
 from _common import add_common, overlay_format, apply_common, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
@@ -37,10 +38,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_redact.<ext>)")
-    ap.add_argument("--x", type=int, required=True, help="left edge of the rectangle, in source pixels")
-    ap.add_argument("--y", type=int, required=True, help="top edge of the rectangle, in source pixels")
-    ap.add_argument("--width", type=int, required=True, help="rectangle width in px (must be even)")
-    ap.add_argument("--height", type=int, required=True, help="rectangle height in px (must be even)")
+    ap.add_argument("--rect", metavar="X:Y:W:H", help="the rectangle in one value (left:top:width:height, in source pixels), instead of the four options below")
+    ap.add_argument("--x", type=int, help="left edge of the rectangle, in source pixels")
+    ap.add_argument("--y", type=int, help="top edge of the rectangle, in source pixels")
+    ap.add_argument("--width", type=int, help="rectangle width in px (must be even)")
+    ap.add_argument("--height", type=int, help="rectangle height in px (must be even)")
     ap.add_argument("--mode", choices=["blur", "pixelate", "delogo"], default="blur",
                      help="blur (default), pixelate, or delogo (interpolate a fixed rectangle away; not inpainting, and not a moving region)")
     ap.add_argument("--blur-strength", type=int, default=20, help="box-blur radius in px, --mode blur only (default 20)")
@@ -56,6 +58,10 @@ def main() -> int:
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
 
+    if args.rect and re.fullmatch(r"\d+([:,x]\d+){3}", args.rect):
+        args.x, args.y, args.width, args.height = (int(n) for n in re.split("[:,x]", args.rect))
+    if None in (args.x, args.y, args.width, args.height):
+        die("give the rectangle as --rect X:Y:W:H (four whole numbers) or as --x --y --width --height")
     if args.x < 0 or args.y < 0:
         die(f"--x/--y must be >= 0, got x={args.x} y={args.y}")
     if args.width <= 0 or args.height <= 0:

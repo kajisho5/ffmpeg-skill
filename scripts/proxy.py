@@ -41,6 +41,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_proxy.<ext>)")
     ap.add_argument("--width", type=int, default=640, help="output width in px, 1..16384, height follows the source aspect (default 640)")
+    ap.add_argument("--height", type=int, help="output height in px, 2..16384, instead of --width: the width follows the source aspect")
     ap.add_argument("--scale", type=float, help="scale factor applied to the source dimensions instead of --width (0 < scale <= 1)")
     ap.set_defaults(crf=30)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--fps", type=float, help="force a constant output frame rate")
@@ -58,7 +59,7 @@ def main() -> int:
     if not meta.get("video"):
         die("input has no video stream")
     # the displayed width: rotation applied, non-square pixels squared first (#411)
-    sw = display_size(meta["video"])[0]
+    sw, sh = display_size(meta["video"])
     square = square_pixels(meta["video"])
     if square:
         note(square_pixels_note(meta["video"]))
@@ -67,7 +68,7 @@ def main() -> int:
     # A proxy is never wider than its source, and never under 2 px: through 3.8.8 the default
     # --width 640 upscaled a smaller source, and a --scale that rounded to 0 became scale=0, which
     # ffmpeg reads as "the input's width" (a full-size proxy, audit A162)
-    asked = even(sw * args.scale) if args.scale is not None else even(args.width)
+    asked = even(sw * args.scale) if args.scale is not None else even(args.height * sw / sh) if args.height and sh else even(args.width)
     ceiling = max(2, sw - sw % 2) if sw else asked
     out_w = max(2, min(asked, ceiling))
     if out_w != asked:
