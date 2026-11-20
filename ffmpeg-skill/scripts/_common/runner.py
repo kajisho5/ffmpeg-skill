@@ -367,7 +367,7 @@ class Context:
     makes it obvious what run()/emit() depend on and lets tests reset it with ``STATE.reset()``.
     """
 
-    __slots__ = ("dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
+    __slots__ = ("parser", "dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries",
@@ -449,6 +449,9 @@ def finite_float(text: str) -> float:
     return value
 
 
+SHARED = ("--dry-run", "--json", "--json-brief", "--progress", "--fast", "--timeout", "--overwrite", "--plan", "--output")  # on every tool
+
+
 def _teach(ap: "argparse.ArgumentParser") -> str:
     """For each --flag on the command line this tool lacks: a near option, else the options whose help uses the word, and the tools that take it."""
     import difflib
@@ -459,7 +462,7 @@ def _teach(ap: "argparse.ArgumentParser") -> str:
             word = flag[2:] if len(flag) > 5 and flag != "--from" else "\0"  # --to, --at and --from are in every help text
             # options that share a word with the flag (--pad-color and --fill-color), else a near spelling
             near = [o for o in acts if set(flag[2:].split("-")) - {"to", "at", "in", "no", "min", "max", "from"} & set(o[2:].split("-"))][:5] or difflib.get_close_matches(flag, acts, 2, 0.85)
-            said = [o for o, a in acts.items() if re.search(rf"\b{re.escape(word)}", a.help or "", re.I) and o not in near][:2]
+            said = [o for o, a in acts.items() if re.search(rf"\b{re.escape(word)}".replace("\\-", "[- ]"), a.help or "", re.I) and o not in near and o not in SHARED][:2]
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
             tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
@@ -484,6 +487,7 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         usage_error(message + _teach(ap))
 
     ap.error = error  # type: ignore[method-assign]
+    STATE.parser = ap
     g = ap.add_argument_group("agent options")
     g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
@@ -534,6 +538,13 @@ def hw_flag(args: "argparse.Namespace") -> Optional[bool]:
 
 
 def apply_common(args: "argparse.Namespace") -> None:
+    # argparse takes a shortened option name: `freeze.py --time 3` ran as --timeout 3 and said nothing.
+    # A tool's own options keep that (callers use it); the options every tool shares are spelled in full.
+    acts = getattr(getattr(STATE, "parser", None), "_option_string_actions", {})
+    for flag in [a.split("=")[0] for a in sys.argv[1:] if acts and re.match(r"--[a-z]", a) and a.split("=")[0] not in acts]:
+        hit = [o for o in SHARED if o.startswith(flag)]
+        if hit:
+            STATE.parser.error(f"{flag} is not an option of this tool, and {hit[0]}, the shared option it is the start of, is spelled in full")
     STATE.plan = getattr(args, "plan", None) or None
     STATE.dry_run = bool(getattr(args, "dry_run", False)) or bool(STATE.plan)
     if STATE.plan:

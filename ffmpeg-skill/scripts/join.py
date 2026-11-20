@@ -693,7 +693,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
     ap.add_argument("--transition", choices=TRANSITIONS, default="fade", help="transition between clips (default fade)")
     ap.add_argument("--duration", type=float, default=0.5, help="transition length in seconds (default 0.5)")
-    ap.add_argument("--width", type=int, help="output width (default: first clip)")
+    ap.add_argument("--width", type=int, help="output width (default: first clip); a size or resolution WxH is --width W --height H")
     ap.add_argument("--height", type=int, help="output height (default: first clip)")
     ap.add_argument("--fps", type=float, help="output frame rate (default: first clip)")
     ap.add_argument("--fit", choices=["pad", "crop"], default="pad", help="how clips of another aspect reach the frame (default pad)")

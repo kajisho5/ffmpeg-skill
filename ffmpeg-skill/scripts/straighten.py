@@ -33,7 +33,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_straighten.<ext>)")
     ap.add_argument("--degrees", type=float, required=True, help="rotation angle in degrees, -45..45, positive = clockwise")
     ap.add_argument("--fit", choices=["crop", "pad"], default="crop",
-                     help="crop (default): scale up to fill the frame, no visible corner gap; pad: keep the full picture, fill the corner gaps with --fill-color")
+                     help="crop (default): scale up to fill the frame, no visible corner gap; pad: keep the full picture (no crop), fill the corner gaps with --fill-color")
     ap.add_argument("--fill-color", default="black", help="corner fill colour with --fit pad (default black)")
     ap.add_argument("--audio-stream", type=int, default=0,
                      help="which audio stream of the input to keep, 0-based in file order (default 0)")
