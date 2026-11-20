@@ -1257,7 +1257,7 @@ def main() -> int:
     sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
     sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
     sty.add_argument("--fonts-dir", help="directory with extra .ttf/.otf files")
-    sty.add_argument("--size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
+    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
     sty.add_argument("--color", default=None, help="text colour RRGGBB (default FFFFFF or brand text colour)")
     sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
     sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")

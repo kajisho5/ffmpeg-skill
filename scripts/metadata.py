@@ -264,7 +264,7 @@ def main() -> int:
                       help="which detector(s) propose the markers (default both)")
     auto.add_argument("--silence-threshold", type=float, default=-35.0,
                       help="silence level in dBFS for --auto-chapters (default -35)")
-    auto.add_argument("--silence-min", type=float, default=1.5,
+    auto.add_argument("--min-silence", "--silence-min", dest="silence_min", type=float, default=1.5,
                       help="a pause must last this long to propose a chapter (default 1.5 -- deliberately longer than silence.py's 0.6: a chapter break is a long pause)")
     auto.add_argument("--scene-threshold", type=float, default=8.0,
                       help="minimum scdet score for a scene cut with --auto-chapters (default 8, as scenes.py)")
