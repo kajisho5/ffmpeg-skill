@@ -46,7 +46,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(page_path, work / "proj.review" / "index.html")
         def embedded(path):  # the one document the page is built from
             text = Path(path).read_text(encoding="utf-8")
-            return text, json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', text, re.S).group(1))
+            return text, json.loads(re.search(r'<script id="data">window\.REVIEW_DATA = (.*?);</script>', text, re.S).group(1))
         page, data = embedded(page_path)
         stills = sorted(p.name for p in (page_path.parent / "stills").glob("*.jpg"))
         self.assertEqual([n for n in stills if n.startswith("clip")], [f"clip{i}_{k}.jpg" for i in range(2) for k in range(3)])
@@ -69,6 +69,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual({n: t["p"] for n, t in data["tools"].items()}, {t["name"]: t["input_schema"]["properties"] for t in contract["tools"]})
         self.assertEqual(set(data["safe"]["reels"]), {"top", "bottom", "left", "right"})
         self.assertNotIn("/*DATA*/", page)
+        self.assertNotIn('getElementById("data")', page, "the data is the script's own value, never text read back from the document")
         for needed in ('id="app"', "data-clip", "data-prompt", "navigator.clipboard"):  # the screen, the clip fields, the instruction
             self.assertIn(needed, page)
         self.assertNotRegex(page, r'(src|href)="https?://', "the page asks the network for nothing")

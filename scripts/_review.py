@@ -246,7 +246,8 @@ def main(argv=None) -> int:
             "tools": {t["name"]: {"d": t["description"], "p": t["input_schema"]["properties"]} for t in json.loads(contract.stdout)["tools"]},
             # runnable from anywhere: this copy's render.py, both paths quoted for a shell
             "run": f"python3 {shlex.quote(str(HERE / 'render.py'))} {shlex.quote(str(proj_path))} --overwrite --json"}
-    # the page is the template with this one document in it; no "<" of the data reaches the HTML parser
+    # the page is the template with this one document in it, as a script's own value (the page never
+    # reads its data back out of the DOM); no "<" of the data reaches the HTML parser
     page = (HERE / "_review.html").read_text(encoding="utf-8").replace("/*DATA*/", json.dumps(data, ensure_ascii=False).replace("<", "\\u003c"), 1)
     write_new(folder / "index.html", page)
     print(folder / "index.html")
