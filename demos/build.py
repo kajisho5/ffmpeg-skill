@@ -527,29 +527,29 @@ def make_compare(before, after, dest, font, labels=("BEFORE", "AFTER")):
 
 def make_wave_compare(before, after, dest, font, labels=("BEFORE", "AFTER")):
     """For audio-only work there is nothing to see in the video, so the comparison is the two
-    waveforms (showwavespic) side by side, held for 3 s."""
+    waveforms side by side, held for 3 s: thin bars on the page's dark ground, the source in grey
+    and the result in the brand green running to blue, each with a soft glow and its label."""
     pics = []
-    for idx, src in enumerate((before, after)):
+    bars = (CELL_W - 2) // 3   # a 2 px bar and a 1 px gap
+    for idx, (src, c0, c1) in enumerate(((before, "0x6B7280", "0x9CA3AF"), (after, "0x17D16A", "0x38BDF8"))):
         pic = OUT / ("%s_wave%d.png" % (dest.stem, idx))
-        # bars, not a filled shape: one column per 4 px, drawn small and scaled up without
-        # smoothing, with a 1 px gap cut between the columns, on the page's own dark ground
-        ffmpeg("-i", str(src), "-filter_complex",
-               "color=c=0x101114:s=%dx%d[bg];[0:a]aformat=channel_layouts=mono,"
-               "showwavespic=s=%dx%d:split_channels=0:scale=sqrt:draw=full:colors=0x17D16A,"
-               "scale=%d:%d:flags=neighbor,drawgrid=w=4:h=%d:t=1:c=0x101114[w];[bg][w]overlay=0:%d"
-               % (CELL_W, CELL_H, CELL_W // 4, CELL_H - 60, CELL_W, CELL_H - 60, CELL_H, 40),
+        ffmpeg("-i", str(src),
+               "-f", "lavfi", "-i", "gradients=s=%dx%d:c0=%s:c1=%s:x0=0:y0=%d:x1=%d:y1=%d:n=2:speed=0.00001:d=1"
+               % (CELL_W, CELL_H, c0, c1, CELL_H // 2, CELL_W - 1, CELL_H // 2),
+               "-f", "lavfi", "-i", "color=c=0x0B0C0F:s=%dx%d:d=1" % (CELL_W, CELL_H),
+               "-filter_complex",
+               "[0:a]aformat=channel_layouts=mono,showwavespic=s=%dx%d:split_channels=0:scale=sqrt:draw=full:colors=white,"
+               "scale=%d:%d:flags=neighbor,drawgrid=w=3:h=%d:t=1:c=black,pad=%d:%d:1:%d:black,format=rgb24,format=gray[m];"
+               "[1:v]format=rgb24[gr];[gr][m]alphamerge,split[w1][w2];[w2]gblur=sigma=7[g];[2:v][g]overlay[bg];"
+               "[bg][w1]overlay,drawbox=x=0:y=%d:w=%d:h=1:c=white@0.08:t=fill,"
+               "drawtext=fontfile='%s':text='%s':fontsize=11:fontcolor=white@0.75:x=12:y=11"
+               % (bars, CELL_H - 70, bars * 3, CELL_H - 70, CELL_H * 2, CELL_W, CELL_H, 38,
+                  CELL_H // 2 + 3, CELL_W, esc(font), labels[idx]),
                "-frames:v", "1", str(pic))
         pics.append(pic)
-    chain = ";".join([
-        "[0:v]pad=%d:%d:0:0:color=0x101114,drawtext=fontfile='%s':text='%s':fontsize=18:"
-        "fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=6[v0]"
-        % (CELL_W, CELL_H, esc(font), labels[0]),
-        "[1:v]pad=%d:%d:0:0:color=0x101114,drawtext=fontfile='%s':text='%s':fontsize=18:"
-        "fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=6[v1]"
-        % (CELL_W, CELL_H, esc(font), labels[1]),
-        "[v0][v1]hstack=inputs=2,format=yuv420p[out]"])
     ffmpeg("-loop", "1", "-t", "3", "-i", str(pics[0]), "-loop", "1", "-t", "3", "-i", str(pics[1]),
-           "-filter_complex", chain, "-map", "[out]", "-r", "10", "-c:v", "libx264",
+           "-filter_complex", "[0:v][1:v]hstack=inputs=2,drawbox=x=%d:y=0:w=1:h=%d:c=0x1F2229:t=fill,format=yuv420p[out]"
+           % (CELL_W, CELL_H), "-map", "[out]", "-r", "10", "-c:v", "libx264",
            "-preset", "veryfast", "-crf", "24", str(dest))
     return dest
 
