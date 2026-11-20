@@ -4,10 +4,18 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.1.0
+
+_Automated release: version and notes generated from pull requests merged since 4.0.1._
+
 - **The review page has the site's ground.** Three soft glows sit behind the panels and the panels' corners are rounder (20px). The panels stay opaque, so the small type and the check results keep their contrast; the layout is unchanged.
 - **The showcase is rebuilt from 1080p footage and plays in the page's language.** Nine clips AI-generated with Google Veo and three shot on a phone (stabilised, a night shot lifted and denoised, 60 fps slowed down) replace the four earlier ones: a talk laid out with its slides (side by side, picture in picture, a cutaway, a captioned vertical short), a pause removed, a green-screen composite in a new room, a levelled horizon, colour, and speed and reframing. The talk, the composite and the reel exist in English and Japanese, and the site plays the one for the language shown. `demos/showcase.py` builds all of it; `docs/showcase.md` has the commands and what the build showed.
 - **The before/after gallery (`docs/demos.md`, the README's and the site's previews) is rebuilt on real pictures.** `demos/build.py` takes its pictures from `demos/footage/` in place of colour bars and fractals; the sound stays synthetic so the measured pauses and levels hold. The waveform previews are drawn as thin bars, the source in grey and the result in the brand green running to blue, and the loudness demo measures a real voice.
 - **The site and the README show the review page**, with a screenshot made from real footage in each language and the three steps to call it and send a change back.
+- chore(review): the review page has the site's ground (#641)
+- docs: the showcase is rebuilt from twelve clips, and the site and README show the review page (#640)
 
 ## 4.0.1
 
