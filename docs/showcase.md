@@ -41,10 +41,10 @@ python3 scripts/color.py denoised.mp4 --correct --contrast 1.06 --saturation 1.1
 
 # B. speed and reframe
 python3 scripts/fit.py $SRC/veo_basketball.mp4 --duration 15.7 --method speed --smooth blend -o slow_motion.mp4   # 50%
-python3 scripts/cut.py $SRC/veo_basketball.mp4 --start 2 --end 7 --accurate -o shot.mp4
-python3 scripts/speedramp.py shot.mp4 --segment 0-1.2:1 --segment 1.2-3.6:0.5 --segment 3.6-5:1 -o highlight.mp4
-python3 scripts/fit.py a.mp4 --aspect 9:16 --fit crop --crop-x 0.26 --width 1080 --height 1920 -o a916.mp4   # the player
-python3 scripts/fit.py b.mp4 --aspect 9:16 --fit crop --crop-x 0.72 --width 1080 --height 1920 -o b916.mp4   # the hoop
+python3 scripts/cut.py $SRC/veo_basketball.mp4 --start 1 --end 6.25 --accurate -o shot.mp4
+python3 scripts/speedramp.py shot.mp4 --segment 0-2.2:1 --segment 2.2-4.2:0.5 --segment 4.2-5.25:1 -o highlight.mp4
+python3 scripts/fit.py a.mp4 --aspect 9:16 --fit crop --crop-x 0.18 --width 1080 --height 1920 -o a916.mp4   # the player
+python3 scripts/fit.py b.mp4 --aspect 9:16 --fit crop --crop-x 0.95 --width 1080 --height 1920 -o b916.mp4   # the hoop
 python3 scripts/join.py a916.mp4 b916.mp4 --transition none -o vertical_9x16.mp4
 
 # C. a talk and its slides
@@ -90,7 +90,8 @@ python3 scripts/fit.py $SRC/real_fireworks.mp4 --duration 8.235 --method speed -
 - **`overlay.py --video` keeps the main input's sound.** A layer that carries the voice gets it
   back with `audio.py --replace`.
 - **The vertical basketball shot is two fixed crops.** There is no subject tracking: the player,
-  then the hoop, joined with a hard cut.
+  then the hoop, joined with a hard cut. The before/after puts the 16:9 frame and the 9:16 one on
+  one canvas with `background.py` and `overlay.py --video`, each at its own shape.
 - **The crooked horizon is made here.** The generated sea clip is level, so the build tilts it five
   degrees and then levels it; the site says so under the video.
 - **Loudness.** The talk measures -17.6 LUFS and is brought to -14.

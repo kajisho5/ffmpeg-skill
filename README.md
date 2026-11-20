@@ -22,6 +22,7 @@ No cloud · No API keys · Python standard library</p>
   <a href="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml"><img src="https://github.com/kajisho5/ffmpeg-skill/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/kajisho5/ffmpeg-skill"><img src="https://api.scorecard.dev/projects/github.com/kajisho5/ffmpeg-skill/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/v/ffmpeg-skill" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/ffmpeg-skill"><img src="https://img.shields.io/npm/dm/ffmpeg-skill" alt="npm downloads per month"></a>
   <a href="#ffmpeg-compatibility"><img src="https://img.shields.io/badge/ffmpeg-6.1%20%7C%207.1%20%7C%208%20%7C%209%20tested-orange" alt="FFmpeg 6.1, 7.1, 8 and 9 tested in CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
   <a href="https://github.com/sponsors/kajisho5"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors" alt="Sponsor"></a>
@@ -30,6 +31,20 @@ No cloud · No API keys · Python standard library</p>
 <p align="center">
   <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: Edit. Measure. Ship. 42 local FFmpeg tools, 12 stable; your agent does the work. A card shows final.mp4 measured: 59.98 s, 1080x1920, 30 fps, -14.0 LUFS, verified."></a>
 </p>
+
+<p align="center">
+  <a href="#quick-start"><img src="brand/button-install.svg" height="56" alt="Install: npx ffmpeg-skill setup"></a>
+  &nbsp;
+  <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase"><img src="brand/button-demos.svg" height="56" alt="Watch the demos"></a>
+</p>
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/211415"><img src="https://trendshift.io/api/badge/repositories/211415" alt="kajisho5/ffmpeg-skill on Trendshift: GitHub Trending, repository of the day" width="250" height="55"></a>
+  &nbsp;
+  <a href="https://www.star-history.com/kajisho5/ffmpeg-skill"><img src="https://api.star-history.com/badge?repo=kajisho5/ffmpeg-skill&type=rank" alt="Star History: global rank among GitHub repositories" height="55"></a>
+</p>
+
+<p align="center"><b>English</b> · <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja">日本語（サイト）</a></p>
 
 ```bash
 npx ffmpeg-skill
