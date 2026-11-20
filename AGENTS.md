@@ -32,3 +32,7 @@
   has a fresh agent write calls blind from each tool's name, runs them (`tests/first_try.py`) and
   turns each miss into a line of `docs/stumbles.jsonl` that the tests replay. Run it after adding
   or renaming an option and before a tool moves from beta to stable.
+- **Defects nobody has reported are looked for.** `.claude/skills/edge-probe/SKILL.md` gives every
+  numeric option a zero, a negative and a huge value (`tests/edge_values.py`) and checks the few
+  properties a tool should keep. Run it before a tool moves from beta to stable and after adding a
+  numeric option.
