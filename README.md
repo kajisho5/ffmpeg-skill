@@ -38,6 +38,12 @@ No cloud · No API keys · Python standard library</p>
   <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase"><img src="brand/button-demos.svg" height="56" alt="Watch the demos"></a>
 </p>
 
+<p align="center">
+  <a href="https://trendshift.io/repositories/211415"><img src="https://trendshift.io/api/badge/repositories/211415" alt="kajisho5/ffmpeg-skill on Trendshift: GitHub Trending, repository of the day" width="250" height="55"></a>
+  &nbsp;
+  <a href="https://www.star-history.com/kajisho5/ffmpeg-skill"><img src="https://api.star-history.com/badge?repo=kajisho5/ffmpeg-skill&type=rank" alt="Star History: global rank among GitHub repositories" height="55"></a>
+</p>
+
 <p align="center"><b>English</b> · <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja">日本語（サイト）</a></p>
 
 ```bash
