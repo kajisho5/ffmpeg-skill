@@ -4,9 +4,17 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.1.1
+
+_Automated release: version and notes generated from pull requests merged since 4.1.0._
+
 - **A guessed option name is answered with the right one.** Every tool now adds to its usage error, for each `--flag` it does not have: its nearest option (`--treshold`: did you mean `--threshold`?), the options whose help uses the word (`straighten.py --angle`: `--degrees` mentions 'angle'; `fit.py --ratio`: `--aspect`), and the tools that do take a flag of that name (`export.py --width`: `fit.py` and others). It is said even when a required option is also missing, where argparse named only that one. `overlay.py --position` lists its names when one is wrong.
 - **First-try stumbles are recorded and replayed.** `docs/stumbles.jsonl` holds each call an agent got wrong (what it typed, what came back, what was right, the class); a line marked `taught` is run by the tests and the tool's answer must name the way out. Five stumbles where the result is wrong and says nothing are listed as `open`.
 - **Option names stop growing apart.** The names for an angle, a strength, a text size, a duration and the rest are decided (docs/design-decisions.md, "one name per meaning"). Nothing is renamed while the freeze holds; a test keeps a new option from taking an older name and a shared name from meaning two things. Twenty-four more wrong calls, each another tool's name for the same thing, are in the ledger and answered.
+- fix: a guessed option name is answered with the right one, and first-try stumbles are recorded and replayed (#642)
+
 ## 4.1.0
 
 _Automated release: version and notes generated from pull requests merged since 4.0.1._
