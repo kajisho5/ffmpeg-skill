@@ -250,39 +250,22 @@ class AudioTests(MediaFixtures):
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
             text=True).split()]
         self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
-        # a short gap too: 80 ms of sound missing before the second beep is under swresample's
-        # default threshold (100 ms), and every later beep played 80 ms early (review of #636)
-        short = OUT / "loud_flash_beep_gap80.mp4"
-        sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", "aselect='not(between(t,0.70,0.78))'", "-c:v", "copy", "-c:a", "aac", short)
-        self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, "fixture: the gapped source is in sync")
-        for target in ("-14", "-30"):
-            with self.subTest(short_gap_target=target):
-                fixed = OUT / f"loud_flash_beep_gap80_{target[1:]}.mp4"
-                script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite")
-                offsets = av_offsets_ms(fixed)
-                self.assertEqual(len(offsets), 4, offsets)
-                self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
-        # a gap in the source's sound (8-10 s here) stays where it is, in both modes and on every
-        # build: it is filled with silence before loudnorm. The dynamic-mode restamp closed it,
-        # and FFmpeg 8.0's loudnorm closes it in linear mode, so the sound after it played 2 s
-        # early against the copied picture (review of #636)
-        gapped = OUT / "loud_gapped.mp4"
-        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=160x90:r=25:d=20", "-f", "lavfi",
-           "-i", "anoisesrc=d=20:c=pink:a=0.05", "-filter_complex", "[1]aselect='not(between(t,8,10))'[a]",
-           "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", gapped)
-        for target, mode in (("-23", "linear"), ("-14", "dynamic")):
-            with self.subTest(mode=mode):
-                kept = OUT / f"loud_gapped_{mode}.mp4"
-                doc = json.loads(script("loudness.py", gapped, "-I", target, "--tp", "-1", "-o", kept, "--overwrite", "--json").stdout)
-                self.assertEqual(doc["result"]["loudnorm_mode"], mode, doc["result"])
-                log = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-i", str(kept), "-map", "0:a:0", "-af",
-                                      "silencedetect=n=-70dB:d=1", "-f", "null", "-"], capture_output=True, text=True).stderr
-                starts = [float(v) for v in re.findall(r"silence_start: ([\d.]+)", log)]
-                ends = [float(v) for v in re.findall(r"silence_end: ([\d.]+)", log)]
-                self.assertEqual((len(starts), len(ends)), (1, 1), log[-600:])
-                self.assertAlmostEqual(starts[0], 8.0, delta=0.15)
-                self.assertAlmostEqual(ends[0], 10.0, delta=0.15)
-                self.assertAlmostEqual(probe(str(kept))["duration"], 20.0, delta=0.06)
+        # a gap in the source's sound stays where it is, in both modes and on every build: it is
+        # filled with silence before loudnorm. The dynamic-mode restamp closed it, and so did
+        # swresample's own threshold for a gap under 100 ms, so every later beep played early by
+        # the gap's length (0.8 s and 85 ms here). What is checked is the thing a viewer sees,
+        # flash against beep, not how a build stamps its packets (review of #636)
+        for name, cut in (("gap80", "between(t,0.70,0.78)"), ("gap800", "between(t,1.60,2.40)")):
+            short = OUT / f"loud_flash_beep_{name}.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", f"aselect='not({cut})'", "-c:v", "copy", "-c:a", "aac", short)
+            self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, f"fixture {name}: the gapped source is in sync")
+            for target in ("-14", "-30"):
+                with self.subTest(gap=name, target=target):
+                    fixed = OUT / f"loud_flash_beep_{name}_{target[1:]}.mp4"
+                    script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite")
+                    offsets = av_offsets_ms(fixed)
+                    self.assertEqual(len(offsets), 4, offsets)
+                    self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"

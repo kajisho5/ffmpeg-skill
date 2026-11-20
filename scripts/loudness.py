@@ -153,8 +153,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # first one's time (a late start keeps its lead). A gap in the source's sound is
             # filled with silence before loudnorm (aresample=async=1, both modes; from 10 ms
             # up, swresample's own threshold of 100 ms left an 80 ms gap closed): the restamp
-            # closed it, and so does 8.0's loudnorm in linear mode, which played everything after
-            # the gap that much early (review of #636).
+            # closed it, and everything after the gap played that much early (review of #636).
             af += ",asetpts=N/SR/TB+STARTPTS"
         if in_audio:
             af += f",atrim=duration={float(in_audio):.6f}"
