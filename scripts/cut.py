@@ -1177,7 +1177,6 @@ def _fraction_rate(text: str) -> float:
 
 # the first frame at or after t on the source's grid; shared with the tools that cut both streams
 # on one set of bounds (#409)
-_grid_at_or_after = grid_at_or_after
 
 
 def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,
@@ -1223,8 +1222,8 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
             # output's grid, and the constant-rate output duplicated one (65 frames for 64 on
             # FFmpeg 6.1). The video trim sits half a frame before each grid point, so no FFmpeg
             # version rounds a frame on the boundary in or out.
-            a = m + (_grid_at_or_after(s, v0, rate) - s)
-            b = m + (_grid_at_or_after(e, v0, rate) - s)
+            a = m + (grid_at_or_after(s, v0, rate) - s)
+            b = m + (grid_at_or_after(e, v0, rate) - s)
             half = 0.5 / rate
         # both streams shift by the same constant, so an offset between them (audio that starts
         # late) survives; the audio is then padded to the segment's origin
@@ -1684,7 +1683,11 @@ def main() -> int:
     for s, e in segments:
         if total and s >= total:
             die(f"segment start {s:.3f}s is beyond the media duration {total:.3f}s")
-    segments = [(s, min(e, total) if total else e) for s, e in segments]
+    # a start or end given in milliseconds is the frame it reads back to (#653): moved onto that
+    # frame when it is up to half a millisecond after it or before it (a time rounded down, 1.935 for the
+    # frame at 1.93527); never past the media's end; a sound-only output or a VFR picture has no grid
+    rate = 0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta)
+    segments = [tuple(min(a if (a := grid_at_or_after(t, stream_starts(meta)[0], rate)) - t <= 0.0005 else t, total or math.inf) for t in (s, e)) for s, e in segments]
     # what was asked for, clamped to the media duration as in every 2.x release: requested_* and
     # expected_duration report this, and a segment the join below ends with the video (less than a
     # frame of sound trimmed) shows that trim in duration_delta_seconds and a note instead

@@ -1385,6 +1385,36 @@ class CutJoinTests(unittest.TestCase):
         self.assertIn(f"atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB", graph)
         self.assertEqual(cmd[cmd.index("-r") + 1], "30000/1001")
 
+    def test_a_time_given_in_milliseconds_is_read_back_to_its_frame(self):
+        """#653, velisa/timebase@1 TB-3: frame 57 of 30000/1001 starts at 1.9019 s, and "1.902" is
+        that frame written to the millisecond. A start there keeps it and an end there leaves it
+        out, as 1.9019 does; the shared helper reads it the same way for every tool that uses it."""
+        at = 57 * 1001 / 30000
+        self.assertEqual(decision.grid_at_or_after(1.902, 0.0, 30000 / 1001), at)
+        self.assertEqual(decision.grid_at_or_after(1.9026, 0.0, 30000 / 1001), 58 * 1001 / 30000)
+        # the tolerance never reaches the frame before the first one: no frame lies before the file starts
+        self.assertEqual(decision.grid_at_or_after(0, 0.0398, 25), 0.0398)
+        self.assertEqual(decision.grid_at_or_after(0, 1.4, 25), 0.0)
+        src = DIR / "ntsc.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30000/1001:d=4",
+           "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv420p", src)
+        for flag, exact, millis in (("--start", "1.9019", "1.902"), ("--end", "1.9019", "1.902")):
+            counts = []
+            for value in (exact, millis):
+                out = DIR / "ntsc_ms.mp4"
+                extra = ("--end", "3") if flag == "--start" else ("--start", "0")
+                cut_json(src, flag, value, *extra, "--accurate", "--overwrite", "-o", out)
+                counts.append(len(frame_pts(out)))
+            self.assertEqual(counts[0], counts[1], f"{flag} {millis} is the frame {flag} {exact} is")
+        # consecutive frames 57 and 58 written as 1.902 and 1.935: the second rounds DOWN, and is still the
+        # frame it reads back to, so the cut is the one frame and not a sub-frame refusal
+        out = DIR / "ntsc_ms.mp4"
+        cut_json(src, "--start", "1.902", "--end", "1.935", "--accurate", "--overwrite", "-o", out)
+        self.assertEqual(len(frame_pts(out)), 1)
+        # a time that is not within half a millisecond of a frame is not moved: still a sub-frame cut, refused
+        proc = script("cut.py", src, "--start", "1.9", "--end", "1.92", "--accurate", "--overwrite", "-o", out, expect_fail=True)
+        self.assertIn("shorter than one frame", proc.stderr)
+
     def test_a_wav_join_stays_a_lossless_copy(self):
         """PCM has no extradata at all; a "missing means incompatible" rule would have sent every
         multi-segment WAV cut to a re-encode."""

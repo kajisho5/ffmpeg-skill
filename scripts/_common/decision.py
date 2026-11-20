@@ -497,9 +497,12 @@ def frame_durations(meta: Optional[Dict[str, Any]], rate: float) -> str:
 
 def grid_at_or_after(t: float, v0: float, rate: float) -> float:
     """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
+    # a time up to half a millisecond after a frame is that frame: a time written in milliseconds
+    # reads back to its nearest frame (#653, velisa/timebase@1 TB-3). Never a frame before the file's
+    # start (time 0): the tolerance must not reach the frame before the first one
     if not rate:
         return t
-    return v0 + math.ceil((t - v0) * rate - 1e-6) / rate
+    return v0 + max(math.ceil((t - v0 - 0.0005) * rate - 1e-6), math.ceil(-v0 * rate - 1e-6)) / rate
 
 
 def frame_window(start: Optional[float], end: Optional[float], meta: Optional[Dict[str, Any]],
