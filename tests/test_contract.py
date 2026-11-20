@@ -13370,6 +13370,16 @@ class StumbleLedgerTests(unittest.TestCase):
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
 
+    def test_every_option_has_help_text(self):
+        """#558: twenty options (--preset on eight tools, the colour and font options of overlay
+        and graphics, ...) had no help, the text `--help` and every MCP tool description show an
+        agent before it guesses a value. A new option added without one fails here."""
+        doc = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"],
+                                        capture_output=True, text=True, encoding="utf-8").stdout)
+        bare = [f"{t['name']} {spec.get('cli')}" for t in doc["tools"] for spec in t["input_schema"]["properties"].values()
+                if spec.get("cli") != "positional" and not str(spec.get("description", "")).strip()]
+        self.assertEqual(bare, [])
+
     def test_the_decided_name_and_the_older_one_are_the_same_option(self):
         """The decided names (an angle is --angle, a length of time --duration, ...) were answered
         with a hint by the tools that held an older name. They are spellings of the same option now:

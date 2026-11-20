@@ -496,7 +496,7 @@ def main() -> int:
                           "audio (--to-sdr, --lut, --correct, and --retag's re-encode fallback) -- --strip-dovi and "
                           "a successful --retag stream-copy all streams untouched, so the flag has nothing to select there.")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
-    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_alpha_args(ap)
     add_common(ap)
     args = ap.parse_args()
