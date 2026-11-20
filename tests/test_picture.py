@@ -3232,7 +3232,7 @@ class PictureTests(MediaFixtures):
                "--animate", "pop", "--karaoke", "--font", "DejaVu Sans",
                "--write-ass", ass, "-o", OUT / "cap_margins.mp4")
         left, right, vertical = self._style_margins(ass)
-        safe = platforms.safe_of("tiktok")
+        safe = platforms.PLATFORMS["tiktok"]["safe"]
         self.assertEqual((left, right), (round(safe["left"] * 1080), round(safe["right"] * 1080)))
         self.assertAlmostEqual(vertical, safe["bottom"] * 1920, delta=4)   # via whole ASS units
         # the column libass is given, not the sliver the vertical margin used to leave

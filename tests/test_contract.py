@@ -13236,5 +13236,56 @@ class BasicsAudit558Tests(unittest.TestCase):
         self.assertEqual(doc["error"]["reason"], "output_looks_like_option")
 
 
+
+class StumbleLedgerTests(unittest.TestCase):
+    """docs/stumbles.jsonl records each call an agent got wrong on the first try: what it typed,
+    what came back, what was right. A line marked `taught` is replayed here, and the tool's answer
+    must name the way out (`must_say`), so the next agent that types the same thing is told. A line
+    marked `open` is a stumble with no answer yet (a result that is wrong and says nothing): it
+    stays listed until a change teaches it."""
+
+    LEDGER = ROOT / "docs" / "stumbles.jsonl"
+    CLASSES = {"flag_name", "flag_on_another_tool", "value_name", "value_shape", "silent_wrong_result",
+               "refusal_without_way_out", "default_misses"}
+
+    def rows(self):
+        return [json.loads(line) for line in self.LEDGER.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def test_every_line_is_complete_and_of_a_known_class(self):
+        rows = self.rows()
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(row=row["argv"]):
+                self.assertEqual(set(row), {"seen", "tool", "argv", "class", "got", "right", "must_say", "status"})
+                self.assertIn(row["class"], self.CLASSES)
+                self.assertIn(row["status"], ("taught", "open"))
+                self.assertTrue((ROOT / "scripts" / f"{row['tool']}.py").is_file())
+                self.assertEqual(bool(row["must_say"]), row["status"] == "taught", "a taught line says what the answer must name; an open one cannot yet")
+
+    def test_a_taught_stumble_is_answered_with_the_way_out(self):
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            for row in self.rows():
+                if row["status"] != "taught":
+                    continue
+                with self.subTest(tool=row["tool"], argv=row["argv"]):
+                    argv = [clip if a == "{clip}" else a for a in row["argv"]]
+                    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4")],
+                                          capture_output=True, text=True, timeout=120)
+                    self.assertNotEqual(proc.returncode, 0, "the wrong call must not run")
+                    for phrase in row["must_say"]:
+                        self.assertIn(phrase, proc.stdout + proc.stderr)
+
+    def test_an_unknown_flag_is_named_even_when_a_required_one_is_missing(self):
+        # argparse reports the missing required option first and never reaches the unknown one:
+        # `straighten.py --angle 5` said only that --degrees was required
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "straighten.py"), "in.mp4", "--angle", "5"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--angle is not an option of this tool", proc.stderr)
+        # a flag the tool has, an abbreviation argparse accepts and a negative number are left alone
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "silence.py"), "--thresh", "-30", "--min-silence=0.4"], capture_output=True, text=True)
+        self.assertNotIn("is not an option", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

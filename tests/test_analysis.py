@@ -1678,11 +1678,11 @@ class AnalysisTests(MediaFixtures):
         sys.path.insert(0, str(SCRIPTS))
         import export as export_mod
         from check import SPECS
-        from _platforms import loudness_of
+        from _platforms import PLATFORMS
         for preset, platform in export_mod.PLATFORM_OF.items():
             with self.subTest(preset=preset):
                 spec = SPECS[platform]
-                table = loudness_of(platform)
+                table = PLATFORMS[platform]["spec"]
                 self.assertEqual((spec["lufs"], spec["lufs_tol"], spec["tp"]),
                                  (table["lufs"], table["lufs_tol"], table["tp"]))
 
