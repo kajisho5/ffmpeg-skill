@@ -4428,6 +4428,71 @@ class EditingTests(MediaFixtures):
         listed = json.loads(script("silence.py", two, "--max-cuts", "1", "--list", "--json").stdout)
         self.assertEqual(len(listed["keep"]), 3, listed)
 
+    def test_stream_span_falls_back_when_the_tail_was_not_read(self):
+        """#566: a head+tail ffprobe can exit 0 with only the head packets, so a non-empty
+        result is not proof that the tail was observed; fall back to the full packet scan."""
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        head_only = {"packets": [
+            {"pts_time": "0.000000", "duration_time": "0.033"},
+            {"pts_time": "2.100000", "duration_time": "0.033"},
+        ]}
+        full = {"packets": [
+            {"pts_time": "0.000000", "duration_time": "0.033"},
+            {"pts_time": "39.966667", "duration_time": "0.033"},
+        ]}
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            body = head_only if len(calls) == 1 else full
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(body), "")
+
+        with mock.patch.object(join_mod, "run", side_effect=fake_run):
+            first, last = join_mod._stream_span("x.mp4", "V", 40.0)
+        self.assertEqual(len(calls), 2, calls)
+        self.assertIn("-read_intervals", calls[0])
+        self.assertNotIn("-read_intervals", calls[1])
+        self.assertAlmostEqual(first, 0.0)
+        self.assertAlmostEqual(last, 39.999667, places=3)
+
+    def test_stream_span_falls_back_for_head_only_audio(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        # AAC priming starts below zero; the first 64 packets cover only about 1.46 s.
+        head = [{"pts_time": f"{(i - 1) * 1024 / 44100:.6f}", "duration_time": "0.023220"}
+                for i in range(64)]
+        full = head + [{"pts_time": "39.990000", "duration_time": "0.010000"}]
+        responses = [subprocess.CompletedProcess([], 0, json.dumps({"packets": packets}), "")
+                     for packets in (head, full)]
+        with mock.patch.object(join_mod, "run", side_effect=responses) as run:
+            self.assertEqual(join_mod._stream_span("x.mp4", "a", 40.0), (-0.023220, 40.0))
+        self.assertEqual(run.call_count, 2)
+        sampled, fallback = (call.args[0] for call in run.call_args_list)
+        for cmd in (sampled, fallback):
+            self.assertEqual(cmd[cmd.index("-select_streams") + 1], "a:0")
+        self.assertIn("-read_intervals", sampled)
+        self.assertNotIn("-read_intervals", fallback)
+
+    def test_stream_span_head_packets_can_reach_the_tail_window(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import join as join_mod
+        from unittest import mock
+        packets = [{"pts_time": str(100 + i / 2), "duration_time": "0.5"} for i in range(80)]
+        # At 2 fps the first 64 packets cover 32 s, past the 130 s tail seek on this clock.
+        for count, expected_calls in ((64, 2), (80, 1)):
+            with self.subTest(count=count):
+                responses = [subprocess.CompletedProcess([], 0, json.dumps({"packets": p}), "")
+                             for p in (packets[:count], packets)]
+                with mock.patch.object(join_mod, "run", side_effect=responses) as run:
+                    self.assertEqual(join_mod._stream_span("x.mp4", "V", 40.0, 100.0), (100.0, 140.0))
+                self.assertEqual(run.call_count, expected_calls)
+                self.assertIn("%+#64,130.000%", run.call_args_list[0].args[0])
+                if expected_calls == 2:
+                    self.assertNotIn("-read_intervals", run.call_args.args[0])
+
 
 class OneClockTests(MediaFixtures):
     """#409: a tool that cuts, repeats, reverses or re-times both streams keeps them on one clock.

@@ -809,6 +809,19 @@ FFmpeg itself:
 - **Put it first on `PATH`.** Add `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` to your shell profile. `brew --prefix ffmpeg-full` is the stable `opt/` path, so this survives upgrades, but it only reaches processes started from a shell that read the profile.
 - **Link it over the lean formula:** `brew unlink ffmpeg 2>/dev/null; brew link --overwrite --force ffmpeg-full`. Every process finds this one, but `brew doctor` warns about a linked keg-only formula, and an upgrade of the lean `ffmpeg` has been seen to link the lean build back on top without a message. After upgrading, check that `command -v ffmpeg` still resolves into `ffmpeg-full`, and re-run the link if it doesn't.
 
+### Updating
+
+Releases are frequent (often several a week), and nothing updates by itself: the tools never go online, so a copy stays at the version you installed until you replace it.
+
+```bash
+grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
+npm view ffmpeg-skill version                                  # the latest release
+npx ffmpeg-skill@latest setup                                  # replace every installed copy with the latest
+claude plugin update                                           # when installed as a Claude Code plugin
+```
+
+`npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
+
 ## Requirements
 
 - FFmpeg 6.1+ (3.0.0 removed 5.x; an older build is refused). Required by at least one tool (so `doctor`'s `ok` needs them all): `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `amix`, `overlay`, `scdet`, `silencedetect`, `cropdetect`, `tile`, `tpad`, `boxblur`, `hqdn3d`, `yadif`, `reverse`, `rotate`, `showwaves`, `v360`, `xstack` and `vidstabdetect`/`vidstabtransform` (libvidstab, `stabilize.py` only) filters; `doctor --json` lists them as `capabilities.required`. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.

@@ -78,16 +78,7 @@ def main() -> int:
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
 
-    if not -180 <= args.yaw <= 180:
-        die(f"--yaw must be -180..180, got {args.yaw}")
-    if not -180 <= args.pitch <= 180:
-        die(f"--pitch must be -180..180, got {args.pitch}")
-    if not -180 <= args.roll <= 180:
-        die(f"--roll must be -180..180, got {args.roll}")
-    if not 1 <= args.h_fov <= 170:
-        die(f"--h-fov must be 1..170, got {args.h_fov}")
-    if args.v_fov is not None and not 1 <= args.v_fov <= 170:
-        die(f"--v-fov must be 1..170, got {args.v_fov}")
+    # the angles and both fields of view state their range in the help; apply_common refuses outside it
     if args.width <= 0 or args.height <= 0:
         die(f"--width/--height must be > 0, got width={args.width} height={args.height}")
     if args.width % 2 or args.height % 2:

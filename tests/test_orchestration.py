@@ -1936,6 +1936,9 @@ class OrchestrationTests(MediaFixtures):
     def test_render_cache_hit_skips_the_encode(self):
         cdir = OUT / "rcache_hit"
         shutil.rmtree(cdir, ignore_errors=True)
+        cdir.mkdir()
+        sentinel = cdir / ".writable"
+        sentinel.write_text("keep this file", encoding="utf-8")
         proj = self._cache_project("cache_hit")
         first = json.loads(script("render.py", proj, "--cache", cdir, "--json").stdout)
         self.assertEqual(first["cache"]["hits"], [])
@@ -1946,6 +1949,11 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(second["commands"], [])
         self.assertEqual(second["stages"], first["stages"])   # a cached stage still happened
         self.assertTrue(Path(second["output"]).exists())
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
+        dry = json.loads(script("render.py", proj, "--cache", cdir, "--overwrite",
+                                "--dry-run", "--json").stdout)
+        self.assertIn("clips", dry["cache"]["would_hit"])
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
 
     def test_render_cache_misses_when_a_stage_arg_changes(self):
         cdir = OUT / "rcache_arg"
@@ -2015,8 +2023,14 @@ class OrchestrationTests(MediaFixtures):
         shutil.rmtree(cdir, ignore_errors=True)
         data = json.loads(script("render.py", self._cache_project("cache_dry"), "--cache", cdir,
                                  "--dry-run", "--json").stdout)
-        self.assertEqual(sorted(p.name for p in cdir.iterdir()), [])
+        self.assertFalse(cdir.exists())
         self.assertIn("cache", data)
+
+        cdir.mkdir()
+        sentinel = cdir / ".writable"
+        sentinel.write_text("keep this file", encoding="utf-8")
+        script("render.py", self._cache_project("cache_dry"), "--cache", cdir, "--dry-run", "--json")
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep this file")
 
     def test_render_failure_with_a_cache_leaves_no_work_dir_and_caches_nothing(self):
         """The failure path of --cache, which the happy-path tests do not reach: a stage that
@@ -2512,6 +2526,26 @@ class TimelineExportTests(unittest.TestCase):
         self.assertEqual(c["record_in"], a["visible"] + b["visible"])
         # b's window: from its visible start minus trim_head, for 15 frames; a's media covers it
         self.assertEqual(a["visible"] + a["trim_tail"], a["length"])
+
+    def test_a_half_frame_position_rounds_up(self):
+        """#638, velisa/timebase@1 TB-4: a position at an exact half frame rounds up, floor(x + 1/2), as
+        decision.py and av_rescale do. round() took it to even: 0.5 s at 25 fps (12.5 frames) became 12,
+        a frame off the same cut exported by a tool that follows TB-4."""
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 4})
+        probes["/m/a.mp4"]["video"]["fps"] = 25.0
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 0.5, "out": 2.5}], "transition": {"type": "none"}},
+                          probes, lambda p: f"/m/{p}")
+        clip = tl["clips"][0]
+        self.assertEqual((clip["src_in"], clip["src_out"], clip["length"]), (13, 63, 50))
+        # one source frame played at 2x is half a timeline frame
+        tl = tl_mod.build({"clips": [{"src": "a.mp4", "in": 1, "out": 1.04, "speed": 2}],
+                           "transition": {"type": "none"}}, probes, lambda p: f"/m/{p}")
+        clip = tl["clips"][0]
+        self.assertEqual((clip["src_in"], clip["src_out"], clip["length"]), (25, 26, 1))
+        # the start label's offset: 00:00:00:00 plus 0.02 s is half a frame at 25 fps
+        meta = {"timecode": {"value": "00:00:00:00"}, "video": {"fps": 25.0}}
+        self.assertEqual(tl_mod.output_timecode_args(meta, 0.02)[1], "timecode=00:00:00:01")
 
     def test_crop_only_sequence_uses_the_even_canvas_for_several_clips(self):
         probes = self._probes(**{"a.mp4": 2, "b.mp4": 2})
