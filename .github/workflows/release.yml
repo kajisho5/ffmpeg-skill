@@ -238,11 +238,17 @@ jobs:
           # be the literal "(nothing yet)" line, so a PR that wrote real notes there broke the
           # bump step (1.4.1's first run).
           m = re.search(r"## Unreleased\n(.*?)(?=^## )", changelog, re.S | re.M)
-          assert m, "CHANGELOG.md has no '## Unreleased' section followed by a version heading"
-          unreleased = m.group(1).strip()
+          # A hand-bumped major writes its own section on top and leaves no "## Unreleased"
+          # (4.0.0): the first release after it then failed here and nothing was published. With
+          # no such section there is nothing to carry, and the new section goes above the first
+          # version heading.
+          first = m or re.search(r"^## ", changelog, re.M)
+          assert first, "CHANGELOG.md has no '## Unreleased' section and no version heading"
+          unreleased = m.group(1).strip() if m else ""
           if unreleased and unreleased != "(nothing yet)":
               section = section.replace(f"since {old}._\n\n", f"since {old}._\n\n{unreleased}\n", 1)
-          changelog = changelog[:m.start()] + "## Unreleased\n\n(nothing yet)\n\n" + section + changelog[m.end():]
+          changelog = (changelog[:first.start()] + "## Unreleased\n\n(nothing yet)\n\n" + section
+                       + changelog[m.end() if m else first.start():])
           changelog_path.write_text(changelog, encoding="utf-8")
           PY
 

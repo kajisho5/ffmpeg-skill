@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import re
+import textwrap
 import shlex
 import shutil
 import subprocess
@@ -895,6 +896,29 @@ class ContractTests(unittest.TestCase):
         # a hand-bumped major writes its own section on top (#632, 4.0.0); otherwise Unreleased
         version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
         self.assertIn(headings[0], ("Unreleased", version))
+
+    def test_the_release_bump_writes_its_section_with_or_without_an_unreleased_heading(self):
+        """4.0.1 was not published: 4.0.0 was bumped by hand, its section sat on top of
+        CHANGELOG.md with no `## Unreleased` above it, and the bump step of the next release
+        asserted on the missing heading. The step's own lines are run here on both shapes."""
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        start = release.index('          m = re.search(r"## Unreleased')
+        step = textwrap.dedent(release[start:release.index("          changelog_path.write_text(changelog", start)])
+        def bumped(changelog):
+            scope = {"re": re, "changelog": changelog, "old": "4.0.0",
+                     "section": "## 4.0.1\n\n_Automated release: since 4.0.0._\n\n- fix: one\n\n"}
+            exec(step, scope)
+            return scope["changelog"]
+        head = "# Changelog\n\n> note\n\n"
+        after_a_hand_bump = bumped(head + "## 4.0.0\n\nThe third break.\n\n## 3.15.1\n\nold\n")
+        self.assertEqual(re.findall(r"(?m)^## (\S+)", after_a_hand_bump), ["Unreleased", "4.0.1", "4.0.0", "3.15.1"])
+        self.assertIn("## 4.0.0\n\nThe third break.", after_a_hand_bump, "the hand-written section is kept whole")
+        usual = bumped(head + "## Unreleased\n\n- **A note.** By hand.\n\n## 4.0.0\n\nThe third break.\n")
+        self.assertEqual(re.findall(r"(?m)^## (\S+)", usual), ["Unreleased", "4.0.1", "4.0.0"])
+        self.assertIn("since 4.0.0._\n\n- **A note.** By hand.\n- fix: one", usual, "hand-written notes lead the new section")
+        self.assertIn("## Unreleased\n\n(nothing yet)\n\n## 4.0.1", usual)
+        with self.assertRaises(AssertionError):
+            bumped("# Changelog\n\nno heading at all\n")
 
     def test_every_fuzz_target_runs_on_its_seeds(self):
         """ClusterFuzzLite builds fuzz/*_fuzzer.py with atheris; without atheris each target runs
