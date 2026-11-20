@@ -380,6 +380,8 @@ h1,h2,h3{letter-spacing:-0.045em}
 .chips li{background:rgba(255,255,255,.05)}
 .cmds{border-radius:24px}
 .cmds .copy{background:rgba(255,255,255,.08)}
+.cmds li.first{margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}
+.cmds li.first code{color:#FFFFFF;font-weight:700}.cmds li.first .p{color:var(--green-hi)}.cmds li.first .who{color:var(--green-hi);font-weight:700}
 .faq{border-radius:28px;padding:4px 28px}
 .faq details:last-child{border-bottom:0}
 .close{position:relative;isolation:isolate;overflow:hidden}
@@ -419,7 +421,7 @@ h1,h2,h3{letter-spacing:-0.045em}
         <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 42 tools</p>
         <h1 class="dotted" id="hero-h" data-i="hero.h">Give your coding agent a video editor.</h1>
         <p class="intro" data-i="hero.p">Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.</p>
-        <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill setup</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
         <div class="acts">
           <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
           <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
@@ -539,8 +541,10 @@ h1,h2,h3{letter-spacing:-0.045em}
     <div class="pf" style="padding-top:80px;border-top:1px solid var(--line)">
       <div>
         <p class="eyebrow" data-i="nav.install">Install</p>
-        <h2 class="h3x dotted" id="install-h" data-i="in.h">One line per agent.</h2>
+        <h2 class="h3x dotted" id="install-h" data-i="in.h">One command.</h2>
+        <p class="note" data-i="in.lead">It installs the skill for every agent found on this machine, installs FFmpeg through your package manager when it is missing, then checks the machine. The other lines pick one agent.</p>
         <ul class="cmds">
+          <li class="first"><code id="i0"><span class="p">$ </span>npx ffmpeg-skill setup</code><span class="who" data-i="in.setup">everything in one go</span><button class="copy" type="button" data-copy="i0" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i1"><span class="p">$ </span>npx ffmpeg-skill</code><span class="who">Claude Code</span><button class="copy" type="button" data-copy="i1" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i2"><span class="p">$ </span>npx ffmpeg-skill --cursor</code><span class="who">Cursor</span><button class="copy" type="button" data-copy="i2" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i3"><span class="p">$ </span>npx ffmpeg-skill --codex</code><span class="who">Codex</span><button class="copy" type="button" data-copy="i3" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
@@ -587,7 +591,7 @@ h1,h2,h3{letter-spacing:-0.045em}
       <div>
         <img class="sym" src="brand/ffmpeg-skill-symbol-on-dark.svg" alt="" width="72" height="72">
         <h2 class="dotted" id="close-h" data-i="close.h">Hand it the footage.</h2>
-        <div class="term"><code id="c-close"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-close"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="term"><code id="c-close"><span class="p">$ </span>npx ffmpeg-skill setup</code><button class="copy" type="button" data-copy="c-close"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
         <div class="acts">
           <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
           <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
@@ -656,7 +660,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     "ag1.p1": "どのツールも MCP のツールです。AI に渡す情報を小さく保つため、ふだんは主要な 12 個だけを見せ、", "ag1.p2": " で 42 個すべてを見せます。",
     "ag2.h": "契約", "ag2.p": "機械が読める 1 つの契約が、全ツールを説明します。何を受け取り何を書き出すか、FFmpeg に何が必要か、どう確かめるか。",
     "ag3.p": "各ツールの入力の定義は、スクリプト自身の引数の定義から自動で作られます。手で書き写すことはありません。説明がずれると CI が失敗します。",
-    "in.h": "エージェントごとに 1 行。", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
+    "in.h": "コマンドひとつ。", "in.lead": "このパソコンにあるエージェントすべてにスキルを入れ、FFmpeg が無ければパッケージマネージャーで入れ、最後にパソコンを点検します。下の行は、エージェントをひとつ選ぶときに使います。", "in.setup": "ぜんぶ一度に", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
     "in.note": "FFmpeg 6.1 以上と Python 3.10 以上が必要です。オフラインで動きます。FFmpeg 本体の入れ方（macOS、Linux、Windows）は ", "in.link": "README", "in.end": " にあります。",
     "faq.h": "最初によく聞かれること",
     "q1": "ffmpeg の引数や filter_complex をそのまま渡せますか？", "a1": "渡せません。どの操作も、自分の引数の定義を持つスクリプトで、契約と MCP の入力の定義はそこから作られます。呼び出し側のフィルターグラフや -vf の文字列など、ffmpeg のオプションを受け取るスクリプトはありません。",
