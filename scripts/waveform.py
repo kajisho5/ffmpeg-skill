@@ -134,8 +134,8 @@ def main() -> int:
     ap.add_argument("--at", action="append", metavar="TIME", help="write a waveform PNG around this time (repeat for several points)")
     ap.add_argument("--window", type=float, default=None, metavar="SECONDS", help="total waveform time around each --at (default 2, up to 30)")
     ap.add_argument("--style", choices=["waveform", "spectrum"], default="waveform", help="waveform (default) or spectrum visualization")
-    ap.add_argument("--width", type=int, default=1920, help="output width in px, must be even (default 1920)")
-    ap.add_argument("--height", type=int, default=1080, help="output height in px, must be even (default 1080)")
+    ap.add_argument("--width", type=int, default=1920, help="output width in px, 2..16384, must be even (default 1920)")
+    ap.add_argument("--height", type=int, default=1080, help="output height in px, 2..16384, must be even (default 1080)")
     ap.add_argument("--fps", type=float, default=25.0, help="output frame rate (default 25)")
     ap.add_argument("--color", default="lime", help="--style waveform only: channel colour(s), pipe-separated per channel, e.g. 'lime' or 'cyan|magenta' (default lime)")
     ap.add_argument("--background", default="black", help="background colour (default black)")
@@ -225,8 +225,6 @@ def main() -> int:
         if path and not os.path.isfile(path):
             die(f"{flag} file {absent_word(path)}: {path}", kind="input")
 
-    if args.width <= 0 or args.height <= 0:
-        die(f"--width/--height must be > 0, got width={args.width} height={args.height}")
     if args.width % 2 or args.height % 2:
         die(f"--width/--height must be even (4:2:0 chroma), got width={args.width} height={args.height}")
     for token in args.color.split("|"):

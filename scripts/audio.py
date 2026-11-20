@@ -335,7 +335,7 @@ def main() -> int:
                             "medium = highpass, de-esser, denoise, gentle compression; strong = medium plus a harder de-esser, a second "
                             "compressor and a soft limiter at -1 dBFS. MCP/JSON callers may still send the 1.12 boolean true, "
                             "which is the bare flag and so means medium")
-    clean.add_argument("--gain", type=float, help="gain in dB applied to the main track")
+    clean.add_argument("--gain", type=float, help="gain in dB applied to the main track, -96..96")
     music = ap.add_argument_group("music")
     music.add_argument("--music", help="music file to mix underneath")
     music.add_argument("--music-volume", type=float, default=-14.0, help="music level in dB relative to full scale (default -14)")

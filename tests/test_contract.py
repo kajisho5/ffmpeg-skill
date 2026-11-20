@@ -13302,6 +13302,42 @@ class StumbleLedgerTests(unittest.TestCase):
             self.assertEqual(kept.returncode, 0, kept.stderr)
             self.assertEqual(run("cut", "--start", "1", "--end", "2", "--dry-run", "--timeout=30").returncode, 0)
 
+    def test_a_number_outside_what_its_option_takes_is_refused_on_every_tool(self):
+        """#645: `cropdetect.py --samples 1000000000` gave no answer in 300 s, `caption.py --size -1` and
+        `overlay.py --font-size 1000000000` wrote a file, `scenes.py --threshold -1` ran against a help
+        that says 0-100. One shared step answers for every tool: the range a help states as a..b is
+        the range taken, a negative needs a help that names one, and nothing is past a million."""
+        clip, srt = str(ROOT / "demos" / "footage" / "veo_sea.mp4"), str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "--dry-run"],
+                                                     capture_output=True, text=True, timeout=60)
+            for tool, argv in (("cropdetect", ("--samples=1000000000",)), ("scenes", ("--threshold=-1",)), ("scenes", ("--threshold=101",)),
+                               ("graphics", ("--template", "countdown", "--from=1000000000", "-o", out)),
+                               ("caption", ("--srt", srt, "--size=-1", "-o", out)), ("silence", ("--min-keep=-1", "-o", out)),
+                               ("overlay", ("--text", "hi", "--font-size=1000000000", "-o", out)), ("fit", ("--width=1000000000", "-o", out)),
+                               ("freeze", ("--at", "1", "--hold=1000000000", "-o", out)), ("audio", ("--gain=1000000000", "-o", out)),
+                               ("crop", ("--x", "0", "--y", "0", "--width", "64", "--height", "64", "--fps=1000000000", "-o", out))):
+                with self.subTest(tool=tool, argv=argv):
+                    proc = run(tool, *argv)
+                    flag = next(a for a in argv if "=" in a).split("=")[0]
+                    self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                    self.assertIn(f"{flag} ", proc.stderr)
+                    self.assertIn("is outside what this option takes", proc.stderr)
+            # what a help names is still taken: a negative level, an angle, -1 as "never", a long sample count
+            for tool, argv in (("audio", ("--gain=-3", "-o", out)), ("cut", ("--start", "1", "--end", "2", "--tolerance=-1", "-o", out)),
+                               ("silence", ("--threshold=-45", "-o", out)), ("straighten", ("--degrees=-2", "-o", out)),
+                               ("audio", ("--length-samples=500000000", "-o", str(Path(tmp) / "o.wav"))), ("scenes", ("--threshold=0",))):
+                with self.subTest(tool=tool, kept=argv):
+                    self.assertEqual(run(tool, *argv).returncode, 0)
+        # and no help states a range its own default is outside of (silence.py's "use -40..-45" read as one)
+        doc = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"], capture_output=True, text=True).stdout)
+        for t in doc["tools"]:
+            for name, spec in t["input_schema"]["properties"].items():
+                span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", spec.get("description", ""))
+                if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
+                    self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
+
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
     # no other tool may take one, and a name two tools share means one thing and one type.

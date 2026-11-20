@@ -155,7 +155,7 @@ def sheet_graph(starts: List[float], src: str, thumb: str, tile: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("--threshold", type=float, default=8.0, help="minimum scdet score for a cut, 0-100 (default 8)")
+    ap.add_argument("--threshold", type=float, default=8.0, help="minimum scdet score for a cut, 0..100 (default 8)")
     ap.add_argument("--ratio", type=float, default=3.0, help="a cut must exceed this multiple of the neighbouring frames' median score (default 3; lower = more cuts)")
     ap.add_argument("--min-scene", type=float, default=1.0, help="ignore cuts closer than this in seconds (default 1)")
     ap.add_argument("--highlights", type=int, default=0, help="number of highlight ranges to propose")

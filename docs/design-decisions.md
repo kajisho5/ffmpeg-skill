@@ -6276,3 +6276,22 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   become taught lines. The first round was 126 calls: 27 ran.
 - Code: `scripts/_common/runner.py` (`_teach`, `add_common`, `apply_common`). Tests: `StumbleLedgerTests`
   (tests/test_contract.py).
+
+## After 4.1.2 — a number outside what its option takes is refused in one place (#645)
+
+- **The help is the range.** A numeric option whose help states `a..b` takes that range and nothing
+  else; `apply_common` reads it from the help, so the text an agent reads and the check cannot
+  disagree. A help that mentions two numbers some other way writes them as "-40 to -45".
+- **A negative needs a help that names one.** `-N`, dB, degrees or stops in the help means a
+  negative is a real setting (`audio --gain -3`, `cut --tolerance -1`, `straighten --degrees -2`).
+  Elsewhere a negative length, size or count is refused. This looks strict for an option nobody
+  thought about; that is the point: say what the negative means in the help and it is taken.
+- **Nothing is past a million**, except `audio --length-samples` (an hour at 48 kHz is 172,800,000).
+  A million seconds is eleven days and no frame is a million pixels wide. An option that needs a
+  tighter ceiling states its range.
+- **A value equal to the default is not checked**, so a default outside its own stated range would
+  hide; the test reads every stated range against its default instead.
+- Zero is not decided here. On most options it is a real setting; the ones where it is not keep
+  their own check.
+- Code: `scripts/_common/runner.py` (`apply_common`). Test:
+  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
