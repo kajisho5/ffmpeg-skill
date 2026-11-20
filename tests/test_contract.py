@@ -10774,7 +10774,10 @@ class McpArgumentSafetyTests(unittest.TestCase):
         for name, args in calls:
             result = mcp_server.call_tool(name, args)
             self.assertTrue(result.get("isError"), f"{name} {args}")
-            self.assertIn("read-only", result["content"][0]["text"], name)
+            # --pla is no longer a spelling of --plan: a shortened shared option is a usage error
+            # before the tool looks at it (4.1.2), which refuses the call as surely
+            said = "spelled in full" if any(str(a).startswith("--pla=") for a in args.get("argv", ())) else "read-only"
+            self.assertIn(said, result["content"][0]["text"], name)
             self.assertEqual(victim.read_text(encoding="utf-8"), "precious user data", f"{name} {args}")
         doc = mcp_server.call_tool("check", calls[1][1])["structuredContent"]
         self.assertEqual(doc["error"]["reason"], "read_only_plan_refused")
