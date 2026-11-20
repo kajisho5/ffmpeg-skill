@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+- **A half frame rounds up in the timeline.** 0.5 s at 25 fps is frame 13 in a timeline, in its EDL and in the output's start timecode, as `decision.py` and FFmpeg count it; Python's `round()` had made it 12 (#638, contributed by @dchaudhari7177 in #644).
+- **`render.py --cache DIR --dry-run` leaves the disk alone.** It created the directory and wrote and removed a file named `.writable` there, which deleted a caller's file of that name (contributed by @xunguangzlj-cloud in #561).
+- **`join.py --copy` reads the whole stream when the tail was not read.** Some ffprobe builds answer the head interval and stop; the measured span then ended early (#566, contributed by @Ethereal49 in #567).
 
 ## 4.2.0
 

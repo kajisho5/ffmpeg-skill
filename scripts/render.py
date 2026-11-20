@@ -68,6 +68,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -1811,7 +1812,6 @@ def main() -> int:
             work = Path(args.work)
             work.mkdir(parents=True, exist_ok=True)
         else:
-            import tempfile
             Path(output).parent.mkdir(parents=True, exist_ok=True)
             work = Path(tempfile.mkdtemp(prefix=f"{Path(output).with_suffix('').name}_work_{os.getpid()}_",
                                          dir=str(Path(output).parent)))
@@ -1874,10 +1874,13 @@ def main() -> int:
     if args.cache:
         cdir = Path(args.cache)
         try:
-            cdir.mkdir(parents=True, exist_ok=True)
-            probe_file = cdir / ".writable"
-            probe_file.write_text("", encoding="utf-8")
-            probe_file.unlink()
+            if STATE.dry_run:
+                if (cdir.exists() or cdir.is_symlink()) and not cdir.is_dir():
+                    raise NotADirectoryError(cdir)
+            else:
+                cdir.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(prefix=".ffskill-cache-", dir=cdir):
+                    pass
         except OSError as exc:
             die(f"--cache {args.cache}: not a writable directory ({exc})", kind="output")
         CACHE["dir"] = str(cdir)
@@ -2331,7 +2334,6 @@ def main() -> int:
             # still reads the list, from a temporary directory removed at exit
             if STATE.dry_run:
                 import atexit
-                import tempfile
                 tmp_dir = tempfile.mkdtemp(prefix="ffskill_render_chapters_")
                 atexit.register(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
                 chapter_file = os.path.join(tmp_dir, "chapters.txt")

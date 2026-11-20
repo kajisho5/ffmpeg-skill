@@ -189,7 +189,7 @@ def output_timecode_args(meta: Dict[str, Any], first_frame: Optional[float], rat
             # once: 00:00:00:02 at 25 fps plus 0.08 s is 4.8 frames at 30, so frame 5, not 2 + 2
             pos = (Fraction(start_tc_frames(tc, src_rate)) / src_rate
                    + Fraction(first_frame).limit_denominator(1000000)) * out_rate
-            label = _tc_label(round(pos) % day, out_rate, drop)
+            label = _tc_label(math.floor(pos + Fraction(1, 2)) % day, out_rate, drop)
         # below 1 fps no frame count can name a frame: the label is removed, as when the first
         # frame is unknown, rather than divide by a zero-length day
     STATE.expected_timecode = label
@@ -234,8 +234,10 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
     if fit_mode not in _CONFORM:
         raise TimelineError(f"frame.fit {frame.get('fit')!r}: use pad, crop or blur (fit.py's --fit)")
 
+    # A half frame rounds up, floor(x + 1/2), in every count of frames here: velisa/timebase@1 TB-4,
+    # decision.py and FFmpeg's av_rescale all do, and round() took 12.5 to 12 (#638).
     def fr(seconds: float) -> int:
-        return int(round(Fraction(seconds).limit_denominator(1000000) * rate))
+        return math.floor(Fraction(seconds).limit_denominator(1000000) * rate + Fraction(1, 2))
 
     trans = proj.get("transition") or {}
     t_type = str(trans.get("type", "fade")) if len(clips_in) > 1 else "none"
@@ -287,7 +289,7 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
                       "in_seconds": Fraction(start).limit_denominator(1000000), "rate": clip_rate,
                       "tc_start": tc_start, "tc_seconds": Fraction(tc_start) / clip_rate,
                       "drop_frame": _drop_frame(tc.get("drop_frame"), clip_rate),
-                      "length": int(round((src_out - src_in) / speed)),
+                      "length": math.floor(Fraction(src_out - src_in) / Fraction(speed) + Fraction(1, 2)),
                       "media_frames": fr(dur), "has_video": bool(meta.get("video")),
                       "has_audio": bool(meta.get("audio")),
                       "picture": picture, "fps": clip_fps, "reframed": reframe})
@@ -427,14 +429,14 @@ def to_edl(tl: Dict[str, Any]) -> str:
         point: counted at the clip's own rate from its own start timecode (#414)."""
         own = c.get("rate") or rate
         seconds = c.get("in_seconds", Fraction(c["src_in"]) / rate) + Fraction(seq_frames) / rate
-        return _tc_label(int(round(seconds * own)) + c.get("tc_start", 0), own, c.get("drop_frame", False))
+        return _tc_label(math.floor(seconds * own + Fraction(1, 2)) + c.get("tc_start", 0), own, c.get("drop_frame", False))
 
     for i, c in enumerate(clips):
         n += 1
         chan = "B" if c["has_audio"] and c["has_video"] else ("V" if c["has_video"] else "A")
         rec_in, rec_out = hour + starts[i], hour + ends[i]
         s_in = src_tc(c, 0)
-        s_out = src_tc(c, int(round((ends[i] - starts[i]) * c["speed"])))
+        s_out = src_tc(c, math.floor((ends[i] - starts[i]) * Fraction(c["speed"]) + Fraction(1, 2)))
         if i > 0 and d:
             lines.append(f"{n:03d}  AX       {chan:<5} C        {prev_src_end} {prev_src_end} "
                          f"{_tc(rec_in, fps_int)} {_tc(rec_in, fps_int)}")
@@ -544,14 +546,14 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         if i > 0 and d:
             spine.append(f'        <transition name="Cross Dissolve" offset="{_t(c["record_in"] - c["trim_head"], rate)}" '
                          f'duration="{_t(d, rate)}"/>')
-        src_start = c["src_in"] + int(round(c["trim_head"] * c["speed"]))
+        src_start = c["src_in"] + math.floor(c["trim_head"] * Fraction(c["speed"]) + Fraction(1, 2))
         inner: List[str] = []
         if abs(c["speed"] - 1.0) > 1e-6:
             # timeMap maps clip-local time to source time; two linear points give a constant speed
             inner.append("          <timeMap>")
             inner.append(f'            <timept time="0s" value="{_ts(base + Fraction(src_start) / rate)}" interp="linear"/>')
             inner.append(f'            <timept time="{_t(c["visible"], rate)}" '
-                         f'value="{_ts(base + Fraction(src_start + int(round(c["visible"] * c["speed"]))) / rate)}" interp="linear"/>')
+                         f'value="{_ts(base + Fraction(src_start + math.floor(c["visible"] * Fraction(c["speed"]) + Fraction(1, 2))) / rate)}" interp="linear"/>')
             inner.append("          </timeMap>")
             start_attr = "0s"
         else:
@@ -608,7 +610,7 @@ def to_otio(tl: Dict[str, Any]) -> str:
                           "transition_type": "SMPTE_Dissolve",
                           # OTIO: in_offset is the part before the cut, out_offset the part after
                           "in_offset": _rt(c["trim_head"], rate), "out_offset": _rt(tl["clips"][i - 1]["trim_tail"], rate)})
-        src_start = c["src_in"] + int(round(c["trim_head"] * c["speed"]))
+        src_start = c["src_in"] + math.floor(c["trim_head"] * Fraction(c["speed"]) + Fraction(1, 2))
         # the media's range starts at its start timecode (#414), in timeline frames
         base = c.get("tc_seconds", Fraction(0)) * rate
         clip = {"OTIO_SCHEMA": "Clip.2", "name": c["name"], "metadata": {}, "enabled": True,
