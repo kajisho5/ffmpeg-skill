@@ -1,7 +1,8 @@
 {
   "why": "Fixes kept adding code that the next fixes then fixed: at 3.13.2 the median fix added 118 lines (30 seven weeks earlier), scripts/ had doubled since 2026-10-01, and 47% of the lines November's fixes changed had been written by earlier fixes. Shipped code does not grow: a change that adds lines removes as many. Lower the number when code is removed; raising it needs the reason in the PR body.",
   "counted": "non-blank lines that are not a comment, in scripts/**/*.py and mcp/**/*.py",
-  "max_lines": 34077,
+  "max_lines": 34036,
+  "lowered": "2026-11-20: 34077 -> 34036 (-41): the review page's markup, styles and script moved out of Python strings into scripts/_review.html, which _review.py fills with one JSON document.",
   "fix_max_net_lines": 50,
   "fix_size_rule": "A fix adds at most this many net lines to scripts/ and mcp/ (added minus removed, Python files). Beyond it, prefer a refusal or removing a mode; a larger fix says why in its ledger line (size_reason).",
   "budget": {
