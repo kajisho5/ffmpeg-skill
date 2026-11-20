@@ -13368,7 +13368,7 @@ class StumbleLedgerTests(unittest.TestCase):
                         proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *(more[0] if more else []), name, *rest, *o, "--dry-run", "--json"],
                                               capture_output=True, text=True, encoding="utf-8", timeout=120)
                         self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr[-300:]}")
-                        plans.append(re.sub(r"\S*(tmp|stab-|meta_)\S*", "TEMP", " ".join(json.loads(proc.stdout).get("commands"))))
+                        plans.append(re.sub(r"(?i)\S*(te?mp|stab-|meta_|loop_|text-)\S*", "TEMP", " ".join(json.loads(proc.stdout).get("commands"))))
                     self.assertEqual(plans[0], plans[1])
         # verify.py takes folders and writes a kit, so its two spellings are read from the contract
         tools = {t["name"]: t["input_schema"]["properties"] for t in json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)["tools"]}
