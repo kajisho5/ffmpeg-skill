@@ -15,7 +15,12 @@ Every call runs with --dry-run, so nothing is rendered. A row is one of:
     taught    a usage error that names one of the tool's own options for each unknown flag
     elsewhere it names only other tools that take the flag
     silent    an unknown flag and no pointer at all
-    refused   any other refusal (a missing file, a value out of range): not about a name
+    refused   any other refusal (a value of the wrong shape, an ambiguous short name): not about a name
+
+A blind call names files that are not here and times past a short clip. Neither says anything about
+the call, so {clip} is two minutes long (the clip looped) and a named file that does not exist is
+replaced by a real one of its kind: a video by the clip, a sound by the clip's sound, an .srt and an
+image by one from demos/footage.
 
 Nothing here judges a row. `silent` and `elsewhere` are where a help string may lack the word
 people reach for; a row that `ran` needs its plan read. .claude/skills/first-try-probe/SKILL.md
@@ -40,8 +45,24 @@ def brief():
     return "\n".join(f"{t['name']}: {t['description'].split('. ')[0][:170]}" for t in doc["tools"])
 
 
+STAND_INS = {".srt": "veo_talk_en.srt", ".vtt": "veo_talk_en.srt", ".png": "slide_en_1.png", ".jpg": "slide_en_1.png", ".jpeg": "slide_en_1.png"}
+
+
+def stand_in(arg, clip, tmp):
+    """A file a blind call names (b.mp4, music.mp3, a.srt, logo.png) does not exist here. A refusal
+    for that says nothing about the call, so a real file of the same kind stands in for it."""
+    ext = Path(arg).suffix.lower()
+    if arg.startswith("-") or "%" in arg or Path(arg).exists():
+        return arg
+    if ext in (".mp4", ".mov", ".mkv", ".webm", ".m4v"):
+        return clip
+    if ext in (".mp3", ".wav", ".m4a", ".aac", ".flac"):
+        return str(Path(tmp) / "sound.wav")
+    return str(ROOT / "demos" / "footage" / STAND_INS[ext]) if ext in STAND_INS else arg
+
+
 def run(guess, clip, tmp, index):
-    argv = [clip if a == "{clip}" else a for a in guess["argv"]]
+    argv = [clip if a == "{clip}" else stand_in(a, clip, tmp) for a in guess["argv"]]
     out = [] if guess["tool"] in NO_OUTPUT else ["-o", str(Path(tmp) / f"o{index}.mp4")]
     proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{guess['tool']}.py"), *argv, *out, "--dry-run"],
                           capture_output=True, text=True, timeout=180)
@@ -49,7 +70,7 @@ def run(guess, clip, tmp, index):
     answer = text.rsplit("error:", 1)[-1].strip() if "error:" in text else ""
     unknown = re.findall(r"^(--[\w-]+) is not an option of this tool(.*)$", answer, re.M)
     own = lambda tail: "did you mean" in tail or "mention" in tail or "spelled in full" in tail
-    if proc.returncode == 0:
+    if proc.returncode == 0 or re.search(r"\d+ of \d+ \w+ checks failed", answer):  # check.py ran and gave its verdict
         kind = "ran"
     elif not unknown:
         kind = "refused"
@@ -74,7 +95,11 @@ def main():
         return 0
     guesses = json.loads(Path(args.guesses).read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory() as tmp:
-        rows = [run(g, args.clip, tmp, i) for i, g in enumerate(guesses)]
+        # two minutes of the clip, so that "start at 60 s" is inside it, and its sound as a file
+        long_clip = str(Path(tmp) / "clip.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "15", "-i", args.clip, "-c", "copy", long_clip], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-i", args.clip, "-vn", str(Path(tmp) / "sound.wav")], check=True)
+        rows = [run(g, long_clip, tmp, i) for i, g in enumerate(guesses)]
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return 0
