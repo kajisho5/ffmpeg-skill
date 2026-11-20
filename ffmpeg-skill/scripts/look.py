@@ -224,7 +224,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output PNG (contact sheet / compare) or basename for --at frames")
     ap.add_argument("--at", action="append", help="time of a frame to extract (repeatable)")
     ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS, e.g. 4x3 for 12 frames (default 4x3)")
-    ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
+    ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image in px, 2..16384 (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--compare-at", action="append", metavar="TIME",
                     help="seek time in the comparison file, one per --at. By default both use --at.")
@@ -251,9 +251,6 @@ def main() -> int:
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
-    if args.width < 2:
-        # a width of 0 or below wrote a sheet two pixels a tile, or a still at the source's size
-        die(f"--width must be at least 2 px, got {args.width}")
     dur = meta.get("duration") or 0.0
     stem = Path(args.input).stem
     outdir = str(Path(args.output).parent) if args.output else str(Path(args.input).parent)

@@ -367,8 +367,8 @@ def main() -> int:
     ap.add_argument("--platform", choices=PLATFORM_CHOICES, default=None, help="delivery spec to check against (default: youtube, with judgement rows reported as WARN because no platform was named)")
     ap.add_argument("--max-duration", type=float, help="the caller's own maximum length in seconds: over it FAILs when a --platform is named, WARNs with none (the platform table's limit is guidance, WARN)")
     ap.add_argument("--aspect", help="override allowed aspect (e.g. 9:16 or 16:9,1:1)")
-    ap.add_argument("--lufs", type=float, help="override loudness target")
-    ap.add_argument("--tp", type=float, help="override true-peak ceiling")
+    ap.add_argument("--lufs", type=float, help="override loudness target, in LUFS (-14 for most platforms)")
+    ap.add_argument("--tp", type=float, help="override true-peak ceiling, in dBTP (-1 for most platforms)")
     ap.add_argument("--max-mb", type=float, help="the caller's own maximum file size in MB: over it FAILs (the platform table's limit is guidance, WARN)")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
