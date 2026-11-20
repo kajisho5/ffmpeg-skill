@@ -170,6 +170,8 @@ body { margin: 0; } img { max-width: 100%; }
 .stage > figure { height: 100%; min-width: 0; justify-content: center; } .stage.wide { flex-direction: column; gap: 10px; } .stage.wide > figure { height: auto; }
 figcaption { max-width: 340px; } .step .dot.ok { background: var(--green); } .phone { flex: none; height: calc(258px + max(0px, (100vh - 900px) * 0.9)); }
 .irow .auto { grid-column: 2 / 4; font-size: 11.5px; overflow-wrap: anywhere; }
+textarea.field.area { min-height: 64px; padding: 8px 10px; resize: vertical; font: inherit; color: inherit; line-height: 1.4; }
+.cap { white-space: pre-line; }
 .cap.demo { position: static; display: inline-block; margin-top: 4px; font-size: 13px; padding: 2px 8px; }
 .frame video, .frame > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .nomedia { padding: 12px; color: var(--dim); font-size: 12px; max-width: 280px; }
@@ -245,7 +247,7 @@ label.opt { gap: 4px; }
   document.title = "Review: " + D.name;
   var LANGS = [["en", "English"], ["ja", "日本語"], ["ko", "한국어"], ["zh", "中文"]];
   var L = {
-    en: { kFix: "Suggested fix", kWhy: "Why", unmeasured: "not measured", noPlay: "This browser cannot play the file; stills of it are shown instead", pass: "PASS", check: "TO CHECK", unv: "UNVERIFIED", humanOk: "CONFIRMED", notRendered: "NOT RENDERED YET", failed: "FAILED", verified: "VERIFIED", notVerified: "NOT VERIFIED",
+    en: { brk: "(\\n = line break)", kFix: "Suggested fix", kWhy: "Why", unmeasured: "not measured", noPlay: "This browser cannot play the file; stills of it are shown instead", pass: "PASS", check: "TO CHECK", unv: "UNVERIFIED", humanOk: "CONFIRMED", notRendered: "NOT RENDERED YET", failed: "FAILED", verified: "VERIFIED", notVerified: "NOT VERIFIED",
       save: "Save project", saved: "Saved a copy", copy: "Copy the instruction", copied: "Copied", sources: "Sources · probe", steps: "Work steps", lang: "Language",
       tSource: "Source", tProgram: "Program", tBoth: "Side by side", viewMode: "View", safe: "Safe area", none: "None", titleSafe: "Title safe", safeColor: "Overlay colour",
       cGreen: "Green", cYellow: "Yellow", cPink: "Pink", cBlue: "Blue", cWhite: "White", cBlack: "Black", safeLegend: "Tinted = covered by the app",
@@ -264,7 +266,7 @@ label.opt { gap: 4px; }
       kVideo: "Video", kLength: "Length", kAudio: "Audio", kFile: "File", kSource: "Source", kIn: "In", kOut: "Out", kSpeed: "Speed", kPos: "Position in the result", kAt: "Position", kKind: "Kind",
       kRange: "Range", kExpected: "Expected", kMeas: "Measured", kStage: "Stage", kTool: "Tool", kSection: "In the project", kDesc: "What it does", kText: "Text", kState: "State",
       ownMark: "your own marker", clip: "Clip {n}", cue: "Caption {n}", sound: "Sound of the result", ownAt: "{t} your marker", rangeOf: "{a}–{b} range", newStep: "a new step",
-      clipEdit: "Edit this clip (saved into the project, and added to the instruction)", capText: "Caption text (editing adds it to the instruction)",
+      clipEdit: "Edit this clip (saved into the project, and added to the instruction)", capText: "Caption text (Enter breaks the line; editing adds it to the instruction)",
       allFlags: "Every setting of {t} ({n})", flagFilter: "Filter settings, e.g. fps", flagsEn: "Names and descriptions come straight from the tool contract.", noFlag: "No setting matches.", keep: "leave", dflt: "default",
       pickTool: "＋ Add a step (any of the {n} tools)", addToolNote: "add a {t} step", unusedNote: "Only steps this project ran can be adjusted. Add another tool here.",
       quick: "Common requests", qTrimStart: "start 1 s later", qTrimEnd: "end 1 s earlier", qRemoveClip: "remove this clip", qCapUp: "move it up inside the safe area", qCapDel: "remove this caption",
@@ -272,7 +274,7 @@ label.opt { gap: 4px; }
       oAspect: "Frame shape", oFit: "Fitting the frame", oCapColor: "Caption colour", oLook: "Solid box behind the text", oPos: "Caption position", oAnim: "How captions appear", oDest: "Export for", optHint: "(sets the flag below)",
       setTo: "{k}: “{v}”", textTo: "text to “{v}”", hS: "e.g. do not use this source", hC: "e.g. end 1 s earlier", hT: "e.g. fix the wording", hA: "e.g. 3 dB lower", hM: "e.g. cut here", hR: "e.g. remove this range",
       hP: "e.g. bring this within the limit", hW: "e.g. keep the right side", hN: "e.g. steady the shaky part", notes: "Notes from the run", stagesFrom: "from a dry run" },
-    ja: { kFix: "直し方の候補", kWhy: "理由", unmeasured: "測定なし", noPlay: "このブラウザーでは再生できないため、静止画を表示しています", pass: "PASS", check: "要確認", unv: "未確認", humanOk: "人が確認", notRendered: "まだ書き出していません", failed: "失敗", verified: "確認済み", notVerified: "未確認あり",
+    ja: { brk: "（\\n は改行）", kFix: "直し方の候補", kWhy: "理由", unmeasured: "測定なし", noPlay: "このブラウザーでは再生できないため、静止画を表示しています", pass: "PASS", check: "要確認", unv: "未確認", humanOk: "人が確認", notRendered: "まだ書き出していません", failed: "失敗", verified: "確認済み", notVerified: "未確認あり",
       save: "プロジェクトを保存", saved: "コピーを保存しました", copy: "AI への指示をコピー", copied: "コピーしました", sources: "素材 · probe", steps: "作業工程", lang: "言語",
       tSource: "素材", tProgram: "仕上がり", tBoth: "並べて比較", viewMode: "表示の切り替え", safe: "安全域", none: "なし", titleSafe: "タイトルセーフ", safeColor: "安全域の色",
       cGreen: "緑", cYellow: "黄", cPink: "ピンク", cBlue: "青", cWhite: "白", cBlack: "黒", safeLegend: "色の付いた所 = アプリの表示に隠れる",
@@ -291,7 +293,7 @@ label.opt { gap: 4px; }
       kVideo: "映像", kLength: "長さ", kAudio: "音", kFile: "ファイル", kSource: "素材", kIn: "in", kOut: "out", kSpeed: "速さ", kPos: "仕上がりの位置", kAt: "位置", kKind: "種類",
       kRange: "範囲", kExpected: "期待", kMeas: "測定", kStage: "工程", kTool: "道具", kSection: "プロジェクトの設定", kDesc: "できること", kText: "文字", kState: "状態",
       ownMark: "自分で付けた印", clip: "クリップ {n}", cue: "字幕 {n}", sound: "仕上がりの音", ownAt: "{t} 自分で付けた印", rangeOf: "{a}–{b} の範囲", newStep: "新しい工程",
-      clipEdit: "このクリップを直す（プロジェクトに保存され、指示にも入ります）", capText: "字幕の文字（直すと指示に入ります）",
+      clipEdit: "このクリップを直す（プロジェクトに保存され、指示にも入ります）", capText: "字幕の文字（Enter で改行。直すと指示に入ります）",
       allFlags: "{t} のすべての設定（{n} 個）", flagFilter: "設定を絞り込む（例: fps）", flagsEn: "名前と説明は、道具の定義（contract）そのままなので英語です。", noFlag: "当てはまる設定がありません。", keep: "変えない", dflt: "標準",
       pickTool: "＋ 工程を足す（{n} の道具から選ぶ）", addToolNote: "{t} の工程を足す", unusedNote: "調整できるのは、このプロジェクトで動いた工程だけです。ほかの道具はここから足せます。",
       quick: "よく使う指示", qTrimStart: "始まりを 1 秒遅らせる", qTrimEnd: "終わりを 1 秒早める", qRemoveClip: "このクリップを消す", qCapUp: "安全域の内側に上げる", qCapDel: "この字幕を消す",
@@ -299,7 +301,7 @@ label.opt { gap: 4px; }
       oAspect: "画面の形", oFit: "画面の合わせ方", oCapColor: "字幕の色", oLook: "文字の後ろに箱を敷く", oPos: "字幕の位置", oAnim: "字幕の出し方", oDest: "書き出し先", optHint: "（下の設定に入ります）",
       setTo: "{k}を「{v}」に", textTo: "文字を「{v}」に", hS: "例: この素材は使わない", hC: "例: 終わりを 1 秒早める", hT: "例: 言い回しを直す", hA: "例: 全体に 3 dB 下げる", hM: "例: ここで切る", hR: "例: この範囲を削る",
       hP: "例: これを基準内に収める", hW: "例: 右側を残す", hN: "例: 手ぶれを直す", notes: "実行時の注意", stagesFrom: "dry run より" },
-    ko: { kFix: "수정 제안", kWhy: "이유", unmeasured: "측정 안 됨", noPlay: "이 브라우저에서 재생할 수 없어 정지 화면을 표시합니다", pass: "PASS", check: "확인 필요", unv: "미확인", humanOk: "사람이 확인", notRendered: "아직 내보내지 않음", failed: "실패", verified: "확인됨", notVerified: "미확인 있음",
+    ko: { brk: "(\\n = 줄바꿈)", kFix: "수정 제안", kWhy: "이유", unmeasured: "측정 안 됨", noPlay: "이 브라우저에서 재생할 수 없어 정지 화면을 표시합니다", pass: "PASS", check: "확인 필요", unv: "미확인", humanOk: "사람이 확인", notRendered: "아직 내보내지 않음", failed: "실패", verified: "확인됨", notVerified: "미확인 있음",
       save: "프로젝트 저장", saved: "사본을 저장했습니다", copy: "AI 지시 복사", copied: "복사했습니다", sources: "소스 · probe", steps: "작업 단계", lang: "언어",
       tSource: "소스", tProgram: "결과", tBoth: "나란히 비교", viewMode: "보기 전환", safe: "안전 영역", none: "없음", titleSafe: "타이틀 세이프", safeColor: "안전 영역 색",
       cGreen: "초록", cYellow: "노랑", cPink: "분홍", cBlue: "파랑", cWhite: "흰색", cBlack: "검정", safeLegend: "색칠된 곳 = 앱 화면에 가려짐",
@@ -318,7 +320,7 @@ label.opt { gap: 4px; }
       kVideo: "영상", kLength: "길이", kAudio: "오디오", kFile: "파일", kSource: "소스", kIn: "in", kOut: "out", kSpeed: "속도", kPos: "결과에서의 위치", kAt: "위치", kKind: "종류",
       kRange: "범위", kExpected: "기대", kMeas: "측정", kStage: "단계", kTool: "도구", kSection: "프로젝트 설정", kDesc: "하는 일", kText: "문구", kState: "상태",
       ownMark: "직접 추가한 마커", clip: "클립 {n}", cue: "자막 {n}", sound: "결과의 소리", ownAt: "{t} 직접 추가한 마커", rangeOf: "{a}–{b} 범위", newStep: "새 단계",
-      clipEdit: "이 클립 수정 (프로젝트에 저장되고 지시에도 들어갑니다)", capText: "자막 문구 (고치면 지시에 들어갑니다)",
+      clipEdit: "이 클립 수정 (프로젝트에 저장되고 지시에도 들어갑니다)", capText: "자막 문구 (Enter로 줄바꿈. 고치면 지시에 들어갑니다)",
       allFlags: "{t}의 모든 설정 ({n}개)", flagFilter: "설정 좁히기 (예: fps)", flagsEn: "이름과 설명은 도구 정의(contract) 그대로라 영어입니다.", noFlag: "맞는 설정이 없습니다.", keep: "그대로", dflt: "기본",
       pickTool: "＋ 단계 추가 ({n}개 도구 중 선택)", addToolNote: "{t} 단계를 추가", unusedNote: "이 프로젝트에서 실행한 단계만 조정할 수 있습니다. 다른 도구는 여기서 추가합니다.",
       quick: "자주 쓰는 지시", qTrimStart: "시작을 1초 늦추기", qTrimEnd: "끝을 1초 앞당기기", qRemoveClip: "이 클립 삭제", qCapUp: "안전 영역 안으로 올리기", qCapDel: "이 자막 삭제",
@@ -326,7 +328,7 @@ label.opt { gap: 4px; }
       oAspect: "화면 비율", oFit: "화면 맞추기", oCapColor: "자막 색", oLook: "글자 뒤에 상자 깔기", oPos: "자막 위치", oAnim: "자막이 나오는 방식", oDest: "내보낼 곳", optHint: "(아래 설정에 들어갑니다)",
       setTo: "{k}: “{v}”(으)로", textTo: "문구를 “{v}”(으)로", hS: "예: 이 소스는 쓰지 않기", hC: "예: 끝을 1초 앞당기기", hT: "예: 문구 고치기", hA: "예: 전체를 3 dB 낮추기", hM: "예: 여기서 자르기", hR: "예: 이 범위를 삭제",
       hP: "예: 기준 안으로 맞추기", hW: "예: 오른쪽을 남기기", hN: "예: 흔들림 보정", notes: "실행 중 알림", stagesFrom: "dry run 기준" },
-    zh: { kFix: "建议的修正", kWhy: "原因", unmeasured: "未测量", noPlay: "此浏览器无法播放该文件，改为显示静帧", pass: "PASS", check: "待确认", unv: "未确认", humanOk: "已由人确认", notRendered: "尚未导出", failed: "失败", verified: "已验证", notVerified: "有未验证项",
+    zh: { brk: "（\\n 表示换行）", kFix: "建议的修正", kWhy: "原因", unmeasured: "未测量", noPlay: "此浏览器无法播放该文件，改为显示静帧", pass: "PASS", check: "待确认", unv: "未确认", humanOk: "已由人确认", notRendered: "尚未导出", failed: "失败", verified: "已验证", notVerified: "有未验证项",
       save: "保存项目", saved: "已保存副本", copy: "复制给 AI 的指示", copied: "已复制", sources: "素材 · probe", steps: "处理步骤", lang: "语言",
       tSource: "素材", tProgram: "成片", tBoth: "并排比较", viewMode: "切换显示", safe: "安全区", none: "无", titleSafe: "标题安全区", safeColor: "安全区颜色",
       cGreen: "绿", cYellow: "黄", cPink: "粉", cBlue: "蓝", cWhite: "白", cBlack: "黑", safeLegend: "着色处 = 被应用界面遮住",
@@ -345,7 +347,7 @@ label.opt { gap: 4px; }
       kVideo: "视频", kLength: "时长", kAudio: "音频", kFile: "文件", kSource: "素材", kIn: "in", kOut: "out", kSpeed: "速度", kPos: "在成片中的位置", kAt: "位置", kKind: "类型",
       kRange: "范围", kExpected: "预期", kMeas: "测量", kStage: "步骤", kTool: "工具", kSection: "项目中的设置", kDesc: "功能", kText: "文字", kState: "状态",
       ownMark: "自己加的标记", clip: "片段 {n}", cue: "字幕 {n}", sound: "成片的声音", ownAt: "{t} 自己加的标记", rangeOf: "{a}–{b} 范围", newStep: "新步骤",
-      clipEdit: "修改这个片段（会保存到项目，并加入指示）", capText: "字幕文字（修改后会加入指示）",
+      clipEdit: "修改这个片段（会保存到项目，并加入指示）", capText: "字幕文字（按 Enter 换行，修改后会加入指示）",
       allFlags: "{t} 的全部设置（{n} 项）", flagFilter: "筛选设置（例：fps）", flagsEn: "名称和说明直接来自工具定义（contract），所以是英文。", noFlag: "没有匹配的设置。", keep: "不改", dflt: "默认",
       pickTool: "＋ 增加步骤（从 {n} 个工具中选）", addToolNote: "增加 {t} 步骤", unusedNote: "只能调整本项目运行过的步骤。其他工具可在这里添加。",
       quick: "常用指示", qTrimStart: "开头晚 1 秒", qTrimEnd: "结尾早 1 秒", qRemoveClip: "删除这个片段", qCapUp: "上移到安全区内", qCapDel: "删除这条字幕",
@@ -393,7 +395,7 @@ label.opt { gap: 4px; }
       it[c.id] = { title: tr("clip", { n: i + 1 }), hint: tr("hC"), ref: "clips[" + i + "]", rows: [[tr("kSource"), c.src + " " + c.name], [tr("kIn"), val(P.clips[i].in)], [tr("kOut"), val(P.clips[i].out)], [tr("kSpeed"), val(P.clips[i].speed)],
         [tr("kPos"), fmt(o.t0) + "–" + fmt(o.t1)]] };
     });
-    D.cues.forEach(function (q, i) { it[q.id] = { title: tr("cue", { n: i + 1 }), hint: tr("hT"), ref: D.cue_file + " #" + (i + 1), text: q.text, rows: [[tr("kAt"), fmt(q.a) + "–" + fmt(q.b)], [tr("kText"), q.text]] }; });
+    D.cues.forEach(function (q, i) { it[q.id] = { title: tr("cue", { n: i + 1 }), hint: tr("hT"), ref: D.cue_file + " #" + (i + 1), text: q.text, rows: [[tr("kAt"), fmt(q.a) + "–" + fmt(q.b)], [tr("kText"), q.text.split("\n").join(" ⏎ ")]] }; });
     if (D.has_audio) it.A1 = { title: tr("sound"), hint: tr("hA"), ref: "audio", rows: [[tr("kAudio"), D.rendered ? show(D.output_audio) : val(null)]] };
     D.props.forEach(function (p) { it[p.id] = { title: p.name, hint: tr("hP"), rows: [[tr("kMeas"), show(p.measured)], [tr("kExpected"), show(p.expected)]].concat(p.stage ? [[tr("kStage"), p.stage]] : []).concat(p.state === "check" && p.fix ? [[tr("kFix"), p.fix]] : []).concat(p.reason ? [[tr("kWhy"), p.reason]] : []) }; });
     STEPS.forEach(function (w) {
@@ -429,7 +431,7 @@ label.opt { gap: 4px; }
   // dropped by typing: the saved project and the instruction would then disagree.
   function autoOf(id) {
     var parts = [];
-    if (S.textEdits[id] !== undefined) parts.push(tr("textTo", { v: S.textEdits[id] }));
+    if (S.textEdits[id] !== undefined) parts.push(tr("textTo", { v: S.textEdits[id].split("\n").join("\\n") }) + (S.textEdits[id].indexOf("\n") >= 0 ? " " + tr("brk") : ""));
     if (clipNote(id)) parts.push(clipNote(id));
     if (id[0] === "N") parts.push(tr("addToolNote", { t: S.extra[id].tool + ".py" }));
     if (flagNote(id)) parts.push(flagNote(id));
@@ -540,7 +542,7 @@ label.opt { gap: 4px; }
         var v = P.clips[i][k];
         return '<label for="clip-' + k + '">' + k + '<input class="field" type="text" id="clip-' + k + '" name="clip-' + k + '" autocomplete="off" data-clip="' + k + '" value="' + esc(v === null || v === undefined ? "" : v) + '"></label>'; }).join("") + "</div></div>";
     }
-    if (typeof sel.text === "string") h += '<label class="opt dim small" for="caption-text">' + esc(tr("capText")) + '<input class="field" type="text" id="caption-text" name="caption-text" autocomplete="off" data-input="caption" value="' + esc(S.textEdits[S.sel] !== undefined ? S.textEdits[S.sel] : sel.text) + '"></label>';
+    if (typeof sel.text === "string") h += '<label class="opt dim small" for="caption-text">' + esc(tr("capText")) + '<textarea class="field area" id="caption-text" name="caption-text" autocomplete="off" rows="3" data-input="caption">' + esc(S.textEdits[S.sel] !== undefined ? S.textEdits[S.sel] : sel.text) + "</textarea></label>";
     h += cur.map(function (g) {
       return '<div class="opt" role="group" aria-label="' + esc(tr(g[0])) + '"><span class="dim small">' + esc(tr(g[0])) + " " + esc(tr("optHint")) + '</span><div class="choices">'
         + g[2].map(function (c) { var on = set[g[1]] === (c === true ? true : String(c)); return '<button data-act="cur" data-flagkey="' + g[1] + '" data-val="' + (c === true ? "1" : esc(c)) + '" aria-pressed="' + on + '">' + esc(c === true ? "--" + g[1] : COLOR_NAME[c] ? tr(COLOR_NAME[c]) : c) + "</button>"; }).join("") + "</div></div>"; }).join("");
@@ -600,7 +602,7 @@ label.opt { gap: 4px; }
       + Object.keys(S.extra).filter(function (id) { return id[0] === "M"; }).map(function (id) { return '<button class="mk own"' + pick(id) + ' style="left:' + pct(S.extra[id].at) + '">' + id + "</button>"; }).join("")
       + '<span class="head" data-head aria-hidden="true" style="left:' + pct(S.t) + ";bottom:-" + (44 + (D.cues.length ? 40 : 0) + (D.has_audio ? 40 : 0)) + 'px"></span></div>'
       + '<span class="lab">V1</span><div class="track v">' + CLIPS.map(function (o) { return '<button class="clip"' + pick(o.c.id) + ' style="left:' + pct(o.t0) + ";width:" + pct(o.t1 - o.t0) + '" title="' + esc(o.c.name) + '"><b>' + o.c.id + "</b>　" + esc(o.c.src + " " + val(P.clips[o.c.i].in) + "–" + (P.clips[o.c.i].out === null || P.clips[o.c.i].out === undefined ? "" : P.clips[o.c.i].out)) + "</button>"; }).join("") + "</div>"
-      + (D.cues.length ? '<span class="lab">T</span><div class="track">' + D.cues.map(function (q) { return '<button class="cue"' + pick(q.id) + ' style="left:' + pct(q.a) + ";width:" + pct(Math.max(q.b - q.a, 0)) + '" title="' + esc(q.text) + '"><b>' + q.id + "</b> " + esc(S.textEdits[q.id] !== undefined ? S.textEdits[q.id] : q.text) + "</button>"; }).join("") + "</div>" : "")
+      + (D.cues.length ? '<span class="lab">T</span><div class="track">' + D.cues.map(function (q) { return '<button class="cue"' + pick(q.id) + ' style="left:' + pct(q.a) + ";width:" + pct(Math.max(q.b - q.a, 0)) + '" title="' + esc(q.text) + '"><b>' + q.id + "</b> " + esc((S.textEdits[q.id] !== undefined ? S.textEdits[q.id] : q.text).split("\n").join(" ⏎ ")) + "</button>"; }).join("") + "</div>" : "")
       + (D.has_audio ? '<span class="lab">A1</span><div class="track a"><button class="aud"' + pick("A1") + ' aria-label="A1 ' + esc(tr("sound")) + '">'  + (D.wave ? '<img src="' + esc(D.wave) + '" alt="">' : '<span class="nm"><b>A1</b></span>') + "</button></div>" : "")
       + "</div></div></div></section></div>";
 
@@ -705,6 +707,9 @@ label.opt { gap: 4px; }
     if (el.dataset.input === "caption") {
       S.textEdits[S.sel] = el.value; S.copied = false;
       if (S.picked.indexOf(S.sel) < 0) { S.picked.push(S.sel); render(); var again = document.getElementById("caption-text"); again.focus(); again.setSelectionRange(again.value.length, again.value.length); return; }
+      var cueBtn = document.querySelector('.cue[data-id="' + S.sel + '"]'), capBox = document.querySelector("[data-capwrap]");
+      if (cueBtn) cueBtn.innerHTML = "<b>" + S.sel + "</b> " + esc(el.value.split("\n").join(" ⏎ "));
+      if (capBox) capBox.innerHTML = capNote();
       var auto = document.querySelector('[data-auto="' + S.sel + '"]'); if (auto) auto.textContent = autoOf(S.sel); else { render(); var c2 = document.getElementById("caption-text"); c2.focus(); c2.setSelectionRange(c2.value.length, c2.value.length); return; }
       refreshPrompt();
     }
