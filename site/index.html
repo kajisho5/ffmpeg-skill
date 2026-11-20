@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ffmpeg-skill: give your coding agent a video editor</title>
 <meta name="description" content="An Agent Skill for Claude Code, Cursor, Codex and any MCP client: 42 local FFmpeg tools with a machine-readable contract. The agent probes the real file, edits, checks the result against the destination and looks at it. No cloud, no API keys, Python standard library only.">
-<meta name="theme-color" content="#101114">
+<meta name="theme-color" content="#0B0C10">
 <link rel="icon" href="brand/favicon.ico" sizes="48x48">
 <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="brand/apple-touch-icon.png">
@@ -314,6 +314,82 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
 .foot nav{display:flex;flex-wrap:wrap;gap:8px 24px}
 .foot a{text-decoration:none}
 .foot a:hover{color:#FFFFFF}
+
+/* 4.0 look: one dark ground, soft colour light behind it, glass surfaces, a tighter headline.
+   The brand rule holds: green is still the verified dot and the measured-and-passed pill. */
+:root,:root[data-theme="light"],:root[data-theme="dark"]{
+  --ink:#0B0C10; --ink-2:rgba(255,255,255,.055); --ink-line:rgba(255,255,255,.12); --ink-mute:rgba(255,255,255,.16);
+  --paper:#0B0C10; --mist:transparent; --line:rgba(255,255,255,.12); --text:#FFFFFF; --slate:#B4BAC4; --slate-2:#8A909C;
+  --green:#17D16A; --green-tint:rgba(23,209,106,.14); --green-ink:#17D16A;
+  --card:rgba(255,255,255,.055); --card-line:rgba(255,255,255,.12);
+  --glass:rgba(255,255,255,.055); --glass-line:rgba(255,255,255,.14);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#0B0C10;--mist:transparent;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.055);--card-line:rgba(255,255,255,.12)}}
+body{background:#0B0C10}
+main{position:relative;isolation:isolate;overflow:hidden}
+/* the light: green from the top right, blue low in the middle, violet low on the left, repeated down the page */
+main::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(46vw 520px at 96% 0, rgba(23,209,106,.50), transparent 70%),
+  radial-gradient(52vw 560px at 66% 900px, rgba(37,99,235,.42), transparent 70%),
+  radial-gradient(34vw 420px at 0 760px, rgba(124,58,237,.30), transparent 70%),
+  radial-gradient(40vw 520px at 0 38%, rgba(23,209,106,.14), transparent 70%),
+  radial-gradient(46vw 560px at 100% 58%, rgba(37,99,235,.20), transparent 70%),
+  radial-gradient(40vw 480px at 12% 82%, rgba(124,58,237,.18), transparent 70%)}
+.ink,.mist{background:transparent}
+header.top{background:rgba(11,12,16,.62);border-bottom-color:rgba(255,255,255,.08)}
+h1,h2,h3{letter-spacing:-0.045em}
+.hero{position:relative;padding:72px 0 88px}
+@media(min-width:768px){.hero{padding:104px 0 104px}}
+.hero h1{font-size:52px;line-height:.98;letter-spacing:-0.055em}
+@media(min-width:640px){.hero h1{font-size:72px}}
+@media(min-width:1200px){.hero h1{font-size:76px}}
+@media(min-width:1000px){.hero-grid{grid-template-columns:minmax(0,6fr) minmax(0,6fr);align-items:center}}
+:lang(ja) .hero h1{letter-spacing:-0.02em;line-height:1.2;font-size:36px}
+@media(min-width:640px){:lang(ja) .hero h1{font-size:48px}}
+@media(min-width:1200px){:lang(ja) .hero h1{font-size:52px}}
+.hero .intro{color:#C9CED6}
+/* the outlined numeral behind the headline */
+.v4{position:absolute;top:-84px;left:30%;z-index:-1;font-weight:800;font-size:clamp(200px,24vw,340px);line-height:.8;letter-spacing:-0.08em;color:transparent;-webkit-text-stroke:1.5px rgba(255,255,255,.13);user-select:none;pointer-events:none}
+@media(max-width:999px){.v4{left:auto;right:-12px;top:-8px;font-size:200px}}
+/* glass */
+.session,.flow,.cards li,.duo > div,.cmds,.term,.faq,.chips li,.why{background:var(--glass);border:1px solid var(--glass-line);backdrop-filter:blur(26px) saturate(140%);-webkit-backdrop-filter:blur(26px) saturate(140%)}
+.session,.flow,.cards li,.duo > div{border-radius:28px;box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 30px 80px -40px rgba(0,0,0,.8)}
+.session .chrome{border-bottom-color:rgba(255,255,255,.10)}
+.session .chrome span{letter-spacing:.14em;text-transform:uppercase;font-size:11px;font-weight:700;color:#A3A9B4}
+.runs li{min-height:40px;border-bottom:1px solid rgba(255,255,255,.08)}
+.result{border-top:0;margin-top:20px;padding-top:0;grid-template-columns:1fr auto}
+.result::before{display:none}
+.result code{color:#FFFFFF}
+.vpill{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:9999px;background:var(--green-hi);color:#06210F;font-weight:800;font-size:13px;line-height:16px;letter-spacing:.04em;white-space:nowrap}
+.vpill::before{content:"";width:6px;height:6px;border-radius:9999px;background:#06210F}
+@media(max-width:559px){.result{grid-template-columns:1fr}.vpill{justify-self:start}}
+.term{border-radius:16px;background:rgba(30,58,138,.28);border-color:rgba(147,197,253,.22)}
+.term .p{color:var(--green-hi);font-weight:700}
+.copy{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.14)}
+.btn-key{box-shadow:0 12px 40px -12px rgba(23,209,106,.7)}
+.btn-line{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.04)}
+.h2{font-size:44px;letter-spacing:-0.05em}
+@media(min-width:768px){.h2{font-size:64px;line-height:1}}
+.lede code,.why p code,.faq .a code,.mist .lede code,.mist .why p code{background:rgba(255,255,255,.10)}
+.demos img,.reel video{border-radius:20px;border-color:var(--glass-line)}
+.why{border-radius:28px;padding:8px 28px;border-top:1px solid var(--glass-line)}
+.why li:last-child{border-bottom:0}
+.big{font-size:clamp(120px,16vw,200px);letter-spacing:-0.07em;background:linear-gradient(180deg,#FFFFFF 30%,rgba(255,255,255,.35));-webkit-background-clip:text;background-clip:text;color:transparent}
+.big::after{background:var(--green-hi)}
+.chips li{background:rgba(255,255,255,.05)}
+.cmds{border-radius:24px}
+.cmds .copy{background:rgba(255,255,255,.08)}
+.cmds li.first{margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}
+.cmds li.first code{color:#FFFFFF;font-weight:700}.cmds li.first .p{color:var(--green-hi)}.cmds li.first .who{color:var(--green-hi);font-weight:700}
+.faq{border-radius:28px;padding:4px 28px}
+.faq details:last-child{border-bottom:0}
+.close{position:relative;isolation:isolate;overflow:hidden}
+.close::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(44vw 300px at 88% 46%, rgba(23,209,106,.30), transparent 72%),radial-gradient(52vw 520px at 30% 100%, rgba(37,99,235,.36), transparent 70%)}
+.close h2{letter-spacing:-0.055em}
+@media(min-width:768px){.close h2{font-size:84px;line-height:.98}}
+.duo .vl{display:none}.duo .vl-dark{display:block}
+@media (prefers-reduced-transparency: reduce){.session,.flow,.cards li,.duo > div,.cmds,.term,.faq,.chips li,.why{backdrop-filter:none;-webkit-backdrop-filter:none;background:#16181D}}
 </style>
 </head>
 <body>
@@ -338,13 +414,14 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
 <main id="main">
 
 <section class="hero ink" aria-labelledby="hero-h">
-  <div class="wrap">
+  <div class="wrap" style="position:relative">
+    <span class="v4" aria-hidden="true">v4</span>
     <div class="hero-grid">
       <div>
         <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 42 tools</p>
         <h1 class="dotted" id="hero-h" data-i="hero.h">Give your coding agent a video editor.</h1>
         <p class="intro" data-i="hero.p">Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.</p>
-        <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill setup</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
         <div class="acts">
           <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
           <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
@@ -367,7 +444,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
             <li><code>check.py --platform reels</code><span class="pass">PASS</span></li>
             <li><code>look.py</code><span class="tag" data-i="sess.t2">contact sheet</span></li>
           </ol>
-          <p class="result"><code>final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo</code></p>
+          <p class="result"><code>final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo</code><span class="vpill">VERIFIED</span></p>
         </div>
         <figcaption class="sr" id="sess-cap" data-i="sess.cap">The request from the README's quick start, and the tools the agent runs for it.</figcaption>
       </figure>
@@ -403,6 +480,17 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
       <li><a href="docs/demos.html"><img src="docs/demos/greenscreen.gif" alt="Green screen keyed onto a generated background, before and after" width="480" height="136" loading="lazy"><code>overlay.py --chromakey 0x00b140</code><span data-i="d6">Green screen onto a generated background</span></a></li>
     </ul>
     <a class="more-link" href="docs/demos.html"><span data-i="demos.more">Every before/after demo, with the exact command</span><i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+  </div>
+  <div class="wrap" style="margin-top:88px">
+    <h3 class="h3x" id="showcase" data-i="sc.h">Four clips, edited by asking</h3>
+    <p class="lede"><span data-i="sc.p">The footage in these five videos is AI-generated with Grok (Grok Imagine): the people and places do not exist. Every edit is one of the skill's tools, built by </span><code>demos/showcase.py</code><span data-i="sc.p2">; the request and the exact commands are in </span><a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/docs/showcase.md" data-i="sc.link">the showcase notes</a>.</p>
+    <ul class="reel">
+      <li><video src="media/showcase_reel.mp4" poster="media/showcase_reel.jpg" width="1280" height="720" controls playsinline preload="metadata" aria-label="A 40 second reel of the four demos (AI-generated footage)"></video><code>join.py · graphics.py · export.py</code><span data-i="sc.1">All four in 40 seconds.</span></li>
+      <li><video src="media/showcase_colour.mp4" poster="media/showcase_colour.jpg" width="1472" height="400" controls muted loop playsinline preload="metadata" aria-label="A rainy night street before and after exposure, white balance, denoise and grade (AI-generated footage)"></video><code>color.py --correct · denoise.py</code><span data-i="sc.2">Exposure, white balance, noise and grade, with the shadows and the neon kept.</span></li>
+      <li><video src="media/showcase_reframe.mp4" poster="media/showcase_reframe.jpg" width="1280" height="640" controls muted loop playsinline preload="metadata" aria-label="A basketball shot in 16:9 and reframed to 9:16 (AI-generated footage)"></video><code>cut.py · fit.py --aspect 9:16 · join.py</code><span data-i="sc.3">The shot, reframed to vertical: the player, then the hoop.</span></li>
+      <li><video src="media/showcase_short.mp4" poster="media/showcase_short.jpg" width="1280" height="640" controls playsinline preload="metadata" aria-label="A conference talk and the vertical short made from it, with captions (AI-generated footage)"></video><code>loudness.py · silence.py · caption.py · export.py --preset reels</code><span data-i="sc.4">A talk turned into a captioned short. Turn the sound on.</span></li>
+      <li><video src="media/showcase_key.mp4" poster="media/showcase_key.jpg" width="1472" height="400" controls muted loop playsinline preload="metadata" aria-label="A presenter on a green screen, and the same presenter on a new background with a title (AI-generated footage)"></video><code>overlay.py --video --chromakey</code><span data-i="sc.5">Green screen keyed, resized and placed on a new background.</span></li>
+    </ul>
   </div>
 </section>
 
@@ -464,8 +552,10 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     <div class="pf" style="padding-top:80px;border-top:1px solid var(--line)">
       <div>
         <p class="eyebrow" data-i="nav.install">Install</p>
-        <h2 class="h3x dotted" id="install-h" data-i="in.h">One line per agent.</h2>
+        <h2 class="h3x dotted" id="install-h" data-i="in.h">One command.</h2>
+        <p class="note" data-i="in.lead">It installs the skill for every agent found on this machine, installs FFmpeg through your package manager when it is missing, then checks the machine. The other lines pick one agent.</p>
         <ul class="cmds">
+          <li class="first"><code id="i0"><span class="p">$ </span>npx ffmpeg-skill setup</code><span class="who" data-i="in.setup">everything in one go</span><button class="copy" type="button" data-copy="i0" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i1"><span class="p">$ </span>npx ffmpeg-skill</code><span class="who">Claude Code</span><button class="copy" type="button" data-copy="i1" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i2"><span class="p">$ </span>npx ffmpeg-skill --cursor</code><span class="who">Cursor</span><button class="copy" type="button" data-copy="i2" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
           <li><code id="i3"><span class="p">$ </span>npx ffmpeg-skill --codex</code><span class="who">Codex</span><button class="copy" type="button" data-copy="i3" aria-label="Copy"><i class="ph ph-copy" aria-hidden="true"></i></button></li>
@@ -512,7 +602,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
       <div>
         <img class="sym" src="brand/ffmpeg-skill-symbol-on-dark.svg" alt="" width="72" height="72">
         <h2 class="dotted" id="close-h" data-i="close.h">Hand it the footage.</h2>
-        <div class="term"><code id="c-close"><span class="p">$ </span>npx ffmpeg-skill</code><button class="copy" type="button" data-copy="c-close"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
+        <div class="term"><code id="c-close"><span class="p">$ </span>npx ffmpeg-skill setup</code><button class="copy" type="button" data-copy="c-close"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
         <div class="acts">
           <a class="btn btn-key btn-lg" href="#install" data-i="cta.start">Get started</a>
           <a class="btn btn-line btn-lg" href="https://github.com/kajisho5/ffmpeg-skill"><i class="ph ph-github-logo" aria-hidden="true"></i><span data-i="cta.gh">View on GitHub</span></a>
@@ -563,6 +653,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",
     "demos.h": "左が元の映像。右がコマンドの結果。",
     "demos.p1": "上の 2 本の動画は AI 生成の映像に、下のプレビューは合成した映像にツールをかけたものです。プレビューは ", "demos.p2": " で、2 本の動画はその出力から demos/pages_videos.py で作り直せるので、すべてのコマを自分で再現できます。",
+    "sc.h": "4 本の映像を、頼むだけで編集", "sc.p": "この 5 本の動画の素材は、Grok（Grok Imagine）による AI 生成です。写っている人物や場所は実在しません。編集はすべてこのスキルの道具で行い、", "sc.p2": " で組み立てています。頼んだ内容と実際のコマンドは ", "sc.link": "ショーケースの説明", "sc.1": "4 本を 40 秒で。", "sc.2": "露出・ホワイトバランス・ノイズ・色を調整。暗部とネオンは残しています。", "sc.3": "シュートを縦型に。選手、次にゴール。", "sc.4": "講演を字幕つきのショート動画に。音を出して見てください。", "sc.5": "グリーンバックを抜き、大きさと位置を変えて新しい背景に。",
     "v1": "実際の話し声の映像を縦長に。切り抜きは中央ではなく話し手に合わせています。AI 生成の映像です。",
     "v2": "音を出して聞いてください。「er」「um」が入った声のあとに、それを切った声が流れます。AI 生成の映像です。",
     "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に切り出し", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
@@ -581,7 +672,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     "ag1.p1": "どのツールも MCP のツールです。AI に渡す情報を小さく保つため、ふだんは主要な 12 個だけを見せ、", "ag1.p2": " で 42 個すべてを見せます。",
     "ag2.h": "契約", "ag2.p": "機械が読める 1 つの契約が、全ツールを説明します。何を受け取り何を書き出すか、FFmpeg に何が必要か、どう確かめるか。",
     "ag3.p": "各ツールの入力の定義は、スクリプト自身の引数の定義から自動で作られます。手で書き写すことはありません。説明がずれると CI が失敗します。",
-    "in.h": "エージェントごとに 1 行。", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
+    "in.h": "コマンドひとつ。", "in.lead": "このパソコンにあるエージェントすべてにスキルを入れ、FFmpeg が無ければパッケージマネージャーで入れ、最後にパソコンを点検します。下の行は、エージェントをひとつ選ぶときに使います。", "in.setup": "ぜんぶ一度に", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
     "in.note": "FFmpeg 6.1 以上と Python 3.10 以上が必要です。オフラインで動きます。FFmpeg 本体の入れ方（macOS、Linux、Windows）は ", "in.link": "README", "in.end": " にあります。",
     "faq.h": "最初によく聞かれること",
     "q1": "ffmpeg の引数や filter_complex をそのまま渡せますか？", "a1": "渡せません。どの操作も、自分の引数の定義を持つスクリプトで、契約と MCP の入力の定義はそこから作られます。呼び出し側のフィルターグラフや -vf の文字列など、ffmpeg のオプションを受け取るスクリプトはありません。",

@@ -28,7 +28,7 @@ No cloud · No API keys · Python standard library</p>
 </p>
 
 <p align="center">
-  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v3: give your coding agent a video editor. An agent runs probe, cut, fit, export and check, and the final file is measured: 59.98 s, 1080x1920, 30 fps."></a>
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: Edit. Measure. Ship. 42 local FFmpeg tools, 12 stable; your agent does the work. A card shows final.mp4 measured: 59.98 s, 1080x1920, 30 fps, -14.0 LUFS, verified."></a>
 </p>
 
 ```bash
@@ -45,6 +45,11 @@ npx ffmpeg-skill
     <td width="50%"><img src="docs/demos/loudness.gif" alt="waveform before and after loudness normalisation"><br><sub><code>loudness.py -I -14 --tp -1</code></sub></td>
   </tr>
 </table>
+
+<p align="center">
+  <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase"><img src="site/media/showcase_key.jpg" width="720" alt="a presenter on a green screen, and the same presenter keyed onto a new background with a title and the logo"></a><br>
+  <sub>Four clips edited by asking: colour, slow motion and reframing, a captioned short, a green-screen composite. <a href="https://kajisho5.github.io/ffmpeg-skill/#showcase">Watch them</a> · <a href="docs/showcase.md">the request and the exact commands</a>. The footage is AI-generated with Grok.</sub>
+</p>
 
 Left half is the input, right half is what the command produced. **[Every before/after demo, with the exact command under each one →](docs/demos.md)** — all of it built by `python3 demos/build.py`, so you can rebuild every frame of it yourself. The footage is synthetic (FFmpeg's own test sources) except in three demos, `reframe_talk`, `filler_en` and `pauses_en`, which use two AI-generated clips of people who do not exist ([demos/footage/](demos/footage/README.md)).
 
