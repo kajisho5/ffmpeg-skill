@@ -6264,6 +6264,17 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   argument names do not change (a caller there reads the schema and does not guess). A stumble
   whose guess became a spelling is marked `named` in `docs/stumbles.jsonl` and replayed: the
   tool must not call it unknown again.
+- **A word most models reach for is a spelling too.** The same 126 blind tasks were given to nine
+  models, from an 8B open model to the strongest; their calls used 300 distinct option names the
+  tools do not have. Where most of them used the same word for an option that exists and means
+  exactly that, the word is a second spelling: `silence --padding` (`--margin`) and
+  `--min-duration` (`--min-silence`), `loudness --target` (`--lufs`) and `--true-peak` (`--tp`),
+  `loop --count` (`--times`), `sphere --fov` (`--h-fov`), `broll --broll` (`--insert`) and
+  `--start` (`--at`). Here the tool's own name stays first. A word that would need a new value
+  shape (`redact --rect x:y:w:h`), a new behaviour (`proxy --height`, `reverse --start`) or that
+  means something else on the tool (`cropdetect --threshold`) is not added: that is a feature, and
+  the freeze holds for it. Calls that ran on the first try, before and after the eighteen
+  spellings: 33 to 39 of 126 for the strongest model, 22 to 29 for a 26B model, 2 to 6 for an 8B.
 - **Until then the answer teaches.** A usage error names, for each `--flag` the tool lacks, the
   options that share a word with it or are a near spelling, the options whose help uses the word,
   and the tools that take a flag of that name (`runner._teach`). A help-text match is reported as

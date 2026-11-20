@@ -61,7 +61,7 @@ def main() -> int:
     aim.add_argument("--pitch", type=float, default=0.0, help="up/down rotation in degrees, -180..180 (default 0, level)")
     aim.add_argument("--roll", type=float, default=0.0, help="tilt/roll rotation in degrees, -180..180 (default 0)")
     fov = ap.add_argument_group("field of view")
-    fov.add_argument("--h-fov", type=float, default=90.0, help="output horizontal field of view in degrees, 1..170 (default 90)")
+    fov.add_argument("--h-fov", "--fov", type=float, default=90.0, help="output horizontal field of view in degrees, 1..170 (default 90)")
     fov.add_argument("--v-fov", type=float, default=None,
                      help="output vertical field of view in degrees, 1..170 (default: the one that keeps pixels square at "
                           "--h-fov and --width/--height, 58.7 at the defaults)")

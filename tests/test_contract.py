@@ -13354,7 +13354,13 @@ class StumbleLedgerTests(unittest.TestCase):
                      ("caption", "--font-size", "--size", ["20", "--srt", str(ROOT / "demos" / "footage" / "veo_talk_en.srt")], out),
                      ("metadata", "--min-silence", "--silence-min", ["1", "--auto-chapters"], out), ("stabilize", "--strength", "--shakiness", ["6"], out),
                      ("grid", "--audio", "--audio-from", ["0", "--cols", "2", "--rows", "1"], out, [clip]),
-                     ("grid", "--pad-color", "--background", ["white", "--cols", "2", "--rows", "1"], out, [clip]))
+                     ("grid", "--pad-color", "--background", ["white", "--cols", "2", "--rows", "1"], out, [clip]),
+                     # the word most of nine models reached for, blind, where it means the same thing
+                     ("silence", "--padding", "--margin", ["0.3"], out), ("silence", "--min-duration", "--min-silence", ["0.5"], out),
+                     ("loudness", "--target", "--lufs", ["-16"], out), ("loudness", "--true-peak", "--tp", ["-1.5"], out),
+                     ("loop", "--count", "--times", ["3"], out), ("sphere", "--fov", "--h-fov", ["100"], out),
+                     ("broll", "--broll", "--insert", [clip, "--at", "2", "--duration", "1"], out),
+                     ("broll", "--start", "--at", ["2", "--insert", clip, "--duration", "1"], out))
             for tool, decided, older, rest, o, *more in cases:
                 with self.subTest(tool=tool, decided=decided):
                     plans = []
