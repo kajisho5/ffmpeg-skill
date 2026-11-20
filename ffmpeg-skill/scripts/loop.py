@@ -237,7 +237,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_loop.<ext>)")
     group = ap.add_mutually_exclusive_group(required=True)
-    group.add_argument("--times", type=int, help="repeat the whole clip this many times (2 = original + 1 repeat)")
+    group.add_argument("--times", "--count", type=int, help="repeat the whole clip this many times (2 = original + 1 repeat)")
     group.add_argument("--duration", help="loop (and trim the last repeat) to hit exactly this target duration (seconds or mm:ss)")
     ap.add_argument("--boomerang", action="store_true",
                     help="play forward then backward (--times counts round trips; 1 is allowed); drops audio")

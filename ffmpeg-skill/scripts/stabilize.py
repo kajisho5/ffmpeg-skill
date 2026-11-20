@@ -39,7 +39,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_stab.<ext>)")
-    ap.add_argument("--shakiness", type=int, default=5, help="the amount of shake to correct, the strength: 1 (barely shaky) .. 10 (very shaky), default 5")
+    ap.add_argument("--strength", "--shakiness", dest="shakiness", type=int, default=5, help="the amount of shake to correct, the strength: 1 (barely shaky) .. 10 (very shaky), default 5")
     ap.add_argument("--smoothing", type=int, default=15, help="frames of camera-path smoothing on each side, default 15")
     ap.add_argument("--zoom", type=float, default=0.0, help="percent to zoom in to hide stabilization edges, 0..100 (default 0)")
     ap.add_argument("--crop", choices=["keep", "black"], default="keep", help="edges --zoom doesn't crop away: keep (stretch border pixels, default) or black (fill solid black)")
