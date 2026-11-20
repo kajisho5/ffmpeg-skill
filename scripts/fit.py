@@ -392,8 +392,8 @@ def main() -> int:
                         "blurred, darkened copy of itself filling the rest (the phone-editor vertical, 1.14). "
                         "The darkening is applied to SDR sources only: on an HDR source the background is blurred "
                         "but left at its own levels, since an eq on PQ/HLG code values is not a -15%% perceptual dim")
-    a.add_argument("--width", type=int, help="output width in px (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
-    a.add_argument("--height", type=int, help="output height in px (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
+    a.add_argument("--width", type=int, help="output width in px, 1..16384 (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
+    a.add_argument("--height", type=int, help="output height in px, 1..16384 (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
     add_pad_fill_args(a)
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
@@ -413,11 +413,6 @@ def main() -> int:
 
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
-    for flag, value in (("--width", args.width), ("--height", args.height)):
-        # A165: 0 read as "not given" (the side was sized from the other one, or the run was
-        # "nothing to do") and a negative size reached ffmpeg's pad as kind ffmpeg
-        if value is not None and value < 1:
-            die(f"{flag} must be a positive number of pixels, got {value}")
     if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip:
         die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:

@@ -2946,7 +2946,7 @@ class EditingTests(MediaFixtures):
         r = script("join.py", *clips[:2], "--transition", "fade", "--duration", "-1", "--json",
                    "-o", d / "neg.mp4", expect_fail=True)
         self.assertNotEqual(r.returncode, 0, "a negative --duration is refused, not taken as one frame")
-        self.assertIn("--duration must be 0 or more", r.stdout + r.stderr)
+        self.assertIn("--duration -1 is outside what this option takes", r.stdout + r.stderr)
 
     def test_join_two_or_more_audio_less_clips(self):
         """Every no-audio clip gets a synthetic silent audio track added as an extra ffmpeg input (join.py

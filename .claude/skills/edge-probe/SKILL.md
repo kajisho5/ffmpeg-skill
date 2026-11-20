@@ -59,7 +59,10 @@ asks what the tool does once it has one and the value is wrong.
 
 6. **Fix with a refusal, and count the lines.** Shipped code may not grow
    (`.github/code-budget.json`), so prefer one bound in a shared place (`finite_float` in
-   `runner.py` is the model: one registered type covers every tool) over a check per tool. Each
+   `runner.py` is the model: one registered type covers every tool) over a check per tool. Since
+   #645 a range is one of them: `apply_common` refuses a number outside the `a..b` its option's
+   help states, a negative the help does not name, and anything past a million. So most findings
+   are fixed by writing the range in the help, with no new check. Each
    fix adds a line to `docs/defect-ledger.jsonl` and a test that gives the edge value and reads
    the refusal.
 

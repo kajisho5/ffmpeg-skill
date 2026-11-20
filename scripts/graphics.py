@@ -98,7 +98,7 @@ def main(force_route: Optional[str] = None) -> int:
     ap.add_argument("--bottom", help="meme: lower line")
     ap.add_argument("--duration", type=float, default=3.0, help="hook: seconds the opening card stays up (default 3)")
     ap.add_argument("--subtitle", help="title: smaller second line")
-    ap.add_argument("--from", dest="count_from", type=int, default=5, help="countdown start number (default 5)")
+    ap.add_argument("--from", dest="count_from", type=int, default=5, help="countdown start number, 0..600 (default 5)")
     ap.add_argument("--start", help="show from (default 0)")
     ap.add_argument("--end", help="hide after (default end of clip)")
     ap.add_argument("--position", choices=["top-left", "top-right", "bottom-left", "bottom-right"], default=None, help="corner for chapter/bug/sticker (default bottom-left / top-right / top-right)")
@@ -145,8 +145,6 @@ def main(force_route: Optional[str] = None) -> int:
     apply_common(args)
     # A176: --from -1 divided by zero (a traceback, no JSON); --from -3 built an empty filter
     # graph and --scale 0 or below a 0-px or negative box, both refused by ffmpeg (kind ffmpeg)
-    if args.count_from < 0:
-        die(f"--from must be 0 or more (the number the countdown starts at), got {args.count_from}")
     if args.scale <= 0:
         die(f"--scale must be more than 0 (a size multiplier; 1 is the template's own size), got {args.scale:g}")
     # 2.2.6: whitespace-only text is no text -- stripped before the "needs --title" checks, which
