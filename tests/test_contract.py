@@ -13273,8 +13273,32 @@ class StumbleLedgerTests(unittest.TestCase):
                     proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4")],
                                           capture_output=True, text=True, timeout=120)
                     self.assertNotEqual(proc.returncode, 0, "the wrong call must not run")
+                    # the answer is what follows "error:": the usage block above it lists every option
+                    # the tool has, so a name found there teaches nothing
+                    answer = (proc.stdout + proc.stderr).rsplit("error:", 1)[-1]
                     for phrase in row["must_say"]:
-                        self.assertIn(phrase, proc.stdout + proc.stderr)
+                        self.assertIn(phrase, answer)
+
+    # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
+    # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
+    # no other tool may take one, and a name two tools share means one thing and one type.
+    OLDER_NAMES = {"degrees": {"straighten"}, "shakiness": {"stabilize"}, "smoothing": {"stabilize"}, "size": {"caption", "render"},
+                   "language": {"caption"}, "silence_min": {"metadata"}, "seconds": {"cropdetect", "verify"}, "hold": {"freeze"},
+                   "background": {"grid", "waveform"}, "fill_color": {"straighten"}, "scale_percent": {"overlay"}, "audio_from": {"grid"}}
+    SAME_NAME_TWO_MEANINGS = {"at", "audio", "duration", "end", "fit", "gap", "limit", "list", "logo", "margin", "mode", "on_silent",
+                              "platform", "position", "preset", "scale", "segments", "stereo", "template", "zoom"}
+
+    def test_option_names_do_not_grow_apart(self):
+        tools = {t["name"]: t["input_schema"]["properties"] for t in json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)["tools"]}
+        holders: dict = {}
+        for tool, props in tools.items():
+            for name, spec in props.items():
+                holders.setdefault(name, {})[tool] = (spec.get("type"), tuple(sorted(spec.get("enum") or ())))
+        for name, allowed in self.OLDER_NAMES.items():
+            self.assertLessEqual(set(holders.get(name, {})), allowed, f"--{name.replace('_', '-')} is an older name: a new option takes the decided one")
+        two = {name for name, by_tool in holders.items() if len(set(by_tool.values())) > 1}
+        self.assertLessEqual(two, self.SAME_NAME_TWO_MEANINGS,
+                             "an option name two tools share has one type and one list of choices; these are new: " + ", ".join(sorted(two - self.SAME_NAME_TWO_MEANINGS)))
 
     def test_an_unknown_flag_is_named_even_when_a_required_one_is_missing(self):
         # argparse reports the missing required option first and never reaches the unknown one:

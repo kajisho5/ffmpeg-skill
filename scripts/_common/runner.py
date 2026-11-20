@@ -456,11 +456,12 @@ def _teach(ap: "argparse.ArgumentParser") -> str:
     here, tips = os.path.dirname(os.path.abspath(sys.argv[0])), ""
     for flag in dict.fromkeys(a.split("=")[0] for a in sys.argv[1:] if re.match(r"--[a-z]", a)):
         if not any(o.startswith(flag) for o in acts):
-            word = flag[2:] if len(flag) > 6 else "\0"  # a short word (--to, --from) is in every help text
-            near = [o for o in acts if o[:6] == flag[:6]] or difflib.get_close_matches(flag, acts, 2, 0.85)
-            said = [o for o, a in acts.items() if re.search(rf"\b{re.escape(word)}", a.help or "", re.I)][:2]
+            word = flag[2:] if len(flag) > 5 and flag != "--from" else "\0"  # --to, --at and --from are in every help text
+            # options that share a word with the flag (--pad-color and --fill-color), else a near spelling
+            near = [o for o in acts if set(flag[2:].split("-")) - {"to", "at", "in", "no", "min", "max", "from"} & set(o[2:].split("-"))][:5] or difflib.get_close_matches(flag, acts, 2, 0.85)
+            said = [o for o, a in acts.items() if re.search(rf"\b{re.escape(word)}", a.help or "", re.I) and o not in near][:2]
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
-            tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else f"; {' and '.join(said)} mention '{word}'" if said else "")
+            tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
     return tips
 
