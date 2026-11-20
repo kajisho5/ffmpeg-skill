@@ -4,10 +4,18 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.0.1
+
+_Automated release: version and notes generated from pull requests merged since 4.0.0._
+
 - **The Pages site has the 4.0 look and a showcase.** The landing page is dark in every theme with glass surfaces, leads with `npx ffmpeg-skill setup`, and plays five videos made from four AI-generated clips (Grok Imagine) with the skill's tools only; `demos/showcase.py` builds them and `docs/showcase.md` lists the request and the exact commands.
 - **Every logo and icon file is the current mark**, the plugin listing's icon and the Cursor plugin's logo included; the link preview image is the v4 card.
 - **The review page's spacing is on a 4px grid.**
 - **A release after a hand-bumped major is published again.** 4.0.0's section sat on top of this file with no `## Unreleased` above it, and the release job's bump step stopped on the missing heading, so the changes merged after 4.0.0 were not released. The step now writes the new section above the first version heading when there is no `## Unreleased`.
+- fix(release): a release after a hand-bumped major is published again (#639)
+- docs: the 4.0 look on the Pages site, a showcase of four edited clips, and current logo files (#637)
 
 ## 4.0.0
 
