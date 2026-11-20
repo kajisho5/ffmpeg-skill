@@ -8,13 +8,13 @@
     "source": "github",
     "id": "1356077516"
   },
-  "version": "4.2.0",
+  "version": "4.2.1",
   "websiteUrl": "https://github.com/kajisho5/ffmpeg-skill",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "ffmpeg-skill",
-      "version": "4.2.0",
+      "version": "4.2.1",
       "transport": {
         "type": "stdio"
       },
