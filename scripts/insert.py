@@ -43,7 +43,7 @@ def main() -> int:
     ap.add_argument("input", help="still image (PNG/JPG/...)")
     ap.add_argument("-o", "--output", help="output file (default: <name>_insert.mp4)")
     ap.add_argument("--duration", required=True, help="clip duration (seconds or mm:ss)")
-    ap.add_argument("--width", type=int, help="output width in px; with --height also given, both are used directly")
+    ap.add_argument("--width", type=int, help="output width in px; with --height also given, both are used directly (a size or resolution WxH is --width W --height H)")
     ap.add_argument("--height", type=int, help="output height in px; with --width also given, both are used directly")
     ap.add_argument("--fps", type=float, default=30.0, help="output frame rate (default 30)")
     ap.add_argument("--zoom", choices=["in", "out"], help="Ken Burns: slow linear zoom in or out across the clip")

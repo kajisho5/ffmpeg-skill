@@ -223,7 +223,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output PNG (contact sheet / compare) or basename for --at frames")
     ap.add_argument("--at", action="append", help="time of a frame to extract (repeatable)")
-    ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS (default 4x3)")
+    ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS, e.g. 4x3 for 12 frames (default 4x3)")
     ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image (default 1280)")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--compare-at", action="append", metavar="TIME",

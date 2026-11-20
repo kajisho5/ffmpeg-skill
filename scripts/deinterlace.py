@@ -33,7 +33,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_deint.<ext>)")
     ap.add_argument("--mode", choices=list(MODES), default="frame",
-                     help="frame (default): one output frame per input frame; field: one output frame per field, doubling fps")
+                     help="frame (default): one output frame per input frame; field: one output frame per field, doubling fps (double rate)")
     ap.add_argument("--parity", choices=list(PARITIES), default="auto",
                      help="which field came first (default auto-detect from the stream)")
     ap.add_argument("--only-interlaced", action="store_true",

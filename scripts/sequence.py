@@ -115,7 +115,7 @@ def argument_parser() -> argparse.ArgumentParser:
     ap.add_argument("--dir", required=True, help="directory containing the frames")
     ap.add_argument("--pattern", required=True, help="printf pattern (frame_%%04d.png) or glob (*.png)")
     ap.add_argument("-o", "--output", help="output file (default: <dir>_sequence.mp4)")
-    ap.add_argument("--fps", type=float, default=30.0, help="output frame rate (default 30)")
+    ap.add_argument("--fps", type=float, default=30.0, help="output frame rate, the framerate (default 30)")
     ap.add_argument("--start-number", type=int, default=0, help="first frame index, for a printf pattern (default 0)")
     ap.add_argument("--width", type=int, help="output width in px; with --height also given, both are used directly")
     ap.add_argument("--height", type=int, help="output height in px; with --width also given, both are used directly")

@@ -60,7 +60,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", help="video clips, filled into the grid left-to-right, top-to-bottom")
     ap.add_argument("-o", "--output", help="output file (default: <first name>_grid.<ext>)")
-    ap.add_argument("--cols", type=int, required=True, help="grid columns")
+    ap.add_argument("--cols", type=int, required=True, help="grid columns: the layout is --cols by --rows")
     ap.add_argument("--rows", type=int, required=True, help="grid rows")
     ap.add_argument("--cell-width", type=int, default=480, help="each cell's width in px, must be even (default 480)")
     ap.add_argument("--cell-height", type=int, default=270, help="each cell's height in px, must be even (default 270)")
