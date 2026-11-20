@@ -111,6 +111,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.13.2 — file names and unusable inputs (#558)](#after-3132--file-names-and-unusable-inputs-558)
 - [4.0.0 — a review page for standalone use (#633)](#400--a-review-page-for-standalone-use-633)
 - [After 4.1.0 — one name per meaning, and a guessed name is answered](#after-410--one-name-per-meaning-and-a-guessed-name-is-answered)
+- [After 4.1.2 — a number outside what its option takes is refused in one place (#645)](#after-412--a-number-outside-what-its-option-takes-is-refused-in-one-place-645)
 <!-- contents:end -->
 
 ## Time limits
