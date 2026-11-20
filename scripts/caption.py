@@ -1658,7 +1658,6 @@ def main() -> int:
                                              engine=args.engine)
             cues = asr_run.cues
             args._asr = dict(asr_run.facts)
-            args._asr_notes = list(asr_run.notes)
             args._word_timings = shift_words(whisper_word_timings(srt_path) or sorted(
                 (w["start"], w["end"], w["word"]) for w in asr_run.words), args.offset)
             cues, changed = lay_out(cues)
@@ -1705,8 +1704,7 @@ def main() -> int:
     # WRITING waits for a real run (the rule every side file in this tool follows), which is why
     # the cues are kept in hand below for the font sample and the ASS generator.
     planned_cues: Optional[List[Tuple[float, float, str]]] = None
-    # an English-only transcript made on an assumption says so first (asr.assumed_english_note)
-    side_notes: List[str] = list(getattr(args, "_asr_notes", None) or [])
+    side_notes: List[str] = []
     ass_counts: dict = {}  # --ass: ass_shifted / ass_unshifted (with --offset) and ass_malformed, into `caption`
     ass_sample_path = args.ass
     normalised_only = False  # srt_path is a copy of the caller's SRT that only rewrites its timings

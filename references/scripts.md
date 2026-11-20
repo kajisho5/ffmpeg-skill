@@ -929,9 +929,9 @@ Results: `filler.removed_count`, `filler.removed_seconds`, `filler.removed`
 (one entry per span), `filler.lang`, `filler.list`, `filler.word_timings` and
 `filler.warnings`; `--filler-lang auto` refuses (`kind: input`) a transcript in a language with no built-in list, so pass `--filler-words FILE` for it. With `--transcribe`, `filler.source` is `whisper:ENGINE` or
 `parakeet:ENGINE` and `filler.transcription` says which engine, model, language
-and routing made the words; a top-level `notes` line says when `--engine auto`
-ran the English-only Parakeet model on English assumed (no `--filler-lang`, and
-no Whisper engine that could take it). The existing `removed_seconds` keeps exactly the meaning it
+and routing made the words; with no `--filler-lang`, no detectable language and
+no Whisper engine that could take it, an English-only Parakeet model is not run
+and the call is refused (`reason: english_only`). The existing `removed_seconds` keeps exactly the meaning it
 has always had — the seconds of **silence** this run removed, the figure the
 same run would report without `--filler` — and `removed_seconds_total` is the
 additive sibling covering everything that went. A filler word quiet enough to
@@ -1620,10 +1620,10 @@ If `parakeet-mlx`, `parakeet-cli` (parakeet.cpp, with a `.gguf`), `whisper-cli` 
 SRT from the audio and burns it (combine with `--animate pop --karaoke`). `--engine auto` (default,
 or `FFMPEG_SKILL_ASR_ENGINE`) runs Parakeet for English speech -- an English `--language`, else
 English from whisper.cpp's language detector -- and Whisper for any other language. When neither
-can name the language, a Whisper engine that can run goes first; Parakeet runs on English
-*assumed* only when no Whisper engine is installed or every one failed, and the result's
-top-level `notes` then says so: that transcript is wrong for non-English speech, so pass `--language`
-(`--filler-lang` for `silence.py`) when the speech may not be English.
+can name the language, a Whisper engine that can run goes first. When none can (none installed, or
+every one failed), an English-only Parakeet model is not run on speech nobody named: the call is
+refused before anything is written (`reason: english_only`), so pass `--language`
+(`--filler-lang` for `silence.py`), `en` included, or install a Whisper engine for other languages.
 `--engine parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper` forces one (a
 missing one is `kind: missing_tool`; an installed one that fails is `kind: input`, `reason:
 engine_failed`, with its own error line in `detail`). Without a language whisper.cpp is passed
@@ -1634,7 +1634,7 @@ whisper model (default `FFMPEG_SKILL_ASR_MODEL`, this machine's default, else `b
 English `tdt-0.6b-v2`. A Parakeet model in `FFMPEG_SKILL_ASR_MODEL` goes to the Parakeet engines
 only (the Whisper engines keep `base`); one given with `--model` goes to whichever engine runs.
 A non-English `--language` on an English-only Parakeet model is refused; a
-multilingual (v3) model assumes no language, so it gets no English-assumed note. The result's
+multilingual (v3) model assumes no language, so it runs when the language is not known. The result's
 `transcription` names the engine, model and routing. `silence.py --transcribe` (with `--filler`
 or a sentence flag) takes the same `--engine` and `--model`.
 Nothing is required: without an engine it prints install hints and the user can supply `--text`

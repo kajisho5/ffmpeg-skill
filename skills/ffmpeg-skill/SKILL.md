@@ -55,7 +55,7 @@ into one proposal ("Reels: 9:16 padded, 60 s, -14 LUFS, no captions — OK?"). N
 
 - **Destination** sets aspect, length, loudness, codec; "export/post/deliver" with none named: ask.
 - **Duration** without a method: choose what to keep first. Drop dead air (`silence.py`) and unwanted spans, or use `--method trim` for a simple trim. Use `--method speed` when asked to retime. Ask when the intended edit is unclear. A large implicit retime fails with `fit_method_required`.
-- **Captions** without text: `--transcribe` if an engine exists, else ask; never invent dialogue.
+- **Captions** without text: `--transcribe --language ja` (name the spoken language; other than English needs a Whisper engine) if an engine exists, else ask; never invent dialogue.
 - **Brand, CJK text, crop position:** `references/workflow.md` (ask/assume section).
 - Anything else: pick the conventional default, say so, offer the alternative in one line.
 

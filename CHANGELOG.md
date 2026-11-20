@@ -18,6 +18,8 @@ The third deliberate break (4.0.0). What changed and how to migrate: docs/contra
 - Return a verification failure when a video delivery misses a required export property (#620).
 - Ask for a duration method before making a large implicit retime in `fit.py` (#582).
 
+- **Speech nobody named is no longer transcribed as English by an English-only model.** `caption.py --transcribe` and `silence.py --transcribe` under `--engine auto`, with no `--language` (`--filler-lang`), no detectable language and only an English-only Parakeet model able to run, used to transcribe anyway and add a note saying English was assumed: Japanese speech came out as English words, and the note was read after the captions were burned. The call is now refused before anything is transcribed or written (`kind: input`, `reason: english_only`, or `engine_failed` when a Whisper engine ran and failed), and the refusal names the flag. Name the language (`--language en` for English), install a Whisper engine for other languages, or give Parakeet a multilingual (v3) model. The warning `asr_language_assumed` and `silence.py`'s top-level `notes` are gone with it.
+
 ### Fixed
 
 - **A normalised sound stays where its picture is.** `loudness.py`, and `export.py --normalize` (now the default for platform presets), played every sound after a stretch of digital silence about 89 ms late against the copied picture on FFmpeg 6.1, and cut as much off the end: loudnorm's output frames jumped in time while its samples ran on. The samples are restamped in order from the first one's time. A gap in the source's sound (from 10 ms) is filled with silence first, so the sound after it stays in place: the restamp closed such a gap, and each later sound played early by the gap's length.

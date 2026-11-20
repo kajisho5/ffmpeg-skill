@@ -1496,19 +1496,23 @@ not a new file format this tool would have to maintain.
   decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
   or less) decides. When neither can name the language, a Whisper engine that can run goes first
   (Parakeet only if every Whisper engine fails): a fast English transcript is not worth a
-  confidently wrong one. Only when no Whisper engine is installed, or every one failed, does
-  Parakeet run on English assumed, and then the result's top-level `notes` says the transcript is
-  wrong if the speech is not English -- `transcription.routing` alone was too quiet for a caller
-  that reads `verified`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
+  confidently wrong one. When no Whisper engine is installed, or every one failed, the
+  English-only model is not run at all (4.0.0): the call is refused before anything is transcribed
+  or written (`reason: english_only`, or `engine_failed` when a Whisper engine ran and failed), and
+  the refusal names the flag that names the language. Until 3.x it ran on English assumed and a
+  top-level `notes` line said so; a note is read after Japanese has been burned in as English
+  words, and a caller that reads `verified` never read it. The price: English speech on a machine
+  with only Parakeet needs `--language en`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
   is passed `-l auto` when nothing named the language (its own default is `-l en`, which decoded
   every unnamed language as English, in 2.5.1 too), else the named or detected one, and an
   English-only Whisper model (`base.en`, `ggml-*.en.bin`, quantised too: `ggml-base.en-q5_1.bin`) does
   not count as one for routing. Known gap: with whisper.cpp as the only engine and such a model, undetected
-  speech is decoded as English and the run adds no note.
-  A named `--engine parakeet-*` runs as asked, with no note, and so does a Parakeet model named
-  with `--model` or `PARAKEET_MODEL`: a multilingual (v3) one assumes nothing and gets no note; an
-  English-only one named with `--model` gets the note, pointing at a v3 model rather than at a
-  Whisper engine, which cannot load it. Measured on 8 min of LibriSpeech
+  speech is decoded as English.
+  A named `--engine parakeet-*` runs as asked: naming the engine is naming what it does. A
+  multilingual (v3) Parakeet model named with `--model` or `PARAKEET_MODEL` assumes nothing and
+  runs under `auto`; an English-only one named with `--model` is not run on speech nobody named.
+  Tests: `test_no_language_and_only_an_english_only_parakeet_is_refused_before_it_runs`,
+  `test_an_english_only_parakeet_is_not_the_last_resort_when_every_whisper_engine_fails`. Measured on 8 min of LibriSpeech
   (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
   large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
   `UndetectedLanguageTests`, `WhisperLanguageTests`, `AutoRoutingFallbackTests`.

@@ -129,7 +129,6 @@ def sentence_words(args) -> "Tuple[list, str]":
         return usable(words, f"whisper-json:{args.words}")
     if args.transcribe:
         asr_run = _asr.transcribe_words_result(args.input, None, model=args.model, engine=args.engine)
-        args._asr_notes = list(asr_run.notes)
         if not asr_run.words:
             die(f"{asr_run.engine or 'the local engine'} ran but produced no word-level timings, so there is "
                 "nothing to tell a sentence end from. Pass a transcript with word timings as --words.", kind="input")
@@ -422,7 +421,6 @@ def resolve_filler(args, meta):
                                                model=args.model, engine=args.engine, prompt=prompt)
         words, engine = asr_run.words, asr_run.engine
         transcription = dict(asr_run.facts)
-        args._asr_notes = list(asr_run.notes)
         family = "parakeet" if engine in _asr.PARAKEET_ENGINES else "whisper"
         source = f"{family}:{engine}" if engine else "whisper"
         if not words:
@@ -824,10 +822,6 @@ def main() -> int:
              f"({filler_info['lang']}, list {filler_info['list']})")
         for warning in filler_info.get("warnings") or []:
             warn(warning, "filler_removal_caution")
-    if getattr(args, "_asr_notes", None):
-        # an English-only transcript made on an assumption (asr.assumed_english_note): the
-        # bridge already logged the warning; the result document carries it at the top level
-        summary["notes"] = list(args._asr_notes)
     filler_only = args.filler and not args.speech_aware and not by_sentence
     if filler_only:
         info(f"--filler only (no --speech-aware): skipping generic silence detection, "
