@@ -7,8 +7,16 @@
 - **A half frame rounds up in the timeline.** 0.5 s at 25 fps is frame 13 in a timeline, in its EDL and in the output's start timecode, as `decision.py` and FFmpeg count it; Python's `round()` had made it 12 (#638, contributed by @dchaudhari7177 in #644).
 - **`render.py --cache DIR --dry-run` leaves the disk alone.** It created the directory and wrote and removed a file named `.writable` there, which deleted a caller's file of that name (contributed by @xunguangzlj-cloud in #561).
 - **`join.py --copy` reads the whole stream when the tail was not read.** Some ffprobe builds answer the head interval and stop; the measured span then ended early (#566, contributed by @Ethereal49 in #567).
+(nothing yet)
+
+## 4.2.0
+
+_Automated release: version and notes generated from pull requests merged since 4.1.3._
+
 - **Ten options take the name people reach for.** An angle is `--angle`, a length of time `--duration`, a text size `--font-size`, a strength `--strength`, the fill of a frame `--pad-color`: decided in 4.1.1, and until now a tool that held an older name answered the decided one with a hint. Now it runs: `straighten.py --angle 2` (and `--pad-color`), `freeze.py --duration 2`, `cropdetect.py --duration 5`, `verify.py --duration 6`, `caption.py --font-size 40`, `metadata.py --min-silence 1`, `stabilize.py --strength 6`, `grid.py --audio 0` (and `--pad-color`). The older spellings (`--degrees`, `--hold`, `--seconds`, `--size`, `--silence-min`, `--shakiness`, `--fill-color`, `--audio-from`, `--background`) keep working, and MCP argument names are unchanged. Eight recorded first-try stumbles are now calls that run.
 - **Eight more spellings, chosen by measuring.** The same 126 tasks were given blind to nine models, from an 8B open model up; where most of them used the same word for an option a tool already has, that word now runs: `silence.py --padding` and `--min-duration`, `loudness.py --target` and `--true-peak`, `loop.py --count`, `sphere.py --fov`, `broll.py --broll` and `--start`. Calls that ran on the first try went from 33 to 39 of 126 for the strongest model, 22 to 29 for a 26B model and 2 to 6 for an 8B one. A refused number is now named by the spelling that was typed.
+- feat: options take the name people reach for, as a second spelling (#652)
+- docs: a new basketball take in the showcase and the gallery, and README buttons and badges (#651)
 
 ## 4.1.3
 
