@@ -4,8 +4,7 @@
 
 ## Unreleased
 
-(nothing yet)
-
+- **Edge values are probed, and the probe is a skill.** `tests/edge_values.py` gives every numeric option of the single-input tools a zero, a negative and a huge value in a dry run and lists the calls that ran or hung; `.claude/skills/edge-probe/SKILL.md` has the loop, with the few properties a tool should keep. The first round is #645: 558 calls, 344 refused, two options that hang on a huge value. Nothing in the tools changes here.
 ## 4.1.2
 
 _Automated release: version and notes generated from pull requests merged since 4.1.1._
