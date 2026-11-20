@@ -581,7 +581,7 @@ def main() -> int:
                          "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
                          "before and after; the input is never touched")
     ap.add_argument("--max-mb", type=float, metavar="MB",
-                    help="fit the file under MB megabytes (MiB): a two-pass x264 encode at the video bitrate the "
+                    help="the max size of the file: fit it under MB megabytes (MiB), a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
     # 4.0.0 (#579): a platform preset promises the platform's loudness, so it meets it by default
     norm = ap.add_mutually_exclusive_group()

@@ -10774,7 +10774,10 @@ class McpArgumentSafetyTests(unittest.TestCase):
         for name, args in calls:
             result = mcp_server.call_tool(name, args)
             self.assertTrue(result.get("isError"), f"{name} {args}")
-            self.assertIn("read-only", result["content"][0]["text"], name)
+            # --pla is no longer a spelling of --plan: a shortened shared option is a usage error
+            # before the tool looks at it (4.1.2), which refuses the call as surely
+            said = "spelled in full" if any(str(a).startswith("--pla=") for a in args.get("argv", ())) else "read-only"
+            self.assertIn(said, result["content"][0]["text"], name)
             self.assertEqual(victim.read_text(encoding="utf-8"), "precious user data", f"{name} {args}")
         doc = mcp_server.call_tool("check", calls[1][1])["structuredContent"]
         self.assertEqual(doc["error"]["reason"], "read_only_plan_refused")
@@ -13278,6 +13281,26 @@ class StumbleLedgerTests(unittest.TestCase):
                     answer = (proc.stdout + proc.stderr).rsplit("error:", 1)[-1]
                     for phrase in row["must_say"]:
                         self.assertIn(phrase, answer)
+
+    def test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept(self):
+        """argparse takes a shortened option name. `freeze.py --time 3 --hold 1` ran with --timeout 3,
+        froze the last frame and said nothing. The options every tool shares are now spelled in
+        full; a tool's own options keep the shortening, which callers use (`caption.py --lang`)."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", str(Path(tmp) / "o.mp4")],
+                                                     capture_output=True, text=True, timeout=120)
+            for tool, argv, full in (("freeze", ("--time", "3", "--hold", "1"), "--timeout"), ("cut", ("--start", "1", "--end", "2", "--dry"), "--dry-run"),
+                                     ("cut", ("--start", "1", "--end", "2", "--over"), "--overwrite")):
+                with self.subTest(tool=tool, argv=argv):
+                    proc = run(tool, *argv)
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn(f"{argv[-1] if tool == 'cut' else '--time'} is not an option of this tool", proc.stderr)
+                    self.assertIn(full, proc.stderr)
+                    self.assertFalse((Path(tmp) / "o.mp4").exists())
+            kept = run("caption", "--srt", str(ROOT / "demos" / "footage" / "veo_talk_en.srt"), "--lang", "en", "--dry-run")
+            self.assertEqual(kept.returncode, 0, kept.stderr)
+            self.assertEqual(run("cut", "--start", "1", "--end", "2", "--dry-run", "--timeout=30").returncode, 0)
 
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;

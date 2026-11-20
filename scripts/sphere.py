@@ -66,7 +66,7 @@ def main() -> int:
                      help="output vertical field of view in degrees, 1..170 (default: the one that keeps pixels square at "
                           "--h-fov and --width/--height, 58.7 at the defaults)")
     out = ap.add_argument_group("output frame")
-    out.add_argument("--width", type=int, default=1920, help="output width in px, must be even (default 1920)")
+    out.add_argument("--width", type=int, default=1920, help="output width in px, must be even (default 1920); a size or resolution WxH is --width W --height H")
     out.add_argument("--height", type=int, default=1080, help="output height in px, must be even (default 1080)")
     out.add_argument("--interp", choices=INTERP_METHODS, default="lanczos", help="resampling method (default lanczos)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)

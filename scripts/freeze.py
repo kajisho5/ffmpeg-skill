@@ -30,7 +30,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_freeze.<ext>)")
     ap.add_argument("--at", help="timestamp to freeze: seconds, mm:ss, hh:mm:ss.ms or SMPTE hh:mm:ss:ff (default: the last frame)")
-    ap.add_argument("--hold", type=float, required=True, help="how long the freeze lasts, in seconds")
+    ap.add_argument("--hold", type=float, required=True, help="the duration of the freeze: how long it lasts, in seconds")
     ap.add_argument("--mode", choices=["insert", "extend"], default="insert",
                      help="insert (default): hold pushes the rest of the clip later; extend: only valid at/after the clip's end, makes the last frame last longer with nothing pushed")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)

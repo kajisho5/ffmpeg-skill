@@ -6266,5 +6266,13 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   replayed by `StumbleLedgerTests`, which reads only what follows `error:` (the usage block lists
   every option, so a name found there teaches nothing). An `open` line is a result that is wrong and
   says nothing; answering it adds a warning to the result, which waits for the freeze.
-- Code: `scripts/_common/runner.py` (`_teach`, `add_common`). Tests: `StumbleLedgerTests`
+- **A shortened name of a shared option is refused; a tool's own is kept.** argparse takes any
+  unambiguous start of an option name. `freeze.py --time 3` ran as `--timeout 3`. The options every
+  tool shares (`runner.SHARED`) are spelled in full, because a guess that lands on one of them
+  changes how the run behaves and not what it makes. A tool's own options keep the shortening:
+  callers use it (`caption.py --lang`), and removing it everywhere is a break for a major.
+- **The ledger is fed by blind guesses.** An agent shown only each tool's name and one line about
+  it writes the calls it would try; they are run, and the ones answered with the right option
+  become taught lines. The first round was 126 calls: 27 ran.
+- Code: `scripts/_common/runner.py` (`_teach`, `add_common`, `apply_common`). Tests: `StumbleLedgerTests`
   (tests/test_contract.py).

@@ -55,7 +55,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-o", "--output", required=True, help="output file")
     ap.add_argument("--duration", required=True, help="clip duration (seconds or mm:ss)")
-    ap.add_argument("--width", type=int, required=True, help="output width in px (must be even)")
+    ap.add_argument("--width", type=int, required=True, help="output width in px (must be even); a size or resolution WxH is --width W --height H")
     ap.add_argument("--height", type=int, required=True, help="output height in px (must be even)")
     ap.add_argument("--fps", type=float, default=30.0, help="output frame rate (default 30)")
     src = ap.add_mutually_exclusive_group()

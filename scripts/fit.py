@@ -388,7 +388,7 @@ def main() -> int:
     a = ap.add_argument_group("aspect")
     a.add_argument("--aspect", help="target aspect ratio, e.g. 16:9, 9:16, 1:1, 4:5")
     a.add_argument("--fit", choices=["pad", "crop", "blur"], default="pad",
-                   help="how to reach the aspect: pad (letterbox), crop, or blur -- the whole picture centred on a "
+                   help="the fit mode, how to reach the aspect: pad (letterbox), crop, or blur -- the whole picture centred on a "
                         "blurred, darkened copy of itself filling the rest (the phone-editor vertical, 1.14). "
                         "The darkening is applied to SDR sources only: on an HDR source the background is blurred "
                         "but left at its own levels, since an eq on PQ/HLG code values is not a -15%% perceptual dim")

@@ -28,3 +28,7 @@
   runs over every tool). Patching the reported place alone is allowed once per class, with the
   reason; the second defect of that class means the mechanism is wrong and is what gets rebuilt.
   `.github/scripts/revert_proof.py` and `test_every_defect_names_its_class_...` enforce it.
+- **How usable the tools are is measured, not assumed.** `.claude/skills/first-try-probe/SKILL.md`
+  has a fresh agent write calls blind from each tool's name, runs them (`tests/first_try.py`) and
+  turns each miss into a line of `docs/stumbles.jsonl` that the tests replay. Run it after adding
+  or renaming an option and before a tool moves from beta to stable.
