@@ -399,7 +399,7 @@ def main() -> int:
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
     a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
     r = ap.add_argument_group("rotate / flip")
-    r.add_argument("--rotate", type=int, choices=[90, 180, 270], help="rotate the picture clockwise by this many degrees")
+    r.add_argument("--rotate", type=int, choices=[90, 180, 270], help="rotate the picture clockwise by this angle in degrees")
     r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
     e = ap.add_argument_group("encoding")
     e.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
