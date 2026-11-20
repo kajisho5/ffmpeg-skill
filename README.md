@@ -802,7 +802,7 @@ Releases are frequent (often several a week), and nothing updates by itself: the
 grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
 npm view ffmpeg-skill version                                  # the latest release
 npx ffmpeg-skill@latest setup                                  # replace every installed copy with the latest
-claude plugin update ffmpeg-skill@ffmpeg-skill                 # when installed as a Claude Code plugin
+claude plugin update                                           # when installed as a Claude Code plugin
 ```
 
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
