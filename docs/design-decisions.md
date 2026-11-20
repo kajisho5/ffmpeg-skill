@@ -112,6 +112,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [4.0.0 — a review page for standalone use (#633)](#400--a-review-page-for-standalone-use-633)
 - [After 4.1.0 — one name per meaning, and a guessed name is answered](#after-410--one-name-per-meaning-and-a-guessed-name-is-answered)
 - [After 4.1.2 — a number outside what its option takes is refused in one place (#645)](#after-412--a-number-outside-what-its-option-takes-is-refused-in-one-place-645)
+- [After 4.2.1 — one file per `-o` (#562)](#after-421--one-file-per--o-562)
 <!-- contents:end -->
 
 ## Time limits
@@ -6315,3 +6316,22 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   their own check.
 - Code: `scripts/_common/runner.py` (`apply_common`). Test:
   `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
+
+## After 4.2.1 — one file per `-o` (#562)
+
+- **A name ffmpeg would expand is refused, not guarded.** `.m3u8`, `.m3u` and `.mpd` make the HLS
+  and DASH muxers write segments beside the playlist, and a `%03d` in an image name makes image2
+  write one file per frame. The output guards see the one path the caller named, so the derived
+  files were never checked and `-y` replaced the ones that existed. Enumerating and guarding every
+  derived file (the approach of #568) is correct and costs about 120 lines in the runner; no tool
+  here is meant to write a playlist or a frame sequence, so the name is refused in
+  `_check_output_path` in four. `sequence.py` reads a pattern; nothing writes one.
+- **The existing reason is used.** `output_extension_unsupported` already means "this skill writes
+  no such file". A reason of its own would be a contract addition, and the freeze holds.
+- **What is not refused.** `-update` in the command (`look.py`, `scenes.py`: one image, written as
+  named, pattern or not), and a percent in a name whose extension is not an image (`100%.mp4`):
+  only image2 expands a pattern.
+- **Not covered:** `-f segment`, `-f tee` and `-strftime`. No tool passes them, and a caller cannot
+  add raw ffmpeg options.
+- Code: `scripts/_common/runner.py` (`_check_output_path`). Test:
+  `test_an_output_ffmpeg_would_split_into_files_it_names_is_refused` (tests/test_contract.py).

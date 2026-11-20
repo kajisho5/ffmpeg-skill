@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-(nothing yet)
+- **An output that ffmpeg would split into files of its own naming is refused.** `-o out.m3u8` wrote `out0.ts`, `-o out.mpd` wrote `init-stream0.m4s` and `-o frame%03d.png` wrote `frame001.png` onward; files of those names that already existed were replaced without `--overwrite`, and the tool failed only afterwards (#562). Every tool now refuses such a name before anything runs, dry runs included, as `output_extension_unsupported`. A literal percent in a name (`100%.mp4`) and `look.py`'s single image are written as before. Thanks to @zfareed, whose #568 worked out which names ffmpeg expands.
+- Seven range checks that the shared step of 4.1.3 had made unreachable are removed (`straighten --degrees`, `cropdetect --limit`, `overlay --opacity` and `--chromakey-blend`, `stabilize --zoom`, `audio --stereo-widen` and `--denoise-strength`); the answer for a value outside the range is the shared one.
 
 ## 4.2.1
 
