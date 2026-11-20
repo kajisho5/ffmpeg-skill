@@ -140,7 +140,7 @@ def motion_centre(path: str, seconds: float, samples: int, duration: float, sw: 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
-    ap.add_argument("--seconds", type=float, default=10.0, help="total duration in seconds of the footage sampled across the file (default 10)")
+    ap.add_argument("--duration", "--seconds", dest="seconds", type=float, default=10.0, help="total duration in seconds of the footage sampled across the file (default 10)")
     ap.add_argument("--samples", type=int, default=5, help="number of windows spread across the file, 1..100 (default 5)")
     ap.add_argument("--limit", type=float, default=0.0941176, help="black-pixel threshold, 0..1 (default ~0.094, cropdetect's own default)")
     ap.add_argument("--round", type=int, default=16, dest="round_to", help="a detected crop's width/height are rounded down to a multiple of this (default 16); a picture that reaches every edge is reported as the whole frame, unrounded")

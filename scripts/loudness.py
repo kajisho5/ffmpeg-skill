@@ -297,8 +297,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_loudnorm.<ext>)")
-    ap.add_argument("-I", "--lufs", type=float, default=-14.0, help="integrated loudness target in LUFS (default -14)")
-    ap.add_argument("--tp", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
+    ap.add_argument("-I", "--lufs", "--target", type=float, default=-14.0, help="integrated loudness target in LUFS (default -14)")
+    ap.add_argument("--tp", "--true-peak", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
     ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container (default 192k), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
