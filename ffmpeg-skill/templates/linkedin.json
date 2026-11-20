@@ -42,6 +42,7 @@
     "normalize": true
   },
   "check": {
-    "platform": "linkedin"
+    "platform": "linkedin",
+    "content": true
   }
 }

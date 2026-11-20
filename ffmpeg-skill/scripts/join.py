@@ -44,7 +44,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
-from _common.runner import read_text_or_die
+from _common.runner import path_denied, read_text_or_die, run_analysis
 from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts
@@ -349,8 +349,9 @@ def preflight(paths: List[str], audible: Optional[List[int]] = None) -> Tuple[Li
         if dry_run_input_pending(p):
             pending.append({"index": i, "path": p})
             continue
-        if not os.path.exists(p):
-            problems.append({"index": i, "path": p, "reason": "missing"})
+        # a file that is there but unreadable is "permission denied" too, not ffprobe's line (#558)
+        if path_denied(p) or not os.path.exists(p):
+            problems.append({"index": i, "path": p, "reason": "permission denied" if path_denied(p) else "missing"})
             continue
         if os.path.isdir(p):
             problems.append({"index": i, "path": p, "reason": "a directory, not a file"})
@@ -452,6 +453,32 @@ def _video_packets(path: str, limit: "Optional[int]" = None) -> "List[str]":
     return (proc.stdout or "").split() if proc.returncode == 0 else []
 
 
+def _aac_priming_seconds(path: str, sample_rate: int) -> Optional[float]:
+    """Measure the samples to skip when decoding the input's first AAC packet."""
+    cmd = [require_tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
+           "-read_intervals", "%+#1", "-show_entries", "packet=pts:packet_side_data=skip_samples",
+           "-of", "json", path]
+    proc = run(cmd, quiet=True, check=False)
+    if proc.returncode != 0 or not sample_rate:
+        return None
+    try:
+        packet = json.loads(proc.stdout or "{}")["packets"][0]
+        return sum(int(side.get("skip_samples", 0)) for side in packet.get("side_data_list", [])) / sample_rate
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def _decoded_audio_seconds(path: str) -> Optional[float]:
+    """The length of the first sound stream as a decoder delivers it (priming already dropped),
+    by decoding it: packet spans miss the overhang a stream-copy join carries into the next clip.
+    One byte per 1/8000 s (8-bit mono at 8 kHz): only the length is wanted, so an hour of sound
+    is 29 MB in memory rather than 345 MB at 48 kHz 16-bit, and 0.125 ms is well under COPY_AV_GAP."""
+    cmd = ffmpeg_base() + ["-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "8000",
+                           "-f", "u8", "-"]
+    proc = run_analysis(cmd, check=False, text=False)
+    return len(proc.stdout or b"") / 8000 if proc.returncode == 0 else None
+
+
 SPAN_HEAD_PACKETS = 64     # enough to see the earliest presentation time past B-frame reordering
 SPAN_TAIL_SECONDS = 10.0   # read from this far before the end, so a seek that lands early still reaches it
 
@@ -509,6 +536,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
     guard_sidecar(output, *args.inputs)
     refuse_list_as_output(args, output)
     ext = os.path.splitext(output)[1].lower()
+    mov_output = ext in (".mp4", ".mov", ".m4v")
     n = len(args.inputs)
     pending = any(m.get("dry_run") for m in metas)
     if pending:
@@ -566,6 +594,38 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                    f"--copy: picture and sound start or end more than {COPY_AV_GAP * 1000:.0f} ms apart in {listing}; a copy join "
                    "would leave that gap at the next clip", hint="drop --copy, which trims both streams to one length",
                    clips=[{"path": g["path"], "differs": {"video_span": g["video"], "audio_span": g["audio"]}} for g in gaps])
+        if (metas[0].get("audio") or {}).get("codec") == "aac" and n > 1:
+            # A stream-copy join plays each later clip's AAC priming (the samples its first packet
+            # says to skip) at its seam, and carries the sound an earlier clip decodes to beyond its
+            # picture into the next one, whatever the container. Both streams' spans in the joined
+            # file still match, so only this sum shows it: on eight 4 s clips (21.3 ms priming,
+            # 10.7 ms overhang each) it predicted 32 ms more delay at every join, and the measured
+            # delay of a beep against a flash was 32, 64, ... 224 ms on FFmpeg 6.1 in .mp4, .mov
+            # and .mkv alike (#610). Beyond COPY_AV_GAP at any clip, --copy is refused.
+            drift, at, rows = 0.0, [], []
+            for index, (path, meta) in enumerate(zip(args.inputs, metas)):
+                priming = 0.0 if index == 0 else _aac_priming_seconds(path, (meta.get("audio") or {}).get("sample_rate") or 0)
+                decoded = _decoded_audio_seconds(path)
+                v_span = _stream_span(path, "V", float(meta.get("duration") or 0.0), float(meta.get("start_time") or 0.0))
+                if priming is None or decoded is None or v_span is None or v_span[1] is None:
+                    refuse("input", "join_copy_mismatch", f"--copy: could not measure the AAC priming or sound length of {path}, "
+                           "so the delay a copy join adds at its seams is unknown", hint="drop --copy to re-encode the join",
+                           clips=[{"index": index, "path": path, "differs": {"aac_drift_ms": None}}])
+                drift += priming
+                at.append(drift)
+                rows.append({"index": index, "path": path, "differs": {"aac_priming_ms": round(priming * 1000, 3),
+                                                                       "sound_delay_ms": round(drift * 1000, 3)}})
+                drift += decoded - (v_span[1] - v_span[0])
+            # either way: a clip whose sound ends before its picture pulls the next clips' sound ahead
+            worst = max(at, key=abs)
+            if abs(worst) > COPY_AV_GAP:
+                side = "behind" if worst > 0 else "ahead of"
+                refuse("input", "join_copy_mismatch",
+                       f"--copy: a copy join would put the sound {abs(worst) * 1000:.0f} ms {side} the picture by clip "
+                       f"{at.index(worst) + 1} (AAC priming played at each seam, plus the difference between each "
+                       "clip's sound and its picture)",
+                       hint="drop --copy, which decodes each clip and trims its sound to its picture",
+                       aac_drift_ms=round(worst * 1000, 3), tolerance_ms=COPY_AV_GAP * 1000, clips=rows)
     fps = (metas[0].get("video") or {}).get("fps") or 30.0
     note_short_segments(args.inputs, metas, MIN_SEGMENT_FRAMES / fps, f"{MIN_SEGMENT_FRAMES} frames at {fps:g} fps")
     place_silent([m.get("duration") or 0.0 for m in metas], 0.0)
@@ -576,7 +636,7 @@ def join_copy(args, metas: List[Dict[str, Any]]) -> int:
                 fh.write(concat_list_line(os.path.abspath(p)) + "\n")
         joined = sibling_temp(output, "join") if not STATE.dry_run else output
         cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-map", "0:V:0", "-map", "0:a:0?", "-c", "copy"]
-        if ext in (".mp4", ".mov", ".m4v"):
+        if mov_output:
             cmd += ["-movflags", "+faststart"]
         try:
             run(cmd + [joined])

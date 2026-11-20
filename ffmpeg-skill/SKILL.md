@@ -47,8 +47,8 @@ Ask only when the answer changes the output and the request does not imply it; b
 into one proposal ("Reels: 9:16 padded, 60 s, -14 LUFS, no captions — OK?"). Never ask what a probe tells.
 
 - **Destination** sets aspect, length, loudness, codec; "export/post/deliver" with none named: ask.
-- **Duration** without a method: choose one deliberately, and never leave it to `fit.py`'s default (speed). Cut first: drop dead air (`silence.py`) and unwanted spans, or `--method trim`. Use `--method speed` only when asked, or when cutting cannot reach the target. Ask when it's unclear whether to cut or retime. If a run where you didn't choose speed shows a `large_speed_change` warning (retime beyond 1.15×), redo it as a cut.
-- **Captions** without text: `--transcribe` if an engine exists, else ask; never invent dialogue.
+- **Duration** without a method: choose what to keep first. Drop dead air (`silence.py`) and unwanted spans, or use `--method trim` for a simple trim. Use `--method speed` when asked to retime. Ask when the intended edit is unclear. A large implicit retime fails with `fit_method_required`.
+- **Captions** without text: `--transcribe --language ja` (name the spoken language; other than English needs a Whisper engine) if an engine exists, else ask; never invent dialogue.
 - **Brand, CJK text, crop position:** `references/workflow.md` (ask/assume section).
 - Anything else: pick the conventional default, say so, offer the alternative in one line.
 
@@ -86,7 +86,7 @@ A failure starts `Failed:` and quotes `error.message`; with nothing to check or 
 These fillers are sentences, not labels: a Japanese report says `Check: 検証するものなし` / `Look: 不要`.
 Never describe a fix you did not run. Full Japanese example and more rules: `references/report.md`.
 
-Report the completed edit first. For standalone use, offer a review preview when useful and supported by the host. Prepare it only if the user requests or accepts it. Velisa and other callers that own the review handle their own presentation.
+Report the completed edit first. For standalone use, offer a review page when useful: `python3 scripts/_review.py project.json --result run.json` (a numbered editor screen: press what to change, copy the instruction it writes back to the agent). Prepare it only if the user requests or accepts it. Velisa and other callers that own the review handle their own presentation.
 
 ## Request → script
 
@@ -153,7 +153,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
-| "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` |
+| "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` (platform-sized export; 9:16 alone specifies shape) |
 | "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
 | "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
 | "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |
@@ -169,7 +169,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "grade it but keep the alpha" | `color.py logo.mov --correct --exposure 0.3 --keep-alpha -o graded.mov` |
 | "lower third as a transparent layer" | `background.py --transparent -o canvas.mov --duration 5 --width 1920 --height 1080`, then `graphics.py canvas.mov --template lower-third --name "Ada" --keep-alpha -o lt.mov` |
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
-| "waveform video for this track" | `waveform.py ep.wav -o waveform.mp4` |
+| "waveform video" or "waveform at the cut" | `waveform.py ep.wav -o waveform.mp4` or `waveform.py ep.wav --at 12.4 -o cut.png` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
 | "cut to the product shot", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16 --audio b\|mix` |
 | "add chapters", "set the title / artist" | `metadata.py ep.mp4 --chapters chapters.txt` (`--title`, `--auto-chapters`) |

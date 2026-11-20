@@ -487,7 +487,7 @@ def main() -> int:
             "remux the file (export.py --preset copy) so the container states its length, then check again",
             reason="the file does not state its length, so whether it is within the limit is unknown")
     elif spec["max_duration"]:
-        row("duration", "PASS" if dur <= spec["max_duration"] else "FAIL", f"{dur:.2f}s", f"<= {spec['max_duration']:g}s", "decide with the user: cut.py keeps quality but drops content; fit.py --duration speeds up (audio pitch-preserved, motion faster)")
+        row("duration", "PASS" if dur <= spec["max_duration"] else "FAIL", f"{dur:.2f}s", f"<= {spec['max_duration']:g}s", "choose what to keep with cut.py, or explicitly retime with fit.py --duration N --method speed")
     else:
         row("duration", "PASS", f"{dur:.2f}s", "any")
 

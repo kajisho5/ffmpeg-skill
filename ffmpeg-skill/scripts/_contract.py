@@ -23,6 +23,7 @@ import functools
 import importlib.metadata
 import importlib.util
 import json
+import os
 import platform
 import re
 import shutil
@@ -105,9 +106,10 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                    required=FF + [X264, AAC, "filter:boxblur"],
                    optional=[HDR_X265, {"capability": "filter:delogo", "when": "--mode delogo"}],
                    video_required=True, audio_only=False, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "waveform": dict(role="execution", inputs=["audio or video asset (audio track only)"], outputs=["generated waveform or spectrum visualization video artifact"],
+    "waveform": dict(role="execution", inputs=["audio or video asset (audio track only)"], outputs=["waveform or spectrum video, or waveform PNGs at supplied times"],
                      required=FF + [X264, AAC, "filter:showwaves"], optional=[{"capability": "filter:showspectrum", "when": "--style spectrum"},
-                                                                                {"capability": "filter:drawtext", "when": "--title (graphics.py draws it)"},
+                                                                                {"capability": "filter:showwavespic", "when": "--at"},
+                                                                                {"capability": "filter:drawtext", "when": "--title (graphics.py draws it) or --at"},
                                                                                 {"capability": "filter:subtitles", "when": "--srt (caption.py burns it)"}],
                      video_required=False, audio_only=True, visual=True, verify=["probe", "look"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "sphere": dict(role="execution", inputs=["360/spherical video asset"], outputs=["flat rectilinear video artifact of the chosen viewport"],
@@ -282,7 +284,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "denoise":   dict(video="always", audio="always", note="the hqdn3d filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "cropdetect": dict(video="never", audio="never", note="analysis only, no artifact"),
     "redact":    dict(video="always", audio="always", note="the boxblur, pixelate or delogo graph always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
-    "waveform":  dict(video="always", audio="always", note="always encodes a fresh generated visualization clip; the source audio is always re-encoded to AAC"),
+    "waveform":  dict(video="always", audio="conditional", note="a visualization clip is always encoded fresh, and the source audio re-encoded to AAC in it; --at writes waveform PNGs and no audio at all"),
     "sphere":   dict(video="always", audio="always", note="the v360 filter always forces a re-encode of the video stream; audio is passed through to AAC unchanged"),
     "straighten": dict(video="always", audio="always", note="the rotate filter always forces a re-encode of the video stream; audio is re-encoded to AAC when present"),
     "grid":      dict(video="always", audio="conditional", note="the xstack composite always forces a re-encode of the video stream; there is no audio at all unless --audio-from picks one input's track, which is then re-encoded to AAC"),
@@ -440,13 +442,19 @@ ERROR_REASONS = {
     "media_path_is_playlist": "an input is a playlist that ffmpeg would follow to the files or URLs it names: HLS .m3u8/.m3u or an ffconcat list (by name or by its first bytes), a DASH manifest or an IMF composition playlist (by name or by the content ffmpeg's own probe looks for, whatever the file is called); the skill takes media files only; details: {path}",
     "media_path_has_line_break": "a path written into a concat list (loop.py, join.py --copy, sequence.py, multi-part cuts) contains a line break, which the concat format cannot hold: each line is a directive, so the name would add entries to the list; details: {path}",
     "still_unreadable": "an input read by an image demuxer (a .png, .jpg, ... name) has a picture stream with no frame size: the file is not an image ffmpeg can decode (a text file named .png); details: {path, format, codec}. sequence.py: a frame of the sequence that does not decode (every frame is decoded once before the encode; when that check cannot be made, a note says so and nothing is refused); details: {path (the first), frames, frames_unreadable, frames_total}",
+    "input_is_directory": "an input given where a media file is read is a directory; details: {path}",
+    "input_empty": "an input is an empty file (0 bytes): the trace of a recording, download or render step that wrote nothing; details: {path}",
+    "input_not_media": "ffprobe could not read an input as media (a text file, a file cut short): the message carries ffprobe's own lines without their context addresses; details: {path}",
+    "input_permission_denied": "an input exists or may exist but the user this runs as may not read it, or may not search a directory on the way to it (EACCES, as opposed to a path that is not there, which stays \"input not found\" with no reason); dry runs included; details: {path}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
-    "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart; details: {clips: [{index?, path, differs}]}",
+    "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart, or (AAC) a copy join would put the sound more than 50 ms behind or ahead of the picture at some clip (each later clip's priming played at its seam plus the difference between each clip's sound and picture; details also aac_drift_ms, negative when ahead, and tolerance_ms); details: {clips: [{index?, path, differs}]}",
+    "fit_method_required": "fit.py --duration would retime the clip beyond 1.15x in either direction without a method or an explicit slow-motion filter; details: {factor, threshold, source_duration, target_duration}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_extension_missing": "a media output with no file extension (and no -f naming its format), so ffmpeg could not choose a container; refused before ffmpeg runs, dry runs included; details: {output}",
+    "output_extension_unknown": "a media output whose extension this ffmpeg build maps to no muxer (out.xyz), with no -f naming its format: ffmpeg chooses the container by the extension alone, so it could not; judged from the build's own muxer list (`ffmpeg -muxers`, each muxer's common extensions), asked only for an extension outside the common ones, and not refused when the build cannot be asked; refused before ffmpeg runs, dry runs included; the hint names extensions the tools write; details: {output, extension}",
     "output_extension_unsupported": "a media output named .wma (from -o or the input's default name) that the run would encode into: the skill has no WMA encoder line and writes .wma only as a stream copy of WMA sound (wmav1, wmav2, wmapro, wmalossless, wmavoice) with no picture; the hint names the audio extensions it writes (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka); refused before ffmpeg runs (loudness.py and silence.py before their measuring pass), dry runs included; details: {output, extension, written}",
     "output_extension_audio_only": "a media output named with an audio-only extension (.wav, .m4a, .mp3, ...: every one the skill reads) whose command encodes a picture, that export.py, metadata.py or render.py would copy a picture into, or given to waveform.py: refused before delivery, dry runs included; name a video container, or extract the sound with cut.py or audio.py; details: {output, extension, encoders (empty for a copy and for waveform.py)}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
@@ -472,7 +480,7 @@ ERROR_REASONS = {
     "audio_too_short": "kind input: loudness.py: the audio has a true peak but is shorter than one 400 ms gating block, so it has no integrated loudness to normalise from (not silence); details: {input_tp}",
     "no_speech": "kind input: --transcribe (caption.py; silence.py with --filler or a sentence flag) ran a local speech engine that heard no speech in the input; details: {engine}; also top-level reason and engine",
     "engine_failed": "kind input: --transcribe: an installed speech engine ran and failed (a named --engine, or every engine --engine auto found); details: {engine, detail | engines: [{engine, reason, detail}]}; also top-level reason, engine and detail/engines",
-    "english_only": "kind input: --transcribe under --engine auto found only Parakeet engines, which it runs for English speech only, and the language is not English; details: {engine, engines}; also top-level reason, engine and engines",
+    "english_only": "kind input: --transcribe under --engine auto found only Parakeet engines, which it runs for English speech only, and the language is not English or (4.0.0) is not known: no language was named, none could be detected, and the model is English-only; details: {engine, engines}; also top-level reason, engine and engines",
 }
 
 # The codes of the collector's records (docs/design-decisions.md, "Nothing happens silently"):
@@ -496,7 +504,7 @@ DIAGNOSTIC_CODES = {
     # encoder decisions
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
     "crf_clamped": ("warnings", "the CRF handed to the encoder was above its maximum and was capped (the HEVC HDR line adds 2); {encoder, requested, asked, used}"),
-    "large_speed_change": ("warnings", "fit.py --method speed: the whole picture and sound were retimed by a factor beyond 1.15x in either direction to reach --duration, and nothing was cut. A large retime is easy to ask for by accident -- speed is the default method -- when a cut was wanted, so it is never silent; {factor, threshold, source_duration, target_duration}"),
+    "large_speed_change": ("warnings", "fit.py: the requested whole-clip retime is beyond 1.15x in either direction; {factor, threshold, source_duration, target_duration}"),
     # fonts and text
     "emoji_not_drawn": ("warnings", "caption.py / graphics.py --emoji auto: no glyph, colour path or PNG asset draws these emoji here (doctor fonts.emoji mode none), so they were left out of the drawn text; also graphics.py --text-render drawtext, which has no font fallback; {count, reason}"),
     "emoji_mono_drawn_in_colour": ("warnings", "caption.py / graphics.py --emoji mono on a build whose libass draws the emoji face in colour: nothing makes the glyph monochrome, so the result's emoji.mode is color (graphics.py --text-render drawtext draws none: mode none, emoji_not_drawn)"),
@@ -524,13 +532,12 @@ DIAGNOSTIC_CODES = {
     "ass_lines_unshifted": ("warnings", "caption.py --ass --offset: Dialogue lines whose timestamps could not be read were copied unshifted; {path, count, offset}"),
     "ass_lines_malformed": ("warnings", "caption.py --ass: Dialogue lines that could not be read (fields or start/end) are not counted as cues; {path, count}"),
     "cues_outside_video": ("warnings", "caption.py: cues wholly outside the video are not drawn; {count, duration}"),
-    "asr_language_assumed": ("warnings", "--transcribe: the language was assumed (English) and the transcript is wrong if it is not"),
     # analysis
     "speed_length_placeholder": ("skipped", "render.py --dry-run: a clip's length could not be read before its cut exists, so its speed stage was planned on a stand-in 10 s; {stage, clip, path, placeholder_seconds}"),
     "drift_correction_skipped": ("skipped", "sync.py / multicam.py --fix-drift not applied for a source (drift_skipped_reason); {path, reason: too_short | low_confidence, ...}"),
     "sync_low_confidence": ("warnings", "sync.py / multicam.py: a source's offset has a correlation confidence below 0.1; {path, confidence}"),
     "cropdetect_windows_failed": ("warnings", "cropdetect.py: sampled windows ffmpeg could not decode (windows_failed); {failed, windows, starts}"),
-    "crop_content_off_centre": ("warnings", "fit.py --fit crop: a luma motion/detail PROXY, not subject detection, sampled at 9 points over the kept source range (two grey frames 0.2 s apart at each, 160 px on the long axis), puts the measured energy mostly in the part the crop cuts away. With motion: motion_outside >= 0.5. With no motion: detail_outside exceeds discarded_fraction by >= 0.15. Advisory: the output, the exit status and overwrite behaviour are unchanged. The message names typed remedies only: --crop-x/--crop-y with suggested_anchor, --fit pad, --fit blur; {axis, discarded_fraction, motion_outside, detail_outside, centroid, suggested_anchor, samples, basis: luma_motion_proxy}"),
+    "crop_content_off_centre": ("warnings", "fit.py --fit crop: aggregate or per-point luma motion/detail crosses the crop threshold. Up to 9 pairs of gray frames over the kept source range contribute. With motion: motion_outside exceeds discarded_fraction by >= 0.15. With no motion: detail_outside exceeds discarded_fraction by >= 0.15. Advisory. The warning carries the crop_check measurement keys, including the kept range and review_points."),
     "filler_words_untimed": ("warnings", "silence.py --filler: listed words in the transcript with no usable timing were not removed (filler.matched_untimed); {count}"),
     "sentence_ends_not_found": ("warnings", "silence.py --sentence-min-silence / --sentence-margin-tail: the transcript has no sentence-final punctuation, so every silence used --min-silence and --margin-tail (sentence.sentence_end_words is 0)"),
     "cut_near_sound": ("warnings", "silence.py: a cut point's level is within CUT_SOUND_MARGIN_DB of --threshold, so it may land in a breath or a word's weak tail (cut_warnings lists them)"),
@@ -562,6 +569,7 @@ DIAGNOSTIC_CODES = {
     "report_section_missing": ("warnings", "report.py: a loudness, compliance or contact-sheet section could not be built (also a failing verification step naming the section)"),
     "report_section_dry_run": ("skipped", "report.py --dry-run draws no contact sheet"),
     "check_dry_run": ("skipped", "render.py --dry-run does not run a check stage or a plan's check step"),
+    "caption_timecode_rate_mismatch": ("warnings", "caption.py: an SMPTE cue rate differs from the probed video rate; {cue_fps, source_fps, cue_timecode, drift_seconds}. Drift compares the chosen time to reading the same label at the source rate, or null when that reading is unavailable or the source is suspected VFR"),
     "caption_srt_not_delivered": ("skipped", "render.py: the captions stage's generated SRT is not delivered beside the output: the stage was served from --cache (reason cached), or a later stage changed the timeline (reason timeline_changed: the export trimmed the delivery); {reason, path, trimmed}"),
     "batch_cache_inputs_changed": ("skipped", "batch.py: an item's source or a side input changed while it was processed (its cache key, made again when the item ends, is not the one it was looked up with), so its output is not stored in the cache; {file}"),
     "batch_side_file_not_delivered": ("skipped", "batch.py: a step before the last wrote side files beside its intermediate (caption.py's .srt, an .ass), which go with the item's work directory; only the last step's side files land beside the output; {file, step, tool, files}"),
@@ -648,7 +656,7 @@ EMITTED_KEYS: Dict[str, Dict[str, Any]] = {
     "fit": {
         "timing": {"type": "object", "description": "--duration only, in dry-run JSON, saved plans and real results. {method, source_duration, target_duration, speed_factor, retimed}: lengths in seconds, the computed source/target ratio for speed or 1 for trim, and whether the command retimes the source. Ratios within 0.0001 of 1 keep the speed unchanged. A dry run without a usable input length has null source_duration, speed_factor and retimed for speed."},
         "picture": {"type": "object", "description": "after a real run that sized the frame (--aspect, --width or --height): where the picture sits in the frame written, measured, not judged (#519): {measured, x, y, width, height, frame_width, frame_height, frame_share, scale, cropped {left, right, top, bottom}}. ffmpeg runs the frame's own filters (the scale and pad, the blur graph with its background drawn black, or the scale and crop) on one white and one black frame of the source's displayed size and pixel format, ending in the written file's pixel format; the picture is the rectangle where the two differ (no frame of the source is decoded), and frame_width/frame_height are the written file's. frame_share: picture area over frame area (1.0 for --fit crop). scale: the picture's width over the source's displayed width (for --fit crop, the width it was scaled to before the crop); a note says so when it is below 1 and no --width or --height was given. cropped: source pixels --fit crop cut on each side, each axis at its own scale (all 0 otherwise). {measured: false, reason} (and a note) when the measurement gave no frame of the written size. Absent under --dry-run. Whether the subject is in the rectangle is still a look: subject_framing stays in unverified"},
-        "crop_check": {"type": "object", "description": "after a real --fit crop that cuts something away (absent otherwise, under --dry-run, for --fit pad/blur and a crop with no margin): where the source's luma motion, or with none its edge detail, sits against the kept window. A proxy, not subject detection; a measurement, not a judgement. {axis: x|y, the cropped axis; discarded_fraction: the frame's area share cut away; motion_outside / detail_outside: the energy shares in the cut-away part (null when there is none); centroid: 0..1 along axis, of motion when it is above its floor, else of detail; suggested_anchor: the --crop-x/--crop-y value centring the kept window on centroid, or null; samples: the sample points measured (9 asked, over the trim's window under --method trim, else the whole source); basis: luma_motion_proxy; verdict: ok|review|unmeasured}. review also records a crop_content_off_centre warning; unmeasured (no sample decoded, or flat frames) adds a note only. subject_framing stays in unverified"}},
+        "crop_check": {"type": "object", "description": "after a real --fit crop with a discarded margin: where the source's luma motion or edge detail sits. {axis: x|y, kept: {start,end} as fractions of that axis, discarded_fraction, motion_outside, detail_outside, centroid, suggested_anchor, samples, basis: luma_motion_proxy, signal: motion|detail|null, verdict: ok|review|unmeasured, review_points: [{source_time, output_time_estimate, signal, motion_outside, detail_outside, centroid, suggested_anchor}]}. Review points are flagged sample seek times; output_time_estimate accounts for trimming and retiming, or is null without a usable time. Review emits crop_content_off_centre. subject_framing stays in unverified."}},
     "cropdetect": {
         "file": {"type": "string", "description": "the input path, as given"},
         "source_width": {"type": "integer", "description": "the displayed frame's width (a 90/270 degree rotation swaps the stored size; a non-square-pixel source is squared at its display aspect): the frame crop and motion_centre are in"},
@@ -744,7 +752,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named (youtube was assumed and judgement rows are WARN), when --compare paired a different number of frames than the reference has, or when --expect-changed compared two files that are not encoded alike"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string", "description": "row name; --content adds black, frozen and silence; --compare adds similarity; --expect-changed adds change_scope; --levels adds legal levels; --expect-identity adds identity; audio FAILs when the track is present but silent (peak <= -50 dBFS). A value that could not be read is \"could not measure\", never a PASS: duration FAILs under a --max-duration the caller stated (WARN under the platform table's limit or without one) when the file states no length, and black, frozen and silence are then WARN rows; loudness is WARN for audio shorter than one 400 ms block; --tp without --lufs (custom) measures the true peak row"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}, "basis": {"enum": ["requirement", "guidance"], "description": "where the expected value comes from. guidance: the duration and file size rows when their limit is the platform table's upload limit (scripts/_platforms.py, dated UPLOAD_LIMITS_AS_OF); such a row is PASS or WARN, never FAIL, is not counted in failed, and its reason says the uploader checks the platform's current limit. requirement: every other row, and the same two rows under --max-duration / --max-mb (the caller's own limit), which FAIL"}}}}}
     elif name == "caption":
-        extra = {"transcription": {"type": "object", "description": "with --transcribe: {engine, model, language, routing (why auto chose it), detected_language when auto detected it}; when auto ran the English-only Parakeet model on English assumed, notes says so"},
+        extra = {"transcription": {"type": "object", "description": "with --transcribe: {engine, model, language, routing (why auto chose it), detected_language when auto detected it}"},
                  "caption": {"type": "object", "description": "cue layout: shifted / wrapped / rebalanced / split / extended / dropped counts, plus wrap ('phrase' or 'measured'), phrase_breaks (1.16), broken_inside_word -- atoms hard-sliced at the column edge because they did not fit alone even at the size floor (1.18.4) -- and overlong -- now residual: a single character alone wider than the column. Burn mode: cues_burned -- non-blank cues that overlap [0, duration] and are drawn -- and cues_outside -- non-blank cues wholly outside it (2.2.6); a burn with no visible cue is refused, kind input. --ass: ass_malformed -- Dialogue lines that could not be read and are not counted -- and with --offset ass_shifted / ass_unshifted -- lines moved, and lines whose timestamps could not be read, copied as they were (each count above 0 is also a diagnostics.warnings entry)"},
                  "tracks": {"type": "array", "description": "--mode mux: one entry per subtitle stream in the output ({index, file, language, title, codec, default, cues, kept_from_input}); a stream the input already carried has file null and kept_from_input true (1.16)"},
                  "subtitle_tracks": {"type": "integer", "description": "--mode mux: how many subtitle streams the output carries"},
@@ -756,7 +764,10 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "auto_chapters": {"type": "object", "description": "--auto-chapters: {source, min_chapter, max_chapters, proposed, kept, titles, chapters, description_block, files}. titles is always 'placeholder' -- the skill proposes where a chapter starts, never what it is called (1.16)"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "waveform":
-        extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} -- present on every run, so a plain waveform answers background 'color' (1.16)"},
+        extra = {"audiogram": {"type": "object", "description": "{style, background ('image' or 'color'), image, position, vis_height, platform, captions, title, stages, verified} on visualization video runs"},
+                 "waveforms": {"type": "array", "description": "--at: one row per written PNG {output, time, start, end, window_seconds, marker_x}; seconds are on the input's clock"},
+                 "planned_waveforms": {"type": "array", "description": "--at under --dry-run: the paths and planned windows, with no PNG written"},
+                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "--at: PNG paths in request order, planned under --dry-run"},
                  "silent": {"type": ["boolean", "null"], "description": "true when the input audio's whole-file peak is at or below --silence-threshold (default -50 dBFS) and --on-silent warn (default) rendered the flat line anyway, with a notes line; false when audible; null under --dry-run (nothing measured). --on-silent fail refuses as kind input instead; verified is unaffected"},
                  "notes": {"type": "array", "items": {"type": "string"}}}
     elif name == "scenes":
@@ -780,8 +791,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "silence_breakdown": {"type": "object", "description": "2.20: {digital, below_threshold}: the count and seconds of each, with the level that defines it"},
                  "hint": {"type": "string", "description": "when nothing sat below --threshold: the track's measured level and the --threshold that would find its pauses"},
                  "speech_aware": {"type": "object", "description": "--speech-aware (1.18): {min_silence, floor, breaths_kept, breaths_kept_seconds, breaths}"},
-                 "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, matched_untimed (listed words in the transcript with no usable timing, not removed), matched_too_long (listed words longer than a filler, kept), ...}"},
-                 "notes": {"type": "array", "items": {"type": "string"}, "description": "--transcribe (with --filler or a sentence flag) under --engine auto: present when the English-only Parakeet model ran on English assumed (no --filler-lang, no language detected, no Whisper engine installed or none that succeeded); the transcript is wrong if the speech is not English"}}
+                 "filler": {"type": "object", "description": "--filler: {lang, source (whisper-json:FILE | whisper:ENGINE | parakeet:ENGINE), engine, transcription (with --transcribe: {engine, model, language, routing}), removed, removed_count, matched_untimed (listed words in the transcript with no usable timing, not removed), matched_too_long (listed words longer than a filler, kept), ...}"}}
     elif name == "sync":
         extra = {"reference": {"type": "string"}, "second": {"type": "string"}, "offset_seconds": {"type": "number"}, "confidence": {"type": "number"}, "meaning": {"type": "string"}, "drift": {"type": "object"},
                  "sources": {"type": "array", "description": "1.18: [{path, offset_s, confidence, drift_ppm}], one per SOURCE; the only per-source shape once more than one SOURCE is given; with --fix-drift each also carries drift_skipped_reason"},
@@ -824,7 +834,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
     elif name == "export":
         extra = {"picture": {"type": "object", "description": "after an export with both preset frame dimensions and scaling enabled: measured pad, blur-fill foreground or crop rectangle in the written frame (same fields as fit.py); omitted under --dry-run"},
                  "repair": {"type": "object", "description": "--repair (2.24): {before, after}, each {timestamp_warnings, decode_errors} counted over one full decode at -v warning"},
-                 "loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against the platform's target_lufs/target_tp, ok true when inside the spec; normalized true when --normalize ran loudness.py on the file; silent true (lufs \"-inf\", ok false, no normalize) when the written audio is silent; measured false (lufs, tp and ok null, reason not_measured) when the measurement could not be read, and with too_short true (lufs and ok null, tp measured) when the audio is shorter than one 400 ms gating block, which is not silence"},
+                 "loudness": {"type": "object", "description": "platform presets with audio: the written file's lufs/tp against target_lufs/target_tp. ok is true when inside the spec. normalized says whether export ran loudness.py to correct the file. silent true (lufs \"-inf\", ok false, normalized false) when the written audio is silent. measured false (lufs, tp and ok null, reason not_measured) when unreadable; too_short true (lufs and ok null, tp measured) for audio shorter than one 400 ms gating block."},
                  "alpha_mode": {"enum": ["straight", "premultiplied"], "description": "alpha presets only (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): how the colour was written, from --alpha-mode (default straight). The `alpha` verification step compares the written file's alpha with the source's frame by frame, tolerance 2 of 255 per frame (comparison: {ok, paired, worst_delta, worst_frame}; with a different frame count the mean and the most transparent frame, paired false; frames: {expected, measured}, each {mean, min, frames}); `codec` compares the written codec and profile with the preset's"},
                  "key": {"type": "object", "description": "--preset key-fill only: the key file {output (<out stem>_key.mov), identity, sha256, timecode (the source's start timecode written on both, or null)}. Verification adds key_fill_pair (width, height, frame count, rate and the video streams' lengths equal on both files) and key_level (the key's level against the source's alpha frame by frame, tolerance 2 of 255); the source's subtitle/data streams are not written (non_av_streams.dropped, reason key_fill)"},
                  "fill_sha256": {"type": "string", "description": "--preset key-fill only: the fill file's SHA-256 (the key's is key.sha256)"},
@@ -1904,6 +1914,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
+        # 4.0.0: what the 4.x promise covers for this tool (docs/contract.md, Stability guarantee (4.x))
+        "stability": "stable" if name in STABLE_TOOLS else "beta",
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
                                                                                        + (ALPHA_LINE_OPTIONAL if name in ALPHA_LINE_TOOLS else []))},
         "inputs": list(meta["inputs"]),
@@ -2000,6 +2012,8 @@ READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # other 30 stay reachable by name through tools/call either way, and `contract --json` always
 # describes all 42.
 MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
+# 4.0.0: the tools whose surface 4.x promises not to break; the other 30 are "beta" (docs/contract.md).
+STABLE_TOOLS = MCP_CORE_TOOLS
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
                        "Media paths must be absolute.")
@@ -2297,7 +2311,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
                                       "hidden .<output>.ffskill-audit.jsonl beside the output, and a cache event's .ffskill-audit.jsonl in the "
                                       "cache directory (render.py --cache DIR) or the batch's output_dir. Never written under --dry-run; a write that "
                                       "fails is a diagnostics.warnings entry (audit_log_unwritable), never a failure"},
-            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "something the run needs is not installed: ffmpeg or ffprobe not on PATH, or older than the supported 6.1 (error.reason ffmpeg_unsupported) (both exit 127); an encoder this build lacks for --codec, an export.py preset or an alpha line (encoder_missing); the libvpx-vp9 decoder for a VP9 source with an alpha layer (decoder_missing); no local speech-to-text engine for --transcribe (asr_engine_missing), or a named --engine that is not installed (these exit 1)","timeout": "one ffmpeg/ffprobe run exceeded --timeout (default 1800 s, FFMPEG_SKILL_TIMEOUT; verify.py's --timeout is per step, default 600 s) and was killed; partial output removed; exit 124", "verification": "the tool ran but its result failed the requested check: check.py platform rows (checks attached), render.py's check stage (output written, check attached), a render.py --template social pack with a destination that failed (pack rows attached; a destination that timed out or was interrupted gives that kind instead), batch.py items (results attached), verify.py steps (files attached), color.py --retag (output written, but ffprobe does not read the requested colour tags on it), loudness.py (output written, its true peak still above --tp after the re-encodes; result attached), join.py --copy (the stream-copied join does not hold the clips it was given; it is not moved to the output path, verification attached); exit 1", "interrupted": "the tool received SIGINT or SIGTERM: the running ffmpeg (or sibling script) was stopped and its partial output removed; exit 130 or 143"},
+            "error_kinds": {"input": "missing or unsuitable input, bad arguments", "ffmpeg": "ffmpeg/ffprobe returned an error (message carries the last stderr lines)", "output": "ffmpeg exited 0 but the artifact is missing, empty or unreadable (an empty file is removed)", "missing_tool": "something the run needs is not installed: ffmpeg or ffprobe not on PATH, or older than the supported 6.1 (error.reason ffmpeg_unsupported) (both exit 127); an encoder this build lacks for --codec, an export.py preset or an alpha line (encoder_missing); the libvpx-vp9 decoder for a VP9 source with an alpha layer (decoder_missing); no local speech-to-text engine for --transcribe (asr_engine_missing), or a named --engine that is not installed (these exit 1)","timeout": "one ffmpeg/ffprobe run exceeded --timeout (default 1800 s, FFMPEG_SKILL_TIMEOUT; verify.py's --timeout is per step, default 600 s) and was killed; partial output removed; exit 124", "verification": "the tool ran but its result failed the requested check: check.py platform rows (checks attached), render.py's check stage (output written, check attached), a render.py --template social pack with a destination that failed (pack rows attached; a destination that timed out or was interrupted gives that kind instead), batch.py items (results attached), verify.py steps (files attached), color.py --retag (output written, but ffprobe does not read the requested colour tags on it), loudness.py (output written, its true peak still above --tp after the re-encodes; result attached), join.py --copy (the stream-copied join does not hold the clips it was given; it is not moved to the output path, verification attached), export.py since 4.0.0 (a single-file video delivery other than GIF missed a required property: steps streams, codec (for an editing master also its profile and pixel format), frame_size, frame_rate, duration or file_size; output kept, verification attached); exit 1", "interrupted": "the tool received SIGINT or SIGTERM: the running ffmpeg (or sibling script) was stopped and its partial output removed; exit 130 or 143"},
             "success_criterion": "exit 0 AND the output exists AND is non-empty AND ffprobe reads a stream from it; only then is status completed printed and the output probe attached",
         },
         "capabilities": caps,
@@ -2384,5 +2398,30 @@ def main() -> int:
     return 0
 
 
+def _main_to_a_pipe() -> int:
+    """main(), ending quietly when the reader of stdout has gone (#558): `contract --json | head -40`,
+    README's quick start, closes the pipe after 40 of the document's lines, and print() of the
+    rest raised BrokenPipeError: a traceback and exit 1 for a command that had done its job.
+    stdout is pointed at the null device so the interpreter's own flush at exit finds nothing to
+    report; a reader that left has what it asked for, so the exit code is 0. `doctor` is a check
+    whose exit code is its verdict: a reader that left early does not turn a failed check into a
+    pass, so it is run again with its output discarded and keeps that exit code (review of #636)."""
+    try:
+        code = main()
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        if "doctor" in sys.argv[1:]:
+            try:
+                return main()
+            except BrokenPipeError:
+                return 1
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_to_a_pipe())
