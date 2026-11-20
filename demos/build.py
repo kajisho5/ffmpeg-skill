@@ -531,9 +531,14 @@ def make_wave_compare(before, after, dest, font, labels=("BEFORE", "AFTER")):
     pics = []
     for idx, src in enumerate((before, after)):
         pic = OUT / ("%s_wave%d.png" % (dest.stem, idx))
+        # bars, not a filled shape: one column per 4 px, drawn small and scaled up without
+        # smoothing, with a 1 px gap cut between the columns, on the page's own dark ground
         ffmpeg("-i", str(src), "-filter_complex",
-               "[0:a]aformat=channel_layouts=stereo,showwavespic=s=%dx%d:split_channels=0:scale=sqrt:draw=full:colors=0x17D16A"
-               % (CELL_W, CELL_H), "-frames:v", "1", str(pic))
+               "color=c=0x101114:s=%dx%d[bg];[0:a]aformat=channel_layouts=mono,"
+               "showwavespic=s=%dx%d:split_channels=0:scale=sqrt:draw=full:colors=0x17D16A,"
+               "scale=%d:%d:flags=neighbor,drawgrid=w=4:h=%d:t=1:c=0x101114[w];[bg][w]overlay=0:%d"
+               % (CELL_W, CELL_H, CELL_W // 4, CELL_H - 60, CELL_W, CELL_H - 60, CELL_H, 40),
+               "-frames:v", "1", str(pic))
         pics.append(pic)
     chain = ";".join([
         "[0:v]pad=%d:%d:0:0:color=0x101114,drawtext=fontfile='%s':text='%s':fontsize=18:"
@@ -818,9 +823,10 @@ def demo_silence_removal(ctx):
 
 
 def demo_loudness(ctx):
-    """The input is deliberately quiet, so the two waveforms differ by more than rounding."""
+    """A real voice (the AI-generated talk), made deliberately quiet, so the two waveforms differ by
+    more than rounding."""
     before = ctx.path("before.mp4")
-    ffmpeg("-i", str(FIX / "motion.mp4"), "-af", "volume=-14dB", "-c:v", "copy", "-c:a", "aac",
+    ffmpeg("-i", str(ROOT / "demos" / "footage" / "veo_talk_en.mp4"), "-af", "volume=-10dB", "-c:v", "copy", "-c:a", "aac",
            str(before))
     after = ctx.path("after.mp4")
     ctx.script("loudness.py", before, "-I", "-14", "--tp", "-1", "-o", after)
