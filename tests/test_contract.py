@@ -13326,7 +13326,7 @@ class StumbleLedgerTests(unittest.TestCase):
                     proc = run(tool, *argv)
                     flag = next(a for a in argv if "=" in a).split("=")[0]
                     self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
-                    self.assertIn({"--size": "--font-size", "--hold": "--duration"}.get(flag, flag) + " ", proc.stderr)  # the option's first spelling
+                    self.assertIn(f"{flag} ", proc.stderr)  # the spelling that was typed, not the option's first
                     self.assertIn("is outside what this option takes", proc.stderr)
             # what a help names is still taken: a negative level, an angle, -1 as "never", a long sample count
             for tool, argv in (("audio", ("--gain=-3", "-o", out)), ("cut", ("--start", "1", "--end", "2", "--tolerance=-1", "-o", out)),
