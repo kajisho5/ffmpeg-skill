@@ -210,6 +210,9 @@ def main() -> int:
             # the owner's decision of 2026-11-20: a second spelling of an option a tool already has
             # is the decided name arriving, not a feature; a new flag still adds its ("flag", ...) row
             added = [x for x in added if x[0] != "spelling"]
+        # options the owner named while the freeze holds, each "<tool> <option>": listed, never open-ended
+        named = set(budget.get("feature_freeze_named") or ())
+        added = [x for x in added if f"{x[1]} {x[2].lstrip('-').replace('-', '_')}" not in named]
         if added:
             print("feature freeze (.github/code-budget.json): this change adds to the contract: "
                   + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))

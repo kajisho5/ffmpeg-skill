@@ -113,6 +113,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.1.0 — one name per meaning, and a guessed name is answered](#after-410--one-name-per-meaning-and-a-guessed-name-is-answered)
 - [After 4.1.2 — a number outside what its option takes is refused in one place (#645)](#after-412--a-number-outside-what-its-option-takes-is-refused-in-one-place-645)
 - [After 4.2.1 — one file per `-o` (#562)](#after-421--one-file-per--o-562)
+- [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
 <!-- contents:end -->
 
 ## Time limits
@@ -6335,3 +6336,24 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   add raw ffmpeg options.
 - Code: `scripts/_common/runner.py` (`_check_output_path`). Test:
   `test_an_output_ffmpeg_would_split_into_files_it_names_is_refused` (tests/test_contract.py).
+
+## After 4.2.2 — the answer is a command, and three options by request
+
+- **`try:` is printed only when it is known.** A usage error ends with the corrected command when
+  every mistake on the line has exactly one answer: one near option, one choice near the word given
+  (or a common other word for it: strong is high, light is low), a number written with its unit
+  (`-30dB`, `0.8s`, `1080px`). If any mistake has two candidates or none, no command is printed: a
+  caller that copies would run a guess as if it were the answer. The command is one the tool
+  takes, and the test runs each.
+- **A number after an option is joined with `=`.** argparse reads `--threshold -30dB` as two
+  options. The corrected form is `--threshold=-30`.
+- **Three options were added during the freeze, by name.** `proxy --height`, `redact --rect` and
+  `metadata --chapter` are listed in `.github/code-budget.json` (`feature_freeze_named`), and the
+  freeze guard lets exactly those through. They are the shapes most of nine models wrote for a
+  task the tool already did another way. `redact --x --y --width --height` are no longer required
+  one by one, since `--rect` gives all four.
+- **Not added:** a range on `reverse.py`. Reversing holds picture and sound to one end; a range
+  would be a second code path through that. `cut.py` then `reverse.py` does it, and the usage
+  error names `cut.py`.
+- Code: `scripts/_common/runner.py` (`_teach`), `scripts/proxy.py`, `scripts/redact.py`,
+  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py).
