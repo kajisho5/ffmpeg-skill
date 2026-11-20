@@ -1347,7 +1347,7 @@ raise SystemExit(export.main())
         except the two deliberate, documented exceptions."""
         sys.path.insert(0, str(SCRIPTS))
         import export as export_mod
-        from _platforms import PLATFORMS, loudness_of
+        from _platforms import PLATFORMS
         from check import SPECS
         # youtube4k delivers to youtube at 2160p; neither youtube preset trims at the 12-hour cap
         exceptions = {"youtube": {"max"}, "youtube4k": {"w", "h", "max"},
@@ -1364,7 +1364,7 @@ raise SystemExit(export.main())
                 if "max" not in skip:
                     self.assertEqual(p["max"], float(spec["max_duration"]) if spec["max_duration"] else None,
                                      f"{preset} duration cap must be {platform}'s")
-                table = loudness_of(platform)
+                table = PLATFORMS[platform]["spec"]
                 self.assertEqual((SPECS[platform]["lufs"], SPECS[platform]["lufs_tol"], SPECS[platform]["tp"]),
                                  (table["lufs"], table["lufs_tol"], table["tp"]))
         self.assertEqual(export_mod.PRESETS["facebook"]["max"], 14400.0,

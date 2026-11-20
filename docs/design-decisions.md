@@ -110,6 +110,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine](#after-3141--npx-ffmpeg-skill-setup-one-command-for-a-new-machine)
 - [After 3.13.2 — file names and unusable inputs (#558)](#after-3132--file-names-and-unusable-inputs-558)
 - [4.0.0 — a review page for standalone use (#633)](#400--a-review-page-for-standalone-use-633)
+- [After 4.1.0 — one name per meaning, and a guessed name is answered](#after-410--one-name-per-meaning-and-a-guessed-name-is-answered)
 <!-- contents:end -->
 
 ## Time limits
@@ -6233,3 +6234,37 @@ is said about them is reasoned and marked so.
   script (selection, the instruction, clip edits, playback, the four languages) was checked in
   Chromium at 1440x900 and 1920x1080 with `.claude/skills/review-page-ui/SKILL.md`; CI has no
   browser, so a change to `_review.html` is checked that way before it is pushed.
+
+## After 4.1.0 — one name per meaning, and a guessed name is answered
+
+Decided on 2026-11-20 after an agent building the showcase got about a dozen calls wrong on the
+first try. A survey of the 372 tool-specific options showed why: the same thing has several names
+(an angle is `--angle`, `--rotate` and `--degrees`), and one name means several things (`--scale`
+is pixels on `overlay.py` and a factor on `proxy.py`).
+
+- **The decided names.** An angle is `--angle`. A strength is `--strength`. A text size is
+  `--font-size`. A language is `--lang`. A length of time is `--duration`. The shortest pause is
+  `--min-silence`. A colour is `--color`, or `--WHAT-color` when a tool has several (`--pad-color`
+  for what fills a frame). A size in pixels is `--width`/`--height`; `--scale` is a factor. The
+  stream of one input is `--audio-stream`; which input's sound is `--audio`. `--position` takes the
+  nine names of `overlay.py` or `X,Y` on every tool.
+- **A name two tools share has one type and one list of choices.** A shorter list on one tool is a
+  defect to remove, not a variant.
+- **Nothing is renamed during the freeze.** The tools that hold an older name keep it
+  (`OLDER_NAMES`), and the names that already mean two things are listed (`SAME_NAME_TWO_MEANINGS`).
+  Both lists may only shrink: a new option that takes an older name, or a shared name that splits,
+  fails `test_option_names_do_not_grow_apart`. When the freeze lifts, a tool takes the decided name
+  and keeps the older one as a deprecated alias for a major; a stable tool never loses a name.
+- **Until then the answer teaches.** A usage error names, for each `--flag` the tool lacks, the
+  options that share a word with it or are a near spelling, the options whose help uses the word,
+  and the tools that take a flag of that name (`runner._teach`). A help-text match is reported as
+  "mentions", never as "did you mean": a loose match that suggested `--duration` for `--ratio` was
+  removed for that reason. Where the meant option's help did not use the other tools' word, the help
+  now does (`fit.py --rotate`, `cropdetect.py --seconds`, `grid.py --background`,
+  `stabilize.py --shakiness`).
+- **A stumble is one line.** `docs/stumbles.jsonl` holds each first-try mistake. A `taught` line is
+  replayed by `StumbleLedgerTests`, which reads only what follows `error:` (the usage block lists
+  every option, so a name found there teaches nothing). An `open` line is a result that is wrong and
+  says nothing; answering it adds a warning to the result, which waits for the freeze.
+- Code: `scripts/_common/runner.py` (`_teach`, `add_common`). Tests: `StumbleLedgerTests`
+  (tests/test_contract.py).

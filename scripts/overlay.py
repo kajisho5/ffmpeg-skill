@@ -75,7 +75,7 @@ def position_exprs(pos: str, margin: int, text_mode: bool, margins: Optional[dic
             xs, ys = pos.split(",")
             xv, yv = int(xs), int(ys)
         except ValueError:
-            die(f"bad --position '{pos}'")
+            die(f"bad --position '{pos}': use X,Y in pixels or one of {', '.join(POS)}")
         x = f"W-w{xv}" if xv < 0 else str(xv)
         y = f"H-h{yv}" if yv < 0 else str(yv)
     if text_mode:

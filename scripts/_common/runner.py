@@ -449,6 +449,23 @@ def finite_float(text: str) -> float:
     return value
 
 
+def _teach(ap: "argparse.ArgumentParser") -> str:
+    """For each --flag on the command line this tool lacks: a near option, else the options whose help uses the word, and the tools that take it."""
+    import difflib
+    acts = {o: a for o, a in ap._option_string_actions.items() if o.startswith("--")}
+    here, tips = os.path.dirname(os.path.abspath(sys.argv[0])), ""
+    for flag in dict.fromkeys(a.split("=")[0] for a in sys.argv[1:] if re.match(r"--[a-z]", a)):
+        if not any(o.startswith(flag) for o in acts):
+            word = flag[2:] if len(flag) > 5 and flag != "--from" else "\0"  # --to, --at and --from are in every help text
+            # options that share a word with the flag (--pad-color and --fill-color), else a near spelling
+            near = [o for o in acts if set(flag[2:].split("-")) - {"to", "at", "in", "no", "min", "max", "from"} & set(o[2:].split("-"))][:5] or difflib.get_close_matches(flag, acts, 2, 0.85)
+            said = [o for o, a in acts.items() if re.search(rf"\b{re.escape(word)}", a.help or "", re.I) and o not in near][:2]
+            tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
+            tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
+                     + (f" ({', '.join(tools)} take {flag})" if tools else ""))
+    return tips
+
+
 def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
     """Add the flags every script shares. `codec=False` is for a tool that re-encodes but whose
     preset decides the encoder (export.py): it must not advertise --codec/--quality in its schema."""
@@ -464,7 +481,7 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         if "is not a finite number" in message and {"--json", "--json-brief"} & set(sys.argv[1:]):
             STATE.json = True
             die(message.replace("argument ", "", 1))
-        usage_error(message)
+        usage_error(message + _teach(ap))
 
     ap.error = error  # type: ignore[method-assign]
     g = ap.add_argument_group("agent options")

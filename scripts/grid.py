@@ -73,7 +73,7 @@ def main() -> int:
     ap.add_argument("--pad", action="store_true", help="hold each shorter cell's last frame (and pad --audio-from's track with silence) out to the longest clip's duration, instead of stopping at the shortest")
     ap.add_argument("--audio-from", type=int, help="0-based index into inputs to take audio from (default: no audio)")
     ap.add_argument("--gap", type=int, default=0, help="gap between cells in px, must be even (default 0, cells touch)")
-    ap.add_argument("--background", default="black", help="colour of the gap/pad borders (default black)")
+    ap.add_argument("--background", default="black", help="colour of the gap/pad borders, the pad-color of other tools (default black)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)

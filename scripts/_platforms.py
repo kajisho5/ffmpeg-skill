@@ -235,15 +235,6 @@ def spec_of(name: str) -> Dict[str, Any]:
     return dict(PLATFORMS[name]["spec"])
 
 
-def safe_of(name: str) -> Dict[str, float]:
-    return dict(PLATFORMS[name]["safe"])
-
-
-def loudness_of(name: str) -> Dict[str, float]:
-    s = PLATFORMS[name]["spec"]
-    return {"lufs": s["lufs"], "lufs_tol": s["lufs_tol"], "tp": s["tp"]}
-
-
 def safe_margins_px(name: str, width: int, height: int) -> Dict[str, int]:
     """The safe zone in pixels for a frame of this size, as whole pixels per edge."""
     s = PLATFORMS[name]["safe"]
