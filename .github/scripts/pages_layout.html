@@ -16,14 +16,15 @@
 <link rel="apple-touch-icon" href="{{ '/brand/apple-touch-icon.png' | relative_url }}">
 <style>
 :root {
-  --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0;
-  --link: #0969da; --code-bg: #f6f8fa; --nav-bg: #f6f8fa;
+  --bg: #0B0C10; --fg: #F2F3F5; --muted: #A3A9B4; --line: rgba(255,255,255,.12);
+  --link: #17D16A; --code-bg: rgba(255,255,255,.07); --nav-bg: rgba(11,12,16,.7);
+  color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d;
-    --link: #4493f8; --code-bg: #151b23; --nav-bg: #151b23;
-  }
+/* the landing page's light, once, behind the top of every document */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(46vw 420px at 96% 0, rgba(23,209,106,.30), transparent 70%),
+              radial-gradient(40vw 420px at 0 100%, rgba(37,99,235,.22), transparent 70%);
 }
 * { box-sizing: border-box; }
 body {
@@ -34,6 +35,7 @@ a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 nav {
   position: sticky; top: 0; z-index: 1; background: var(--nav-bg);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--line);
 }
 nav .in {

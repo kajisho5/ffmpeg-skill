@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ffmpeg-skill: give your coding agent a video editor</title>
 <meta name="description" content="An Agent Skill for Claude Code, Cursor, Codex and any MCP client: 42 local FFmpeg tools with a machine-readable contract. The agent probes the real file, edits, checks the result against the destination and looks at it. No cloud, no API keys, Python standard library only.">
-<meta name="theme-color" content="#101114">
+<meta name="theme-color" content="#0B0C10">
 <link rel="icon" href="brand/favicon.ico" sizes="48x48">
 <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="brand/apple-touch-icon.png">
@@ -314,6 +314,80 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
 .foot nav{display:flex;flex-wrap:wrap;gap:8px 24px}
 .foot a{text-decoration:none}
 .foot a:hover{color:#FFFFFF}
+
+/* 4.0 look: one dark ground, soft colour light behind it, glass surfaces, a tighter headline.
+   The brand rule holds: green is still the verified dot and the measured-and-passed pill. */
+:root,:root[data-theme="light"],:root[data-theme="dark"]{
+  --ink:#0B0C10; --ink-2:rgba(255,255,255,.055); --ink-line:rgba(255,255,255,.12); --ink-mute:rgba(255,255,255,.16);
+  --paper:#0B0C10; --mist:transparent; --line:rgba(255,255,255,.12); --text:#FFFFFF; --slate:#B4BAC4; --slate-2:#8A909C;
+  --green:#17D16A; --green-tint:rgba(23,209,106,.14); --green-ink:#17D16A;
+  --card:rgba(255,255,255,.055); --card-line:rgba(255,255,255,.12);
+  --glass:rgba(255,255,255,.055); --glass-line:rgba(255,255,255,.14);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#0B0C10;--mist:transparent;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.055);--card-line:rgba(255,255,255,.12)}}
+body{background:#0B0C10}
+main{position:relative;isolation:isolate;overflow:hidden}
+/* the light: green from the top right, blue low in the middle, violet low on the left, repeated down the page */
+main::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(46vw 520px at 96% 0, rgba(23,209,106,.50), transparent 70%),
+  radial-gradient(52vw 560px at 66% 900px, rgba(37,99,235,.42), transparent 70%),
+  radial-gradient(34vw 420px at 0 760px, rgba(124,58,237,.30), transparent 70%),
+  radial-gradient(40vw 520px at 0 38%, rgba(23,209,106,.14), transparent 70%),
+  radial-gradient(46vw 560px at 100% 58%, rgba(37,99,235,.20), transparent 70%),
+  radial-gradient(40vw 480px at 12% 82%, rgba(124,58,237,.18), transparent 70%)}
+.ink,.mist{background:transparent}
+header.top{background:rgba(11,12,16,.62);border-bottom-color:rgba(255,255,255,.08)}
+h1,h2,h3{letter-spacing:-0.045em}
+.hero{position:relative;padding:72px 0 88px}
+@media(min-width:768px){.hero{padding:104px 0 104px}}
+.hero h1{font-size:52px;line-height:.98;letter-spacing:-0.055em}
+@media(min-width:640px){.hero h1{font-size:72px}}
+@media(min-width:1200px){.hero h1{font-size:76px}}
+@media(min-width:1000px){.hero-grid{grid-template-columns:minmax(0,6fr) minmax(0,6fr);align-items:center}}
+:lang(ja) .hero h1{letter-spacing:-0.02em;line-height:1.2;font-size:36px}
+@media(min-width:640px){:lang(ja) .hero h1{font-size:48px}}
+@media(min-width:1200px){:lang(ja) .hero h1{font-size:52px}}
+.hero .intro{color:#C9CED6}
+/* the outlined numeral behind the headline */
+.v4{position:absolute;top:-84px;left:30%;z-index:-1;font-weight:800;font-size:clamp(200px,24vw,340px);line-height:.8;letter-spacing:-0.08em;color:transparent;-webkit-text-stroke:1.5px rgba(255,255,255,.13);user-select:none;pointer-events:none}
+@media(max-width:999px){.v4{left:auto;right:-12px;top:-8px;font-size:200px}}
+/* glass */
+.session,.flow,.cards li,.duo > div,.cmds,.term,.faq,.chips li,.why{background:var(--glass);border:1px solid var(--glass-line);backdrop-filter:blur(26px) saturate(140%);-webkit-backdrop-filter:blur(26px) saturate(140%)}
+.session,.flow,.cards li,.duo > div{border-radius:28px;box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 30px 80px -40px rgba(0,0,0,.8)}
+.session .chrome{border-bottom-color:rgba(255,255,255,.10)}
+.session .chrome span{letter-spacing:.14em;text-transform:uppercase;font-size:11px;font-weight:700;color:#A3A9B4}
+.runs li{min-height:40px;border-bottom:1px solid rgba(255,255,255,.08)}
+.result{border-top:0;margin-top:20px;padding-top:0;grid-template-columns:1fr auto}
+.result::before{display:none}
+.result code{color:#FFFFFF}
+.vpill{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:9999px;background:var(--green-hi);color:#06210F;font-weight:800;font-size:13px;line-height:16px;letter-spacing:.04em;white-space:nowrap}
+.vpill::before{content:"";width:6px;height:6px;border-radius:9999px;background:#06210F}
+@media(max-width:559px){.result{grid-template-columns:1fr}.vpill{justify-self:start}}
+.term{border-radius:16px;background:rgba(30,58,138,.28);border-color:rgba(147,197,253,.22)}
+.term .p{color:var(--green-hi);font-weight:700}
+.copy{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.14)}
+.btn-key{box-shadow:0 12px 40px -12px rgba(23,209,106,.7)}
+.btn-line{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.04)}
+.h2{font-size:44px;letter-spacing:-0.05em}
+@media(min-width:768px){.h2{font-size:64px;line-height:1}}
+.lede code,.why p code,.faq .a code,.mist .lede code,.mist .why p code{background:rgba(255,255,255,.10)}
+.demos img,.reel video{border-radius:20px;border-color:var(--glass-line)}
+.why{border-radius:28px;padding:8px 28px;border-top:1px solid var(--glass-line)}
+.why li:last-child{border-bottom:0}
+.big{font-size:clamp(120px,16vw,200px);letter-spacing:-0.07em;background:linear-gradient(180deg,#FFFFFF 30%,rgba(255,255,255,.35));-webkit-background-clip:text;background-clip:text;color:transparent}
+.big::after{background:var(--green-hi)}
+.chips li{background:rgba(255,255,255,.05)}
+.cmds{border-radius:24px}
+.cmds .copy{background:rgba(255,255,255,.08)}
+.faq{border-radius:28px;padding:4px 28px}
+.faq details:last-child{border-bottom:0}
+.close{position:relative;isolation:isolate;overflow:hidden}
+.close::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(44vw 300px at 88% 46%, rgba(23,209,106,.30), transparent 72%),radial-gradient(52vw 520px at 30% 100%, rgba(37,99,235,.36), transparent 70%)}
+.close h2{letter-spacing:-0.055em}
+@media(min-width:768px){.close h2{font-size:84px;line-height:.98}}
+.duo .vl{display:none}.duo .vl-dark{display:block}
+@media (prefers-reduced-transparency: reduce){.session,.flow,.cards li,.duo > div,.cmds,.term,.faq,.chips li,.why{backdrop-filter:none;-webkit-backdrop-filter:none;background:#16181D}}
 </style>
 </head>
 <body>
@@ -338,7 +412,8 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
 <main id="main">
 
 <section class="hero ink" aria-labelledby="hero-h">
-  <div class="wrap">
+  <div class="wrap" style="position:relative">
+    <span class="v4" aria-hidden="true">v4</span>
     <div class="hero-grid">
       <div>
         <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 42 tools</p>
@@ -367,7 +442,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
             <li><code>check.py --platform reels</code><span class="pass">PASS</span></li>
             <li><code>look.py</code><span class="tag" data-i="sess.t2">contact sheet</span></li>
           </ol>
-          <p class="result"><code>final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo</code></p>
+          <p class="result"><code>final.mp4: 59.98 s, 1080×1920, 30 fps, AAC stereo</code><span class="vpill">VERIFIED</span></p>
         </div>
         <figcaption class="sr" id="sess-cap" data-i="sess.cap">The request from the README's quick start, and the tools the agent runs for it.</figcaption>
       </figure>
