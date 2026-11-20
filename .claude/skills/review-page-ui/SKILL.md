@@ -125,6 +125,20 @@ reviewing.
 - Green means measured and passed (the project's design rule). Do not spend it
   on decoration.
 
+Before a visual change is pushed, audit the page against the signs and passes of
+unslop (github.com/heydamir/unslop, by Damir Sokolovsky, CC BY 4.0): spacing,
+colour, icons, copy, type, layout, details, motion. What the page takes from it:
+
+- Every gap, padding and control height is on a 4px grid (2px only for a
+  hairline). No one-off values.
+- One accent (the key green), three text roles, no gradient on a surface, no
+  glow, no coloured shadow, no emoji, no looping or bouncy motion.
+- Short strings have no trailing period and no exclamation mark; no hype words.
+
+Where it differs from the project's design system, the project's wins: weights
+700 and 800, pill-shaped controls and the uppercase section label are the
+brand's (`site/index.html`), so they stay.
+
 Colours, type and spacing come from the project's design tokens (`site/index.html`
 is the reference implementation; ink ground, one key green, Manrope with the
 Japanese fallbacks, monospace for commands and measured values).
