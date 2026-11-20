@@ -13331,7 +13331,7 @@ class StumbleLedgerTests(unittest.TestCase):
                 with self.subTest(tool=tool, kept=argv):
                     self.assertEqual(run(tool, *argv).returncode, 0)
         # and no help states a range its own default is outside of (silence.py's "use -40..-45" read as one)
-        doc = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"], capture_output=True, text=True).stdout)
+        doc = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"], capture_output=True, text=True, encoding="utf-8").stdout)
         for t in doc["tools"]:
             for name, spec in t["input_schema"]["properties"].items():
                 span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", spec.get("description", ""))
