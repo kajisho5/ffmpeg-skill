@@ -60,7 +60,7 @@ After an edit, ask your agent for the review page ("show me the review page"), o
   <sub>The talk above as a vertical short, on the review page (AI-generated footage).</sub>
 </p>
 
-Left half is the input, right half is what the command produced. **[Every before/after demo, with the exact command under each one →](docs/demos.md)** — all of it built by `python3 demos/build.py`, so you can rebuild every frame of it yourself. The footage is synthetic (FFmpeg's own test sources) except in three demos, `reframe_talk`, `filler_en` and `pauses_en`, which use two AI-generated clips of people who do not exist ([demos/footage/](demos/footage/README.md)).
+Left half is the input, right half is what the command produced. **[Every before/after demo, with the exact command under each one →](docs/demos.md)** — all of it built by `python3 demos/build.py`, so you can rebuild every frame of it yourself. The pictures come from [demos/footage/](demos/footage/README.md): clips AI-generated with Google Veo (the people and places do not exist) and a few shot on a phone. The sound is synthetic, and a few demos (HDR10, a panorama) use a synthetic picture.
 
 `ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also callable as an MCP tool (`tools/list` advertises a core 12 by default to keep client context small, with `FFMPEG_SKILL_MCP_FULL=1` listing all 42; every tool is reachable by name through `tools/call` either way), and the whole set is described by a machine-readable contract.
 
@@ -812,7 +812,7 @@ FFmpeg itself:
 npm test                      # tests/run_parallel.py (test_all.py's end-to-end modules, sharded across the cores) + tests/test_contract.py
 python3 tests/test_picture.py # one tool group on its own (analysis, editing, cut_copy, audio, picture, delivery, orchestration, accel, asr)
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
-npm run demo                  # python3 demos/build.py: synthetic footage (and two AI-generated clips) -> every before/after demo + docs/demos/*.gif
+npm run demo                  # python3 demos/build.py: the clips in demos/footage -> every before/after demo + docs/demos/*.gif
 npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run, one clip through 13 of the 42 scripts
 python3 evals/run.py --list   # agent eval prompts (see evals/); regex-only grading, runnable from any agent harness -- see evals/README.md "Running this from Cursor, Codex, or another harness"
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude

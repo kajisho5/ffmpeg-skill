@@ -3,9 +3,10 @@
 For a complete edit of spoken footage, follow the
 [subtitled Reels walkthrough](../examples/reels-walkthrough.md).
 
-Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
-the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of
-people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
+The pictures on this page come from `demos/footage/`: clips AI-generated with Google Veo (the people
+and places in them do not exist) and a few shot on a phone. The sound is synthetic, so every pause
+and level a demo measures is a fact of the build; a few demos (HDR10, a panorama, a frame sequence)
+use a synthetic picture too. `reframe_talk`, `filler_en` and `pauses_en` use AI-generated speech. Each "after" is produced by running one of this
 repo's scripts on its source. Rebuild the whole page's material with:
 
 ```bash
@@ -501,7 +502,7 @@ python3 scripts/sphere.py demos/out/fixtures/equirect.mp4 --input-projection equ
 
 ```bash
 python3 scripts/background.py --duration 4 --width 960 --height 540 --gradient 0xff6a00:0x0057ff --angle 45 --fps 25 --preset veryfast -o demos/out/greenscreen_plate.mp4
-python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fixtures/green.mp4 --chromakey 0x00b140 --chromakey-similarity 0.18 --chromakey-blend 0.05 --position center --scale 960 --preset veryfast -o demos/out/greenscreen_after.mp4
+python3 scripts/overlay.py demos/out/greenscreen_plate.mp4 --video demos/out/fixtures/green.mp4 --chromakey 0x50b64f --chromakey-similarity 0.1 --chromakey-blend 0.05 --position center --scale 960 --preset veryfast -o demos/out/greenscreen_after.mp4
 ```
 
 **Look for:** background.py draws the gradient plate from nothing (there is no input file), then overlay.py keys the chroma green out of the subject and composites it on top.

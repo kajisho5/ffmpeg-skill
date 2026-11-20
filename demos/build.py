@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build the before/after demo gallery: synthetic footage in, previews out.
+"""Build the before/after demo gallery: committed footage in, previews out.
 
-Everything here except three demos is generated from nothing -- ffmpeg's own synthetic sources
-(testsrc2, mandelbrot, life, aevalsrc) make the footage; reframe_talk reads demos/footage/ai_talk.mp4,
+The pictures come from demos/footage/ (clips AI-generated with Google Veo, and a few shot on a
+phone); the sound is synthetic (aevalsrc), so every pause and level a demo measures is a fact of
+the build. A few demos need a synthetic picture (HDR10, a panorama, cells: testsrc2, life). reframe_talk reads demos/footage/ai_talk.mp4,
 and filler_en and pauses_en demos/footage/ai_talk_en.mp4: AI-generated clips (no real person), and every "after" file is produced by running
 this repo's own scripts, so a demo that renders is also a smoke test of the tool behind it.
 
@@ -180,8 +181,23 @@ def _short(arg) -> str:
 
 
 # --------------------------------------------------------------------------- fixtures
+def picture(clip, width, height, rate):
+    """A committed clip from demos/footage as a silent picture of exactly this size and rate, long
+    enough for any fixture (looped to 10 s). The fixtures add their own synthetic sound, so every
+    pause, tone and level a demo measures stays a fact of the build rather than of the footage."""
+    path = FIX / ("_pic_%s_%dx%d_%d.mp4" % (clip, width, height, rate))
+    if not path.exists() or path.stat().st_size == 0:
+        ffmpeg("-stream_loop", "-1", "-i", str(ROOT / "demos" / "footage" / (clip + ".mp4")), "-t", "10", "-an",
+               "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d,setsar=1"
+               % (width, height, width, height, rate),
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", str(path))
+    return str(path)
+
+
 def build_fixtures(force=False):
-    """Synthetic source material. Nothing here is downloaded and nothing is committed."""
+    """Source material: pictures from demos/footage (AI-generated and phone clips) with synthetic
+    sound, and synthetic pictures where a demo needs one (HDR10, a panorama, cells). Nothing here
+    is downloaded."""
     FIX.mkdir(parents=True, exist_ok=True)
     made = []
 
@@ -195,7 +211,7 @@ def build_fixtures(force=False):
     # 1. The main clip: a moving test pattern with speech-like audio (pauses included).
     path = need("motion.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+        ffmpeg("-i", picture("veo_basketball", 1280, 720, 30),
                "-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % SPEECH,
                "-t", "8", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", str(path))
@@ -204,7 +220,7 @@ def build_fixtures(force=False):
     #    actually visible frame to frame (a static pattern hides both).
     path = need("mandel.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "mandelbrot=size=1280x720:rate=30:maxiter=200",
+        ffmpeg("-i", picture("veo_sea", 1280, 720, 30),
                "-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % MUSIC,
                "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", str(path))
@@ -224,7 +240,7 @@ def build_fixtures(force=False):
     #     about six em at the default size and an ordinary sentence needs four lines.
     path = need("vertical.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30",
+        ffmpeg("-i", picture("veo_talk_en", 1080, 1920, 30),
                "-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % SPEECH,
                "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", str(path))
@@ -235,7 +251,7 @@ def build_fixtures(force=False):
     if path:
         click = "0.8*sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.04)"
         ffmpeg("-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % click,
-               "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+               "-i", picture("veo_hands", 640, 360, 30),
                "-t", "10", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
                "-pix_fmt", "yuv420p", "-c:a", "aac", str(path))
 
@@ -249,7 +265,7 @@ def build_fixtures(force=False):
     path = need("surround.mp4")
     if path:
         tones = ["0.5*sin(2*PI*%d*t)" % f for f in (220, 330, 440, 60, 550, 660)]
-        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+        ffmpeg("-i", picture("veo_hall", 1280, 720, 30),
                "-f", "lavfi", "-i", "aevalsrc='%s':s=48000:c=5.1" % "|".join(tones),
                "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "6", str(path))
@@ -263,15 +279,15 @@ def build_fixtures(force=False):
                "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
                "-tag:v", "hvc1", "-c:a", "aac", str(path))
 
-    # 7. A semi-transparent logo for the overlay demo.
+    # 7. The project's own mark, for the overlay demo.
     path = need("logo.png")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "color=c=0xff5533@0.85:s=240x90,format=rgba",
+        ffmpeg("-i", str(ROOT / "brand" / "app-icon-dark.png"), "-vf", "scale=120:120,format=rgba",
                "-frames:v", "1", str(path))
 
     # 8. Caption cues, one file per script, in caption.py's plain-text cue format.
     cues = {
-        "cues_en.txt": ["0:00-0:02 Shot on nothing but FFmpeg",
+        "cues_en.txt": ["0:00-0:02 Edited by asking, with FFmpeg",
                         "0:02-0:04 Captions burned in with libass",
                         "0:04-0:06 No cloud. No API keys.",
                         "0:06-0:08 Just python3 and ffmpeg."],
@@ -332,8 +348,8 @@ def build_fixtures(force=False):
             "output": str(OUT / "render_pip_after.mp4"),
             "frame": {"aspect": "9:16", "width": 540, "fit": "blur"},
             "clips": [{"src": str(FIX / "motion.mp4"), "in": 0, "out": 4}],
-            "overlays": [{"video": str(FIX / "green.mp4"), "chromakey": "0x00b140",
-                          "chromakey_similarity": 0.18, "chromakey_blend": 0.05,
+            "overlays": [{"video": str(FIX / "green.mp4"), "chromakey": "0x50b64f",
+                          "chromakey_similarity": 0.1, "chromakey_blend": 0.05,
                           "position": "bottom", "scale": 540}],
         }
         path.write_text(json.dumps(project, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -342,7 +358,7 @@ def build_fixtures(force=False):
     #     cropdetect.py has something to measure and crop.py something to remove.
     path = need("letterbox.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "mandelbrot=size=1280x400:rate=25:maxiter=150", "-t", "4",
+        ffmpeg("-i", picture("veo_basketball", 1280, 400, 25), "-t", "4",
                "-vf", "pad=1280:720:0:160:black", "-c:v", "libx264", "-preset", "veryfast",
                "-crf", "22", "-pix_fmt", "yuv420p", str(path))
 
@@ -367,7 +383,7 @@ def build_fixtures(force=False):
     #     with no camera, and the motion vidstab (stabilize.py) is built to cancel.
     path = need("shaky.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "mandelbrot=size=1400x800:rate=25:maxiter=150", "-t", "4",
+        ffmpeg("-i", picture("veo_hall", 1400, 800, 25), "-t", "4",
                "-vf", "crop=1280:720:x='60+26*sin(2*PI*3.1*t)+12*sin(2*PI*6.7*t)':"
                       "y='40+18*cos(2*PI*2.3*t)+9*sin(2*PI*5.3*t)'",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
@@ -377,7 +393,7 @@ def build_fixtures(force=False):
     #     corrects (the black corner wedges are part of the problem, not the fixture's).
     path = need("tilted.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "mandelbrot=size=1280x720:rate=25:maxiter=150", "-t", "4",
+        ffmpeg("-i", picture("veo_sea", 1280, 720, 25), "-t", "4",
                "-vf", "rotate=5*PI/180:fillcolor=black", "-c:v", "libx264", "-preset", "veryfast",
                "-crf", "22", "-pix_fmt", "yuv420p", str(path))
 
@@ -392,9 +408,7 @@ def build_fixtures(force=False):
     # 16. A green-screen clip: a moving subject on chroma green, to be keyed onto a background.
     path = need("green.mp4")
     if path:
-        ffmpeg("-f", "lavfi", "-i", "color=c=0x00b140:s=960x540:rate=25",
-               "-f", "lavfi", "-i", "mandelbrot=size=300x300:rate=25:maxiter=150", "-t", "4",
-               "-filter_complex", "[0:v][1:v]overlay=x='330+230*sin(2*PI*0.35*t)':y=120",
+        ffmpeg("-i", picture("veo_greenscreen", 960, 540, 25), "-t", "4",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
                str(path))
 
@@ -518,14 +532,14 @@ def make_wave_compare(before, after, dest, font, labels=("BEFORE", "AFTER")):
     for idx, src in enumerate((before, after)):
         pic = OUT / ("%s_wave%d.png" % (dest.stem, idx))
         ffmpeg("-i", str(src), "-filter_complex",
-               "[0:a]aformat=channel_layouts=stereo,showwavespic=s=%dx%d:colors=0x39ff88|0x33aaff"
+               "[0:a]aformat=channel_layouts=stereo,showwavespic=s=%dx%d:split_channels=0:scale=sqrt:draw=full:colors=0x17D16A"
                % (CELL_W, CELL_H), "-frames:v", "1", str(pic))
         pics.append(pic)
     chain = ";".join([
-        "[0:v]pad=%d:%d:0:0:color=0x101014,drawtext=fontfile='%s':text='%s':fontsize=18:"
+        "[0:v]pad=%d:%d:0:0:color=0x101114,drawtext=fontfile='%s':text='%s':fontsize=18:"
         "fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=6[v0]"
         % (CELL_W, CELL_H, esc(font), labels[0]),
-        "[1:v]pad=%d:%d:0:0:color=0x101014,drawtext=fontfile='%s':text='%s':fontsize=18:"
+        "[1:v]pad=%d:%d:0:0:color=0x101114,drawtext=fontfile='%s':text='%s':fontsize=18:"
         "fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=6[v1]"
         % (CELL_W, CELL_H, esc(font), labels[1]),
         "[v0][v1]hstack=inputs=2,format=yuv420p[out]"])
@@ -903,7 +917,7 @@ def demo_render_pip(ctx):
     after = ctx.path("after.mp4")
     ctx.script("render.py", FIX / "project_pip.json", "--fast")
     ctx.expect(after, "render.py")
-    ctx.note('overlays[]: {"video": "green.mp4", "chromakey": "0x00b140", "position": "bottom", "scale": 540}')
+    ctx.note('overlays[]: {"video": "green.mp4", "chromakey": "0x50b64f", "position": "bottom", "scale": 540}')
     return before, after
 
 
@@ -1168,8 +1182,8 @@ def demo_greenscreen(ctx):
     ctx.script("background.py", "--duration", "4", "--width", "960", "--height", "540",
                "--gradient", "0xff6a00:0x0057ff", "--angle", "45", "--fps", "25",
                "--preset", "veryfast", "-o", plate)
-    ctx.script("overlay.py", plate, "--video", before, "--chromakey", "0x00b140",
-               "--chromakey-similarity", "0.18", "--chromakey-blend", "0.05",
+    ctx.script("overlay.py", plate, "--video", before, "--chromakey", "0x50b64f",
+               "--chromakey-similarity", "0.1", "--chromakey-blend", "0.05",
                "--position", "center", "--scale", "960", "--preset", "veryfast", "-o", after)
     return before, after
 
@@ -2025,9 +2039,10 @@ DOC_HEADER = """# Demo gallery
 For a complete edit of spoken footage, follow the
 [subtitled Reels walkthrough](../examples/reels-walkthrough.md).
 
-Every clip on this page but three was generated from nothing: ffmpeg's own synthetic sources make
-the footage. The three exceptions, `reframe_talk`, `filler_en` and `pauses_en`, use AI-generated footage of
-people who do not exist (`demos/footage/`). Each "after" is produced by running one of this
+The pictures on this page come from `demos/footage/`: clips AI-generated with Google Veo (the people
+and places in them do not exist) and a few shot on a phone. The sound is synthetic, so every pause
+and level a demo measures is a fact of the build; a few demos (HDR10, a panorama, a frame sequence)
+use a synthetic picture too. `reframe_talk`, `filler_en` and `pauses_en` use AI-generated speech. Each "after" is produced by running one of this
 repo's scripts on its source. Rebuild the whole page's material with:
 
 ```bash
