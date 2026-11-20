@@ -66,15 +66,21 @@ def basketball(d):
     src = FOOTAGE / "veo_basketball.mp4"
     tool("fit", src, "--duration", 15.7, "--method", "speed", "--smooth", "blend", "-o", d / "slow_motion.mp4")
     tool("fit", src, "--duration", 3.925, "--method", "speed", "-o", d / "fast_motion.mp4")
-    tool("cut", src, "--start", 2.0, "--end", 7.0, "--accurate", "-o", d / "shot.mp4")
-    tool("speedramp", d / "shot.mp4", "--segment", "0-1.2:1", "--segment", "1.2-3.6:0.5", "--segment", "3.6-5:1", "-o", d / "highlight.mp4")
+    tool("cut", src, "--start", 1.0, "--end", 6.25, "--accurate", "-o", d / "shot.mp4")
+    tool("speedramp", d / "shot.mp4", "--segment", "0-2.2:1", "--segment", "2.2-4.2:0.5", "--segment", "4.2-5.25:1", "-o", d / "highlight.mp4")
     # no subject tracking: the player, then the hoop, each with its own fixed crop, joined with a hard cut
-    for name, start, end, x in (("a", 2.0, 4.7, 0.26), ("b", 4.7, 7.0, 0.72)):
+    for name, start, end, x in (("a", 1.0, 4.5, 0.18), ("b", 4.5, 6.25, 0.95)):
         tool("cut", src, "--start", start, "--end", end, "--accurate", "-o", d / f"{name}.mp4")
         tool("fit", d / f"{name}.mp4", "--aspect", "9:16", "--fit", "crop", "--crop-x", x, "--width", 1080, "--height", 1920,
              "-o", d / f"{name}916.mp4")
     tool("join", d / "a916.mp4", d / "b916.mp4", "--transition", "none", "-o", d / "vertical_9x16.mp4")
-    side_by_side(d / "shot.mp4", d / "vertical_9x16.mp4", d / "before_after.mp4", 960, 960, 0)
+    # the wide frame and the tall one on one canvas, each at its own shape (a grid's equal cells would letterbox both)
+    tool("background", "--color", "0x101114", "--width", 1920, "--height", 1080, "--fps", 24, "--duration", 5.25, "-o", d / "canvas.mp4")
+    tool("overlay", d / "canvas.mp4", "--video", d / "shot.mp4", "--position", "48,210", "--margin", 0, "--scale", 1176, "-o", d / "pair1.mp4")
+    tool("overlay", d / "pair1.mp4", "--video", d / "vertical_9x16.mp4", "--position", "1288,24", "--margin", 0, "--scale", 580, "-o", d / "pair2.mp4")
+    tool("overlay", d / "pair2.mp4", "--text", "16:9", "--position", "48,140", "--margin", 0, "--font-size", 44, "-o", d / "pair3.mp4")
+    tool("overlay", d / "pair3.mp4", "--text", "9:16", "--position", "1160,140", "--margin", 0, "--font-size", 44, "-o", d / "pair4.mp4")
+    tool("audio", d / "pair4.mp4", "--replace", d / "shot.mp4", "-o", d / "before_after.mp4")
 
 
 def talk(d, lang):
@@ -211,7 +217,7 @@ def web():
     """site/media/showcase_*.mp4 from what main() built, at two thirds of the size and a weight that can be committed."""
     MEDIA.mkdir(parents=True, exist_ok=True)
     wide, tall, full = (1280, 360), (1280, 640), (1280, 720)
-    clips = [("colour", OUT / "rain" / "before_after.mp4", wide, "3"), ("reframe", OUT / "basketball" / "before_after.mp4", tall, "2.2"),
+    clips = [("colour", OUT / "rain" / "before_after.mp4", wide, "3"), ("reframe", OUT / "basketball" / "before_after.mp4", full, "2.6"),
              ("pause", OUT / "pause" / "before_after.mp4", full, "1"), ("horizon", OUT / "horizon" / "before_after.mp4", wide, "3"),
              ("steady", OUT / "steady" / "before_after.mp4", wide, "2"), ("lowlight", OUT / "lowlight" / "before_after.mp4", wide, "2"),
              ("slow", OUT / "slow" / "before_after.mp4", wide, "1.5")]
