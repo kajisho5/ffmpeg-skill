@@ -373,6 +373,7 @@ h1,h2,h3{letter-spacing:-0.045em}
 @media(min-width:768px){.h2{font-size:64px;line-height:1}}
 .lede code,.why p code,.faq .a code,.mist .lede code,.mist .why p code{background:rgba(255,255,255,.10)}
 .demos img,.reel video{border-radius:20px;border-color:var(--glass-line)}
+.shot{display:block;width:100%;height:auto;margin-top:48px;border-radius:20px;border:1px solid var(--glass-line)}
 .why{border-radius:28px;padding:8px 28px;border-top:1px solid var(--glass-line)}
 .why li:last-child{border-bottom:0}
 .big{font-size:clamp(120px,16vw,200px);letter-spacing:-0.07em;background:linear-gradient(180deg,#FFFFFF 30%,rgba(255,255,255,.35));-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -482,15 +483,24 @@ h1,h2,h3{letter-spacing:-0.045em}
     <a class="more-link" href="docs/demos.html"><span data-i="demos.more">Every before/after demo, with the exact command</span><i class="ph ph-arrow-right" aria-hidden="true"></i></a>
   </div>
   <div class="wrap" style="margin-top:88px">
-    <h3 class="h3x" id="showcase" data-i="sc.h">Four clips, edited by asking</h3>
-    <p class="lede"><span data-i="sc.p">The footage in these five videos is AI-generated with Grok (Grok Imagine): the people and places do not exist. Every edit is one of the skill's tools, built by </span><code>demos/showcase.py</code><span data-i="sc.p2">; the request and the exact commands are in </span><a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/docs/showcase.md" data-i="sc.link">the showcase notes</a>.</p>
+    <h3 class="h3x" id="showcase" data-i="sc.h">Nine clips, edited by asking</h3>
+    <p class="lede"><span data-i="sc.p">The footage in these videos is AI-generated with Google Veo: the people and places do not exist. Every edit is one of the skill's tools, built by </span><code>demos/showcase.py</code><span data-i="sc.p2">; the request and the exact commands are in </span><a href="https://github.com/kajisho5/ffmpeg-skill/blob/main/docs/showcase.md" data-i="sc.link">the showcase notes</a>.</p>
     <ul class="reel">
-      <li><video src="media/showcase_reel.mp4" poster="media/showcase_reel.jpg" width="1280" height="720" controls playsinline preload="metadata" aria-label="A 40 second reel of the four demos (AI-generated footage)"></video><code>join.py · graphics.py · export.py</code><span data-i="sc.1">All four in 40 seconds.</span></li>
-      <li><video src="media/showcase_colour.mp4" poster="media/showcase_colour.jpg" width="1472" height="400" controls muted loop playsinline preload="metadata" aria-label="A rainy night street before and after exposure, white balance, denoise and grade (AI-generated footage)"></video><code>color.py --correct · denoise.py</code><span data-i="sc.2">Exposure, white balance, noise and grade, with the shadows and the neon kept.</span></li>
+      <li><video src="media/showcase_reel_en.mp4" poster="media/showcase_reel_en.jpg" data-l10n="media/showcase_reel" width="1280" height="720" controls playsinline preload="metadata" aria-label="A 50 second reel of the demos (AI-generated footage)"></video><code>join.py · graphics.py · export.py</code><span data-i="sc.1">All of them in 50 seconds.</span></li>
+      <li><video src="media/showcase_talk_en.mp4" poster="media/showcase_talk_en.jpg" data-l10n="media/showcase_talk" width="1280" height="720" controls playsinline preload="metadata" aria-label="A conference talk with its slides beside the speaker (AI-generated footage)"></video><code>background.py · overlay.py --video · audio.py --replace</code><span data-i="sc.6">One camera on the speaker, the slides as a second source: laid out side by side.</span></li>
+      <li><video src="media/showcase_short_en.mp4" poster="media/showcase_short_en.jpg" data-l10n="media/showcase_short" width="1280" height="640" controls playsinline preload="metadata" aria-label="A conference talk and the vertical short made from it, with captions (AI-generated footage)"></video><code>overlay.py · caption.py --karaoke · export.py --preset reels</code><span data-i="sc.4">The same talk as a captioned vertical short. Turn the sound on.</span></li>
+      <li><video src="media/showcase_colour.mp4" poster="media/showcase_colour.jpg" width="1280" height="360" controls muted loop playsinline preload="metadata" aria-label="A rainy night street before and after exposure, white balance, denoise and grade (AI-generated footage)"></video><code>color.py --correct · denoise.py</code><span data-i="sc.2">Exposure, white balance, noise and grade, with the shadows and the neon kept.</span></li>
       <li><video src="media/showcase_reframe.mp4" poster="media/showcase_reframe.jpg" width="1280" height="640" controls muted loop playsinline preload="metadata" aria-label="A basketball shot in 16:9 and reframed to 9:16 (AI-generated footage)"></video><code>cut.py · fit.py --aspect 9:16 · join.py</code><span data-i="sc.3">The shot, reframed to vertical: the player, then the hoop.</span></li>
-      <li><video src="media/showcase_short.mp4" poster="media/showcase_short.jpg" width="1280" height="640" controls playsinline preload="metadata" aria-label="A conference talk and the vertical short made from it, with captions (AI-generated footage)"></video><code>loudness.py · silence.py · caption.py · export.py --preset reels</code><span data-i="sc.4">A talk turned into a captioned short. Turn the sound on.</span></li>
-      <li><video src="media/showcase_key.mp4" poster="media/showcase_key.jpg" width="1472" height="400" controls muted loop playsinline preload="metadata" aria-label="A presenter on a green screen, and the same presenter on a new background with a title (AI-generated footage)"></video><code>overlay.py --video --chromakey</code><span data-i="sc.5">Green screen keyed, resized and placed on a new background.</span></li>
+      <li><video src="media/showcase_pause.mp4" poster="media/showcase_pause.jpg" width="1280" height="720" controls playsinline preload="metadata" aria-label="A man pauses for three seconds mid-sentence, then the same clip with the pause removed (AI-generated footage)"></video><code>silence.py --threshold -30</code><span data-i="sc.7">A long pause, then the same take without it: 7.9 s to 5.9 s. Turn the sound on.</span></li>
+      <li><video src="media/showcase_key_en.mp4" poster="media/showcase_key_en.jpg" data-l10n="media/showcase_key" width="1280" height="360" controls muted loop playsinline preload="metadata" aria-label="A presenter on a green screen, and the same presenter in a conference hall with a title (AI-generated footage)"></video><code>overlay.py --video --chromakey</code><span data-i="sc.5">Green screen keyed, resized and placed in a new room.</span></li>
+      <li><video src="media/showcase_horizon.mp4" poster="media/showcase_horizon.jpg" width="1280" height="360" controls muted loop playsinline preload="metadata" aria-label="A tilted sea horizon and the same shot straightened (AI-generated footage)"></video><code>straighten.py --degrees</code><span data-i="sc.8">A crooked horizon, levelled. The tilt was added for the demo: the generated clip was level.</span></li>
     </ul>
+  </div>
+  <div class="wrap" style="margin-top:88px">
+    <h3 class="h3x" id="review" data-i="rv.h">Then look at it, and say what to change</h3>
+    <p class="lede"><span data-i="rv.p">After an edit you can ask for a review page: one local HTML file with the sources, every step and its checks, the result in a phone frame with the platform's safe area, and a timeline. Press the number of a clip or a caption, write what should change, and copy the instruction back to your agent. Nothing is uploaded. </span><code>python3 scripts/_review.py project.json --result run.json</code></p>
+    <img class="shot" src="media/review_en.png" data-l10n-img="media/review" width="1440" height="900" loading="lazy" alt="The review page: sources and work steps on the left, the source frames and the vertical result in the middle with a timeline below, and on the right the selected caption with the instruction that will be copied to the agent">
+    <p class="lede" data-i="rv.n" style="margin-top:16px">The page shown is the talk above (AI-generated with Google Veo), rendered as a vertical short. It speaks English, Japanese, Korean and Chinese.</p>
   </div>
 </section>
 
@@ -653,7 +663,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",
     "demos.h": "左が元の映像。右がコマンドの結果。",
     "demos.p1": "上の 2 本の動画は AI 生成の映像に、下のプレビューは合成した映像にツールをかけたものです。プレビューは ", "demos.p2": " で、2 本の動画はその出力から demos/pages_videos.py で作り直せるので、すべてのコマを自分で再現できます。",
-    "sc.h": "4 本の映像を、頼むだけで編集", "sc.p": "この 5 本の動画の素材は、Grok（Grok Imagine）による AI 生成です。写っている人物や場所は実在しません。編集はすべてこのスキルの道具で行い、", "sc.p2": " で組み立てています。頼んだ内容と実際のコマンドは ", "sc.link": "ショーケースの説明", "sc.1": "4 本を 40 秒で。", "sc.2": "露出・ホワイトバランス・ノイズ・色を調整。暗部とネオンは残しています。", "sc.3": "シュートを縦型に。選手、次にゴール。", "sc.4": "講演を字幕つきのショート動画に。音を出して見てください。", "sc.5": "グリーンバックを抜き、大きさと位置を変えて新しい背景に。",
+    "sc.h": "9 本の映像を、頼むだけで編集", "sc.p": "ここにある動画の素材は、Google Veo による AI 生成です。写っている人物や場所は実在しません。編集はすべてこのスキルの道具で行い、", "sc.p2": " で組み立てています。頼んだ内容と実際のコマンドは ", "sc.link": "ショーケースの説明", "sc.1": "全部を 50 秒で。", "sc.2": "露出・ホワイトバランス・ノイズ・色を調整。暗部とネオンは残しています。", "sc.3": "シュートを縦型に。選手、次にゴール。", "sc.4": "同じ講演を、字幕つきの縦型ショートに。音を出して見てください。", "sc.5": "グリーンバックを抜き、大きさと位置を変えて別の会場に。", "sc.6": "登壇者だけを撮ったカメラと、別に用意したスライド。この二つを横に並べます。", "sc.7": "長い間のある話と、間を詰めた同じ話。7.9 秒が 5.9 秒に。音を出して見てください。", "sc.8": "傾いた水平線をまっすぐに。生成された映像は水平だったので、傾きはデモ用に付けています。", "rv.h": "仕上がりを見て、直したい所を伝える", "rv.p": "編集のあと、確認画面を頼めます。手元で開く 1 枚の HTML に、素材、各工程とその検査結果、スマホ枠に入れた仕上がり（アプリに隠れる範囲つき）、タイムラインが並びます。クリップや字幕の番号を押して直したい内容を書き、できあがった指示をコピーして AI に渡します。どこにも送信しません。", "rv.n": "写っているのは上の講演（Google Veo による AI 生成）を縦型ショートにしたものです。画面は英語・日本語・韓国語・中国語で表示できます。",
     "v1": "実際の話し声の映像を縦長に。切り抜きは中央ではなく話し手に合わせています。AI 生成の映像です。",
     "v2": "音を出して聞いてください。「er」「um」が入った声のあとに、それを切った声が流れます。AI 生成の映像です。",
     "d1": "カラオケ風に色が変わる、動く字幕", "d2": "16:9 を 9:16 に切り出し", "d3": "無音をカットして尺が短く", "d4": "音量をそろえる前とあとの波形", "d5": "HDR10 を SDR に変換", "d6": "グリーンバックを生成した背景に合成",
@@ -704,6 +714,11 @@ h1,h2,h3{letter-spacing:-0.045em}
     lang = l === "ja" ? "ja" : "en";
     document.documentElement.lang = lang;
     nodes.forEach(function (el) { var k = el.dataset.i; setText(el, lang === "ja" && JA[k] ? JA[k] : EN[k]); });
+    document.querySelectorAll("video[data-l10n]").forEach(function (v) {
+      var base = v.dataset.l10n + "_" + lang;
+      if (v.getAttribute("src") !== base + ".mp4") { v.poster = base + ".jpg"; v.src = base + ".mp4"; }
+    });
+    document.querySelectorAll("img[data-l10n-img]").forEach(function (m) { m.src = m.dataset.l10nImg + "_" + lang + ".png"; });
     document.title = META[lang].title;
     document.querySelector('meta[name="description"]').setAttribute("content", META[lang].desc);
     document.querySelectorAll(".lang button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lang === lang)); });
