@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- The review page's template: scripts/_review.py puts one JSON document where the data element says, and writes the result as index.html.
+     One offline file: no network request, no dependency, and it runs nothing. How it is built and checked: .claude/skills/review-page-ui/SKILL.md -->
+<title>ffmpeg-skill review</title>
+<style>
+/* Layout: one editor screen, three columns (bin + steps | viewer + timeline | inspector + instruction); stacks to one column when narrow. */
+:root {
+  color-scheme: dark;
+  --ink: #101114; --ink-2: #1a1c21; --line: #2a2d34; --mute: #3a3f49; --dim: #a3a9b4; --text: #ffffff;
+  --green: #17d16a; --green-halo: rgba(23, 209, 106, 0.14);
+  --sans: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Apple SD Gothic Neo", "Malgun Gothic", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK JP", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r: 14px;
+}
+html, body { height: 100%; }
+body { background: var(--ink); color: var(--text); font: 13px/1.45 var(--sans); font-variant-numeric: tabular-nums; }
+#app { box-sizing: border-box; height: 100%; min-height: 680px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px;
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+button:hover { filter: brightness(1.25); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.mono { font-family: var(--mono); }
+.dim { color: var(--dim); }
+header { display: flex; gap: 10px 12px; align-items: center; justify-content: space-between; }
+header .left, header .right { display: flex; gap: 8px 12px; align-items: center; min-width: 0; }
+header .left { flex: 1 1 0; }
+header .left > * { flex: none; }
+header .left .note { flex: 1 1 0; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header .right { flex: none; }
+header { min-width: 0; }
+header .left > .path { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logo { width: 124px; height: auto; display: block; }
+.brand { font-weight: 700; font-size: 14px; color: var(--dim); border-left: 1px solid var(--mute); padding-left: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; white-space: nowrap; border: 1px solid transparent; }
+.pill.pass { background: var(--green-halo); color: var(--green); }
+.pill.pass::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.pill.check { border-color: var(--text); }
+.pill.unv { border-color: var(--mute); color: var(--dim); }
+.seg { display: flex; gap: 3px; background: var(--ink-2); border-radius: 999px; padding: 3px; }
+.seg button { min-height: 30px; padding: 0 12px; border-radius: 999px; border: 0; background: transparent; font-weight: 700; font-size: 12px; }
+.seg button[aria-pressed="true"] { background: var(--mute); }
+.btn { min-height: 40px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--mute); background: transparent; font-weight: 700; }
+.btn.primary { border: 0; background: var(--green); color: var(--ink); font-weight: 800; }
+main { display: grid; grid-template-columns: 272px minmax(0, 1fr) 352px; gap: 10px; min-height: 0; }
+.col { display: grid; gap: 10px; min-height: 0; min-width: 0; }
+.col.left { grid-template-rows: auto minmax(0, 1fr); }
+.col.mid { grid-template-rows: minmax(0, 1fr) auto; }
+.col.right { grid-template-rows: minmax(0, 1fr) minmax(0, 1.1fr); }
+.panel { background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.panel.scroll { overflow-y: auto; }
+.panel.ai { border-color: var(--dim); }
+h2 { margin: 0; font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--green); }
+.id { font-family: var(--mono); font-weight: 700; background: var(--mute); border-radius: 6px; padding: 0 6px; white-space: nowrap; }
+.card { text-align: left; background: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.card .facts { font-family: var(--mono); font-size: 11.5px; line-height: 16px; color: var(--dim); white-space: pre-line; }
+.card .name { font-weight: 700; overflow-wrap: anywhere; }
+.steps { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; flex: 1 1 0; }
+.step { text-align: left; background: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 4px 10px; display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 8px; align-items: center; min-height: 44px; }
+.step.warn { border-color: var(--text); }
+.step .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); justify-self: center; }
+.step.warn .dot { background: var(--text); }
+.step .main { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step .sub { display: block; font: 12px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viewer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row.between { justify-content: space-between; }
+.stage { display: flex; gap: 24px; justify-content: center; align-items: center; background: var(--ink); border-radius: 12px; padding: 12px; min-height: 0; overflow: hidden; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: center; min-height: 0; max-width: 100%; }
+figcaption { color: var(--dim); font-size: 12px; text-align: center; }
+.frame { display: grid; place-items: center; color: var(--dim); font-size: 12px; text-align: center; border-radius: 8px; max-width: 100%; }
+.frame.src { height: 190px; aspect-ratio: 16 / 9; border: 1px dashed var(--mute); }
+.phone { box-sizing: border-box; height: 258px; aspect-ratio: 9 / 18.6; padding: 5px; border-radius: 26px; border: 2px solid var(--dim); background: #000000; }
+.frame.prg { box-sizing: border-box; padding: 24% 16% 0; align-items: start; font-size: 9px; color: var(--dim); position: relative; height: 100%; width: 100%; border-radius: 20px; overflow: hidden; background: linear-gradient(160deg, #2a2d34, #101114 55%, #1a1c21); color: var(--text); }
+.frame.plain { position: relative; box-sizing: border-box; border: 1px solid var(--text); border-radius: 6px; overflow: hidden; background: linear-gradient(160deg, #2a2d34, #101114 55%, #1a1c21); color: var(--dim); font-size: 10px; padding-top: 6%; align-items: start; max-width: 100%; }
+.island { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 30%; height: 9px; border-radius: 999px; background: #000000; z-index: 3; }
+.zone { position: absolute; background: var(--safe); opacity: 0.3; z-index: 1; }
+.sw { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 2px solid var(--mute); }
+.sw[aria-pressed="true"] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ink-2), 0 0 0 4px var(--text); }
+.legend { display: inline-flex; gap: 6px; align-items: center; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; background: var(--safe); opacity: 0.6; }
+.safe { position: absolute; border: 1.5px dashed var(--safe); border-radius: 4px; z-index: 2; }
+.cap { position: absolute; z-index: 2; left: 6%; right: 6%; border-radius: 4px; font-weight: 800; line-height: 1.25; padding: 2px 4px; text-align: center; }
+.meter { flex: none; display: flex; flex-direction: column; gap: 4px; align-items: center; border-left: 1px solid var(--line); padding-left: 12px; }
+.meter .bars { display: flex; gap: 4px; flex: 1 1 0; min-height: 150px; }
+.meter .ch { display: flex; flex-direction: column; gap: 4px; align-items: center; font: 10px var(--mono); color: var(--dim); }
+.meter .ch .bar { flex: 1 1 0; }
+.meter .scale { margin-left: 4px; margin-bottom: 18px; }
+.meter .bar { position: relative; width: 12px; background: var(--ink-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.meter .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--dim); }
+.meter .scale { position: relative; width: 58px; font: 10px var(--mono); color: var(--dim); }
+.meter .scale span { position: absolute; white-space: nowrap; }
+.meter .scale .tgt { top: 22%; color: var(--green); }
+.meter .scale .tick { left: -38px; width: 34px; top: 25%; height: 2px; background: var(--green); }
+.ic { width: 40px; height: 40px; padding: 0; display: inline-grid; place-items: center; border-radius: 50%; border: 1px solid var(--mute); background: transparent; }
+.ic.play { width: 48px; height: 48px; border: 0; background: var(--text); color: var(--ink); }
+.ic.g { width: auto; min-width: 40px; padding: 0 10px; border-radius: 999px; border-color: var(--dim); color: var(--text); display: inline-flex; gap: 6px; align-items: center; justify-content: center; font-weight: 700; }
+.grow { flex-grow: 1; }
+select { min-height: 32px; background: var(--ink); border: 1px solid var(--mute); border-radius: 999px; padding: 0 10px; }
+.tlrow { display: flex; gap: 12px; align-items: stretch; min-width: 0; }
+.tlwrap { overflow-x: auto; flex: 1 1 0; min-width: 0; }
+.ic.s { width: 32px; height: 32px; }
+.ic.s[disabled] { opacity: 0.4; cursor: default; }
+.tl .lab, .tl > span:first-child { position: sticky; left: 0; z-index: 4; background: var(--ink-2); align-self: stretch; display: grid; align-items: center; }
+.tl { min-width: 520px; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 4px 8px; align-items: center; }
+.tl .lab { font-family: var(--mono); font-weight: 700; color: var(--dim); }
+.ruler { position: relative; height: 40px; border-bottom: 1px solid var(--line); font: 11px var(--mono); color: var(--dim); }
+.ruler .tm { position: absolute; bottom: 2px; }
+.mk { position: absolute; top: 0; transform: translateX(-50%); min-height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--mute); background: var(--ink); color: var(--dim); font-weight: 800; font-size: 11px; }
+.mk.warn { border-color: var(--text); color: var(--text); }
+.mk.own { border-color: var(--green); color: var(--green); }
+.rg { position: absolute; top: 2px; min-height: 20px; padding: 0; border-radius: 4px; border: 1px solid var(--green); background: var(--green-halo); color: var(--green); font-weight: 800; font-size: 11px; overflow: hidden; }
+.head { position: absolute; top: 24px; bottom: -164px; width: 2px; background: var(--green); pointer-events: none; }
+.track { position: relative; height: 36px; }
+.track.v { height: 40px; }
+.clip, .cue, .aud { position: absolute; top: 2px; bottom: 2px; border-radius: 8px; overflow: hidden; white-space: nowrap; }
+.clip { top: 0; bottom: 0; border: 1px solid var(--dim); background: var(--mute); text-align: left; padding: 0 10px; }
+.cue { border: 1px solid var(--line); background: var(--ink); font-size: 11.5px; text-align: left; padding: 0 6px; text-overflow: ellipsis; }
+.cue.warn { border-color: var(--text); font-weight: 800; }
+.aud { left: 0; width: 100%; border: 1px solid var(--line); background: var(--ink); color: var(--dim); text-align: left; padding: 0 10px; font-size: 12px; display: flex; align-items: center; gap: 10px; }
+.aud .nm { flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.aud .nm b { color: var(--text); }
+.wave { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: center; gap: 1px; }
+.wave i { flex: 1 1 0; background: var(--dim); border-radius: 1px; }
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid var(--line); }
+.kv .v { font-family: var(--mono); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.opt { display: flex; flex-direction: column; gap: 4px; }
+.opt .choices { display: flex; flex-wrap: wrap; gap: 4px; }
+.opt button { min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--mute); background: transparent; font-size: 12px; font-weight: 700; }
+.opt button[aria-pressed="true"] { background: var(--mute); border-color: var(--text); }
+.field { min-height: 40px; box-sizing: border-box; width: 100%; background: var(--ink); border: 1px solid var(--mute); border-radius: 10px; padding: 0 10px; }
+.field:hover { border-color: var(--dim); }
+.probe { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--line); padding: 4px 0; min-height: 40px; }
+.chk { display: flex; gap: 10px; align-items: center; min-height: 36px; }
+.chk input { width: 18px; height: 18px; accent-color: var(--green); }
+.ai { display: grid; grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto; }
+.rows { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; }
+.irow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.irow label { text-align: center; padding: 2px 0; }
+.empty { margin: 0; border: 1px dashed var(--mute); border-radius: 10px; padding: 12px; color: var(--dim); }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; min-height: 0; background: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: 12px/18px var(--mono); }
+.strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pchip { display: inline-flex; gap: 6px; align-items: center; min-height: 32px; padding: 0 10px; white-space: nowrap; border-radius: 999px; border: 1px solid var(--line); background: var(--ink-2); font-size: 11.5px; }
+.pchip .st { width: 9px; height: 9px; border-radius: 50%; background: var(--green); flex: none; }
+.pchip.check { border-color: var(--text); }
+.pchip label { display: inline-flex; gap: 5px; align-items: center; }
+.pchip input { width: 16px; height: 16px; accent-color: var(--text); }
+[data-sel] { outline: 2px solid var(--text); outline-offset: 1px; }
+[data-picked] { box-shadow: inset 0 -3px 0 var(--text); }
+[data-rel] { outline: 1.5px dashed var(--dim); outline-offset: 1px; }
+.field:placeholder-shown { border-style: dashed; }
+.frow { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
+.frow label { min-width: 0; display: flex; flex-direction: column; }
+.frow .fd { font-size: 11px; line-height: 15px; color: var(--dim); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.frow input[type=text], .frow select { min-height: 34px; width: 100%; box-sizing: border-box; border-radius: 8px; background: var(--ink); border: 1px solid var(--mute); padding: 0 8px; }
+.frow input[type=checkbox] { width: 18px; height: 18px; justify-self: end; accent-color: var(--text); }
+.frow[data-set] label .mono { color: var(--text); font-weight: 700; }
+.frow[data-set] { border-top-color: var(--text); }
+.quick { display: flex; flex-wrap: wrap; gap: 4px; }
+.quick button { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px dashed var(--mute); background: transparent; font-size: 12px; }
+.warnline { color: var(--text); font-size: 11.5px; font-weight: 700; }
+/* The screen is for a computer: on a narrow window the same editor layout is scaled down, never stacked. */
+body { overflow: hidden; }
+#app { transform-origin: 0 0; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+/* the real page: media inside the frames, and the small utility classes the markup uses */
+body { margin: 0; } img { max-width: 100%; }
+.frame.prg, .frame.plain { padding: 0; background: #000000; }
+.stage > figure { height: 100%; min-width: 0; justify-content: center; } .stage.wide { flex-direction: column; gap: 10px; } .stage.wide > figure { height: auto; }
+figcaption { max-width: 340px; } .step .dot.ok { background: var(--green); } .phone { flex: none; height: calc(258px + max(0px, (100vh - 900px) * 0.9)); }
+.irow .auto { grid-column: 2 / 4; font-size: 11.5px; overflow-wrap: anywhere; }
+textarea.field.area { min-height: 64px; padding: 8px 10px; resize: vertical; font: inherit; color: inherit; line-height: 1.4; }
+.cap { white-space: pre-line; }
+.cap.demo { position: static; display: inline-block; margin-top: 4px; font-size: 13px; padding: 2px 8px; }
+.frame video, .frame > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.nomedia { padding: 12px; color: var(--dim); font-size: 12px; max-width: 280px; }
+.srcrow { display: flex; gap: 6px; } .srcrow img { height: 96px; width: auto; border-radius: 6px; display: block; }
+.srcrow.tiny img { height: 64px; } .srcrow.large img { height: 150px; }
+.small { font-size: 12px; } .tiny { font-size: 11px; } .nb { white-space: nowrap; } .row.nowrap { flex-wrap: nowrap; } .row.tight { gap: 6px; }
+.big { font-size: 14px; min-width: 0; overflow-wrap: anywhere; } .strong { color: var(--text); font-weight: 700; } .thin { font-weight: 400; }
+.tcode { font-size: 15px; font-weight: 700; white-space: nowrap; } .zoomv { min-width: 34px; text-align: center; } .grow0 { min-width: 0; }
+.addtool { width: 100%; border-radius: 10px; min-height: 36px; flex: none; }
+.pill.mini { padding: 1px 8px; font-size: 10px; } button.pill.ghost { background: transparent; color: var(--text); min-height: 26px; }
+.strip { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; } .pchip { flex: none; }
+.pchip .val { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.clipf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .clipf label { font: 12px var(--mono); color: var(--dim); }
+.note { margin: 0; font-size: 12px; color: var(--dim); overflow-wrap: anywhere; } h2.gap { margin-top: 8px; }
+.aud img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.srcs { display: flex; flex-direction: column; gap: 6px; max-height: 210px; overflow-y: auto; }
+label.opt { gap: 4px; }
+</style></head><body>
+<template id="logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 902 256" class="logo" role="img" aria-label="ffmpeg-skill"><title>ffmpeg-skill</title><g transform="translate(-34,0)"><path fill="#FFFFFF" fill-rule="evenodd" d="M117.0,52 H52 A18,18 0 0 0 34,70 V186 A18,18 0 0 0 52,204 H117.0 V188 H52 A2,2 0 0 1 50,186 V70 A2,2 0 0 1 52,68 H117.0 Z M139.0,52 H204 A18,18 0 0 1 222,70 V186 A18,18 0 0 1 204,204 H139.0 V147.05 A22,22 0 0 0 139.0,108.95 Z M123.0,45.0 A5.0,5.0 0 0 1 133.0,45.0 V106.58 A22,22 0 0 0 123.0,106.58 Z M123.0,149.42 A22,22 0 0 0 133.0,149.42 V211.0 A5.0,5.0 0 0 1 123.0,211.0 Z"/><path fill="#17D16A" fill-rule="evenodd" d="M114,128 A14,14 0 1 0 142,128 A14,14 0 1 0 114,128 Z"/></g><g transform="translate(228.00,75.07) scale(1.1544303797468354)"><path fill="#FFFFFF" transform="translate(-3.00,73.50)" d="M11.5 0.0V-53.800000000000004Q11.5 -55.85 11.600000000000001 -58.45Q11.700000000000001 -61.050000000000004 12.425 -63.7Q13.15 -66.35000000000001 15.100000000000001 -68.5Q17.6 -71.3 20.525000000000002 -72.325Q23.450000000000003 -73.35000000000001 26.200000000000003 -73.42500000000001Q28.950000000000003 -73.5 30.900000000000002 -73.5H37.6V-62.5H31.400000000000002Q28.200000000000003 -62.5 26.650000000000002 -60.875Q25.1 -59.25 25.1 -57.0V0.0ZM3.0 -43.5V-54.0H37.6V-43.5ZM47.6 0.0V-53.800000000000004Q47.6 -55.85 47.7 -58.45Q47.800000000000004 -61.050000000000004 48.525000000000006 -63.7Q49.25 -66.35000000000001 51.2 -68.5Q53.7 -71.3 56.625 -72.325Q59.550000000000004 -73.35000000000001 62.30000000000001 -73.42500000000001Q65.05000000000001 -73.5 67.0 -73.5H73.7V-62.5H67.5Q64.30000000000001 -62.5 62.75000000000001 -60.875Q61.2 -59.25 61.2 -57.0V0.0ZM39.1 -43.5V-54.0H73.7V-43.5ZM144.2 0.0V-31.900000000000002Q144.2 -37.25 141.675 -40.225Q139.15 -43.2 134.7 -43.2Q131.85000000000002 -43.2 129.75 -41.875Q127.65 -40.550000000000004 126.47500000000001 -38.175000000000004Q125.30000000000001 -35.800000000000004 125.30000000000001 -32.7L119.60000000000001 -36.5Q119.60000000000001 -42.050000000000004 122.22500000000001 -46.300000000000004Q124.85000000000001 -50.550000000000004 129.275 -52.925000000000004Q133.7 -55.300000000000004 139.10000000000002 -55.300000000000004Q148.35000000000002 -55.300000000000004 153.07500000000002 -49.825Q157.8 -44.35 157.8 -35.5V0.0ZM79.10000000000001 0.0V-54.0H91.10000000000001V-36.1H92.80000000000001V0.0ZM111.7 0.0V-31.900000000000002Q111.7 -37.25 109.17500000000001 -40.225Q106.65 -43.2 102.2 -43.2Q97.95 -43.2 95.375 -40.275000000000006Q92.80000000000001 -37.35 92.80000000000001 -32.7L87.10000000000001 -36.7Q87.10000000000001 -42.0 89.75 -46.2Q92.4 -50.400000000000006 96.875 -52.85000000000001Q101.35000000000001 -55.300000000000004 106.9 -55.300000000000004Q113.25 -55.300000000000004 117.325 -52.60000000000001Q121.4 -49.900000000000006 123.35000000000001 -45.400000000000006Q125.30000000000001 -40.900000000000006 125.30000000000001 -35.5V0.0ZM194.8 1.5Q186.75 1.5 181.35000000000002 -2.25Q175.95000000000002 -6.0 173.22500000000002 -12.450000000000001Q170.5 -18.900000000000002 170.5 -27.0Q170.5 -35.1 173.2 -41.55Q175.9 -48.0 181.15 -51.75Q186.4 -55.5 194.10000000000002 -55.5Q201.85000000000002 -55.5 207.60000000000002 -51.8Q213.35000000000002 -48.1 216.52500000000003 -41.675Q219.70000000000002 -35.25 219.70000000000002 -27.0Q219.70000000000002 -18.900000000000002 216.57500000000002 -12.450000000000001Q213.45000000000002 -6.0 207.85000000000002 -2.25Q202.25 1.5 194.8 1.5ZM168.20000000000002 24.0V-54.0H180.20000000000002V-17.0H181.9V24.0ZM192.60000000000002 -10.600000000000001Q197.0 -10.600000000000001 199.8 -12.8Q202.60000000000002 -15.0 203.95000000000002 -18.725Q205.3 -22.450000000000003 205.3 -27.0Q205.3 -31.5 203.9 -35.225Q202.5 -38.95 199.575 -41.175000000000004Q196.65 -43.400000000000006 192.10000000000002 -43.400000000000006Q187.85000000000002 -43.400000000000006 185.22500000000002 -41.35000000000001Q182.60000000000002 -39.300000000000004 181.40000000000003 -35.6Q180.20000000000002 -31.900000000000002 180.20000000000002 -27.0Q180.20000000000002 -22.1 181.40000000000003 -18.400000000000002Q182.60000000000002 -14.700000000000001 185.32500000000002 -12.650000000000002Q188.05 -10.600000000000001 192.60000000000002 -10.600000000000001ZM253.3 1.5Q245.00000000000003 1.5 238.675 -2.075Q232.35000000000002 -5.65 228.77500000000003 -11.925Q225.20000000000002 -18.2 225.20000000000002 -26.3Q225.20000000000002 -35.15 228.70000000000002 -41.7Q232.20000000000002 -48.25 238.35000000000002 -51.875Q244.50000000000003 -55.5 252.50000000000003 -55.5Q261.0 -55.5 266.95000000000005 -51.5Q272.90000000000003 -47.5 275.75 -40.25Q278.6 -33.0 277.75 -23.200000000000003H264.3V-28.200000000000003Q264.3 -36.45 261.675 -40.075Q259.05 -43.7 253.10000000000002 -43.7Q246.15000000000003 -43.7 242.87500000000003 -39.475Q239.60000000000002 -35.25 239.60000000000002 -27.0Q239.60000000000002 -19.450000000000003 242.87500000000003 -15.325000000000003Q246.15000000000003 -11.200000000000001 252.50000000000003 -11.200000000000001Q256.5 -11.200000000000001 259.35 -12.950000000000001Q262.20000000000005 -14.700000000000001 263.70000000000005 -18.0L277.3 -14.100000000000001Q274.25 -6.7 267.675 -2.6Q261.1 1.5 253.3 1.5ZM235.4 -23.200000000000003V-33.300000000000004H271.20000000000005V-23.200000000000003ZM309.6 25.5Q305.0 25.5 300.85 24.025Q296.7 22.55 293.42499999999995 19.925Q290.15 17.3 288.1 13.8L300.7 7.7Q302.0 10.100000000000001 304.425 11.350000000000001Q306.85 12.600000000000001 309.7 12.600000000000001Q312.75 12.600000000000001 315.45 11.575000000000001Q318.15 10.55 319.775 8.525Q321.4 6.5 321.3 3.5V-12.200000000000001H323.0V-54.0H334.9V3.7Q334.9 5.7 334.725 7.475Q334.55 9.25 334.1 11.0Q332.8 15.950000000000001 329.275 19.150000000000002Q325.75 22.35 320.65 23.925Q315.55 25.5 309.6 25.5ZM308.4 1.5Q300.95 1.5 295.35 -2.25Q289.75 -6.0 286.625 -12.450000000000001Q283.5 -18.900000000000002 283.5 -27.0Q283.5 -35.25 286.675 -41.675Q289.85 -48.1 295.6 -51.8Q301.35 -55.5 309.1 -55.5Q316.8 -55.5 322.05 -51.75Q327.3 -48.0 330.0 -41.55Q332.7 -35.1 332.7 -27.0Q332.7 -18.900000000000002 329.975 -12.450000000000001Q327.25 -6.0 321.85 -2.25Q316.45 1.5 308.4 1.5ZM310.6 -10.600000000000001Q315.15 -10.600000000000001 317.875 -12.650000000000002Q320.6 -14.700000000000001 321.8 -18.400000000000002Q323.0 -22.1 323.0 -27.0Q323.0 -31.900000000000002 321.8 -35.6Q320.6 -39.300000000000004 317.975 -41.35000000000001Q315.35 -43.400000000000006 311.1 -43.400000000000006Q306.55 -43.400000000000006 303.625 -41.175000000000004Q300.7 -38.95 299.29999999999995 -35.225Q297.9 -31.5 297.9 -27.0Q297.9 -22.450000000000003 299.25 -18.725Q300.6 -15.0 303.4 -12.8Q306.2 -10.600000000000001 310.6 -10.600000000000001ZM345.4 -26.3V-36.800000000000004H375.4V-26.3ZM407.0 1.5Q396.79999999999995 1.5 390.525 -3.125Q384.25 -7.75 382.9 -16.2L396.79999999999995 -18.3Q397.65 -14.5 400.575 -12.350000000000001Q403.5 -10.200000000000001 408.0 -10.200000000000001Q411.7 -10.200000000000001 413.7 -11.625Q415.7 -13.05 415.7 -15.600000000000001Q415.7 -17.2 414.9 -18.175Q414.09999999999997 -19.150000000000002 411.32499999999993 -20.1Q408.54999999999995 -21.05 402.7 -22.6Q396.09999999999997 -24.3 392.15 -26.4Q388.2 -28.5 386.45 -31.425Q384.7 -34.35 384.7 -38.5Q384.7 -43.7 387.35 -47.525000000000006Q390.0 -51.35 394.825 -53.425Q399.65 -55.5 406.2 -55.5Q412.54999999999995 -55.5 417.44999999999993 -53.55Q422.34999999999997 -51.6 425.375 -48.0Q428.4 -44.400000000000006 429.09999999999997 -39.5L415.2 -37.0Q414.84999999999997 -40.0 412.59999999999997 -41.75Q410.34999999999997 -43.5 406.5 -43.800000000000004Q402.75 -44.050000000000004 400.475 -42.800000000000004Q398.2 -41.550000000000004 398.2 -39.2Q398.2 -37.800000000000004 399.17499999999995 -36.85Q400.15 -35.9 403.22499999999997 -34.9Q406.29999999999995 -33.9 412.59999999999997 -32.300000000000004Q418.75 -30.700000000000003 422.475 -28.575000000000003Q426.2 -26.450000000000003 427.9 -23.475Q429.59999999999997 -20.5 429.59999999999997 -16.3Q429.59999999999997 -8.0 423.59999999999997 -3.25Q417.59999999999997 1.5 407.0 1.5ZM437.99999999999994 0.0 438.09999999999997 -72.0H451.9V-28.0L470.2 -54.0H487.0L467.49999999999994 -27.0L488.29999999999995 0.0H470.59999999999997L451.9 -26.0V0.0ZM491.79999999999995 -61.5V-73.5H505.4V-61.5ZM491.79999999999995 0.0V-54.0H505.4V0.0ZM518.9 0.0V-73.5H532.5V0.0ZM546.0 0.0V-73.5H559.6V0.0Z"/></g></svg></template>
+<div id="app"></div>
+<script id="data">window.REVIEW_DATA = /*DATA*/;</script>
+<script>
+(function () {
+  "use strict";
+  var R = window.REVIEW_DATA;
+  // the page's working shape, derived once from what _review.py measured: nothing here is a new measurement
+  var D = (function () {
+    var res = R.result || {}, probe = res.probe || {}, pv = probe.video || {}, pa = probe.audio || null;
+    function base(p) { return String(p || "").split(/[\\/]/).pop(); }
+    function streams(p, kind) { return ((p || {}).streams || []).filter(function (s) { return s.codec_type === kind; }); }
+    function rate(r) { var q = String(r || "").split("/"), v = Number(q[0]) / (Number(q[1]) || 1); return isFinite(v) && v > 0 ? v : null; }
+    function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+    function shape(w, h) { if (!(w > 0 && h > 0)) return null; var g = gcd(w, h); return (w / g) + ":" + (h / g); }
+    var sources = R.sources.map(function (s, i) {
+      var v = streams(s.probe, "video")[0], a = streams(s.probe, "audio")[0], d = Number(((s.probe || {}).format || {}).duration), facts = [];
+      if (v) facts.push(["kVideo", v.codec_name + " " + v.width + "×" + v.height + (rate(v.r_frame_rate) ? " " + Number(rate(v.r_frame_rate).toFixed(3)) + " fps" : "")]);
+      if (isFinite(d)) facts.push(["kLength", d.toFixed(2) + " s"]);
+      if (a) facts.push(["kAudio", a.codec_name + " " + a.channels + " ch " + a.sample_rate + " Hz"]);
+      if (!facts.length) facts.push(["kState", null]);
+      return { id: "S" + (i + 1), name: base(s.path), path: s.path, facts: facts, v: v, a: a };
+    });
+    var clips = R.clips.map(function (c, i) { return { id: "C" + (i + 1), i: i, src: sources[c.s].id, name: sources[c.s].name, a: c.a, b: c.b, speed: (R.project.clips[i] || {}).speed, stills: c.stills.length ? c.stills : [null, null, null] }; });
+    var props = [];
+    if (R.result && !res.probe) props.push({ name: "output probe", measured: null, expected: null, state: "check", stage: "" });
+    (res.verification || []).forEach(function (v) {
+      props.push({ name: String(v.property && v.property !== v.step ? v.step + " · " + v.property : v.step), measured: v.measured, expected: v.expected, state: v.ok === true ? "pass" : v.ok === false ? "check" : "unv", stage: v.stage || "" }); });
+    ((res.check || {}).checks || []).forEach(function (r) {
+      props.push({ name: String(r.check), measured: r.value, expected: r.expected === "" ? null : r.expected, state: r.status === "PASS" ? "pass" : r.status === "FAIL" || r.status === "WARN" ? "check" : "unv", stage: "check", status: r.status, fix: r.fix, reason: r.reason }); });
+    (res.unverified || []).forEach(function (u) { props.push({ name: String(u), measured: null, expected: null, state: "unv", stage: "" }); });
+    props.forEach(function (p, i) { p.id = "P" + (i + 1); });
+    var planned = clips.reduce(function (t, c) { return t + (c.b !== null && c.a !== null ? Math.max((c.b - c.a) / (Number(c.speed) || 1), 0) : 0); }, 0);
+    var first = sources.filter(function (s) { return s.v; })[0], preset = (R.project.export || {}).preset, safe = {}, tools = {};
+    Object.keys(R.safe).forEach(function (k) { var z = R.safe[k]; if (z.top || z.bottom || z.left || z.right) safe[k] = [z.top * 100, z.right * 100, z.bottom * 100, z.left * 100]; });
+    Object.keys(R.tools).forEach(function (n) {
+      var p = R.tools[n].p;
+      tools[n] = { d: R.tools[n].d, f: Object.keys(p).filter(function (k) { return !p[k].common && p[k].cli && String(p[k].cli[p[k].cli.length - 1])[0] === "-"; }).map(function (k) {
+        var x = p[k], cli = x.cli.filter(function (c) { return c.slice(0, 2) === "--"; })[0] || x.cli[0];
+        return [k, cli, x.enum ? "e" : x.type === "boolean" ? "b" : x.type === "integer" || x.type === "number" ? "n" : "s", x.enum || 0, x.default === undefined || x.default === null || x.default === false ? 0 : x.default, x.description || ""]; }) };
+    });
+    return { name: R.name, project_path: R.project_path, run: R.run, project: R.project, sources: sources, clips: clips,
+      cues: R.cues.map(function (q, i) { return { id: "T" + (i + 1), a: q[0], b: q[1], text: q[2] }; }), cue_file: base(R.cue_file),
+      props: props, tools: tools, safe: safe, platform: safe[preset] ? preset : "",
+      duration: probe.duration || planned, fps: pv.fps || (first && rate(first.v.r_frame_rate)) || 30,
+      aspect: shape(pv.width, pv.height) || (R.project.frame || {}).aspect || (first && shape(first.v.width, first.v.height)) || "16:9",
+      size_label: pv.width ? pv.width + "×" + pv.height : "", has_audio: R.result ? !!pa : sources.some(function (s) { return s.a; }),
+      output_audio: pa ? pa.codec + " " + pa.channels + " ch" : null, video: R.out.video, wave: R.out.wave,
+      out_stills: R.out.stills.filter(function (s) { return s.file; }), rendered: !!R.result, status: res.status, verified: res.verified === true,
+      notes: (res.notes || []).map(function (n) { return typeof n === "string" ? n : JSON.stringify(n); }), output_name: base(res.output || R.project.output),
+      stages: res.stages && res.stages.length ? res.stages : R.stages, stages_note: R.stages_note, 
+      stage_tool: { clips: "cut", audiogram: "waveform", join: "join", silence: "silence", fit: "fit", captions: "caption", graphics: "graphics", overlays: "overlay", audio: "audio", loudness: "loudness", export: "export", check: "check" },
+      stage_section: { clips: "clips", audiogram: "audiogram", join: "transition", silence: "silence", fit: "frame", captions: "captions", graphics: "graphics", overlays: "overlays", audio: "audio", loudness: "loudness", export: "export", check: "check" } };
+  })();
+  document.title = "Review: " + D.name;
+  var LANGS = [["en", "English"], ["ja", "日本語"], ["ko", "한국어"], ["zh", "中文"]];
+  var L = {
+    en: { brk: "(\\n = line break)", kFix: "Suggested fix", kWhy: "Why", unmeasured: "not measured", noPlay: "This browser cannot play the file; stills of it are shown instead", pass: "PASS", check: "TO CHECK", unv: "UNVERIFIED", humanOk: "CONFIRMED", notRendered: "NOT RENDERED YET", failed: "FAILED", verified: "VERIFIED", notVerified: "NOT VERIFIED",
+      save: "Save project", saved: "Saved a copy", copy: "Copy the instruction", copied: "Copied", sources: "Sources · probe", steps: "Work steps", lang: "Language",
+      tSource: "Source", tProgram: "Program", tBoth: "Side by side", viewMode: "View", safe: "Safe area", none: "None", titleSafe: "Title safe", safeColor: "Overlay colour",
+      cGreen: "Green", cYellow: "Yellow", cPink: "Pink", cBlue: "Blue", cWhite: "White", cBlack: "Black", safeLegend: "Tinted = covered by the app",
+      noOutput: "No rendered file to play. Render the project, then build this page with --result.", noStill: "no still", capApprox: "How the caption would look after the next render (a likeness, not rendered pixels):",
+      planned: "The next render would have this shape ({a})", phone: "Phone preview", monitor: "Preview at {a}",
+      prevMark: "Previous marker", back: "Back one frame", play: "Play", pause: "Pause", fwd: "Forward one frame", nextMark: "Next marker",
+      mark: "Add a marker here (M)", inP: "Range start (In, I)", outP: "Range end (Out, O)",
+      timeline: "Timeline", legend: "V video · T captions · A audio · M marker · R range · keys: Space, J K L, I O, M", zoomIn: "Zoom in", zoomOut: "Zoom out", zoomFit: "Show the whole timeline", zoomNow: "Zoom",
+      selected: "Selected", measured: "Measured against expected", human: "For a person to confirm",
+      ai: "Instruction for your agent", aiHelp: "Press any number on the screen (S, C, T, A, M, R, P, #). It lines up here; say what should change.",
+      empty: "Nothing selected yet. Press a number on the screen.", promptLabel: "Text for your agent", remove: "Remove", removeOf: "Remove {id} from the instruction",
+      todo: "What should change…", todoLine: "(say what should change)", runsNothing: "This page runs nothing. Copy the text and paste it to your agent.",
+      emptyRows: "{n} row(s) still say nothing. Fill them in or remove them.",
+      pHead: "Change {f} as follows, render it again with this command, and report the result:", pNone: "(nothing selected yet)", pKeep: "Change nothing else.", pAccept: "After rendering, report every check that passed this time ({n}) and no longer does.",
+      pLegend: "The numbers are the review screen's (S source, C clip, T caption, A audio, M marker, R range, P measurement, # work step, N new step).",
+      kVideo: "Video", kLength: "Length", kAudio: "Audio", kFile: "File", kSource: "Source", kIn: "In", kOut: "Out", kSpeed: "Speed", kPos: "Position in the result", kAt: "Position", kKind: "Kind",
+      kRange: "Range", kExpected: "Expected", kMeas: "Measured", kStage: "Stage", kTool: "Tool", kSection: "In the project", kDesc: "What it does", kText: "Text", kState: "State",
+      ownMark: "your own marker", clip: "Clip {n}", cue: "Caption {n}", sound: "Sound of the result", ownAt: "{t} your marker", rangeOf: "{a}–{b} range", newStep: "a new step",
+      clipEdit: "Edit this clip (saved into the project, and added to the instruction)", capText: "Caption text (Enter breaks the line; editing adds it to the instruction)",
+      allFlags: "Every setting of {t} ({n})", flagFilter: "Filter settings, e.g. fps", flagsEn: "Names and descriptions come straight from the tool contract.", noFlag: "No setting matches.", keep: "leave", dflt: "default",
+      pickTool: "＋ Add a step (any of the {n} tools)", addToolNote: "add a {t} step", unusedNote: "Only steps this project ran can be adjusted. Add another tool here.",
+      quick: "Common requests", qTrimStart: "start 1 s later", qTrimEnd: "end 1 s earlier", qRemoveClip: "remove this clip", qCapUp: "move it up inside the safe area", qCapDel: "remove this caption",
+      qLouder: "3 dB louder", qQuieter: "3 dB quieter", qCutHere: "cut here", qRemoveRange: "remove this range", qKeepRange: "keep only this range",
+      oAspect: "Frame shape", oFit: "Fitting the frame", oCapColor: "Caption colour", oLook: "Solid box behind the text", oPos: "Caption position", oAnim: "How captions appear", oDest: "Export for", optHint: "(sets the flag below)",
+      setTo: "{k}: “{v}”", textTo: "text to “{v}”", hS: "e.g. do not use this source", hC: "e.g. end 1 s earlier", hT: "e.g. fix the wording", hA: "e.g. 3 dB lower", hM: "e.g. cut here", hR: "e.g. remove this range",
+      hP: "e.g. bring this within the limit", hW: "e.g. keep the right side", hN: "e.g. steady the shaky part", notes: "Notes from the run", stagesFrom: "from a dry run" },
+    ja: { brk: "（\\n は改行）", kFix: "直し方の候補", kWhy: "理由", unmeasured: "測定なし", noPlay: "このブラウザーでは再生できないため、静止画を表示しています", pass: "PASS", check: "要確認", unv: "未確認", humanOk: "人が確認", notRendered: "まだ書き出していません", failed: "失敗", verified: "確認済み", notVerified: "未確認あり",
+      save: "プロジェクトを保存", saved: "コピーを保存しました", copy: "AI への指示をコピー", copied: "コピーしました", sources: "素材 · probe", steps: "作業工程", lang: "言語",
+      tSource: "素材", tProgram: "仕上がり", tBoth: "並べて比較", viewMode: "表示の切り替え", safe: "安全域", none: "なし", titleSafe: "タイトルセーフ", safeColor: "安全域の色",
+      cGreen: "緑", cYellow: "黄", cPink: "ピンク", cBlue: "青", cWhite: "白", cBlack: "黒", safeLegend: "色の付いた所 = アプリの表示に隠れる",
+      noOutput: "再生できる書き出し結果がありません。書き出してから、--result を付けてこのページを作ってください。", noStill: "静止画なし", capApprox: "次に書き出したときの字幕の見た目（目安です。書き出した映像ではありません）:",
+      planned: "次に書き出すと、この形（{a}）になります", phone: "スマホでの見え方", monitor: "{a} での見え方",
+      prevMark: "前の印へ", back: "1 コマ戻る", play: "再生", pause: "止める", fwd: "1 コマ進む", nextMark: "次の印へ",
+      mark: "今の位置に印を付ける（M）", inP: "範囲の始まり（イン I）", outP: "範囲の終わり（アウト O）",
+      timeline: "タイムライン", legend: "V 映像 · T 字幕 · A 音 · M 印 · R 範囲 · キー: Space、J K L、I O、M", zoomIn: "拡大", zoomOut: "縮小", zoomFit: "全体を表示", zoomNow: "倍率",
+      selected: "選んだもの", measured: "測定 · 期待との差", human: "人が確かめること",
+      ai: "AI への指示", aiHelp: "画面の番号（S・C・T・A・M・R・P・#）を押すと、ここに並びます。どうしたいかを一言書きます。",
+      empty: "まだ何も選んでいません。画面の番号を押してください。", promptLabel: "AI に渡す文", remove: "外す", removeOf: "{id} を指示から外す",
+      todo: "どうしたいかを書く…", todoLine: "（どうしたいかを書く）", runsNothing: "このページは何も実行しません。コピーして AI に貼ります。",
+      emptyRows: "まだ何も書いていない行が {n} つあります。書くか、外してください。",
+      pHead: "{f} を次のとおり直して、下のコマンドでもう一度書き出し、結果を報告してください:", pNone: "（まだ何も選んでいません）", pKeep: "ほかは何も変えないでください。", pAccept: "書き出したあと、今回合格した確認（{n} 件）のうち、合格しなくなったものがあれば報告してください。",
+      pLegend: "番号はレビュー画面のものです（S 素材、C クリップ、T 字幕、A 音、M 印、R 範囲、P 測定、# 工程、N 足す工程）。",
+      kVideo: "映像", kLength: "長さ", kAudio: "音", kFile: "ファイル", kSource: "素材", kIn: "in", kOut: "out", kSpeed: "速さ", kPos: "仕上がりの位置", kAt: "位置", kKind: "種類",
+      kRange: "範囲", kExpected: "期待", kMeas: "測定", kStage: "工程", kTool: "道具", kSection: "プロジェクトの設定", kDesc: "できること", kText: "文字", kState: "状態",
+      ownMark: "自分で付けた印", clip: "クリップ {n}", cue: "字幕 {n}", sound: "仕上がりの音", ownAt: "{t} 自分で付けた印", rangeOf: "{a}–{b} の範囲", newStep: "新しい工程",
+      clipEdit: "このクリップを直す（プロジェクトに保存され、指示にも入ります）", capText: "字幕の文字（Enter で改行。直すと指示に入ります）",
+      allFlags: "{t} のすべての設定（{n} 個）", flagFilter: "設定を絞り込む（例: fps）", flagsEn: "名前と説明は、道具の定義（contract）そのままなので英語です。", noFlag: "当てはまる設定がありません。", keep: "変えない", dflt: "標準",
+      pickTool: "＋ 工程を足す（{n} の道具から選ぶ）", addToolNote: "{t} の工程を足す", unusedNote: "調整できるのは、このプロジェクトで動いた工程だけです。ほかの道具はここから足せます。",
+      quick: "よく使う指示", qTrimStart: "始まりを 1 秒遅らせる", qTrimEnd: "終わりを 1 秒早める", qRemoveClip: "このクリップを消す", qCapUp: "安全域の内側に上げる", qCapDel: "この字幕を消す",
+      qLouder: "3 dB 上げる", qQuieter: "3 dB 下げる", qCutHere: "ここで切る", qRemoveRange: "この範囲を削る", qKeepRange: "この範囲だけ残す",
+      oAspect: "画面の形", oFit: "画面の合わせ方", oCapColor: "字幕の色", oLook: "文字の後ろに箱を敷く", oPos: "字幕の位置", oAnim: "字幕の出し方", oDest: "書き出し先", optHint: "（下の設定に入ります）",
+      setTo: "{k}を「{v}」に", textTo: "文字を「{v}」に", hS: "例: この素材は使わない", hC: "例: 終わりを 1 秒早める", hT: "例: 言い回しを直す", hA: "例: 全体に 3 dB 下げる", hM: "例: ここで切る", hR: "例: この範囲を削る",
+      hP: "例: これを基準内に収める", hW: "例: 右側を残す", hN: "例: 手ぶれを直す", notes: "実行時の注意", stagesFrom: "dry run より" },
+    ko: { brk: "(\\n = 줄바꿈)", kFix: "수정 제안", kWhy: "이유", unmeasured: "측정 안 됨", noPlay: "이 브라우저에서 재생할 수 없어 정지 화면을 표시합니다", pass: "PASS", check: "확인 필요", unv: "미확인", humanOk: "사람이 확인", notRendered: "아직 내보내지 않음", failed: "실패", verified: "확인됨", notVerified: "미확인 있음",
+      save: "프로젝트 저장", saved: "사본을 저장했습니다", copy: "AI 지시 복사", copied: "복사했습니다", sources: "소스 · probe", steps: "작업 단계", lang: "언어",
+      tSource: "소스", tProgram: "결과", tBoth: "나란히 비교", viewMode: "보기 전환", safe: "안전 영역", none: "없음", titleSafe: "타이틀 세이프", safeColor: "안전 영역 색",
+      cGreen: "초록", cYellow: "노랑", cPink: "분홍", cBlue: "파랑", cWhite: "흰색", cBlack: "검정", safeLegend: "색칠된 곳 = 앱 화면에 가려짐",
+      noOutput: "재생할 결과 파일이 없습니다. 내보낸 뒤 --result를 붙여 이 페이지를 만드세요.", noStill: "정지 화면 없음", capApprox: "다음에 내보냈을 때의 자막 모습 (대략적인 모습이며, 내보낸 영상이 아닙니다):",
+      planned: "다음에 내보내면 이 비율({a})이 됩니다", phone: "휴대폰에서 보이는 모습", monitor: "{a}에서 보이는 모습",
+      prevMark: "이전 마커로", back: "1프레임 뒤로", play: "재생", pause: "정지", fwd: "1프레임 앞으로", nextMark: "다음 마커로",
+      mark: "현재 위치에 마커 추가 (M)", inP: "범위 시작 (인 I)", outP: "범위 끝 (아웃 O)",
+      timeline: "타임라인", legend: "V 영상 · T 자막 · A 오디오 · M 마커 · R 범위 · 키: Space, J K L, I O, M", zoomIn: "확대", zoomOut: "축소", zoomFit: "전체 보기", zoomNow: "배율",
+      selected: "선택한 항목", measured: "측정 · 기대와의 차이", human: "사람이 확인할 것",
+      ai: "AI에게 보내는 지시", aiHelp: "화면의 번호(S·C·T·A·M·R·P·#)를 누르면 여기에 나열됩니다. 어떻게 바꿀지 한마디 적습니다.",
+      empty: "아직 선택한 것이 없습니다. 화면의 번호를 누르세요.", promptLabel: "AI에게 전달할 글", remove: "빼기", removeOf: "{id}을(를) 지시에서 빼기",
+      todo: "어떻게 바꿀지 적기…", todoLine: "(어떻게 바꿀지 적기)", runsNothing: "이 페이지는 아무것도 실행하지 않습니다. 복사해서 AI에 붙여 넣으세요.",
+      emptyRows: "아직 아무것도 적지 않은 줄이 {n}개 있습니다. 적거나 빼 주세요.",
+      pHead: "{f}을(를) 다음과 같이 고치고, 아래 명령으로 다시 내보낸 뒤 결과를 보고해 주세요:", pNone: "(아직 선택한 것이 없습니다)", pKeep: "그 밖에는 아무것도 바꾸지 마세요.", pAccept: "내보낸 뒤, 이번에 통과한 확인({n}건) 중 통과하지 못하게 된 것이 있으면 보고해 주세요.",
+      pLegend: "번호는 리뷰 화면의 번호입니다 (S 소스, C 클립, T 자막, A 오디오, M 마커, R 범위, P 측정, # 작업 단계, N 새 단계).",
+      kVideo: "영상", kLength: "길이", kAudio: "오디오", kFile: "파일", kSource: "소스", kIn: "in", kOut: "out", kSpeed: "속도", kPos: "결과에서의 위치", kAt: "위치", kKind: "종류",
+      kRange: "범위", kExpected: "기대", kMeas: "측정", kStage: "단계", kTool: "도구", kSection: "프로젝트 설정", kDesc: "하는 일", kText: "문구", kState: "상태",
+      ownMark: "직접 추가한 마커", clip: "클립 {n}", cue: "자막 {n}", sound: "결과의 소리", ownAt: "{t} 직접 추가한 마커", rangeOf: "{a}–{b} 범위", newStep: "새 단계",
+      clipEdit: "이 클립 수정 (프로젝트에 저장되고 지시에도 들어갑니다)", capText: "자막 문구 (Enter로 줄바꿈. 고치면 지시에 들어갑니다)",
+      allFlags: "{t}의 모든 설정 ({n}개)", flagFilter: "설정 좁히기 (예: fps)", flagsEn: "이름과 설명은 도구 정의(contract) 그대로라 영어입니다.", noFlag: "맞는 설정이 없습니다.", keep: "그대로", dflt: "기본",
+      pickTool: "＋ 단계 추가 ({n}개 도구 중 선택)", addToolNote: "{t} 단계를 추가", unusedNote: "이 프로젝트에서 실행한 단계만 조정할 수 있습니다. 다른 도구는 여기서 추가합니다.",
+      quick: "자주 쓰는 지시", qTrimStart: "시작을 1초 늦추기", qTrimEnd: "끝을 1초 앞당기기", qRemoveClip: "이 클립 삭제", qCapUp: "안전 영역 안으로 올리기", qCapDel: "이 자막 삭제",
+      qLouder: "3 dB 올리기", qQuieter: "3 dB 내리기", qCutHere: "여기서 자르기", qRemoveRange: "이 범위 삭제", qKeepRange: "이 범위만 남기기",
+      oAspect: "화면 비율", oFit: "화면 맞추기", oCapColor: "자막 색", oLook: "글자 뒤에 상자 깔기", oPos: "자막 위치", oAnim: "자막이 나오는 방식", oDest: "내보낼 곳", optHint: "(아래 설정에 들어갑니다)",
+      setTo: "{k}: “{v}”(으)로", textTo: "문구를 “{v}”(으)로", hS: "예: 이 소스는 쓰지 않기", hC: "예: 끝을 1초 앞당기기", hT: "예: 문구 고치기", hA: "예: 전체를 3 dB 낮추기", hM: "예: 여기서 자르기", hR: "예: 이 범위를 삭제",
+      hP: "예: 기준 안으로 맞추기", hW: "예: 오른쪽을 남기기", hN: "예: 흔들림 보정", notes: "실행 중 알림", stagesFrom: "dry run 기준" },
+    zh: { brk: "（\\n 表示换行）", kFix: "建议的修正", kWhy: "原因", unmeasured: "未测量", noPlay: "此浏览器无法播放该文件，改为显示静帧", pass: "PASS", check: "待确认", unv: "未确认", humanOk: "已由人确认", notRendered: "尚未导出", failed: "失败", verified: "已验证", notVerified: "有未验证项",
+      save: "保存项目", saved: "已保存副本", copy: "复制给 AI 的指示", copied: "已复制", sources: "素材 · probe", steps: "处理步骤", lang: "语言",
+      tSource: "素材", tProgram: "成片", tBoth: "并排比较", viewMode: "切换显示", safe: "安全区", none: "无", titleSafe: "标题安全区", safeColor: "安全区颜色",
+      cGreen: "绿", cYellow: "黄", cPink: "粉", cBlue: "蓝", cWhite: "白", cBlack: "黑", safeLegend: "着色处 = 被应用界面遮住",
+      noOutput: "没有可播放的导出结果。请先导出，再加上 --result 生成本页面。", noStill: "无静帧", capApprox: "下次导出后字幕的大致效果（不是导出的实际画面）：",
+      planned: "下次导出会变成这个比例（{a}）", phone: "手机上的效果", monitor: "{a} 的效果",
+      prevMark: "上一个标记", back: "后退 1 帧", play: "播放", pause: "暂停", fwd: "前进 1 帧", nextMark: "下一个标记",
+      mark: "在当前位置加标记（M）", inP: "范围起点（入点 I）", outP: "范围终点（出点 O）",
+      timeline: "时间线", legend: "V 视频 · T 字幕 · A 音频 · M 标记 · R 范围 · 按键：Space、J K L、I O、M", zoomIn: "放大", zoomOut: "缩小", zoomFit: "显示全部", zoomNow: "缩放",
+      selected: "所选项", measured: "测量 · 与预期的差距", human: "需要人来确认",
+      ai: "给 AI 的指示", aiHelp: "点击画面上的编号（S、C、T、A、M、R、P、#），它会排在这里。写一句想怎么改。",
+      empty: "还没有选择任何内容。请点击画面上的编号。", promptLabel: "交给 AI 的文字", remove: "移除", removeOf: "把 {id} 从指示中移除",
+      todo: "写下想怎么改…", todoLine: "（写下想怎么改）", runsNothing: "本页面不会执行任何操作。复制后粘贴给 AI。",
+      emptyRows: "还有 {n} 行没有写内容。请填写或移除。",
+      pHead: "请按以下内容修改 {f}，用下面的命令重新导出，并报告结果：", pNone: "（还没有选择任何内容）", pKeep: "其他内容不要改动。", pAccept: "导出后，本次通过的检查（{n} 项）中如有不再通过的，请报告。",
+      pLegend: "编号来自审阅画面（S 素材、C 片段、T 字幕、A 音频、M 标记、R 范围、P 测量、# 步骤、N 新步骤）。",
+      kVideo: "视频", kLength: "时长", kAudio: "音频", kFile: "文件", kSource: "素材", kIn: "in", kOut: "out", kSpeed: "速度", kPos: "在成片中的位置", kAt: "位置", kKind: "类型",
+      kRange: "范围", kExpected: "预期", kMeas: "测量", kStage: "步骤", kTool: "工具", kSection: "项目中的设置", kDesc: "功能", kText: "文字", kState: "状态",
+      ownMark: "自己加的标记", clip: "片段 {n}", cue: "字幕 {n}", sound: "成片的声音", ownAt: "{t} 自己加的标记", rangeOf: "{a}–{b} 范围", newStep: "新步骤",
+      clipEdit: "修改这个片段（会保存到项目，并加入指示）", capText: "字幕文字（按 Enter 换行，修改后会加入指示）",
+      allFlags: "{t} 的全部设置（{n} 项）", flagFilter: "筛选设置（例：fps）", flagsEn: "名称和说明直接来自工具定义（contract），所以是英文。", noFlag: "没有匹配的设置。", keep: "不改", dflt: "默认",
+      pickTool: "＋ 增加步骤（从 {n} 个工具中选）", addToolNote: "增加 {t} 步骤", unusedNote: "只能调整本项目运行过的步骤。其他工具可在这里添加。",
+      quick: "常用指示", qTrimStart: "开头晚 1 秒", qTrimEnd: "结尾早 1 秒", qRemoveClip: "删除这个片段", qCapUp: "上移到安全区内", qCapDel: "删除这条字幕",
+      qLouder: "提高 3 dB", qQuieter: "降低 3 dB", qCutHere: "在这里剪开", qRemoveRange: "删掉这个范围", qKeepRange: "只保留这个范围",
+      oAspect: "画面比例", oFit: "画面适配方式", oCapColor: "字幕颜色", oLook: "文字后面加底色框", oPos: "字幕位置", oAnim: "字幕出现方式", oDest: "导出到", optHint: "（会写入下面的设置）",
+      setTo: "把{k}改为“{v}”", textTo: "文字改为“{v}”", hS: "例：不用这个素材", hC: "例：结尾早 1 秒", hT: "例：修改措辞", hA: "例：整体降低 3 dB", hM: "例：在这里剪开", hR: "例：删掉这个范围",
+      hP: "例：调整到限制以内", hW: "例：保留右侧", hN: "例：修正抖动", notes: "运行时的提示", stagesFrom: "来自 dry run" }
+  };
+
+  var TOOLS = D.tools, DUR = Math.max(D.duration || 0, 0.001), FPS = D.fps || 30;
+  var STEPS = D.stages.map(function (st, i) { return { id: "W" + (i + 1), stage: st, tool: D.stage_tool[st] || null }; });
+  var P = JSON.parse(JSON.stringify(D.project));  // the copy "Save project" writes
+  var S = { lang: "en", sel: null, picked: [], notes: {}, tab: "both", copied: false, saved: false, t: 0, playing: false, extra: {}, flags: {}, flagFilter: "", rin: null,
+    nM: 1, nR: 1, nN: 1, platform: D.platform || "", safeColor: "#17d16a", zoom: 1, textEdits: {}, checks: {}, clipEdits: {} };
+  try { var saved = localStorage.getItem("review-lang"); if (saved && L[saved]) S.lang = saved; else { var nav = (navigator.language || "en").slice(0, 2); if (L[nav]) S.lang = nav; } } catch (e) { /* the page works without it */ }
+  S.sel = (D.props.filter(function (p) { return p.state === "check"; })[0] || {}).id || (D.clips[0] || {}).id || (STEPS[0] || {}).id || null;
+  var video = null, timer = null, RANK = { check: 0, unv: 1, pass: 2 };
+  var ORDERED = D.props.slice().sort(function (a, b) { return RANK[a.state] - RANK[b.state]; });
+
+  function tr(key, vars) { var s = L[S.lang][key]; if (s === undefined) s = L.en[key]; if (vars) Object.keys(vars).forEach(function (k) { s = s.split("{" + k + "}").join(vars[k]); }); return s; }
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  function fmt(t) { var m = Math.floor(t / 60), s = (t % 60).toFixed(1); return two(m) + ":" + (s < 10 ? "0" : "") + s; }
+  function tc(t) { return two(Math.floor(t / 3600)) + ":" + two(Math.floor(t / 60) % 60) + ":" + two(Math.floor(t % 60)) + ":" + two(Math.floor((t % 1) * FPS + 0.001)); }
+  function label(id) { return esc(id[0] === "W" ? "#" + id.slice(1) : id); }
+  function pct(t) { return (t / DUR * 100).toFixed(3) + "%"; }
+  function show(v) { return v === null || v === undefined ? tr("unmeasured") : typeof v === "object" ? JSON.stringify(v) : String(v); }
+  function val(v) { return v === null || v === undefined || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v); }  // a project value: absent is absent, not unmeasured
+  function stepOf(tool) { return STEPS.filter(function (w) { return w.tool === tool; })[0] || null; }
+  function toolOf(id) { var w = STEPS.filter(function (x) { return x.id === id; })[0]; return (w && w.tool) || (S.extra[id] && S.extra[id].tool) || null; }
+  function flagOf(tool, key) { var w = stepOf(tool); return w && S.flags[w.id] ? S.flags[w.id][key] : undefined; }
+
+  // where each clip sits in the result: its own length, scaled so the clips fill the measured duration
+  var CLIPS = (function () {
+    var lens = D.clips.map(function (c) { return c.b !== null && c.a !== null ? Math.max((c.b - c.a) / (Number(c.speed) || 1), 0) : 0; });
+    var total = lens.reduce(function (x, y) { return x + y; }, 0), k = total > 0 ? DUR / total : 0, at = 0;
+    return D.clips.map(function (c, i) { var o = { c: c, t0: at, t1: at + lens[i] * k }; at = o.t1; return o; });
+  })();
+
+  function items() {
+    var it = {};
+    D.sources.forEach(function (s) { it[s.id] = { title: s.name, hint: tr("hS"), ref: s.name, rows: [[tr("kFile"), s.path]].concat(s.facts.map(function (f) { return [tr(f[0]), f[1] === null ? tr("unmeasured") : f[1]]; })) }; });
+    CLIPS.forEach(function (o, i) {
+      var c = o.c;
+      it[c.id] = { title: tr("clip", { n: i + 1 }), hint: tr("hC"), ref: "clips[" + i + "]", rows: [[tr("kSource"), c.src + " " + c.name], [tr("kIn"), val(P.clips[i].in)], [tr("kOut"), val(P.clips[i].out)], [tr("kSpeed"), val(P.clips[i].speed)],
+        [tr("kPos"), fmt(o.t0) + "–" + fmt(o.t1)]] };
+    });
+    D.cues.forEach(function (q, i) { it[q.id] = { title: tr("cue", { n: i + 1 }), hint: tr("hT"), ref: D.cue_file + " #" + (i + 1), text: q.text, rows: [[tr("kAt"), fmt(q.a) + "–" + fmt(q.b)], [tr("kText"), q.text.split("\n").join(" ⏎ ")]] }; });
+    if (D.has_audio) it.A1 = { title: tr("sound"), hint: tr("hA"), ref: "audio", rows: [[tr("kAudio"), D.rendered ? show(D.output_audio) : val(null)]] };
+    D.props.forEach(function (p) { it[p.id] = { title: p.name, hint: tr("hP"), rows: [[tr("kMeas"), show(p.measured)], [tr("kExpected"), show(p.expected)]].concat(p.stage ? [[tr("kStage"), p.stage]] : []).concat(p.state === "check" && p.fix ? [[tr("kFix"), p.fix]] : []).concat(p.reason ? [[tr("kWhy"), p.reason]] : []) }; });
+    STEPS.forEach(function (w) {
+      var sec = D.stage_section[w.stage], val = sec ? P[sec] : undefined;
+      it[w.id] = { title: label(w.id) + " " + w.stage + (w.tool ? " · " + w.tool + ".py" : ""), hint: tr("hW"), ref: sec || w.stage,
+        rows: (w.tool ? [[tr("kTool"), w.tool + ".py"], [tr("kDesc"), TOOLS[w.tool].d]] : []).concat(val !== undefined && sec !== "clips" ? [[tr("kSection"), JSON.stringify(val)]] : []) };
+    });
+    Object.keys(S.extra).forEach(function (id) {
+      var x = S.extra[id];
+      it[id] = id[0] === "N" ? { title: tr("newStep") + ": " + x.tool + ".py", hint: tr("hN"), rows: [[tr("kKind"), tr("newStep")], [tr("kDesc"), TOOLS[x.tool].d]] }
+        : id[0] === "M" ? { title: tr("ownAt", { t: fmt(x.at) }), hint: tr("hM"), rows: [[tr("kAt"), fmt(x.at) + " (" + tc(x.at) + ")"], [tr("kKind"), tr("ownMark")]] }
+        : { title: tr("rangeOf", { a: fmt(x.a), b: fmt(x.b) }), hint: tr("hR"), rows: [[tr("kRange"), fmt(x.a) + "–" + fmt(x.b)], [tr("kLength"), (x.b - x.a).toFixed(2) + " s"]] };
+    });
+    return it;
+  }
+  // shortcuts that set a real flag of the step's tool: [label key, flag, choices]
+  var CURATED = {
+    fit: [["oAspect", "aspect", ["9:16", "16:9", "1:1", "4:5"]], ["oFit", "fit", ["crop", "pad", "blur"]]],
+    caption: [["oCapColor", "color", ["FFFFFF", "FFD60A", "101114"]], ["oLook", "box", [true]], ["oPos", "position", ["bottom", "center", "top"]], ["oAnim", "animate", ["none", "fade", "pop", "slide"]]],
+    export: [["oDest", "preset", ["reels", "tiktok", "shorts", "youtube", "x"]]]
+  };
+  var COLOR_NAME = { FFFFFF: "cWhite", FFD60A: "cYellow", "101114": "cBlack" };
+  var QUICK = { C: ["qTrimStart", "qTrimEnd", "qRemoveClip"], T: ["qCapUp", "qCapDel"], A: ["qLouder", "qQuieter"], M: ["qCutHere"], R: ["qRemoveRange", "qKeepRange"] };
+  function flagNote(id) {
+    var f = S.flags[id] || {}, tool = TOOLS[toolOf(id)]; if (!tool) return "";
+    return tool.f.filter(function (x) { return f[x[0]] !== undefined; }).map(function (x) { return x[2] === "b" ? x[1] : x[1] + " " + f[x[0]]; }).join(", ");
+  }
+  function clipNote(id) {
+    var e = S.clipEdits[id] || {};
+    return Object.keys(e).map(function (k) { return k + " " + (e[k] === "" ? "∅" : e[k]); }).join(", ");
+  }
+  // a row's text: what the person's edits and choices produced, then what they typed. An edit is never
+  // dropped by typing: the saved project and the instruction would then disagree.
+  function autoOf(id) {
+    var parts = [];
+    if (S.textEdits[id] !== undefined) parts.push(tr("textTo", { v: S.textEdits[id].split("\n").join("\\n") }) + (S.textEdits[id].indexOf("\n") >= 0 ? " " + tr("brk") : ""));
+    if (clipNote(id)) parts.push(clipNote(id));
+    if (id[0] === "N") parts.push(tr("addToolNote", { t: S.extra[id].tool + ".py" }));
+    if (flagNote(id)) parts.push(flagNote(id));
+    return parts.join(S.lang === "en" ? "; " : "、");
+  }
+  function noteOf(id) { return [autoOf(id), (S.notes[id] || "").trim()].filter(Boolean).join(S.lang === "en" ? "; " : "、"); }
+  function aspect() {
+    var a = flagOf("fit", "aspect") || (P.frame || {}).aspect || D.aspect;
+    return /^\d+:\d+$/.test(a || "") ? a : "16:9";
+  }
+  function plannedAspect() { return aspect() !== D.aspect; }
+  function isPhone() { var p = aspect().split(":"); return Number(p[1]) / Number(p[0]) > 1.5; }
+  function promptText() {
+    var it = items();
+    var lines = S.picked.map(function (id) { return "- " + label(id) + (it[id].ref ? " [" + it[id].ref + "]" : "") + " (" + it[id].title + "): " + (noteOf(id).trim() || tr("todoLine")); });
+    var holds = D.props.filter(function (p) { return p.state === "pass" && S.picked.indexOf(p.id) < 0; }).length;
+    return tr("pHead", { f: D.project_path }) + "\n" + D.run + "\n" + (lines.length ? lines.join("\n") : tr("pNone")) + "\n" + tr("pKeep")
+      + (holds ? "\n" + tr("pAccept", { n: holds }) : "") + "\n" + tr("pLegend");
+  }
+  function emptyRows() { return S.picked.filter(function (id) { return !noteOf(id).trim(); }).length; }
+
+  var SVG = {
+    prevMark: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="5" width="2.5" height="14" rx="1"/><path d="M20 5.5v13a1 1 0 0 1-1.6.8L9.5 12.8a1 1 0 0 1 0-1.6l8.9-6.5A1 1 0 0 1 20 5.5z"/></svg>',
+    back: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M14 5.5v13a1 1 0 0 1-1.6.8L3.5 12.8a1 1 0 0 1 0-1.6l8.9-6.5A1 1 0 0 1 14 5.5z"/><rect x="17" y="5" width="2.5" height="14" rx="1"/></svg>',
+    play: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.6v14.8a1 1 0 0 0 1.5.9l12-7.4a1 1 0 0 0 0-1.8l-12-7.4A1 1 0 0 0 7 4.6z"/></svg>',
+    pause: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4.5" height="16" rx="1.2"/><rect x="13.5" y="4" width="4.5" height="16" rx="1.2"/></svg>',
+    fwd: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4.5" y="5" width="2.5" height="14" rx="1"/><path d="M10 5.5v13a1 1 0 0 0 1.6.8l8.9-6.5a1 1 0 0 0 0-1.6l-8.9-6.5A1 1 0 0 0 10 5.5z"/></svg>',
+    nextMark: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5.5v13a1 1 0 0 0 1.6.8l8.9-6.5a1 1 0 0 0 0-1.6L5.6 4.7A1 1 0 0 0 4 5.5z"/><rect x="17.5" y="5" width="2.5" height="14" rx="1"/></svg>',
+    mark: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h12a1 1 0 0 1 1 1v16.2a.8.8 0 0 1-1.3.6L12 16.5l-5.7 4.3a.8.8 0 0 1-1.3-.6V4a1 1 0 0 1 1-1z"/></svg>',
+    inP: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H6v16h4"/><path d="M11 12h9"/><path d="M16 8l4 4-4 4"/></svg>',
+    outP: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4v16h-4"/><path d="M13 12H4"/><path d="M8 8l-4 4 4 4"/></svg>',
+    zoomIn: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6M10.5 7.5v6M7.5 10.5h6"/></svg>',
+    zoomOut: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6M7.5 10.5h6"/></svg>',
+    zoomFit: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/></svg>'
+  };
+  var RELATED = {};
+  function relate(a, b) { (RELATED[a] = RELATED[a] || []).push(b); (RELATED[b] = RELATED[b] || []).push(a); }
+  D.clips.forEach(function (c) { relate(c.id, c.src); if (stepOf("cut")) relate(c.id, stepOf("cut").id); });
+  D.cues.forEach(function (q) { if (stepOf("caption")) relate(q.id, stepOf("caption").id); });
+  D.props.forEach(function (p) { var w = STEPS.filter(function (x) { return x.stage === p.stage || x.tool === p.stage; })[0]; if (w) relate(p.id, w.id); });
+  function pick(id) { return ' data-act="pick" data-id="' + esc(id) + '"' + (S.sel === id ? " data-sel" : (RELATED[S.sel] || []).indexOf(id) >= 0 ? " data-rel" : "") + (S.picked.indexOf(id) >= 0 ? " data-picked" : ""); }
+  function icon(act, name, cls, extra) { return '<button class="ic ' + (cls || "") + '" data-act="' + act + '"' + (extra || "") + ' aria-label="' + esc(tr(name)) + '" title="' + esc(tr(name)) + '">' + SVG[name] + "</button>"; }
+  var COLORS = [["#17d16a", "cGreen"], ["#ffd60a", "cYellow"], ["#ff5fa2", "cPink"], ["#4da3ff", "cBlue"], ["#ffffff", "cWhite"]];
+
+  function safeBox() {
+    var z = isPhone() ? D.safe[S.platform] : (S.platform ? [5, 5, 5, 5] : null); if (!z) return "";
+    return '<span class="zone" aria-hidden="true" style="left:0;right:0;top:0;height:' + z[0] + '%"></span><span class="zone" aria-hidden="true" style="left:0;right:0;bottom:0;height:' + z[2] + '%"></span>'
+      + '<span class="zone" aria-hidden="true" style="right:0;width:' + z[1] + "%;top:" + z[0] + "%;bottom:" + z[2] + '%"></span><span class="zone" aria-hidden="true" style="left:0;width:' + z[3] + "%;top:" + z[0] + "%;bottom:" + z[2] + '%"></span>'
+      + '<span class="safe" aria-hidden="true" style="top:' + z[0] + "%;right:" + z[1] + "%;bottom:" + z[2] + "%;left:" + z[3] + '%"></span>';
+  }
+  function cueNow() { return D.cues.filter(function (q) { return S.t >= q.a && S.t < q.b; })[0] || null; }
+  // a caption is drawn over the picture only when a caption setting was changed: the rendered file already carries its own
+  function capOverlay() {
+    var w = stepOf("caption"), f = (w && S.flags[w.id]) || {}, q = cueNow(), edited = q && S.textEdits[q.id] !== undefined;
+    if (!q || (!Object.keys(f).length && !edited)) return "";
+    var col = "#" + (f.color || "FFFFFF"), dark = (f.color || "") === "101114", edge = dark ? "#ffffff" : "#000000";
+    var css = "color:" + col + ";" + ({ center: "top:44%", top: "top:14%" }[f.position] || "bottom:12%") + ";"
+      + (f.box ? "background:" + (dark ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.82)") + ";" : "background:transparent;text-shadow:-1px -1px 0 " + edge + ",1px -1px 0 " + edge + ",-1px 1px 0 " + edge + ",1px 1px 0 " + edge + ";");
+    return '<div class="cap demo" data-cap style="' + css.replace(/(top|bottom):[^;]*;/, "") + '">' + esc(edited ? S.textEdits[q.id] : q.text) + "</div>";
+  }
+  function stillNow() { return D.out_stills.reduce(function (best, s) { return Math.abs(s.t - S.t) < Math.abs(best.t - S.t) ? s : best; }).file; }
+  function capNote() { var c = capOverlay(); return c ? "<br>" + esc(tr("capApprox")) + c : ""; }
+  function programFigure() {
+    var a = aspect(), phone = isPhone(), parts = a.split(":"), wide = Number(parts[0]) > Number(parts[1]);
+    var media = D.video && !S.videoFailed ? '<video data-video src="' + esc(D.video) + '" preload="metadata" playsinline></video>'
+      : D.out_stills.length ? '<img data-outstill src="' + esc(stillNow()) + '" alt="">' : '<span class="nomedia">' + esc(tr("noOutput")) + "</span>";
+    var inner = media + safeBox();
+    var h = wide ? (S.tab === "both" ? 230 : 300) : 258;
+    var box = phone ? '<div class="phone" role="img" aria-label="' + esc(tr("phone")) + '" style="--safe:' + S.safeColor + ";aspect-ratio:" + parts[0] + " / " + (Number(parts[1]) * 1.02) + '"><div class="frame prg"><span class="island" aria-hidden="true"></span>' + inner + "</div></div>"
+      : '<div class="frame plain" role="img" aria-label="' + esc(tr("monitor", { a: a })) + '" style="--safe:' + S.safeColor + ";height:calc(" + h + "px + max(0px, (100vh - 900px) * 0.7));aspect-ratio:" + parts[0] + " / " + parts[1] + '">' + inner + "</div>";
+    var where = phone ? (D.safe[S.platform] ? S.platform : "") : (S.platform ? tr("titleSafe") : "");
+    return "<figure>" + box + "<figcaption>" + esc(tr("tProgram")) + " · " + esc(D.size_label || a) + (where ? " · " + esc(where) : "")
+      + (where ? '<br><span class="legend" style="--safe:' + S.safeColor + '"><i></i>' + esc(phone ? tr("safeLegend") : tr("titleSafe")) + "</span>" : "")
+      + (plannedAspect() ? '<br><span class="strong">' + esc(tr("planned", { a: a })) + "</span>" : "")
+      + (S.videoFailed && D.out_stills.length ? "<br>" + esc(tr("noPlay")) : "") + '<span data-capwrap>' + capNote() + "</span></figcaption></figure>";
+  }
+  function sourceFigure() {
+    var c = (D.clips.filter(function (x) { return x.id === S.sel; })[0]) || D.clips[0];
+    if (!c) return "";
+    var imgs = c.stills.map(function (f) { return f ? '<img src="' + esc(f) + '" alt="">' : '<span class="nomedia small">' + esc(tr("noStill")) + "</span>"; }).join("");
+    return '<figure><div class="srcrow' + (S.tab === "source" ? " large" : " tiny") + '">' + imgs + "</div><figcaption>" + c.id + " · " + esc(c.name) + " · in / mid / out</figcaption></figure>";
+  }
+  function ticks() {
+    var want = DUR / (8 * S.zoom), steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600], step = steps.filter(function (x) { return x >= want; })[0] || 3600, out = [];
+    for (var t = 0; t < DUR - step * 0.4; t += step) out.push(t);
+    return out;
+  }
+  function flagRowsHtml() {
+    var tool = TOOLS[toolOf(S.sel)], set = S.flags[S.sel] || {}, q = S.flagFilter.trim().toLowerCase();
+    var list = tool.f.filter(function (x) { return !q || (x[1] + " " + x[5]).toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return '<p class="empty">' + esc(tr("noFlag")) + "</p>";
+    return list.map(function (x) {
+      var fid = esc("f-" + S.sel + "-" + x[0]), key = esc(x[0]), v = set[x[0]], ctl;
+      if (x[2] === "e") ctl = '<select id="' + fid + '" name="' + fid + '" data-flag="' + key + '"><option value="">' + esc(tr("keep")) + (x[4] ? " (" + esc(String(x[4])) + ")" : "") + "</option>" + x[3].map(function (o) { return '<option value="' + esc(o) + '"' + (v === String(o) ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>";
+      else if (x[2] === "b") ctl = '<input type="checkbox" id="' + fid + '" name="' + fid + '" data-flag="' + key + '"' + (v ? " checked" : "") + ">";
+      else ctl = '<input type="text" id="' + fid + '" name="' + fid + '" autocomplete="off" data-flag="' + key + '" value="' + esc(v === undefined ? "" : v) + '" placeholder="' + esc(x[4] ? tr("dflt") + " " + x[4] : tr("keep")) + '…"' + (x[2] === "n" ? ' inputmode="decimal"' : "") + ">";
+      return '<div class="frow"' + (v !== undefined ? " data-set" : "") + '><label for="' + fid + '" title="' + esc(x[5]) + '"><span class="mono">' + esc(x[1]) + '</span><span class="fd">' + esc(x[5]) + "</span></label>" + ctl + "</div>";
+    }).join("");
+  }
+  function inspector(it) {
+    var sel = it[S.sel]; if (!sel) return "";
+    var tool = toolOf(S.sel), cur = CURATED[tool] || [], set = S.flags[S.sel] || {}, h = "";
+    h += '<div class="row nowrap"><span class="id">' + label(S.sel) + '</span><b class="big">' + esc(sel.title) + "</b></div><div>"
+      + sel.rows.map(function (r) { return '<div class="kv"><span class="dim nb">' + esc(r[0]) + '</span><span class="v">' + esc(r[1]) + "</span></div>"; }).join("") + "</div>";
+    if (S.sel[0] === "C") {
+      var i = Number(S.sel.slice(1)) - 1;
+      h += '<div class="opt"><span class="dim small">' + esc(tr("clipEdit")) + '</span><div class="clipf">' + ["in", "out", "speed"].map(function (k) {
+        var v = P.clips[i][k];
+        return '<label for="clip-' + k + '">' + k + '<input class="field" type="text" id="clip-' + k + '" name="clip-' + k + '" autocomplete="off" data-clip="' + k + '" value="' + esc(v === null || v === undefined ? "" : v) + '"></label>'; }).join("") + "</div></div>";
+    }
+    if (typeof sel.text === "string") h += '<label class="opt dim small" for="caption-text">' + esc(tr("capText")) + '<textarea class="field area" id="caption-text" name="caption-text" autocomplete="off" rows="3" data-input="caption">' + esc(S.textEdits[S.sel] !== undefined ? S.textEdits[S.sel] : sel.text) + "</textarea></label>";
+    h += cur.map(function (g) {
+      return '<div class="opt" role="group" aria-label="' + esc(tr(g[0])) + '"><span class="dim small">' + esc(tr(g[0])) + " " + esc(tr("optHint")) + '</span><div class="choices">'
+        + g[2].map(function (c) { var on = set[g[1]] === (c === true ? true : String(c)); return '<button data-act="cur" data-flagkey="' + g[1] + '" data-val="' + (c === true ? "1" : esc(c)) + '" aria-pressed="' + on + '">' + esc(c === true ? "--" + g[1] : COLOR_NAME[c] ? tr(COLOR_NAME[c]) : c) + "</button>"; }).join("") + "</div></div>"; }).join("");
+    if (QUICK[S.sel[0]]) h += '<div class="opt"><span class="dim small">' + esc(tr("quick")) + '</span><div class="quick">' + QUICK[S.sel[0]].map(function (q) { return '<button data-act="quick" data-id="' + q + '">' + esc(tr(q)) + "</button>"; }).join("") + "</div></div>";
+    if (tool) h += '<div class="opt"><span class="dim small">' + esc(tr("allFlags", { t: tool + ".py", n: TOOLS[tool].f.length })) + '</span>'
+      + '<input class="field" type="text" id="flag-filter" name="flag-filter" autocomplete="off" data-input="flagFilter" value="' + esc(S.flagFilter) + '" placeholder="' + esc(tr("flagFilter")) + '…" aria-label="' + esc(tr("flagFilter")) + '">'
+      + '<div data-flaglist>' + flagRowsHtml() + '</div><span class="dim tiny">' + esc(tr("flagsEn")) + "</span></div>";
+    return h;
+  }
+
+  function render() {
+    var it = items(), h = "", oldWrap = document.querySelector("[data-tlwrap]"), keep = oldWrap ? oldWrap.scrollLeft : 0, oldInsp = document.querySelector("[data-insp]"), keepI = oldInsp && S.lastSel === S.sel ? oldInsp.scrollTop : 0;
+    var oldVideo = document.querySelector("[data-video]");
+    document.documentElement.lang = S.lang === "zh" ? "zh-Hans" : S.lang;
+    var bad = D.props.filter(function (p) { return p.state === "check"; }), good = D.props.filter(function (p) { return p.state === "pass"; }).length;
+    h += '<header><div class="left"><span data-logo></span><span class="brand">Review</span><span class="mono dim path" title="' + esc(D.project_path) + '">' + esc(D.name) + (D.output_name ? " → " + esc(D.output_name) : "") + "</span>"
+      + (D.rendered ? '<span class="pill ' + (D.status === "completed" ? "unv" : "check") + '">' + esc(D.status === "completed" ? (D.verified ? tr("verified") : tr("notVerified")) : tr("failed")) + "</span>"
+        + '<span class="pill pass">' + tr("pass") + " " + good + "</span>" + (bad.length ? '<button class="pill check ghost" data-act="pick" data-id="' + bad[0].id + '">' + esc(tr("check")) + " " + bad.length + "</button>" : "")
+        : '<span class="pill unv">' + esc(tr("notRendered")) + "</span>") + "</div>"
+      + '<div class="right"><div class="seg" role="group" aria-label="' + esc(tr("lang")) + '">' + LANGS.map(function (l) { return '<button data-act="lang" data-id="' + l[0] + '" lang="' + l[0] + '" aria-pressed="' + (S.lang === l[0]) + '">' + l[1] + "</button>"; }).join("") + "</div>"
+      + '<button class="btn" data-act="save" aria-live="polite">' + esc(tr(S.saved ? "saved" : "save")) + "</button></div></header>";
+
+    h += '<div class="strip" role="group" aria-label="' + esc(tr("measured")) + '">' + ORDERED.map(function (p) {
+      if (p.state === "unv") { var on = !!S.checks[p.id]; return '<span class="pchip"><span class="mono dim">' + p.id + '</span><label for="chk-' + p.id + '"><input type="checkbox" id="chk-' + p.id + '" data-change="check" data-id="' + p.id + '"' + (on ? " checked" : "") + ">" + esc(p.name) + '</label><span class="pill ' + (on ? "check" : "unv") + ' mini">' + esc(tr(on ? "humanOk" : "unv")) + "</span></span>"; }
+      return '<button class="pchip ' + p.state + '"' + pick(p.id) + ' title="' + esc(show(p.measured)) + '"><span class="mono dim">' + p.id + "</span><span>" + esc(p.name) + '</span><span class="mono val">' + esc(p.measured === null || p.measured === undefined ? "" : show(p.measured)) + "</span>"
+        + (p.state === "pass" ? '<span class="st" role="img" aria-label="' + tr("pass") + '"></span>' : '<span class="pill check mini">' + esc(tr("check")) + "</span>") + "</button>"; }).join("") + "</div>";
+
+    h += '<main><div class="col left"><section class="panel" aria-label="' + esc(tr("sources")) + '"><h2>' + esc(tr("sources")) + '</h2><div class="srcs">'
+      + D.sources.map(function (s) { return '<button class="card"' + pick(s.id) + '><span class="row nowrap"><span class="id">' + s.id + '</span><span class="name">' + esc(s.name) + '</span></span><span class="facts">' + esc(s.facts.map(function (f) { return f[1] === null ? tr("unmeasured") : f[1]; }).join("\n")) + "</span></button>"; }).join("")
+      + '</div></section><section class="panel" aria-label="' + esc(tr("steps")) + '"><h2>' + esc(tr("steps")) + (D.rendered ? "" : ' <span class="dim">· ' + esc(tr("stagesFrom")) + "</span>") + '</h2><div class="steps">'
+      + STEPS.map(function (w) {
+        var mine = D.props.filter(function (p) { return p.stage === w.stage || p.stage === w.tool; }), failed = mine.filter(function (p) { return p.state === "check"; }).length;
+        return '<button class="step' + (failed ? " warn" : "") + '"' + pick(w.id) + '><span class="dot' + (mine.length && !failed ? " ok" : "") + '"></span><span class="grow0"><span class="main"><span class="mono"><b>' + label(w.id) + "</b> " + esc(w.stage) + '</span> <span class="dim">' + esc(w.tool ? w.tool + ".py" : "") + '</span></span><span class="sub">'
+          + (mine.length ? tr("pass") + " " + (mine.length - failed) + (failed ? " · " + esc(tr("check")) + " " + failed : "") : "—") + "</span></span></button>"; }).join("")
+      + (D.stages_note ? '<p class="empty">' + esc(D.stages_note) + "</p>" : "")
+      + '</div><select id="add-tool" name="add-tool" data-change="addTool" aria-label="' + esc(tr("pickTool", { n: Object.keys(TOOLS).length })) + '" title="' + esc(tr("unusedNote")) + '" class="addtool"><option value="">' + esc(tr("pickTool", { n: Object.keys(TOOLS).length })) + "</option>"
+      + Object.keys(TOOLS).map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + ".py — " + esc(TOOLS[n].d.slice(0, 60)) + "</option>"; }).join("") + "</select></section></div>";
+
+    var plats = isPhone() ? Object.keys(D.safe).concat([""]) : ["Title", ""];
+    h += '<div class="col mid"><section class="panel viewer" aria-label="' + esc(tr("tProgram")) + '"><div class="row between tight"><div class="seg" role="group" aria-label="' + esc(tr("viewMode")) + '">'
+      + [["source", "tSource"], ["program", "tProgram"], ["both", "tBoth"]].map(function (t) { return '<button data-act="tab" data-id="' + t[0] + '" aria-pressed="' + (S.tab === t[0]) + '">' + esc(tr(t[1])) + "</button>"; }).join("") + "</div>"
+      + '<label class="row dim small" for="safe-area">' + esc(tr("safe")) + '<select id="safe-area" name="safe-area" data-change="platform">'
+      + plats.map(function (p) { return '<option value="' + esc(p) + '"' + ((isPhone() ? S.platform === p : !!S.platform === !!p) ? " selected" : "") + ">" + esc(p === "Title" ? tr("titleSafe") : p || tr("none")) + "</option>"; }).join("") + "</select></label>"
+      + '<div class="row nowrap sws" role="group" aria-label="' + esc(tr("safeColor")) + '">' + COLORS.map(function (c) { return '<button class="sw" data-act="color" data-id="' + c[0] + '" style="background:' + c[0] + '" aria-pressed="' + (S.safeColor === c[0]) + '" aria-label="' + esc(tr(c[1])) + '" title="' + esc(tr(c[1])) + '"></button>'; }).join("") + "</div>"
+      + '<span class="mono tcode"><span data-tc>' + tc(S.t) + '</span> <span class="dim thin">/ ' + tc(DUR) + '</span></span></div><div class="stage' + (isPhone() ? "" : " wide") + '">'
+      + (S.tab !== "program" ? sourceFigure() : "") + (S.tab !== "source" ? programFigure() : "") + "</div>"
+      + '<div class="row tight">' + icon("prevMark", "prevMark") + icon("back", "back")
+      + '<button class="ic play" data-act="toggle" data-play aria-pressed="' + S.playing + '" aria-label="' + esc(tr(S.playing ? "pause" : "play")) + '" title="' + esc(tr(S.playing ? "pause" : "play")) + '">' + SVG[S.playing ? "pause" : "play"] + "</button>"
+      + icon("fwd", "fwd") + icon("nextMark", "nextMark") + '<span class="grow"></span>' + icon("mark", "mark", "g")
+      + '<button class="ic g" data-act="setIn" aria-label="' + esc(tr("inP")) + '" title="' + esc(tr("inP")) + '">' + SVG.inP + (S.rin === null ? "" : '<span class="mono small">' + fmt(S.rin) + "</span>") + "</button>" + icon("setOut", "outP", "g") + "</div></section>";
+
+    h += '<section class="panel" aria-label="' + esc(tr("timeline")) + '"><div class="row between"><h2>' + esc(tr("timeline")) + '</h2><span class="dim small">' + esc(tr("legend")) + '</span><span class="row nowrap tight" role="group" aria-label="' + esc(tr("zoomNow")) + '">'
+      + icon("zoomOut", "zoomOut", "s", S.zoom <= 1 ? " disabled" : "") + '<span class="mono zoomv" aria-live="polite">×' + S.zoom + "</span>" + icon("zoomIn", "zoomIn", "s", S.zoom >= 64 ? " disabled" : "") + icon("zoomFit", "zoomFit", "s", S.zoom === 1 ? " disabled" : "") + "</span></div>"
+      + '<div class="tlrow"><div class="tlwrap" data-tlwrap><div class="tl" style="width:' + (S.zoom * 100) + '%"><span></span><div class="ruler" data-ruler>'
+      + ticks().map(function (s) { return '<span class="tm" style="left:' + pct(s) + '">' + fmt(s).slice(0, 5) + "</span>"; }).join("")
+      + Object.keys(S.extra).filter(function (id) { return id[0] === "R"; }).map(function (id) { var x = S.extra[id]; return '<button class="rg"' + pick(id) + ' style="left:' + pct(x.a) + ";width:" + pct(x.b - x.a) + '">' + id + "</button>"; }).join("")
+      + Object.keys(S.extra).filter(function (id) { return id[0] === "M"; }).map(function (id) { return '<button class="mk own"' + pick(id) + ' style="left:' + pct(S.extra[id].at) + '">' + id + "</button>"; }).join("")
+      + '<span class="head" data-head aria-hidden="true" style="left:' + pct(S.t) + ";bottom:-" + (44 + (D.cues.length ? 40 : 0) + (D.has_audio ? 40 : 0)) + 'px"></span></div>'
+      + '<span class="lab">V1</span><div class="track v">' + CLIPS.map(function (o) { return '<button class="clip"' + pick(o.c.id) + ' style="left:' + pct(o.t0) + ";width:" + pct(o.t1 - o.t0) + '" title="' + esc(o.c.name) + '"><b>' + o.c.id + "</b>　" + esc(o.c.src + " " + val(P.clips[o.c.i].in) + "–" + (P.clips[o.c.i].out === null || P.clips[o.c.i].out === undefined ? "" : P.clips[o.c.i].out)) + "</button>"; }).join("") + "</div>"
+      + (D.cues.length ? '<span class="lab">T</span><div class="track">' + D.cues.map(function (q) { return '<button class="cue"' + pick(q.id) + ' style="left:' + pct(q.a) + ";width:" + pct(Math.max(q.b - q.a, 0)) + '" title="' + esc(q.text) + '"><b>' + q.id + "</b> " + esc((S.textEdits[q.id] !== undefined ? S.textEdits[q.id] : q.text).split("\n").join(" ⏎ ")) + "</button>"; }).join("") + "</div>" : "")
+      + (D.has_audio ? '<span class="lab">A1</span><div class="track a"><button class="aud"' + pick("A1") + ' aria-label="A1 ' + esc(tr("sound")) + '">'  + (D.wave ? '<img src="' + esc(D.wave) + '" alt="">' : '<span class="nm"><b>A1</b></span>') + "</button></div>" : "")
+      + "</div></div></div></section></div>";
+
+    h += '<div class="col right"><section class="panel scroll" data-insp aria-label="' + esc(tr("selected")) + '"><h2>' + esc(tr("selected")) + "</h2>" + inspector(it)
+      + (D.notes.length ? '<h2 class="gap">' + esc(tr("notes")) + "</h2>" + D.notes.map(function (n) { return '<p class="note">' + esc(n) + "</p>"; }).join("") : "") + "</section>";
+    h += '<section class="panel ai" aria-label="' + esc(tr("ai")) + '"><div><h2>' + esc(tr("ai")) + '</h2><span class="dim small">' + esc(tr("aiHelp")) + '</span></div><div class="rows">'
+      + (S.picked.length ? S.picked.map(function (id) {
+        return '<div class="irow"><label class="id" for="note-' + id + '">' + label(id) + '</label><input class="field" type="text" id="note-' + id + '" name="note-' + id + '" autocomplete="off" data-input="note" data-id="' + id + '" value="' + esc(S.notes[id] || "") + '" placeholder="' + esc(it[id].hint || tr("todo")) + '">'
+          + '<button class="btn rm" data-act="remove" data-id="' + id + '" aria-label="' + esc(tr("removeOf", { id: label(id) })) + '">' + esc(tr("remove")) + "</button>" + (autoOf(id) ? '<span class="auto mono" data-auto="' + id + '">' + esc(autoOf(id)) + "</span>" : "") + "</div>"; }).join("") : '<p class="empty">' + esc(tr("empty")) + "</p>")
+      + '</div><pre data-prompt aria-label="' + esc(tr("promptLabel")) + '" tabindex="0"></pre>'
+      + '<div class="row nowrap"><button class="btn primary nb" data-act="copy" data-copy aria-live="polite"></button><span data-foot></span></div></section></div></main>';
+
+    var app = document.getElementById("app");
+    if (oldVideo) oldVideo.remove();  // the same element goes back in, so a re-render does not restart playback
+    app.innerHTML = h;
+    document.querySelector("[data-logo]").appendChild(document.getElementById("logo").content.cloneNode(true));
+    var slot = document.querySelector("[data-video]");
+    if (slot && oldVideo) slot.replaceWith(oldVideo);
+    video = document.querySelector("[data-video]");
+    if (video && !video.dataset.bound) {
+      video.dataset.bound = "1";
+      video.addEventListener("timeupdate", function () { S.t = video.currentTime; refreshClock(); });
+      video.addEventListener("pause", function () { if (S.playing) { S.playing = false; render(); } });
+      video.addEventListener("ended", function () { S.playing = false; render(); });
+      video.addEventListener("error", function () { S.videoFailed = true; S.playing = false; video = null; render(); });
+    }
+    var wrap = document.querySelector("[data-tlwrap]");
+    if (wrap) { if (S.centre) { centreHead(wrap); S.centre = false; } else wrap.scrollLeft = keep; }
+    var insp = document.querySelector("[data-insp]"); if (insp) insp.scrollTop = keepI; S.lastSel = S.sel;
+    refreshPrompt();
+  }
+  function headX(wrap, head) { return head.getBoundingClientRect().left - wrap.getBoundingClientRect().left + wrap.scrollLeft; }
+  function centreHead(wrap) { var head = wrap.querySelector("[data-head]"); if (head) wrap.scrollLeft = headX(wrap, head) - wrap.clientWidth / 2; }
+  function refreshPrompt() {
+    var pre = document.querySelector("[data-prompt]"); if (pre) pre.textContent = promptText();
+    document.querySelectorAll("[data-copy]").forEach(function (b) { b.textContent = tr(S.copied ? "copied" : "copy"); });
+    var foot = document.querySelector("[data-foot]"), n = emptyRows();
+    if (foot) { foot.className = n ? "warnline" : "dim tiny"; foot.textContent = n ? tr("emptyRows", { n: n }) : tr("runsNothing"); }
+  }
+  var lastCue = null;
+  function refreshClock() {
+    var a = document.querySelector("[data-tc]"), b = document.querySelector("[data-head]");
+    if (a) a.textContent = tc(S.t); if (b) b.style.left = pct(S.t);
+    var img = document.querySelector("[data-outstill]"); if (img && img.getAttribute("src") !== stillNow()) img.setAttribute("src", stillNow());
+    var q = cueNow(), wrapCap = document.querySelector("[data-capwrap]");
+    if (wrapCap && (q ? q.id : null) !== lastCue) { lastCue = q ? q.id : null; wrapCap.innerHTML = capNote(); }
+    var wrap = document.querySelector("[data-tlwrap]");
+    if (wrap && b && S.zoom > 1) { var x = headX(wrap, b); if (x < wrap.scrollLeft + 40 || x > wrap.scrollLeft + wrap.clientWidth - 20) centreHead(wrap); }
+  }
+  function seek(t) { S.t = Math.max(0, Math.min(DUR, t)); if (video) { try { video.currentTime = S.t; } catch (e) { /* not seekable yet */ } } refreshClock(); }
+  function select(id) { if (!items().hasOwnProperty(id)) return; if (S.sel !== id) S.flagFilter = ""; S.sel = id; if (S.picked.indexOf(id) < 0) S.picked.push(id); S.copied = false; render(); }
+  function marks() { return Object.keys(S.extra).filter(function (id) { return id[0] === "M"; }).map(function (id) { return S.extra[id].at; }).concat(CLIPS.map(function (o) { return o.t0; })).sort(function (x, y) { return x - y; }); }
+  function touch(id) { if (noteOf(id) && S.picked.indexOf(id) < 0) S.picked.push(id); S.copied = false; }
+
+  var ACT = {
+    pick: function (d) { select(d.id); var c = CLIPS.filter(function (o) { return o.c.id === d.id; })[0], q = D.cues.filter(function (x) { return x.id === d.id; })[0], x = S.extra[d.id]; if (c) seek(c.t0); else if (q) seek(q.a); else if (x && x.at !== undefined) seek(x.at); },
+    lang: function (d) { if (!L.hasOwnProperty(d.id)) return; S.lang = d.id; try { localStorage.setItem("review-lang", d.id); } catch (e) { /* not remembered */ } render(); },
+    tab: function (d) { S.tab = d.id === "source" || d.id === "program" ? d.id : "both"; render(); },
+    color: function (d) { var known = COLORS.filter(function (c) { return c[0] === d.id; })[0]; if (known) { S.safeColor = known[0]; render(); } },
+    toggle: function () {
+      if (S.playing) { S.playing = false; if (video) video.pause(); clearInterval(timer); }
+      else { S.playing = true; if (video) { var p = video.play(); if (p && p.catch) p.catch(function () { S.playing = false; render(); }); } else timer = setInterval(function () { S.t = S.t + 0.1 >= DUR ? 0 : S.t + 0.1; refreshClock(); }, 100); }
+      render();
+    },
+    prevMark: function () { var m = marks().filter(function (x) { return x < S.t - 0.05; }); seek(m.length ? m[m.length - 1] : 0); },
+    nextMark: function () { var m = marks().filter(function (x) { return x > S.t + 0.05; }); seek(m.length ? m[0] : DUR); },
+    back: function () { seek(S.t - 1 / FPS); }, fwd: function () { seek(S.t + 1 / FPS); },
+    mark: function () { var id = "M" + S.nM; S.nM += 1; S.extra[id] = { at: S.t }; select(id); },
+    setIn: function () { S.rin = S.t; render(); },
+    setOut: function () { if (S.rin === null || S.t <= S.rin) return; var id = "R" + S.nR; S.nR += 1; S.extra[id] = { a: S.rin, b: S.t }; S.rin = null; select(id); },
+    zoomIn: function () { if (S.zoom < 64) { S.zoom *= 2; S.centre = true; render(); } },
+    zoomOut: function () { if (S.zoom > 1) { S.zoom /= 2; S.centre = true; render(); } },
+    zoomFit: function () { S.zoom = 1; render(); },
+    cur: function (d) {
+      var f = S.flags[S.sel] || (S.flags[S.sel] = {}), v = d.val === "1" && d.flagkey === "box" ? true : d.val;
+      if (f[d.flagkey] === v) delete f[d.flagkey]; else f[d.flagkey] = v;
+      touch(S.sel); render();
+    },
+    quick: function (d) { var had = (S.notes[S.sel] || "").trim(); S.notes[S.sel] = had && had.indexOf(tr(d.id)) < 0 ? had + (S.lang === "en" ? "; " : "、") + tr(d.id) : tr(d.id); if (S.picked.indexOf(S.sel) < 0) S.picked.push(S.sel); S.copied = false; render(); },
+    remove: function (d) { S.picked = S.picked.filter(function (x) { return x !== d.id; }); S.copied = false; render(); },
+    save: function () {
+      var blob = new Blob([JSON.stringify(P, null, 2) + "\n"], { type: "application/json" }), a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = D.name; document.body.appendChild(a); a.click(); a.remove(); S.saved = true; render();
+    },
+    copy: function () {
+      var text = promptText();
+      function done() { S.copied = true; refreshPrompt(); }
+      function fallback() { var pre = document.querySelector("[data-prompt]"), r = document.createRange(); r.selectNodeContents(pre); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+      try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+    }
+  };
+  var app = document.getElementById("app");
+  app.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-act]");
+    if (b && !b.disabled && ACT.hasOwnProperty(b.dataset.act)) { ACT[b.dataset.act](b.dataset); return; }
+    var ruler = e.target.closest("[data-ruler]");
+    if (ruler) { var r = ruler.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * DUR); }
+  });
+  app.addEventListener("input", function (e) {
+    var el = e.target;
+    if (el.dataset.input === "flagFilter") { S.flagFilter = el.value; var box = document.querySelector("[data-flaglist]"); if (box) box.innerHTML = flagRowsHtml(); return; }
+    if (el.dataset.input === "note") { S.notes[el.dataset.id] = el.value; S.copied = false; refreshPrompt(); }
+    if (el.dataset.input === "caption") {
+      S.textEdits[S.sel] = el.value; S.copied = false;
+      if (S.picked.indexOf(S.sel) < 0) { S.picked.push(S.sel); render(); var again = document.getElementById("caption-text"); again.focus(); again.setSelectionRange(again.value.length, again.value.length); return; }
+      var cueBtn = document.querySelector('.cue[data-id="' + S.sel + '"]'), capBox = document.querySelector("[data-capwrap]");
+      if (cueBtn) cueBtn.innerHTML = "<b>" + S.sel + "</b> " + esc(el.value.split("\n").join(" ⏎ "));
+      if (capBox) capBox.innerHTML = capNote();
+      var auto = document.querySelector('[data-auto="' + S.sel + '"]'); if (auto) auto.textContent = autoOf(S.sel); else { render(); var c2 = document.getElementById("caption-text"); c2.focus(); c2.setSelectionRange(c2.value.length, c2.value.length); return; }
+      refreshPrompt();
+    }
+  });
+  app.addEventListener("change", function (e) {
+    var el = e.target, again = el.id;
+    if (el.dataset.change === "platform") { S.platform = el.value === "Title" ? "title" : D.safe.hasOwnProperty(el.value) ? el.value : ""; render(); }
+    if (el.dataset.change === "check") { S.checks[el.dataset.id] = el.checked; render(); }
+    if (el.dataset.change === "addTool" && el.value) { var nid = "N" + S.nN; S.nN += 1; S.extra[nid] = { tool: el.value }; select(nid); }
+    if (el.dataset.clip) {
+      var i = Number(S.sel.slice(1)) - 1, k = el.dataset.clip, v = el.value.trim(), ed = S.clipEdits[S.sel] || (S.clipEdits[S.sel] = {});
+      if (v === "") delete P.clips[i][k]; else P.clips[i][k] = (k === "speed" || /^\d+(\.\d+)?$/.test(v)) ? Number(v) : v;
+      ed[k] = v; S.saved = false; touch(S.sel); render(); var back = document.getElementById(again); if (back) back.focus();
+    }
+    if (el.dataset.flag) {
+      var f = S.flags[S.sel] || (S.flags[S.sel] = {}), val = el.type === "checkbox" ? (el.checked ? true : "") : el.value.trim();
+      if (val === "") delete f[el.dataset.flag]; else f[el.dataset.flag] = val;
+      touch(S.sel); render(); var b2 = document.getElementById(again); if (b2) b2.focus();
+    }
+  });
+  document.addEventListener("keydown", function (e) {
+    var t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key.toLowerCase(), map = { " ": "toggle", k: "toggle", j: "back", l: "fwd", i: "setIn", o: "setOut", m: "mark" };
+    if (k === " " && t && t.tagName === "BUTTON") return;  // Space presses the focused button
+    if (map[k]) { e.preventDefault(); ACT[map[k]]({}); }
+  });
+  // keep the computer layout at any window size: below the design width the whole screen is scaled to fit
+  function fit() {
+    var w = window.innerWidth, h = window.innerHeight, k = Math.min(1, w / 1440, h / 860);
+    app.style.transform = k < 1 ? "scale(" + k + ")" : ""; app.style.width = k < 1 ? (w / k) + "px" : ""; app.style.height = k < 1 ? Math.min(h / k, (w / k) * 0.625) + "px" : "";
+  }
+  window.addEventListener("resize", fit);
+  fit();
+  render();
+})();
+</script>
+</body></html>

@@ -236,7 +236,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio, `--smart` for a frame-exact H.264 cut that re-encodes only the partial GOPs at the cut points (matched to the source, verified against its packets and frames) and copies the rest, an SDR HEVC source re-encodes as HEVC (`--no-keep-hevc` for x264), a single `.mp4`/`.mov` copy keeps its edit list, so the picture starts at `--start` unless a keyframe lands later (`start_snapped` then says so; `--no-edit-list` for 2.x's shifted start), `--vfr-guard` to choose the VFR check (`sampled` by default); reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse ; `--remove A-B,...` drops ranges and keeps the rest |
 | `join.py` | Concatenate clips with xfade transitions, normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio; `--list parts.txt` reads generated segments (TTS lines) and checks every one first — missing, empty or unreadable parts are all named in one refusal, or skipped and reported with `--on-missing skip` ; `--copy --transition none` joins clips with matching streams by stream copy, measured afterwards, and refuses a mismatch by name |
 | `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech (`--margin`, 0.2 s each side); list or export the cut list, or a source-to-output time map (`--timemap`, JSON or CSV); reports the level at every cut and warns where one may land in a breath or a word's tail; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()`; `--margin-lead` / `--margin-tail` keep different amounts before and after speech, and with word timings `--sentence-min-silence` / `--sentence-margin-tail` give the pause after a sentence end (the transcript's punctuation) its own floor and tail |
-| `fit.py` | Fit to a duration (pitch-preserving speed change or trim, smooth slow-mo), aspect ratio (pad, crop or blurred fill) or exact size. `picture` measures the written frame. `crop_check` flags discarded motion or detail and can suggest `--crop-x`/`--crop-y`. Rotate 90/180/270, flip h/v and force constant fps. |
+| `fit.py` | Fit to a duration (choose a method for large speed changes), aspect ratio (pad, crop or blurred fill) or exact size. `picture` measures the written frame. `crop_check` flags discarded motion or detail and can suggest `--crop-x`/`--crop-y`. Rotate 90/180/270, flip h/v and force constant fps. |
 | `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
 | `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file; `--motion-centre` reports the per-second motion centroid instead, for a 9:16 reframe — report only, the calling agent picks the crop, no auto-reframing |
 | `deinterlace.py` | Deinterlace interlaced source footage (`yadif`), `--mode frame`/`field`, `--parity` |
@@ -249,7 +249,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `reverse.py` | Reverse playback (video and, unless `--no-audio`, audio) |
 | `stabilize.py` | Two-pass motion stabilisation (`vidstabdetect`/`vidstabtransform`) |
 | `sequence.py` | Numbered (`frame_%04d.png`) or glob-matched still images into a video |
-| `waveform.py` | Render an audio track as a waveform or spectrum visualization video (`showwaves`/`showspectrum`) — for audio-only inputs with no picture worth showing; `--image` puts the visualisation over a still plate (an audiogram), with `--platform`, `--title` and burnt-in captions |
+| `waveform.py` | Render an audio track as a waveform or spectrum video. Use `--at` for a waveform PNG at a cut time, or `--image` for a video audiogram with `--platform`, `--title` and burnt-in captions |
 | `freeze.py` | Hold a frame for N seconds (`--at`, `--hold`, `--mode insert/extend`) — an end-card hold or a comedic beat |
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
 | `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |
@@ -359,6 +359,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `requires_visual_verification` | the picture changed; inspect the contact sheet |
 | `audio_only`, `video_required` | whether an audio-only input is accepted or refused |
 | `mutates_input` | always `false` |
+| `stability` | `stable` for the 12 core tools, `beta` for the other 30 (since 4.0.0) |
 | `idempotency_hint` | `bit_exact`, `content_equivalent`, `cached` or `environment_dependent` |
 
 Next to the tool list the document carries a top-level `deprecated` list (since 1.10): what the next major removes, since when, the replacement and the surface it lives on. It is empty in 3.0.0: Python 3.9 and FFmpeg 5.x, the two 2.x entries, moved to `removed` with what 2.0 removed, and `docs/contract.md` "What 2.0 changed" and "What 3.0 changed" are written from that.
@@ -376,6 +377,12 @@ On Windows, `python3` is only on PATH if Python was installed from the Microsoft
 `mcp/server.py` is a stdio JSON-RPC transport with no tool table of its own. `tools/list` is derived from the contract at start-up, in contract order, with `inputSchema` translated from each tool's `input_schema`. By default it lists only the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`) so a client doesn't pay context for 30 schemas it rarely calls directly; set `FFMPEG_SKILL_MCP_FULL=1` to list all 42. Every tool, listed or not, is callable through `tools/call`, which maps structured arguments to argv and runs the named script; a raw `argv` form is accepted for compatibility and marked non-canonical. `python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
 No `inputSchema` lists `json` or `progress`: they are transport flags the server sets itself, not tool arguments (2.0; 1.x listed them unless `FFMPEG_SKILL_MCP_LEAN=1`). A client that still sends them is not refused.
+
+To receive encode progress during `tools/call`, send a string or integer in
+`params._meta.progressToken`. The server sends `notifications/progress` with
+that token and the current FFmpeg step's percent and ETA when available. The
+final tool result still arrives separately. Dry runs and calls without a token
+return their results without progress notifications.
 
 A structured value is never read as an option: one that starts with `-` (overlay text `-50%`) is passed as `--flag=value`, and positionals that start with `-` follow `--`. `probe`, `check` and `cropdetect` are annotated `readOnlyHint` and write no file over MCP (their `plan` is refused, structured or in a raw `argv`); every other tool is `destructiveHint`, because with `overwrite` it replaces an existing file. See `docs/contract.md` § MCP relationship.
 
@@ -429,11 +436,13 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Filler words (1.17).** `silence.py --filler --words transcript.json` removes "um" and "uh" through the same cut graph the silences use. Never without measured word timings — there is no heuristic that finds an "um" without them that would not also cut real speech — and `like`, `tipo` and `cioè` are deliberately not in the built-in lists, because a discourse marker is a content word. Built-in lists since 2.19: English, Japanese, Korean, Chinese, Spanish, German, French, Portuguese, Italian, Dutch, Polish, Russian and Turkish; any other language takes `--filler-words FILE`. Whisper stays optional: `--transcribe` with no engine installed refuses and names the five installs.
 - **Throughput (1.17).** `batch.py --jobs N` runs several files at once, capped at `min(N, cpu_count, 8)` and sharing one `--timeout` budget rather than one per item; the per-item table keeps its order. `render.py --cache DIR` reuses stages whose inputs and arguments did not change, so swapping an export preset re-runs export only. The cache is opt-in with no default directory, and the ffmpeg, skill and contract versions are part of every key, so a cache is never reused across them.
 - **Audiogram (1.16).** `waveform.py --image cover.png` (or `render.py --template audiogram`) puts the waveform over a still plate for an episode that has no picture, with `--platform` for the frame, `--title` and burnt-in captions. The image is a local file you give: nothing is fetched and no cover art is ever invented.
+- **Cut review.** `waveform.py clip.mp4 --at 12.4 --window 2 -o cut.png` marks the chosen cut time on a waveform PNG. Repeat `--at` for numbered images and use the exported cut's own time coordinates when inspecting the edited file.
 - **Emoji in captions and titles (1.15).** `caption.py`/`graphics.py --emoji-assets DIR` composites a PNG per emoji (Twemoji naming, `1f389.png`, or Noto's `emoji_u1f389.png`) on top of the text, because drawtext cannot load a colour emoji font at all and an installed one does not prove libass will draw it in colour — `doctor --json`'s `fonts.emoji` answers that from a render probe. Without assets the result's `emoji.mode` says which of three things happened: `color` when this build's libass draws the colour glyph (also for `--emoji mono` on such a build, with a warning), `mono` when it draws a monochrome one, and `none` when the emoji are left out of the text: with an `emoji_not_drawn` warning when that happened because nothing here draws the glyph, and with only an info line when `--emoji none` asked for it (and a `graphics.py` title that is nothing but emoji is refused). Nothing is ever downloaded.
 - **Indic and Thai text shaped correctly in titles and lower-thirds (1.15).** `graphics.py` renders Devanagari, Bengali, Tamil, Thai and Lao through libass automatically (`text_renderer: "ass"`), because drawtext never reorders matras or re-clusters marks; Arabic and Hebrew were already correct on a fribidi build. `--text-render drawtext` with such a script is refused, never rendered wrongly.
 - **Non-Latin text picks a font by script (1.12).** Japanese, Chinese, Korean, Arabic, Hebrew, Devanagari, Thai, Cyrillic and Greek cues, titles and overlays resolve a font file that covers them automatically, and a machine with no such font fails the job (`kind: input`) instead of rendering boxes. `doctor --json`'s `fonts.scripts` says which languages this machine can render; `--lang ja|ko` disambiguates Han-only text, and `--lang zh-TW` (or `zh-HK`, `zh-Hant`) picks a Traditional Chinese face (2.19); an explicit `--font`/`--font-file` is always kept.
 - **Silence detection finds nothing?** The default threshold is −35 dBFS. The tool prints a hint with the track's measured level; raise the threshold (`silence.py --threshold -25`) or shorten `--min-silence`.
 - **Sync results carry a confidence.** Below 0.3, or an offset near the edge of the analysis window, is probably wrong: enlarge `--analyze-seconds` or find a clap. Recordings over ten minutes from separate devices need `sync.py --fix-drift`.
+- **Odd file names and unusable inputs are named, not passed to ffmpeg.** A still called `a%20b.png` or `logo%d.png` is read as that one file; a relative subtitle, LUT or font path with a colon works (`--srt ./a:b.srt`); an input whose name starts with `-` is read as a file (give it after `--` or as `./-name.mp4`). An input that is empty, a directory, not media or not readable by the user is refused with its own `error.reason` (`input_empty`, `input_is_directory`, `input_not_media`, `input_permission_denied`) and a hint; an output extension this FFmpeg build has no muxer for (`out.xyz`) is refused before anything runs (`output_extension_unknown`), dry runs included.
 - **Outputs are never overwritten silently.** An existing output path is refused (`kind: input`, `error.reason: output_exists`, before anything runs); pass `--overwrite` where a replacement is intended.
 - **Nothing happens silently.** A refusal names its `error.reason` and `error.details`; a stale output lock taken over, a run without a lock, a plan input nobody could fingerprint, a fallback (an odd-sized frame scaled to even, a substituted font, libaom for SVT-AV1), a skipped step and every warning are recorded in `diagnostics` and on stderr (codes: `json_output.diagnostic_codes`); tools that draw text name the font face they drew with (`font_used`; libass draws a glyph that face lacks from another, not named). A refused plan and a lock takeover also append a line to an audit log (`<plan>.audit.jsonl`, or `render.py --audit-log FILE`). A degraded or partial result says so: `render.py`'s `verified` is every stage's, an unmeasured loudness or a report section that could not be built is a failing verification step, `export.py` reports `trimmed`, `multicam.py`'s `cuts` name the camera rendered, and `batch.py` rows carry the failing step's `error`, `verified`, and a row for every input after Ctrl-C.
 - **Long masters need a longer `--timeout`.** The default is 1800 s per ffmpeg call, which is there to catch a hang. A full re-encode of an hour of 1080p at the default preset ran past it on a 4-core machine (see [A one-hour recording](#a-one-hour-recording)). Pass `--timeout 0` or a larger value, or `--fast`. Analysis and stream-copy cuts are far below it.
@@ -485,6 +494,26 @@ Every command a tool records as run is in its `--json` `commands` (`batch.py` li
 
 It cannot tell you whether the result looks or sounds right, and the result says so: every writing tool lists the properties it did not measure in `unverified`. Examples are `picture_content` (what is in the frame), `subject_framing` after a reframe, `rendered_placement` and `legibility` of captions and titles, `grade_look` after a colour conversion, `removed_span_content` after a silence cut (whether a removed span held speech), `mix_balance` and `lip_sync`. For those, look at frames with `look.py` (a contact sheet, or `--safe` for a platform's UI zones) and listen where the result points you. `silence.py` lists the level at every cut, and `cut_warnings` names the cuts that may have landed in a breath or a word's tail.
 
+For a single-file video delivery other than GIF, the call fails if an expected picture or audio stream is missing, the
+video codec (for an editing master also its profile and pixel format), dimensions or fixed frame rate differ from the preset, or the output exceeds a duration or file size limit.
+The written file stays available for diagnosis. When a platform preset specifies loudness, a failed loudness check
+marks the export unverified so the caller can decide whether to normalize or retry.
+
+`check.py --content` looks for black frames, freezes, flashes, silence and audio dropouts where
+the relevant stream exists. Review WARN rows for checks that could not measure a property.
+Delivery templates run these checks on the written file by default. A single-template render
+includes the rows in `check.checks` when it reaches the check stage. A dry run
+records `check_dry_run` and leaves `check` null. A real check adds decode time. For an intentional exception,
+fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}`
+in the project before rendering. After a failed check, choose a new output or pass
+`--overwrite` to intentionally replace the retained file. JSON `commands` records
+the render's FFmpeg command lines. A single-template render lists content-check commands in
+`check.commands`. A social pack reports a verdict per output. Run `check.py FILE --platform NAME --content`
+on an individual file for its full rows and commands.
+For separate recordings, `sync.py` measures audio offset. Use `--fix-drift` to also
+request a drift measurement, which may be unavailable for short or low-confidence recordings.
+Review lip sync by watching and listening to the delivered file.
+
 When a real export fits video into a preset frame, `picture` gives the rectangle for pad, blur fill or crop if the measurement succeeds. If it fails, the report carries `measured: false` and a reason. A project render carries its fit and export reports in `stage_pictures` and the final framing report in `picture` when available. Dry runs omit both fields.
 
 A contact sheet surveys one file. To inspect a cut's first frame, put the requested source
@@ -493,11 +522,41 @@ position beside the output start with
 Open the PNG to check the two frames. For several cuts, pair the source in-points with their
 positions in the output by repeating both time flags.
 
+### How do I finish a vertical crop for Reels?
+
+On a 1920×1080 source, the first command below centre-crops to **608×1080**.
+The Reels preset scales it to the **1080×1920** delivery frame and applies audio
+correction if required. To do the whole delivery in one project, use `render.py --template reels`.
+
+```bash
+python3 scripts/fit.py source.mp4 --aspect 9:16 --fit crop -o vertical.mp4
+python3 scripts/export.py vertical.mp4 --preset reels -o reels.mp4
+python3 scripts/check.py reels.mp4 --platform reels
+```
+
+When an export returns a `loudness` block, `lufs` is the written file's reading,
+or `null` if unavailable. `loudness.normalized` records whether export applied
+correction. `loudness.ok` is true or false when the target can be evaluated, and
+`null` when it cannot. Since 4.0.0 a platform preset corrects a miss by default
+(`--no-normalize` measures and reports only, as 3.x did); with `--no-normalize`, use the
+`loudness.py` command in the warning.
+A silent track needs usable source audio before its level can be corrected.
+
 ### Are silence removal and captions stable?
 
 They are the most used tools here, and they are tested on every pull request and every push to `main` on Linux, macOS and Windows, with FFmpeg 6.1 to 9. On 20 test files with known gaps, `silence.py` missed none and left at most 1 ms of silence (see [Tested on real footage](#tested-on-real-footage)). A cut keeps `--margin` seconds of air on each side, 0.2 s by default; raise it to 0.3 s for a speaker who trails off. `--speech-aware` keeps the short breaths inside a sentence. Filler words are removed only from measured word timings (`--words` or a local `--transcribe`), never guessed. `--timemap` writes where each kept and removed range sits in the source and the output, for re-timing subtitles. If `--threshold` is set high enough to cut into a breath or a weak word ending, the result warns at that cut.
 
 `caption.py` burns SRT/ASS or muxes them as soft tracks, fits the size to the platform's safe area, and picks a font that covers the script (Japanese, Chinese, Korean, Arabic, Thai, Hindi and others). It needs FFmpeg's `subtitles` filter (libass); `doctor` reports whether this build has it. Placement and legibility are listed as `unverified`, so look at a contact sheet before delivering. Speech-to-text runs on a local engine you install; its first run may download a model.
+
+#### Vietnamese captions
+
+Check `doctor --json` → `fonts.scripts.vi` for Vietnamese font coverage.
+Use `caption.py input.mp4 --srt vi.srt --lang vi` to burn reviewed UTF-8 captions.
+The font lookup also recognizes common Vietnamese accents in unlabelled cues.
+For local speech recognition, use
+`caption.py input.mp4 --transcribe --lang vi --engine faster-whisper --model base`.
+Use a multilingual Whisper model and review its transcript before delivery.
+The Vietnamese regression tests cover font selection and burn-in from SRT.
 
 ### Which engine provides word timestamps for karaoke?
 
@@ -528,7 +587,12 @@ A rectangle you already know, sitting still for the whole clip, can be filled fr
 
 ### Does it auto-track faces or subjects for reframing?
 
-`fit.py --fit crop` centres the crop unless you pass `--crop-x` and `--crop-y`. `crop.py` cuts the rectangle you pass. `cropdetect.py` measures letterbox bars, and `--motion-centre` reports where motion sat each second; it writes no file and picks no crop. `sphere.py` points a 360 view where you aim it. `look.py` writes a contact sheet. Nothing in this repository detects a face, a product or a subject. Choosing what to keep in frame is the caller's.
+`fit.py --fit crop` centres the crop unless you pass `--crop-x` and `--crop-y`. Check
+`crop_check.review_points` for sampled moments when luma motion or edge detail falls
+outside the kept window. Use `look.py OUTPUT --at TIME` with an indicated
+`output_time_estimate` to inspect one. `crop.py` cuts the rectangle you pass.
+`cropdetect.py --motion-centre` reports where motion sat each second. `sphere.py`
+points a 360 view where you aim it. Subject framing still needs visual review.
 
 ### Does it encode on the GPU?
 
@@ -628,6 +692,23 @@ limit. The error message names the fix. For a long master, pass `--timeout 0` (n
 larger value, or `--fast`, which at the measured rate takes about 16 minutes for the hour.
 Analysis tools and stream-copy cuts stay far below the limit.
 
+### Plan a long edit or batch
+
+1. Probe the master and make one lightweight copy for review with
+   `python3 scripts/proxy.py master.mp4 --width 640 -o review.mp4`. Use the
+   master for the final cut and check the chosen boundaries on its timeline.
+2. Run whole-file analysis once and save the results. For example,
+   `python3 scripts/silence.py master.mp4 --list --json > silence.json` lists
+   the ranges to review. Pass the chosen ranges to `cut.py --segments`. When
+   the delivery uses only selected material, trim before reframing, adding
+   captions, or applying effects.
+3. Time a representative segment at the final resolution, codec, and quality
+   to set the export timeout. Watch peak memory across the tool and its FFmpeg
+   children. For a batch, start with `--jobs 1` and increase to `--jobs 2` on the
+   same sample only if throughput improves and the workstation has memory
+   headroom. Each concurrent encode has its own decoder, filter buffers, and
+   encoder threads. A parallel batch shares one timeout across its items.
+
 ## Install
 
 Where it can be installed from today. Each route is spelled out below the table.
@@ -709,7 +790,7 @@ FFmpeg itself:
 
 ## Stability
 
-3.x keeps every tool name, CLI argument, JSON output key and exit code working: nothing is removed or renamed, and nothing optional becomes required, until 4.0. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-3x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. Releases are batched: related fixes and features ship together as one version rather than one version per merged pull request, so a dependent project sees fewer, larger steps. Pin a tagged version, not `main`. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed).
+4.x splits the promise by tool: the 12 core tools (`stability: stable` in `contract --json`) keep every tool name, CLI argument, JSON output key and exit code working until 5.0, as every tool did in 3.x; the other 30 (`beta`) may drop or rename an argument or an output key in a minor release after one minor of notice in `deprecated`. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-4x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. Releases are batched: related fixes and features ship together as one version rather than one version per merged pull request, so a dependent project sees fewer, larger steps. Pin a tagged version, not `main`. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed). 4.0.0 is the third: it split the promise by tool (above), made `export.py` exit non-zero when a video delivery misses a required property, made `fit.py --duration` ask for `--method` before a retime beyond 1.15x, turned on content checks in the delivery templates, and gave unusable inputs their own `error.reason` -- see [docs/contract.md](docs/contract.md#what-40-changed).
 
 ## Development
 

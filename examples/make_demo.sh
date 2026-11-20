@@ -59,7 +59,7 @@ step "3/10 cut.py  (two segments, lossless copy + concat)"
 "$PY" "$SCRIPTS/cut.py" "$OUT/source.mp4" --segments 1-4,7-10 -o "$OUT/01_cut.mp4" --overwrite
 
 step "4/10 fit.py  (retime to 8 s, pad to 9:16 at 720 px wide)"
-"$PY" "$SCRIPTS/fit.py" "$OUT/source.mp4" --duration 8 --aspect 9:16 --fit pad --width 720 -o "$OUT/02_fit.mp4" --overwrite
+"$PY" "$SCRIPTS/fit.py" "$OUT/source.mp4" --duration 8 --method speed --aspect 9:16 --fit pad --width 720 -o "$OUT/02_fit.mp4" --overwrite
 
 step "5/10 caption.py (text cues -> animated ASS with word highlight -> burn in)"
 "$PY" "$SCRIPTS/caption.py" "$OUT/source.mp4" --text "$OUT/cues.txt" --write-srt "$OUT/cues.srt" \

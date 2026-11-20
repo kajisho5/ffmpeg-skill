@@ -292,7 +292,7 @@ class EditingTests(MediaFixtures):
     # ---------------------------------------------------------------- fit
     def test_fit_duration_speed_and_aspect_pad(self):
         out = OUT / "fit1.mp4"
-        script("fit.py", self.src, "--duration", "6", "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
+        script("fit.py", self.src, "--duration", "6", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--width", "540", "-o", out)
         m = probe(str(out))
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
@@ -411,14 +411,14 @@ class EditingTests(MediaFixtures):
             vals = {k: float(v) for k, v in re.findall(r"lavfi\.signalstats\.(YAVG|YMIN|YMAX)=([0-9.]+)", proc.stdout)}
             return vals["YAVG"], vals["YMAX"] - vals["YMIN"]
         blur = OUT / "fit_pad_blur.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--pad-fill", "blur", "--width", "360", "--fast", "-o", blur)
         m = probe(str(blur))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
         avg, spread = bar_stats(str(blur))
         self.assertGreater(avg, 20, f"blurred bar is (nearly) black: YAVG {avg}")
         self.assertGreater(spread, 10, f"blurred bar is flat: spread {spread}")
         solid = OUT / "fit_pad_color.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "pad", "--width", "360", "--fast", "-o", solid)
         avg, spread = bar_stats(str(solid))
         self.assertLess(avg, 20, f"solid black bar is not black: YAVG {avg}")
         self.assertLess(spread, 4, f"solid bar is not flat: spread {spread}")
@@ -1319,7 +1319,7 @@ class EditingTests(MediaFixtures):
                                          ("fit.py", mute, ["--method", "trim", "--duration", "1.23425"], "-t 1.234 "),
                                          ("fit.py", two48, ["--method", "trim", "--duration", "1.2"], "-t 1.200 "),
                                          # a retimed track ends before the target (atempo), so its -t cuts nothing and stays
-                                         ("fit.py", two48, ["--duration", "1.23425"], "-t 1.234 ")):
+                                         ("fit.py", two48, ["--duration", "1.23425", "--method", "speed"], "-t 1.234 ")):
             with self.subTest(pending=tool, source=source.name, args=args):
                 plan = json.loads(script(tool, source, *args, "--dry-run", "-o", OUT / "ms_plan.mp4", "--json").stdout)
                 self.assertIn(text, str(plan["commands"]))
@@ -2302,15 +2302,35 @@ class EditingTests(MediaFixtures):
         """2.24: --copy --transition none joins clips with matching streams by stream copy (the
         joined packets are the clips' packets, nothing re-encoded), and refuses a clip that differs,
         or a picture and sound that end apart, by name and before anything is written."""
-        clips = [self._av_clip(OUT / f"copy_{i}.mp4", 2, 2, 300 + 200 * i) for i in range(3)]
+        # three AAC clips would put the sound 87 ms behind by clip 3 (#610, refused below and in
+        # test_join_copy_refuses_aac_priming_that_accumulates_at_seams); two stay within 50 ms
+        clips = [self._av_clip(OUT / f"copy_{i}.mp4", 2, 2, 300 + 200 * i) for i in range(2)]
         out = OUT / "copy_joined.mp4"
         doc = json.loads(script("join.py", *clips, "--copy", "--transition", "none", "-o", out, "--overwrite", "--json").stdout)
         self.assertEqual((doc["status"], doc["mode"], doc["verified"]), ("completed", "copy", True), doc)
         self.assertTrue(doc["lossless"], doc)
         packets = {v["property"]: v for v in doc["verification"] if v.get("step") == "join"}
-        self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 3 * 60, packets)
+        self.assertTrue(packets["video_packets"]["ok"] and packets["video_packets"]["measured"] == 2 * 60, packets)
         self.assertNotIn("libx264", " ".join(doc["commands"]))
-        self.assertClose(probe(str(out))["video"]["duration"], 6.0, 0.1)
+        self.assertClose(probe(str(out))["video"]["duration"], 4.0, 0.1)
+        # a third clip: on FFmpeg 6.1 to 8 the predicted delay passes 50 ms and the join is refused;
+        # where a build predicts less (FFmpeg 9 joins it), the joined sound is measured against
+        # where each clip starts, so the prediction is checked on whichever build runs this
+        third = self._av_clip(OUT / "copy_2.mp4", 2, 2, 2000)  # far from 300 and 500 Hz: its band hears only it
+        three = OUT / "copy_three.mp4"
+        three.unlink(missing_ok=True)  # a refusal is judged on this run's output only
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "join.py"), *map(str, clips), str(third), "--copy",
+                               "--transition", "none", "-o", str(three), "--json", "--overwrite"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        doc = json.loads(proc.stdout)
+        if proc.returncode:
+            self.assertEqual(doc["error"]["reason"], "join_copy_mismatch", doc)
+            self.assertGreater(abs(doc["error"]["details"]["aac_drift_ms"]), 50, doc)
+            self.assertFalse(three.exists())
+        else:
+            self.assertEqual((doc["mode"], doc["verified"]), ("copy", True), doc)
+            for freq, start in ((500, 2.0), (2000, 4.0)):
+                self.assertLessEqual(abs(self._tone_onset(three, freq) - start), 0.05, f"{freq} Hz clip starts late")
         wide = OUT / "copy_wide.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=96x48:r=30:d=2",
            "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", wide)
@@ -2362,9 +2382,72 @@ class EditingTests(MediaFixtures):
         quiet = OUT / "copy_quiet.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48:r=30:d=2",
            "-f", "lavfi", "-i", "sine=f=500:d=2", "-af", "volume=0", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", quiet)
-        doc = json.loads(script("join.py", clips[0], quiet, clips[1], "--copy", "--transition", "none", "-o",
+        # two clips: three AAC clips would put the sound 87 ms behind by the third (#610)
+        doc = json.loads(script("join.py", clips[0], quiet, "--copy", "--transition", "none", "-o",
                                 OUT / "copy_with_quiet.mp4", "--overwrite", "--json").stdout)
         self.assertEqual([(s["at"], s["end"]) for s in doc["silent"]], [(2.0, 4.0)], doc.get("silent"))
+
+    def test_join_copy_refuses_aac_priming_that_accumulates_at_seams(self):
+        """#610: a copy join plays each later clip's AAC priming at its seam and carries each clip's
+        sound past its picture into the next (+32 ms per join on FFmpeg 6.1 for 21.3 ms priming and
+        10.7 ms overhang, in .mp4, .mov and .mkv alike), and both streams' spans in the joined file
+        still match, so no span check sees it. A predicted delay beyond 50 ms at any clip refuses
+        --copy, a Matroska output included; a re-encoded join lands every clip's sound where its
+        picture is."""
+        clips = []
+        for i in range(4):
+            clip = OUT / f"primed_aac_{i}.mp4"
+            sound = r"aevalsrc=if(between(t\,0.2\,0.35)\,0.6*sin(2*PI*440*t)\,0):s=48000:d=1"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=25:d=1",
+               "-f", "lavfi", "-i", sound, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", clip)
+            clips.append(clip)
+
+        output = OUT / "primed_aac_copy.mp4"
+        output.unlink(missing_ok=True)
+        for flags in ((), ("--dry-run",)):
+            proc = script("join.py", *clips, "--transition", "none", "--copy", "-o", output,
+                          "--json", *flags, expect_fail=True)
+            report = json.loads(proc.stdout)
+            self.assertEqual(report["status"], "failed", report)
+            self.assertIsNot(report.get("verified"), True, report)
+            self.assertEqual(report["error"]["reason"], "join_copy_mismatch", report)
+            self.assertGreater(report["error"]["details"]["aac_drift_ms"], 50)
+            self.assertFalse(output.exists())
+        # the delay is the copy join's, not the container's: a Matroska output is refused the same way
+        mkv = OUT / "primed_aac_copy.mkv"
+        mkv.unlink(missing_ok=True)
+        report = json.loads(script("join.py", *clips, "--transition", "none", "--copy", "-o", mkv,
+                                   "--json", expect_fail=True).stdout)
+        self.assertEqual((report["status"], report["error"]["reason"]), ("failed", "join_copy_mismatch"), report)
+        self.assertFalse(mkv.exists())
+        # the other way: clips whose sound ends 40 ms before their picture (inside the 50 ms span
+        # check) pull the sound about 10.7 ms earlier per join, ahead of the picture by clip 8
+        short = []
+        for i in range(8):
+            clip = OUT / f"short_aac_{i}.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=25:d=1",
+               "-f", "lavfi", "-i", "sine=f=440:r=48000:d=0.96", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "aac", clip)
+            short.append(clip)
+        ahead = OUT / "short_aac_copy.mp4"
+        ahead.unlink(missing_ok=True)
+        report = json.loads(script("join.py", *short, "--transition", "none", "--copy", "-o", ahead,
+                                   "--json", expect_fail=True).stdout)
+        self.assertEqual(report["error"]["reason"], "join_copy_mismatch", report)
+        self.assertLess(report["error"]["details"]["aac_drift_ms"], -50, report)
+        self.assertIn("ahead of the picture", report["error"]["message"])
+        self.assertFalse(ahead.exists())
+
+        encoded = OUT / "primed_aac_encoded.mp4"
+        report = json.loads(script("join.py", *clips, "--transition", "none", "-o", encoded,
+                                   "--overwrite", "--json").stdout)
+        self.assertTrue(report["verified"], report)
+        raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(encoded),
+                                       "-map", "0:a:0", "-f", "s16le", "-"])
+        samples = array.array("h", raw)
+        for i in range(len(clips)):
+            start = next(j / 48000 for j in range(i * 48000, (i + 1) * 48000) if abs(samples[j]) > 4000)
+            self.assertClose(start, i + 0.2, 0.01)
 
     def test_join_copy_measures_stream_spans_in_every_container(self):
         """2.24.1: the A/V end check read stated stream lengths, which Matroska/WebM never state (a
@@ -2891,7 +2974,7 @@ class EditingTests(MediaFixtures):
 
     def test_progress_and_fast_flags(self):
         out = OUT / "prog.mp4"
-        proc = script("fit.py", self.src, "--duration", "6", "--fast", "--progress", "-o", out)
+        proc = script("fit.py", self.src, "--duration", "6", "--method", "speed", "--fast", "--progress", "-o", out)
         self.assertIn("%", proc.stderr)
         self.assertIn("-preset veryfast", proc.stderr, "--fast overrides the preset")
         self.assertClose(probe(str(out))["duration"], 6.0, 0.2)
@@ -3033,14 +3116,14 @@ class EditingTests(MediaFixtures):
         self.assertGreater(distinct, 200, f"{distinct} distinct pictures of 240: the slow motion repeats frames")
         plan = json.loads(script("fit.py", src, "--duration", "4", "--smooth", "interpolate", "--dry-run", "--json").stdout)
         self.assertIn("minterpolate=fps=30:", " ".join(plan["commands"]), "without --fps the source's rate")
-        proc = script("fit.py", self.vfr, "--duration", "6", "-o", OUT / "smooth_rate_vfr.mp4", "--overwrite", "--fast")
+        proc = script("fit.py", self.vfr, "--duration", "6", "--method", "speed", "-o", OUT / "smooth_rate_vfr.mp4", "--overwrite", "--fast")
         self.assertIn("source looks variable-frame-rate", proc.stderr)
 
     def test_fit_blur_keeps_the_whole_picture_on_a_blurred_border(self):
         """--fit blur: the target aspect, nothing cropped, borders that carry a dimmed copy of the
         picture rather than black, and a centre band that is still the scaled source."""
         out = OUT / "fit_blur.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "blur",
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "blur",
                "--width", "360", "--fast", "-o", out)
         m = probe(str(out))
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (360, 640))
@@ -3049,7 +3132,7 @@ class EditingTests(MediaFixtures):
         self.assertGreater(top_spread, 8, f"blurred border is flat: {top_spread}")
         # the centre band is the fitted source: 360x202 sits at y=(640-202)/2
         ref = OUT / "fit_blur_ref.mp4"
-        script("fit.py", self.src, "--duration", "3", "--width", "360", "--fast", "-o", ref)
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--width", "360", "--fast", "-o", ref)
         mid_avg, _ = self._region_stats(out, "iw:180:0:230")
         ref_avg, _ = self._region_stats(ref, "iw:180:0:10")
         self.assertClose(mid_avg, ref_avg, 12, "the centre of a blur fit is the scaled source")
@@ -5426,7 +5509,7 @@ class StillAsClipTests(unittest.TestCase):
             "cut": ("cut.py", "--start", "0", "--end", "1"),
             "cut past its frame": ("cut.py", "--start", "0.2", "--end", "1"),
             "cut --accurate": ("cut.py", "--start", "0.2", "--end", "1", "--accurate"),
-            "fit speed": ("fit.py", "--duration", "1"),
+            "fit speed": ("fit.py", "--duration", "1", "--method", "speed"),
             "fit trim": ("fit.py", "--duration", "1", "--method", "trim"),
             "freeze": ("freeze.py", "--at", "0.4", "--hold", "0.5"),
             "speedramp": ("speedramp.py", "--segment", "0-1:2.0"),

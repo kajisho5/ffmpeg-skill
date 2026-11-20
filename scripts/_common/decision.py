@@ -11,13 +11,13 @@ import os
 import re
 import argparse
 from fractions import Fraction
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
-from _common.runner import read_json
+from _common.runner import absent_word, file_arg, read_json
 from _common.probe import AUDIO_MEDIA_EXT
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -152,7 +152,10 @@ def default_output(input_path: str, suffix: str, ext: Optional[str] = None) -> s
         new_ext = "mp4"
     else:
         new_ext = p.suffix.lstrip(".") or "mp4"
-    return str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
+    out = str(p.with_name(f"{p.stem}_{suffix}.{new_ext}"))
+    # an input named -take.mp4 (given as ./-take.mp4 or after `--`) has a default output that
+    # starts with a dash too, which run() refuses as option-shaped: name it as a file (#558)
+    return file_arg(out)
 
 
 class MissingFpsError(ValueError):
@@ -382,6 +385,15 @@ def escape_filter_path(path: str, *, bind: bool = True) -> str:
         # on POSIX a backslash is a character of the name (#408): turning it into `/` opened a
         # different path, so it is escaped through both passes instead
         p = p.replace("\\", "\\\\\\\\")
+    # A filter that opens its file through libavformat (subtitles=, metadata=print:file=) reads a
+    # relative `a:b.srt` or `d:e/c.srt` as protocol `a` or `d` ("Protocol not found"), and Path()
+    # above has dropped the `./` a caller wrote to say it is a file (#558). A relative path whose
+    # first segment has a colon gets it back; a filter that opens with fopen (lut3d, drawtext,
+    # ssim's stats_file) reads `./name` as the same file. An absolute path and a Windows path
+    # with a drive (`C:/x`, `C:x`) are left as they are: the drive's colon is not a scheme.
+    pure = PureWindowsPath(p) if _on_windows() else PurePosixPath(p)
+    if ":" in p.split("/", 1)[0] and not pure.is_absolute() and not pure.drive:
+        p = "./" + p
     p = p.replace(":", "\\\\:")
     p = p.replace("'", "\\\\\\'")
     for ch in (",", ";", "[", "]"):
@@ -1511,7 +1523,7 @@ def load_brand(path: Optional[str]) -> Dict[str, Any]:
     if not path:
         return brand
     if not os.path.exists(path):
-        die(f"brand file not found: {path}", kind="input")
+        die(f"brand file {absent_word(path)}: {path}", kind="input")
     try:
         data = read_json(path)
     except OSError as exc:

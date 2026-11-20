@@ -1,7 +1,7 @@
 {
   "description": "Routing eval for ffmpeg-skill: natural-language requests and the script(s) an agent should reach for. Run with evals/run.py against an agent transcript, or use skill-creator's eval runner with these as prompts.",
   "tasks": [
-    {"id": 1, "request": "Make this 60 seconds and vertical for Reels.", "expect": ["probe.py", "fit.py", "export.py"], "args_hint": "--duration 60 --aspect 9:16; export --preset reels"},
+    {"id": 1, "request": "Make this 60 seconds and vertical for Reels.", "expect": ["probe.py", "fit.py", "export.py"], "args_hint": "--duration 60 --method trim --aspect 9:16; export --preset reels"},
     {"id": 2, "request": "Cut from 1:20 to 2:05 without losing quality.", "expect": ["probe.py", "cut.py"], "args_hint": "--start 1:20 --end 2:05 (no --accurate unless VFR)"},
     {"id": 3, "request": "Burn these subtitles in, Japanese font, at the top.", "expect": ["caption.py"], "args_hint": "--font 'Noto Sans CJK JP' --position top"},
     {"id": 4, "request": "TikTok style captions where each word pops and highlights.", "expect": ["caption.py"], "args_hint": "--animate pop --karaoke"},
@@ -20,7 +20,7 @@
     {"id": 17, "request": "Show me what the result looks like before you export.", "expect": ["look.py"], "args_hint": "contact sheet or --at"},
     {"id": 18, "request": "Is this ready to upload to Instagram?", "expect": ["check.py"], "args_hint": "--platform reels"},
     {"id": 19, "request": "Make a 60 second highlight reel from this hour of footage.", "expect": ["scenes.py", "cut.py"], "args_hint": "scenes --highlights N --target 60 --edl; cut --segments"},
-    {"id": 20, "request": "Half speed slow motion but smooth, not stuttery.", "expect": ["fit.py"], "args_hint": "--duration 2x --smooth interpolate"},
+    {"id": 20, "request": "Half speed slow motion but smooth, not stuttery.", "expect": ["fit.py"], "args_hint": "--duration twice the measured source duration --smooth interpolate"},
     {"id": 21, "request": "Test the toolkit on my GoPro and OBS files first.", "expect": ["verify.py"], "args_hint": "folder --report"},
     {"id": 22, "request": "Set up the whole edit so I can tweak numbers and re-render.", "expect": ["render.py"], "args_hint": "--init project.json then render"},
     {"id": 23, "request": "Tell me what you'd run before actually rendering.", "expect": ["--dry-run"], "args_hint": "any script with --dry-run"},

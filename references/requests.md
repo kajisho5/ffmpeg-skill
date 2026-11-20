@@ -17,7 +17,7 @@ variant it does not show.
 | "cut on the beat", "edit it to the music" | `scenes.py track.mp4 --beats --json > beats.json`, then `cut.py input.mp4 --segments ... --snap beats --snap-source beats.json` (`--snap-source` carries the measured grid over) |
 | "speed up here, slow-mo there" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
 | "hold on this frame", "freeze the last frame" | `freeze.py clip.mp4 --hold 2` |
-| "smooth slow motion", "half speed but fluid" | `fit.py input.mp4 --duration 2x --smooth interpolate` (slow) or `--smooth blend` |
+| "smooth slow motion", "half speed but fluid" | For a 10 s clip, `fit.py input.mp4 --duration 20 --smooth interpolate` or `--smooth blend` |
 | "reverse this clip" | `reverse.py input.mp4` |
 | "loop this clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
 | "make it vertical / 9:16 / square" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`; `--pad-fill blur` for blurred bars) |
@@ -65,7 +65,7 @@ variant it does not show.
 | "turn this podcast into a video", "audiogram" | `render.py --template audiogram ep.m4a --image cover.png` — waveform over a still or colour plate; nothing is fetched |
 | "make this a TikTok / Reel / Short / YouTube / X / LinkedIn / podcast" | `render.py --template tiktok\|reels\|shorts\|youtube-shorts\|youtube\|x\|linkedin\|facebook\|podcast input.mp4 [--cues cues.txt] [--title "..."]` — frame, captions, loudness, export, check in one command (`--list-templates`; `--write-project` to edit first) |
 | "post it everywhere", "one edit for every platform" | `render.py --template all input.mp4 --cues cues.txt` (or a comma list) → one file per destination plus `<name>_pack.md` (`report.py --pack` renders the HTML) |
-| "export for YouTube / Reels / X", "a ProRes master", "under 25 MB" | `export.py input.mp4 --preset youtube\|reels\|tiktok\|shorts\|linkedin\|facebook\|x\|prores\|h265` (`--normalize` hits the loudness spec in the same call; `--max-mb 25` fits a size; `youtube-hdr` keeps HDR, `youtube-av1` writes AV1) |
+| "export for YouTube / Reels / X", "a ProRes master", "under 25 MB" | `export.py input.mp4 --preset youtube\|reels\|tiktok\|shorts\|linkedin\|facebook\|x\|prores\|h265` (a platform preset meets its loudness spec in the same call since 4.0.0, `--no-normalize` to report only; `--max-mb 25` fits a size; `youtube-hdr` keeps HDR, `youtube-av1` writes AV1) |
 | "make a GIF preview", "the recording is corrupted" | `export.py input.mp4 --preset gif` / `--preset copy --repair` (remux; counts the damage) |
 | "a small proxy / cheap preview file" | `proxy.py input.mp4 [--width 640 --no-audio]` — not a delivery preset (that is `export.py`) |
 | "is this OK to upload?", "how much quality was lost" | `check.py final.mp4 --platform reels` (`--compare master.mp4`: SSIM/PSNR) |

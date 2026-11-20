@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from pathlib import Path
@@ -27,6 +28,39 @@ class DeliveryTests(MediaFixtures):
     """Export, proxy and the delivery templates."""
 
     # ---------------------------------------------------------------- export
+    def test_export_fails_if_the_written_frame_does_not_match_the_preset(self):
+        # Make the real encoder write the unscaled source by intercepting only the command.
+        # The requested preset and FFprobe are untouched.
+        shim = """
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+import export
+run = export.run
+def write_different_size(argv, *args, **kwargs):
+    argv = list(argv)
+    if "-vf" in argv:
+        argv[argv.index("-vf") + 1] = "fps=30"
+    return run(argv, *args, **kwargs)
+export.run = write_different_size
+raise SystemExit(export.main())
+"""
+        for flags in ([], ["--json"]):
+            with self.subTest(flags=flags):
+                out = OUT / f"export_wrong_size_{bool(flags)}.mp4"
+                proc = sh(sys.executable, "-c", shim, SCRIPTS, self.src, "--preset", "reels",
+                          "--fast", "--overwrite", "-o", out, *flags, expect_fail=True)
+                self.assertTrue(out.is_file(), proc.stderr)
+                self.assertIn("frame_size", proc.stderr)
+                if flags:
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual((doc["status"], doc["error"]["kind"], doc["verified"]),
+                                     ("failed", "verification", False))
+                    step = next(s for s in doc["verification"] if s["step"] == "frame_size")
+                    self.assertEqual(step["expected"], [1080, 1920])
+                    self.assertEqual(step["measured"], [1280, 720])
+                else:
+                    self.assertEqual(proc.stdout.strip(), "")
+
     def test_export_presets(self):
         cases = {
             "youtube": ("mp4", "h264", (1920, 1080)),
@@ -1085,7 +1119,8 @@ class DeliveryTests(MediaFixtures):
                 doc = json.loads(script("export.py", src, "--preset", preset, "--fast", "--json", "-o", out).stdout)
                 self.assertEqual(probe(str(out))["video"]["fps"], 60)
                 self.assertTrue(any("one source frame in 2" in n for n in doc.get("notes") or []), doc.get("notes"))
-                check = json.loads(script("check.py", out, "--platform", "youtube", "--json", expect_fail=True).stdout)
+                # since 4.0.0 the preset meets youtube's loudness too (#579), so the whole check passes
+                check = json.loads(script("check.py", out, "--platform", "youtube", "--json").stdout)
                 fps_row = next(r for r in check["checks"] if r["check"] == "fps")
                 self.assertEqual(fps_row["status"], "PASS", fps_row)
 
@@ -1117,6 +1152,7 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual(d["status"], "completed")
         self.assertTrue(d["loudness"]["ok"], d["loudness"])
         self.assertTrue(d["loudness"]["normalized"])
+        self.assertIn("loudness measured after correction", proc.stderr)
         self.assertTrue(d["verified"])
         self.assertAlmostEqual(d["loudness"]["lufs"], -14.0, delta=1.0)
         self.assertFalse((OUT / "export_normalize_loudnorm.mp4").exists())
@@ -1134,12 +1170,39 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual(d["error"]["kind"], "input")
         d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
         self.assertTrue(any("--normalize" in n for n in d.get("notes", [])), d)
-        # without the flag the same file is reported, not fixed
-        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite")
+        # 4.0.0 (#579): a platform preset meets its loudness without the flag; --no-normalize
+        # (3.x's default) reports the same file and does not fix it
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        self.assertTrue(d["loudness"]["ok"], d["loudness"])
+        self.assertIs(d["loudness"]["normalized"], True)
+        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--no-normalize", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertFalse(d["loudness"]["ok"])
-        self.assertNotIn("normalized", d["loudness"])
+        self.assertIs(d["loudness"]["normalized"], False)
+        self.assertIn("loudness measured without export correction", proc.stderr)
         self.assertIn("--normalize", " ".join(d["notes"]))
+        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--no-normalize", "-o", OUT / "export_norm_h265.mp4",
+                              "--json", expect_fail=True).stdout)
+        self.assertEqual(d["error"]["kind"], "input")
+
+    def test_vertical_crop_and_reels_export_report_distinct_sizes_and_loudness(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            folder = Path(tmp)
+            source, vertical, delivery = [folder / n for n in ("source.mp4", "vertical.mp4", "reels.mp4")]
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10",
+               "-f", "lavfi", "-i", "sine=r=48000", "-af", "volume=0.25", "-t", "2",
+               "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", source)
+            crop = json.loads(script("fit.py", source, "--aspect", "9:16", "--fit", "crop", "--fast",
+                                     "-o", vertical, "--json").stdout)
+            self.assertEqual((crop["probe"]["video"]["width"], crop["probe"]["video"]["height"]), (608, 1080))
+            cli = ("export.py", vertical, "--preset", "reels", "--fast", "-o", delivery, "--json")
+            measured = json.loads(script(*cli, "--no-normalize").stdout)
+            self.assertEqual((measured["probe"]["video"]["width"], measured["probe"]["video"]["height"]), (1080, 1920))
+            self.assertIs(measured["loudness"]["normalized"], False)
+            self.assertFalse(measured["loudness"]["ok"])
+            corrected = json.loads(script(*cli).stdout)
+            self.assertIs(corrected["loudness"]["normalized"], True)
+            self.assertTrue(corrected["loudness"]["ok"])
 
     def test_every_delivery_template_renders_and_passes_its_own_check(self):
         """1.14: `render.py --template NAME INPUT` is the one command a delivery request becomes,
@@ -1344,7 +1407,7 @@ class DeliveryTests(MediaFixtures):
         self.assertEqual(render_mod.expand_templates("youtube-shorts"), ["youtube-shorts"],
                          "a template that ships under its own name stays itself")
         target = OUT / "alias_src.mp4"
-        script("fit.py", self.src, "--duration", "3", "--aspect", "9:16", "--fit", "crop",
+        script("fit.py", self.src, "--duration", "3", "--method", "speed", "--aspect", "9:16", "--fit", "crop",
                "--width", "360", "--fast", "-o", target)
 
         def commands(tool, *argv):

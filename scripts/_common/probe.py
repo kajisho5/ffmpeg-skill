@@ -16,7 +16,7 @@ from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, refuse, warn
-from _common.runner import ffmpeg_failure_extra, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
+from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
 # a cover (`V`), its `audio` the first sound stream. Without a -map, FFmpeg picks the largest
@@ -233,6 +233,44 @@ def shorter_than_a_loudness_block(length: "Optional[float]") -> bool:
     return length is not None and 0 < length < LOUDNESS_BLOCK_SECONDS
 
 
+# ffmpeg's log prefix for a component, with the address of its context: `[mov,mp4,m4a @ 0x55d1]`
+# (no `0x` on Windows). It differs on every run and tells a caller nothing.
+_LOG_CONTEXT_RE = re.compile(r"\[[^\]\n]*@ (?:0x)?[0-9A-Fa-f]+\]\s*")
+
+
+def _refuse_unusable_input(path: str) -> None:
+    """Say what an input that cannot be media is, before ffprobe is asked (#558): a directory, an
+    empty file (the usual trace of a recording, download or TTS step that failed after creating
+    its file) or a file the user may not read. Each reached ffprobe and came back as its raw
+    text ("moov atom not found", "Is a directory") with no reason and no hint; join.py's
+    preflight has worded the first two itself since 2.2."""
+    if os.path.isdir(path):
+        refuse("input", "input_is_directory", f"input is a directory, not a file: {path}",
+               hint="pass one media file; verify.py and batch.py take a folder", path=path)
+    if not os.path.isfile(path):
+        return  # a pipe or a device: run() refuses it (media_path_not_a_file)
+    refuse_denied_input(path)
+    try:
+        empty = os.path.getsize(path) == 0
+    except OSError:
+        return
+    if empty:
+        refuse("input", "input_empty", f"input is empty (0 bytes): {path}",
+               hint="the step that should have written it wrote nothing: record, download or render it again", path=path)
+
+
+def _refuse_not_media(path: str, stderr: str) -> "None":
+    """ffprobe could not read an input: `input_not_media`, with ffprobe's own lines as the detail
+    (their `[demuxer @ 0x...]` prefixes removed, #558) and a hint. The message still opens with
+    "ffprobe failed on PATH", which verify.py's report rows and callers have matched since 1.x."""
+    lines = [_LOG_CONTEXT_RE.sub("", ln).strip() for ln in (stderr or "").strip().splitlines()]
+    detail = "; ".join(dict.fromkeys(ln for ln in lines if ln)) or "ffprobe gave no reason"
+    hint = ("pass a video, audio or picture file; a recording or a copy that was cut short reads this way too "
+            "(\"moov atom not found\") and has to be copied again from its source")
+    refuse("input", "input_not_media", f"ffprobe failed on {path}: not a media file ffprobe can read ({detail})",
+           hint=hint, path=path)
+
+
 def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
@@ -244,6 +282,10 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
             return {}
         if role == "output" and not STATE.dry_run:
             _output_failed(path, "not written")
+        if role == "input":
+            # a file behind a directory the user may not search is not "not found", and not an
+            # earlier dry-run stage's output either (#558)
+            refuse_denied_input(path)
         if STATE.dry_run:
             # also for an output path that holds a file: a dry run did not write it, and reading it
             # reported an earlier run's file as this plan's result (#403: cut.py's output_duration)
@@ -260,6 +302,10 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
                               "color_transfer": None, "color_primaries": None, "rotation": 0, "variable_frame_rate_suspected": False},
                     "audio": {"codec": None, "channels": 0, "sample_rate": 0}, "subtitle_streams": 0, "data_streams": 0}
         die(f"input not found: {path}")
+    if role == "input":
+        if not required and (os.path.isdir(path) or (os.path.isfile(path) and os.path.getsize(path) == 0)):
+            return {}  # an optional probe reports "not usable" as {} (as a failed ffprobe did), never exits
+        _refuse_unusable_input(path)
     ffprobe = require_tool("ffprobe")
     proc = run(
         [ffprobe, "-v", "error",
@@ -272,7 +318,7 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
             return {}
         if role == "output":
             _output_failed(path, f"ffprobe cannot read it:\n{proc.stderr.strip()}")
-        die(f"ffprobe failed on {path}:\n{proc.stderr.strip()}")
+        _refuse_not_media(path, proc.stderr)
     if role == "input":
         register_plan_input(path)
     if not (proc.stdout or "").strip():
@@ -1501,7 +1547,7 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
     # read frame by frame as ffmpeg writes them: 1728 bytes a frame is 187 MB for an hour at
     # 30 fps, and only the frames with a changed tile are kept. Same wall-clock limit as run_analysis()
     _runner._refuse_url_media(cmd)
-    cmd = _runner.guard_input_formats(cmd)
+    cmd = _runner.guard_input_names(cmd)
     limit = _runner._limit_for(cmd)
     size, tiles = gw * gh * 3, gw * gh
     changed: Dict[int, int] = {}

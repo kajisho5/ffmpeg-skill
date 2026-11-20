@@ -2,9 +2,64 @@
 
 > `main` moves ahead of the last published npm/GitHub release; a dependent repo should pin a tagged version, not `main`. See README § Development, "Releasing".
 
-## Unreleased
+## 4.0.0
 
-(nothing yet)
+The third deliberate break (4.0.0). What changed and how to migrate: docs/contract.md, "What 4.0 changed".
+
+### Added
+
+- **A review page for a render project, for standalone use (#633).** `npx ffmpeg-skill review project.json --result run.json` (or `python3 scripts/_review.py`) writes a folder with an `index.html`: one editor-style screen for a computer (16:10, three columns) with the sources and their probe facts, the work steps in order, a viewer that plays the output (in a phone frame with the platform's safe area for a tall frame, as a plain monitor otherwise), a timeline with the clips, the caption cues and the sound's waveform, and every measured row against what was expected. Each element has a number (`S1` source, `C1` clip, `T1` caption, `A1` sound, `M1` marker, `R1` range, `P1` measurement, `#1` work step); pressing one adds a row to an instruction for the agent, and "Copy the instruction" gives the text to paste, with the project, the `render.py` command and one line per row. A work step lists every flag of its tool, read from the contract, and any of the 42 tools can be added as a new step. A caption's text and its line breaks are edited in a text box and go into the instruction (`\n` for a break). A clip's in, out and speed are edited in place and "Save project" saves the edited project; rendering it again is `render.py` as before. English, Japanese, Korean and Chinese. The page needs no network and runs nothing. It is not a contract tool and the MCP server does not list it, so a caller that owns the review (Velisa) never reaches it.
+
+### Changed
+
+- **The stability promise is split by tool.** `contract --json` gives each tool `stability`: the 12 core tools are `stable` (the 3.x promise, for the whole of 4.x), the other 30 `beta` (an argument or output key may change in a minor release after one minor in `deprecated`).
+- Delivery templates include the applicable `check.py --content` rows by default (#575).
+- **`export.py`'s platform presets meet the platform's loudness by default (#579).** A quiet source exported with `--preset reels` was delivered at about -56 LUFS with a warning; it is now corrected in the same call (-14.06 LUFS on that source, `loudness.normalized: true`). `--no-normalize` keeps 3.x's measure-and-report behaviour; `--normalize` is still accepted.
+- Return a verification failure when a video delivery misses a required export property (#620).
+- Ask for a duration method before making a large implicit retime in `fit.py` (#582).
+
+- **Speech nobody named is no longer transcribed as English by an English-only model.** `caption.py --transcribe` and `silence.py --transcribe` under `--engine auto`, with no `--language` (`--filler-lang`), no detectable language and only an English-only Parakeet model able to run, used to transcribe anyway and add a note saying English was assumed: Japanese speech came out as English words, and the note was read after the captions were burned. The call is now refused before anything is transcribed or written (`kind: input`, `reason: english_only`, or `engine_failed` when a Whisper engine ran and failed), and the refusal names the flag. Name the language (`--language en` for English), install a Whisper engine for other languages, or give Parakeet a multilingual (v3) model. The warning `asr_language_assumed` and `silence.py`'s top-level `notes` are gone with it.
+
+### Fixed
+
+- **A normalised sound stays where its picture is.** `loudness.py`, and `export.py --normalize` (now the default for platform presets), played every sound after a stretch of digital silence about 89 ms late against the copied picture on FFmpeg 6.1, and cut as much off the end: loudnorm's output frames jumped in time while its samples ran on. The samples are restamped in order from the first one's time. A gap in the source's sound (from 10 ms) is filled with silence first, so the sound after it stays in place: the restamp closed such a gap, and each later sound played early by the gap's length.
+- **`waveform.py --at` refuses a flag it would ignore.** `--fps`, `--silence-threshold`, `--quality`, `--fast`, `--preset`, `--codec`, `--hw` and the audiogram layout flags shape only the video output; with `--at`, which draws PNGs, they were accepted and did nothing. Each is now refused by name.
+- **`fit.py --fit crop` no longer warns about motion spread over the whole frame (#630).** A 16:9 to 9:16 crop cuts 68% of the width, so evenly spread motion (a pan, handheld footage) always had more than half of it outside and raised `crop_content_off_centre`, suggesting the `--crop-x` already in use. The motion rule now asks for an excess of 0.15 over the discarded share, as the detail rule does, and the warning no longer names the anchor the run used.
+- **A stream-copy join of AAC clips no longer lets the sound fall behind (#610).** `join.py --copy`
+  played each later clip's AAC priming at its seam and carried each clip's sound past its picture
+  into the next: on eight 4 s clips the beep came 32 ms later at every join (224 ms by clip 8) in
+  `.mp4`, `.mov` and `.mkv` alike, and the result said `verified: true`. The delay is now predicted
+  from each clip's priming and decoded sound length (it matched the measured delay at all eight
+  clips), and a copy join whose sound would be more than 50 ms behind, or ahead (clips whose sound
+  is shorter than their picture pull it 10.7 ms earlier per join), at any clip is refused
+  (`join_copy_mismatch`, `details.aac_drift_ms`); two such clips still join, three do not.
+- **A still image with a `%` in its name that is not a pattern can be used (#558).**
+  `overlay.py --image 'a%20b.png'` (also `50%.png`, `insert.py`, `broll.py --insert`, `probe.py`)
+  failed inside ffmpeg with "Option pattern_type not found". A still with a `%` in its name is now
+  opened with `-f image2 -pattern_type none`, which reads a literal `%` and a `%d` name alike as
+  the one file (measured on FFmpeg 6.1.1 for `.png` and `.jpg`).
+- **A relative subtitle path with a colon works (#558).** `caption.py --srt ./a:b.srt` (and
+  `d:e/c.srt`) burned in failed with "Protocol not found": the `./` was dropped before the path reached the
+  subtitles filter. A relative path whose first segment has a colon is written `./...` in every
+  filter option (subtitles, ass, LUT, font and text files).
+- **An output extension FFmpeg has no muxer for is refused before ffmpeg runs (#558).**
+  `-o weird.xyz` failed as `kind: ffmpeg` after a dry run that completed. It is `kind: input`,
+  reason `output_extension_unknown`, dry runs included, judged by the installed build's own muxer
+  list; an extension the build knows is never refused, and one outside the common ones costs a
+  one-time lookup of about two seconds.
+- **An input that is empty, a directory or not media says so (#558).** Reasons `input_empty`,
+  `input_is_directory` and `input_not_media`, each with a hint, in place of ffprobe's raw lines
+  with a memory address in them.
+- **A file the user may not read is "permission denied", not "input not found" (#558).** Reason
+  `input_permission_denied`, for a file behind a directory that cannot be searched and for an
+  unreadable file, in a dry run too; `join.py`, `audio.py`, `render.py` and `verify.py` name it the
+  same way, and `verify.py` no longer ends in a traceback on such a path.
+- **`contract --json | head` no longer prints a traceback (#558).** `scripts/_contract.py` exits 0
+  quietly when the reader of its output closes the pipe (README's quick start does this).
+- **An input name starting with a dash is read as a file (#558).** `probe.py -- -report` and
+  `-- -dash.mp4` failed in ffprobe, and `-report` left an `ffprobe-*.log` in the working
+  directory. Such a name reaches ffmpeg and ffprobe as `./name`; the default output named after it
+  is written too, and `verify.py` and `report.py` pass it on as a file.
 
 ## 3.15.1
 
@@ -35,6 +90,14 @@ _Automated release: version and notes generated from pull requests merged since 
 - Report measured picture placement after reframing in export and render results (#548).
 - Treat `.mka` as audio-only. Audio encodes use FLAC, and compatible cuts can copy the original audio codec (#539).
 
+### Changed
+
+- Label platform-export loudness measurements with their correction status (#609).
+
+### Changed
+
+- Read drop-frame caption cues and warn when a cue rate disagrees with the video probe (#580).
+
 ### Fixed
 
 - Preserve reading order and edge punctuation in generated right-to-left captions (#623).
@@ -45,6 +108,10 @@ _Automated release: version and notes generated from pull requests merged since 
 - Compare a requested cut in-point with the output start (#614)
 
 Closes: #548, #569, #606, #623
+- Send live FFmpeg encode updates to MCP callers that request progress (#574).
+- Check Vietnamese font coverage separately and use it for tone-marked captions (#608).
+- Draw still waveforms around supplied cut points with `waveform.py --at` (#450).
+- Crop checks report sampled review times for inspecting discarded motion or detail (#570).
 
 ## 3.13.2
 
@@ -97,7 +164,7 @@ _Automated release: version and notes generated from pull requests merged since 
 - feat(doctor): report the FFmpeg build license (#603)
 - fix: bind parsed side inputs in saved plans (#601)
 
-Closes: #518, #578
+Closes: #518, #564, #578
 
 ## 3.12.1
 

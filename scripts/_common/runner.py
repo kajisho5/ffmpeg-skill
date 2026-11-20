@@ -34,6 +34,9 @@ INSTALL_HINTS = {
     ),
 }
 
+MCP_PROGRESS_ENV = "FFMPEG_SKILL_MCP_PROGRESS"
+_PROGRESS_PREFIX = "[ffmpeg-skill progress] "
+
 # For an FFmpeg that is on PATH but older than MIN_FFMPEG (#467 A226): reinstalling the
 # distribution's package gives the same old version back (Ubuntu 22.04's is 4.4, Debian 12's 5.1),
 # so the hint names a newer build instead.
@@ -530,7 +533,7 @@ def apply_common(args: "argparse.Namespace") -> None:
         # check, cropdetect, silence --list, report and verify printed text (or a bare document,
         # or a document and then a path) under --json-brief alone (review of #521)
         args.json = STATE.json
-    STATE.progress = bool(getattr(args, "progress", False))
+    STATE.progress = bool(getattr(args, "progress", False) or os.environ.get(MCP_PROGRESS_ENV) == "1")
     STATE.fast = bool(getattr(args, "fast", False))
     STATE.overwrite = bool(getattr(args, "overwrite", False))
     if STATE.plan and os.environ.get("FFMPEG_SKILL_READ_ONLY", "") not in ("", "0"):
@@ -1018,6 +1021,10 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
         values.append(last)
         if base.startswith("ffprobe"):  # ffprobe's input is its last argument
             _refuse_playlist(last)
+    elif base.startswith("ffprobe") and last != "-" and os.path.lexists(last):
+        # a file named like an option is still ffprobe's input: guard_input_names() writes it
+        # `./name`, so it is checked as a playlist like any other (review of #636)
+        _refuse_playlist(last)
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",
@@ -1138,14 +1145,82 @@ def _check_output_extension(cmd: Sequence[str]) -> None:
     output = cmd[-1]
     if output == "-" or output.startswith("pipe:"):
         return
+    forced = "-f" in shape_of(cmd).output_opts
     if len(os.path.splitext(output)[1]) > 1:
         refuse_unwritten_output(output, cmd)
+        if not forced:
+            _refuse_unknown_extension(output)
         return
-    if "-f" in shape_of(cmd).output_opts:
+    if forced:
         return
     refuse("input", "output_extension_missing",
            f"output {output!r} has no file extension, so ffmpeg cannot tell which container to write; "
            f"name it with one (for example {output + '.mp4'!r})", output=output)
+
+
+# Extensions every FFmpeg build this skill supports maps to a muxer: an output named with one is
+# handed on without asking the build (no process). `.mka` is here because the Matroska audio muxer
+# shares its name with the Matroska one, so `ffmpeg -h muxer=matroska` never lists it.
+_COMMON_OUTPUT_EXT = frozenset({
+    ".mp4", ".mov", ".mkv", ".mka", ".webm", ".m4v", ".m4a", ".avi", ".ts", ".mts", ".m2ts", ".mxf", ".3gp", ".wmv",
+    ".wma", ".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".wav", ".flac", ".mp3", ".aac", ".ogg",
+    ".opus", ".aif", ".aiff", ".caf", ".srt", ".ass", ".vtt", ".nut", ".mpg", ".mpeg", ".flv", ".y4m"})
+_MUXER_EXT: "List[Optional[frozenset]]" = []  # this build's answer, read once per process
+
+
+def _muxer_extensions() -> "Optional[frozenset]":
+    """Every file extension this ffmpeg build maps to a muxer (lower case, with the dot), or None
+    when the build could not be asked: the names from `ffmpeg -muxers`, and each one's "Common
+    extensions:" line from `ffmpeg -h muxer=NAME`. That is a short process per muxer (about 190
+    on 6.1.1, 1 to 2 s together), so it is asked only for an extension _COMMON_OUTPUT_EXT does not
+    hold, and once. One muxer that cannot be read makes the whole answer None, never a shorter list."""
+    if _MUXER_EXT:
+        return _MUXER_EXT[0]
+    found: Optional[frozenset] = None
+    try:
+        exe = found_exe("ffmpeg")
+        kw: Dict[str, Any] = dict(stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True,
+                                  encoding="utf-8", errors="replace", timeout=_probe_limit())
+        listing = subprocess.run([exe, "-hide_banner", "-muxers"], **kw)
+        names = re.findall(r"^\s*D?E[d ]?\s+(\S+)", listing.stdout.split("--", 1)[-1], re.M) if listing.returncode == 0 else []
+
+        def extensions(name: str) -> List[str]:
+            shown = subprocess.run([exe, "-hide_banner", "-h", f"muxer={name.split(',')[0]}"], **kw)
+            if shown.returncode != 0 or "Muxer " not in shown.stdout:
+                raise OSError(f"muxer {name} could not be read")
+            return [e.strip().lower() for line in re.findall(r"^\s*Common extensions:\s*(.+?)\.?\s*$", shown.stdout, re.M)
+                    for e in line.split(",") if e.strip()]
+
+        if names:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                exts = {"." + e for group in pool.map(extensions, names) for e in group}
+            found = frozenset(exts) or None
+    except (OSError, ValueError, subprocess.TimeoutExpired, SystemExit):
+        found = None
+    _MUXER_EXT.append(found)
+    return found
+
+
+def _refuse_unknown_extension(output: str) -> None:
+    """An output whose extension this ffmpeg build maps to no muxer is refused as `kind: input`
+    before ffmpeg runs, dry runs included (#558): `-o weird.xyz` failed inside ffmpeg as `kind:
+    ffmpeg` ("Unable to choose an output format") after a dry run that completed. FFmpeg chooses
+    the muxer by the extension alone, without case, so the build's own list decides
+    (_muxer_extensions()); when the build cannot be asked the command runs as before."""
+    ext = os.path.splitext(output)[1].lower()
+    if ext in _COMMON_OUTPUT_EXT:
+        return
+    known = _muxer_extensions()
+    if known is None or ext in known:
+        return
+    from _common.decision import AUDIO_CODECS  # decision imports this module
+    refuse("input", "output_extension_unknown",
+           f"output {output!r}: this ffmpeg build has no muxer for the extension {ext}, so it cannot tell "
+           "which container to write",
+           hint="name -o with an extension the tool writes: .mp4, .mov or .mkv for video; for a tool that writes "
+                f"sound, {', '.join(AUDIO_CODECS)}; for one that writes a picture, .png or .jpg",
+           output=output, extension=ext)
 
 
 # The WMA codecs ffprobe names (FFmpeg's decoders): a stream of one of them copied into `.wma` is
@@ -1190,7 +1265,7 @@ def _copies_wma_only(cmd: Sequence[str]) -> bool:
                 continue
             return False
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
-                     "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", path]
+                     "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", file_arg(path)]
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=_probe_limit())
@@ -1249,7 +1324,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
         if not os.path.isfile(path):
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
-                     "-show_entries", "stream=index", "-of", "csv=p=0", *input_format_args(path), path]
+                     "-show_entries", "stream=index", "-of", "csv=p=0", *input_format_args(path), file_arg(path)]
         limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
@@ -2478,7 +2553,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
     ctx = ctx or STATE
     is_ffmpeg = _is_ffmpeg(cmd)
     _refuse_url_media(cmd)  # check the caller's formats before the runner adds input options
-    cmd = guard_input_formats(cmd)
+    cmd = guard_input_names(cmd)  # before it is checked, recorded or run
     if is_ffmpeg:
         # an encoder line that converts a BT.601 source to the BT.709 it is tagged with carries
         # that conversion as a -vf; it joins the tool's own graph here, before anything records
@@ -2647,7 +2722,7 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
     lists the command in the --json `commands` like run() does. With
     timeout_is_fatal=False, raise TimeoutExpired so advisory callers can report a missing measurement."""
     _refuse_url_media(cmd)
-    cmd = guard_input_formats(cmd)
+    cmd = guard_input_names(cmd)
     if record:
         STATE.commands.append(_cmdline(cmd))
     limit = _limit_for(cmd)
@@ -2666,6 +2741,35 @@ def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, r
         err = proc.stderr if text else proc.stderr.decode(errors="replace")
         _fail(cmd, proc.returncode, err)
     return proc
+
+
+def path_denied(path: Any) -> bool:
+    """True when `path` cannot be looked at or read for lack of permission: a directory on the
+    way to it that the user may not search (os.stat fails with EACCES, which os.path.exists()
+    reports as "not there"), or a file that is there and may not be read. False for a path that
+    is simply absent (#558: both were reported as "not found")."""
+    try:
+        os.stat(path)
+    except PermissionError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return not os.path.isdir(path) and not os.access(path, os.R_OK)
+
+
+def absent_word(path: Any) -> str:
+    """"permission denied" or "not found", for the message about a file that could not be opened."""
+    return "permission denied" if path_denied(path) else "not found"
+
+
+def refuse_denied_input(path: Any, what: str = "input") -> None:
+    """Refuse a file the user may not reach or read as what it is (`input_permission_denied`),
+    for a real run and a dry run alike. Nothing for any other path, an absent one included."""
+    if path_denied(path):
+        refuse("input", "input_permission_denied", f"{what} cannot be read: permission denied: {path}",
+               hint="the file, or a directory on the way to it, is not readable by the user this runs as: "
+                    "change its permissions or copy it somewhere readable",
+               path=str(path))
 
 
 def dry_run_input_pending(path: str) -> bool:
@@ -2781,40 +2885,87 @@ def _stop_child(child: subprocess.Popen, communicate: bool = True) -> "Tuple[boo
     return False, wait()
 
 
+def _capture_tool_progress(child: subprocess.Popen, limit: Optional[float],
+                           report: Callable[[str], None]) -> Tuple[str, str, Optional[bool]]:
+    """Drain both pipes while the tool runs. Only tagged progress is sent to the caller."""
+    import threading
+
+    out, err = [], []
+    assert child.stdout is not None and child.stderr is not None
+
+    def stdout_reader() -> None:
+        out.append(child.stdout.read())
+
+    def stderr_reader() -> None:
+        for line in child.stderr:
+            if line.startswith(_PROGRESS_PREFIX):
+                try:
+                    report(line[len(_PROGRESS_PREFIX):].strip())
+                except OSError:
+                    # A closed transport must not leave the child's stderr pipe undrained.
+                    pass
+            else:
+                err.append(line)
+
+    readers = [threading.Thread(target=reader, daemon=True) for reader in (stdout_reader, stderr_reader)]
+    for reader in readers:
+        reader.start()
+    stopped = None
+    try:
+        child.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        stopped, _ = _stop_child(child, communicate=False)
+    for reader in readers:
+        reader.join()
+    child.stdout.close()
+    child.stderr.close()
+    return "".join(out), "".join(err), stopped
+
+
+def _relay_progress(message: str) -> None:
+    sys.stderr.write(_PROGRESS_PREFIX + message + "\n")
+    sys.stderr.flush()
+
+
 def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
              env: Optional[Dict[str, str]] = None,
-             on_start: "Optional[Callable[[subprocess.Popen], None]]" = None) -> subprocess.CompletedProcess:
+             on_start: "Optional[Callable[[subprocess.Popen], None]]" = None,
+             on_progress: "Optional[Callable[[str], None]]" = None) -> subprocess.CompletedProcess:
     """Run a sibling script (`argv[0]` is the script path) under child_limit(). On overrun the
     child is stopped (_stop_child()) and a CompletedProcess is returned whose stdout is this skill's own failure
     document (kind timeout, exit 124), so callers that parse the child's --json see a timeout
     exactly as they would from the child itself. `env` replaces the inherited environment.
     `on_start(child)` is called once the child is running (the MCP server keeps it to stop a call
-    the client cancels)."""
+    the client cancels). Tagged progress is streamed to `on_progress` or relayed to the MCP
+    process through a parent tool such as render.py."""
     limit = child_limit(per_call)
     child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     if on_start is not None:
         on_start(child)
+    report = on_progress
+    if report is None and (os.environ if env is None else env).get(MCP_PROGRESS_ENV) == "1":
+        report = _relay_progress
     try:
-        out, err = child.communicate(timeout=limit)
-        _unwatch(child)
-        return subprocess.CompletedProcess(child.args, child.returncode, out, err)
+        if report is None:
+            out, err = child.communicate(timeout=limit)
+            stopped_cleanly = None
+        else:
+            out, err, stopped_cleanly = _capture_tool_progress(child, limit, report)
     except subprocess.TimeoutExpired:
-        # A183: the child is asked to stop first. A sibling script's SIGTERM handler stops its
-        # ffmpeg, removes the partial output and releases its output lock before it exits; a
-        # SIGKILL left the partial file under the final output name and a stale lock beside it,
-        # under a document that said kind timeout. Killed only when it has not exited in
-        # STOP_GRACE seconds (and at once on Windows, where terminate() is a kill).
-        stopped_cleanly, rest = _stop_child(child)
+        stopped_cleanly, err = _stop_child(child)
+    finally:
         _unwatch(child)
-        name = os.path.basename(str(argv[0]))
-        msg = (f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was "
-               + ("stopped" if stopped_cleanly else "killed"))
-        doc = {"status": "failed", "exit_code": 124,
-               "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
-               "commands": []}
-        # communicate() after a timeout returns everything the child wrote, the part read before too
-        return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), rest + f"\nerror: {msg}\n")
+    if stopped_cleanly is None:
+        return subprocess.CompletedProcess(child.args, child.returncode, out, err)
+    # Keep the same failure document and SIGTERM cleanup as the non-streaming path (A183).
+    name = os.path.basename(str(argv[0]))
+    msg = (f"{name} did not finish within {limit:g} s (4x the per-ffmpeg --timeout plus 60 s) and was "
+           + ("stopped" if stopped_cleanly else "killed"))
+    doc = {"status": "failed", "exit_code": 124,
+           "error": {"kind": "timeout", "message": msg, "code": ERROR_CODE["timeout"], "retryable": ERROR_RETRYABLE},
+           "commands": []}
+    return subprocess.CompletedProcess(list(argv), 124, json.dumps(doc), err + f"\nerror: {msg}\n")
 
 
 def option_args(flag: str, value: Any) -> List[str]:
@@ -2854,7 +3005,7 @@ def _has_non_av_streams(cmd: Sequence[str]) -> bool:
     if not src or not os.path.isfile(src):
         return True
     try:
-        out = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src).stdout
+        out = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), file_arg(src)).stdout
     except (OSError, subprocess.TimeoutExpired):
         return True
     kinds = {ln.strip() for ln in out.splitlines() if ln.strip()}
@@ -2892,7 +3043,7 @@ def carried_stream_maps(src: Optional[str], output: str, *, chapters: bool = Tru
     if not src or not os.path.isfile(src):
         return []
     try:
-        out = _ffprobe("-v", "error", "-show_entries", "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *input_format_args(src), src).stdout
+        out = _ffprobe("-v", "error", "-show_entries", "stream=index,codec_type,codec_tag_string:chapter=id", "-of", "json", *input_format_args(src), file_arg(src)).stdout
         doc = json.loads(out or "{}")
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return []
@@ -2980,7 +3131,7 @@ def subtitle_codec_args(src: Optional[str], output: str) -> List[str]:
     if not src or not os.path.isfile(src):
         return args
     try:
-        out = _ffprobe("-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", *input_format_args(src), src).stdout
+        out = _ffprobe("-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", *input_format_args(src), file_arg(src)).stdout
     except (OSError, subprocess.TimeoutExpired):
         return args
     ext = os.path.splitext(output)[1]
@@ -2998,7 +3149,7 @@ def _non_av_kinds(src: Optional[str]) -> Optional[Dict[str, int]]:
     if not src or not os.path.isfile(src):
         return None
     try:
-        proc = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), src)
+        proc = _ffprobe("-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", *input_format_args(src), file_arg(src))
     except (OSError, subprocess.TimeoutExpired):
         return None
     kinds = [ln.strip().strip(",") for ln in (proc.stdout or "").splitlines() if ln.strip()]
@@ -3175,9 +3326,10 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     err_thread = threading.Thread(target=pump_err, daemon=True)
     err_thread.start()
     last = ""
+    mcp_progress = os.environ.get(MCP_PROGRESS_ENV) == "1"
 
     def clear_line() -> None:
-        if last:
+        if last and not mcp_progress:
             sys.stderr.write("\r" + " " * len(last) + "\r")
 
     def timed_out() -> None:
@@ -3203,8 +3355,12 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
                 continue
             msg = _progress_line(done, total, time.time() - t0)
             if msg != last:
-                sys.stderr.write(msg)
-                sys.stderr.flush()
+                if mcp_progress:
+                    message = msg.strip() if total > 0 else f"{max(0.0, done):.1f}s processed"
+                    _relay_progress(message)
+                else:
+                    sys.stderr.write(msg)
+                    sys.stderr.flush()
                 last = msg
     try:
         proc.wait(timeout=(max(5.0, limit - (time.time() - t0)) if limit else None))
@@ -3289,7 +3445,7 @@ def place_output(src: str, dst: str, move: bool = False) -> None:
             STATE._stream_copy_outputs[_checked_key(dst)] = identity
 
 
-# extensions ffmpeg opens through the image2 demuxer, the only one that expands `%d` in a name
+# extensions ffmpeg can open through the image2 demuxer, the only one that expands `%d` in a name
 # and the only one that has a `pattern_type` option (gif, avif, mp4... reject it: "Option
 # pattern_type not found")
 _IMAGE2_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".dpx", ".exr", ".tga",
@@ -3297,12 +3453,46 @@ _IMAGE2_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".dpx"
 
 
 def still_input_args(path: str) -> List[str]:
-    """`-pattern_type none` for a still read through image2 whose path has a `%` in it (#408):
-    image2 otherwise reads `logo%d.png` as a numbered sequence and opens `logo1.png`, a file the
-    run's guards and fingerprints never looked at. Empty for every other path, a video or a GIF
-    with a `%` in its name included: their demuxers never expand it and reject the option."""
+    """`-f image2 -pattern_type none` for a still with an image extension whose path has a `%` in
+    it (#408): image2 otherwise reads `logo%d.png` as a numbered sequence and opens `logo1.png`, a
+    file the run's guards and fingerprints never looked at. The demuxer is named because FFmpeg
+    chooses image2 by itself only for a name it reads as a pattern: `a%20b.png` and `50%.png` are
+    opened by png_pipe (jpeg_pipe, ...), which has no `pattern_type` and failed with "Option
+    pattern_type not found" (#558; measured on 6.1.1 for every extension above that it writes).
+    Forced, image2 takes the codec from the extension and reads the one file of that name. Empty
+    for every other path, a video or a GIF with a `%` in its name included: their demuxers never
+    expand it and reject the option."""
     p = str(path)
-    return ["-pattern_type", "none"] if "%" in p and os.path.splitext(p)[1].lower() in _IMAGE2_EXT else []
+    if "%" in p and os.path.splitext(p)[1].lower() in _IMAGE2_EXT:
+        return ["-f", "image2", "-pattern_type", "none"]
+    return []
+
+
+def file_arg(path: Any) -> str:
+    """`path` as an argument a command line reads as a file: a relative name starting with a
+    dash is written `./name` (#558). ffprobe, whose input is a bare argument, read `-report` and
+    `-dash.mp4` as options ("You have to specify one input file", and a log file written beside
+    the caller). The name itself is unchanged everywhere else (documents, messages, guards)."""
+    p = str(path)
+    return "./" + p if p.startswith("-") and p != "-" else p
+
+
+def guard_input_names(cmd: Sequence[str]) -> List[str]:
+    """`cmd` with every input named so that ffmpeg and ffprobe read it as that one file: an input
+    whose name starts with a dash is written `./name` (file_arg(): each `-i` value of an ffmpeg
+    command, and the last argument of an ffprobe one when a file of that name exists, which tells
+    it from an option), then guard_input_formats(). run() and run_analysis() apply it to every
+    command, and so do the frame readers and stream checks that start their own process."""
+    cmd = [str(a) for a in cmd]
+    base = os.path.basename(cmd[0]) if cmd else ""
+    if base.startswith("ffprobe"):
+        if len(cmd) > 1 and cmd[-1].startswith("-") and cmd[-1] != "-" and os.path.lexists(cmd[-1]):
+            cmd[-1] = file_arg(cmd[-1])
+    elif base.startswith("ffmpeg"):
+        for i in range(1, len(cmd) - 1):
+            if cmd[i] == "-i":
+                cmd[i + 1] = file_arg(cmd[i + 1])
+    return guard_input_formats(cmd)
 
 
 def riff_wave_args(path: str) -> List[str]:

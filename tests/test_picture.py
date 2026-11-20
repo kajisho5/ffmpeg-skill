@@ -481,6 +481,32 @@ class PictureTests(MediaFixtures):
                                       f"line wider than the safe area: {line!r}")
         self.assertEqual(" ".join(l for _, lines in blocks for l in lines), text, "no word is lost or cut")
 
+    def test_caption_warns_when_a_cue_uses_30_over_a_2997_source(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            folder = Path(tmp)
+            source = tiny_clip(folder / "ntsc.mp4", "color=black:s=320x240:r=30000/1001", seconds=3)
+            self.assertAlmostEqual(probe(str(source))["video"]["fps"], 29.97, places=3)
+            cues = folder / "cues.txt"
+            cases = (("00:00:01:00-00:00:02:00 Hello", ["--fps", "30"], -0.002),
+                     ("00:00:01:00@30-00:00:02:00@30 Hello", [], -0.002),
+                     ("00:00:01:00-00:00:02:00 Hello", [], None),
+                     ("1-2 Hello", ["--fps", "30"], None))
+            for index, (line, flags, drift) in enumerate(cases):
+                with self.subTest(line=line, flags=flags):
+                    cues.write_text(line + "\n", encoding="utf-8")
+                    modes = ((), ("--dry-run",)) if index == 0 else (("--dry-run",),)
+                    for mode in modes:
+                        doc = json.loads(script("caption.py", source, "--text", cues, *flags, *mode,
+                                                "--fast", "-o", folder / f"written-{index}.mp4", "--json").stdout)
+                        warnings = [w for w in (doc.get("diagnostics") or {}).get("warnings", [])
+                                    if w["code"] == "caption_timecode_rate_mismatch"]
+                        if drift is None:
+                            self.assertEqual(warnings, [])
+                        else:
+                            self.assertEqual(len(warnings), 1)
+                            self.assertAlmostEqual(warnings[0]["drift_seconds"], drift, places=6)
+                            self.assertEqual(warnings[0]["cue_timecode"], "00:00:02:00")
+
     def test_phrase_wrap_burns_and_reports(self):
         """1.16 end to end: the dl1 and dl4 cues are burnt in, the ASS the run writes carries the
         phrase breaks, and the result document says which wrap produced them."""
@@ -2338,7 +2364,7 @@ class PictureTests(MediaFixtures):
         sys.path.insert(0, str(SCRIPTS))
         from _platforms import PLATFORMS
         vertical = OUT / "safe_vertical.mp4"
-        script("fit.py", self.src, "--duration", "4", "--aspect", "9:16", "--fit", "crop",
+        script("fit.py", self.src, "--duration", "4", "--method", "speed", "--aspect", "9:16", "--fit", "crop",
                "--width", "540", "--fast", "-o", vertical)
         base = self._region_stats(vertical, "iw:60:0:0", at=1.0)
 
@@ -3004,6 +3030,67 @@ class PictureTests(MediaFixtures):
             emoji_mod._libass_color_probe()
         vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
         self.assertEqual(vf, "subtitles=" + escape_filter_path(str(colon / "e.srt"), bind=False))
+
+    def test_a_relative_path_with_a_colon_inside_a_filter_is_opened_as_a_file(self):
+        """#558: `caption.py --srt ./a:b.srt` failed inside ffmpeg ("Protocol not found").
+        escape_filter_path() went through Path(), which drops the `./`, and the subtitles filter
+        opens its file through libavformat, where a bare `a:b.srt` (or `d:e/c.srt`) is protocol
+        `a`. A relative path whose first segment has a colon is written `./...` again; an
+        absolute path and a Windows drive path are not touched."""
+        from _common import decision
+        self.assertEqual(escape_filter_path("plain.srt", bind=False), "plain.srt")
+        if os.name != "nt":
+            # POSIX names: on Windows `a:` is drive A and a name cannot hold a colon
+            self.assertEqual(escape_filter_path("a:b.srt", bind=False), "./a\\\\:b.srt")
+            self.assertEqual(escape_filter_path("./a:b.srt", bind=False), "./a\\\\:b.srt")
+            self.assertEqual(escape_filter_path("d:e/c.srt", bind=False), "./d\\\\:e/c.srt")
+            self.assertEqual(escape_filter_path("sub/a:b.srt", bind=False), "sub/a\\\\:b.srt")
+            self.assertEqual(escape_filter_path("/abs/a:b.srt", bind=False), "/abs/a\\\\:b.srt")
+            # the POSIX backslash escape (#408) still applies to a name that also has a colon: the
+            # first port of this fix put it under the colon branch's `else`, and `a:b\\x.srt` opened
+            # `a:bx.srt` (review of the 4.0 branch)
+            with unittest.mock.patch.object(decision, "_on_windows", return_value=False):
+                self.assertEqual(escape_filter_path("a:b\\x.srt", bind=False), "./a\\\\:b\\\\\\\\x.srt")
+        with unittest.mock.patch.object(decision, "_on_windows", return_value=True):
+            for drive_path, want in (("C:/Users/me/c.srt", "C\\\\:/Users/me/c.srt"),
+                                     ("C:\\Users\\me\\c.srt", "C\\\\:/Users/me/c.srt"),
+                                     ("C:c.srt", "C\\\\:c.srt"), ("sub\\c.srt", "sub/c.srt")):
+                self.assertEqual(escape_filter_path(drive_path, bind=False), want, "a drive letter is not a scheme")
+        if os.name == "nt":
+            self.skipTest("a file name cannot hold a colon on Windows")
+        work = OUT / "g558_colon"
+        (work / "d:e").mkdir(parents=True, exist_ok=True)
+        clip = work / "black.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=320x180:r=10:d=2",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", clip)
+        cue = "1\n00:00:00,000 --> 00:00:02,000\nHELLO\n"
+        for name in ("a:b.srt", "d:e/c.srt"):
+            (work / name).write_text(cue, encoding="utf-8")
+        cube = work / "l:ut.cube"
+        cube.write_text("LUT_3D_SIZE 2\n" + "".join(f"{r} {g} {b}\n" for b in (0, 1) for g in (0, 1) for r in (0, 1)), encoding="utf-8")
+
+        def run_in(argv):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / argv[0]), *argv[1:], "--json", "--overwrite", "--fast"], cwd=work,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+            return json.loads(proc.stdout)
+
+        def brightest(path):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                                  "-pix_fmt", "gray", "-"], stdout=subprocess.PIPE, check=True).stdout
+            return max(raw)
+
+        self.assertLess(brightest(clip), 40, "the fixture is black")
+        for given in ("./a:b.srt", "a:b.srt", "d:e/c.srt", str(work / "a:b.srt")):
+            with self.subTest(srt=given):
+                doc = run_in(["caption.py", "black.mp4", "--srt", given, "-o", "burned.mp4"])
+                if (doc.get("error") or {}).get("reason") == "filter_missing":
+                    self.skipTest("this build has no subtitles filter")
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertGreater(brightest(work / "burned.mp4"), 150, "the cue was drawn, so the file was opened")
+        with self.subTest(lut="l:ut.cube"):
+            doc = run_in(["color.py", "black.mp4", "--lut", "l:ut.cube", "-o", "graded.mp4"])
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            self.assertIn("lut3d=file=./l\\\\:ut.cube", " ".join(doc["commands"]))
 
     def test_help_survives_a_legacy_console_encoding(self):
         """--help contains non-ASCII (Japanese example, arrows); a cp1252 console must not raise UnicodeEncodeError."""
@@ -4067,6 +4154,89 @@ class ColourAuditGTests(unittest.TestCase):
 
 class ScriptFontTests(unittest.TestCase):
     """1.12: which script text is written in, and a font file that actually covers it."""
+
+    def test_vietnamese_font_coverage_checks_decomposed_text_and_explicit_language(self):
+        import unicodedata
+        from _common import fonts
+
+        entry = ("/test/vi.ttf", "Test Vietnamese")
+        cases = (("Tiếng Việt", None), (unicodedata.normalize("NFD", "Tiếng Việt"), None),
+                 ("đã ăn", None), ("Xin chao", "vi-VN"), ("Tiếng Việt", "vie"))
+        with unittest.mock.patch.object(fonts, "_script_font_entry", return_value=entry) as resolve:
+            for sample, lang in cases:
+                with self.subTest(sample=sample, lang=lang):
+                    self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", *entry))
+                    resolve.assert_called_with("vi")
+            for sample in ("hello", "Mănăstire", "rođen"):
+                self.assertEqual(fonts.script_font_for_text(sample), ("latin", None, None))
+            # Igbo shares these letters; a caller who names the language keeps its own font (review of #636)
+            for sample, lang in (("Ọ dị mma", "ig"), ("ẹ kú àárọ̀", "yo")):
+                self.assertEqual(fonts.script_font_for_text(sample, lang=lang), ("latin", None, None))
+        with unittest.mock.patch.object(fonts.platform, "system", return_value="Linux"), \
+             unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-match"), \
+             unittest.mock.patch.object(fonts.subprocess, "run") as fc_match, \
+             unittest.mock.patch.object(fonts, "warn") as warn:
+            for result, code in ((subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten\n"), "font_lacks_script"),
+                                 (subprocess.CompletedProcess([], 0, stdout="Fallback\ten|vi\n"), "font_coverage_unverified"),
+                                 (subprocess.CompletedProcess([], 1), "font_coverage_unverified"),
+                                 (subprocess.TimeoutExpired("fc-match", 10), "font_coverage_unverified")):
+                fc_match.side_effect = [result]
+                self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True, font_bold=True),
+                                 ("latin", None, None))
+                self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font:bold")
+                self.assertEqual((warn.call_args.args[1], warn.call_args.kwargs["script"]), (code, "vi"))
+            warn.reset_mock()
+            fc_match.side_effect = [subprocess.CompletedProcess([], 0, stdout="Narrow Font\ten|vi\n")]
+            self.assertEqual(fonts.script_font_for_text("đã ăn", font="Narrow Font", font_explicit=True),
+                             ("latin", None, None))
+            self.assertEqual(fc_match.call_args.args[0][-1], "Narrow Font")
+            warn.assert_not_called()
+
+    def test_vietnamese_explicit_folder_face_is_checked_before_installed_fonts(self):
+        from _common import fonts
+
+        with tempfile.TemporaryDirectory() as root:
+            collection = Path(root) / "custom.ttc"
+            collection.touch()
+            faces = (f"{collection}\t0\tCustom\tCustom-Regular\tTrueType\t80\t0\tCustom Regular\n"
+                     f"{collection}\t1\tCustom\tCustom-Bold\tTrueType\t200\t0\tCustom Bold\n")
+            with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
+                 unittest.mock.patch.object(fonts.subprocess, "run") as scan, \
+                 unittest.mock.patch.object(fonts, "warn") as warn:
+                for bold in (False, True):
+                    warn.reset_mock()
+                    scan.side_effect = [subprocess.CompletedProcess([], 0, stdout=faces),
+                                        subprocess.CompletedProcess([], 0, stdout="0\ten|vi\n1\ten\n")]
+                    self.assertEqual(fonts.script_font_for_text("đã ăn", font="Custom", font_explicit=True,
+                                                                fonts_dir=root, font_bold=bold), ("latin", None, None))
+                    if bold:
+                        self.assertEqual(warn.call_args.args[1], "font_lacks_script")
+                    else:
+                        warn.assert_not_called()
+
+    def test_vietnamese_cues_burn_with_default_and_explicit_faces(self):
+        family = font_family_for_script("vi")
+        if not family:
+            self.skipTest("no known Vietnamese-capable font")
+        OUT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=OUT) as work:
+            d = Path(work)
+            source = tiny_clip(d / "blank.mp4", "color=black:s=480x270:r=10", seconds=2)
+            cue = "Tiếng Việt: ă ơ ư ạ ẫ ữ"
+            srt = d / "vi.srt"
+            srt.write_text(f"1\n00:00:00,000 --> 00:00:01,900\n{cue}\n", encoding="utf-8")
+            for name, flags in (("default", ()), ("explicit", ("--font", family, "--lang", "vi"))):
+                with self.subTest(name=name):
+                    out, ass = d / f"{name}.mp4", d / f"{name}.ass"
+                    result = json.loads(script("caption.py", source, "--srt", srt, "--animate", "fade",
+                                               "--write-ass", ass, "-o", out, "--json", *flags).stdout)
+                    self.assertTrue(result["verified"])
+                    self.assertEqual(result["caption"]["cues_burned"], 1)
+                    self.assertEqual(result["font_used"]["family"], family)
+                    if name == "default":
+                        self.assertEqual(result["font_used"]["how"], "script")
+                    self.assertIn(cue, ass.read_text(encoding="utf-8").replace(r"\N", " "))
+                    self.assertGreater(_frame_ink(out), _frame_ink(source))
 
     def test_detect_script_reads_the_characters_not_the_locale(self):
         cases = {
@@ -5893,6 +6063,32 @@ class FitCropLossTests(unittest.TestCase):
         self.assertEqual((check["verdict"], check["samples"]), ("unmeasured", 0))
         self.assertIn("timed out", note.call_args.args[0])
 
+    def test_crop_check_reports_an_outlier_even_when_most_motion_survives(self):
+        from unittest.mock import patch
+
+        outside, = self.moving(2, 7, 6, 13, n=1)
+        inside, = self.moving(14, 19, 2, 16, n=1)
+        samples = [(4.5, outside), (5.0, inside), (5.5, inside)]
+        with patch.object(self.fit, "sample_crop_frames", return_value=(samples, self.W, self.H)), \
+             patch.object(self.fit, "warn") as warn:
+            result = self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 4, 2,
+                                         speed=2, output_video={"duration": 1, "fps": 25})
+        self.assertLess(result["motion_outside"], 0.5)
+        self.assertEqual(result["verdict"], "review")
+        first, = result["review_points"]
+        self.assertEqual((first["source_time"], first["output_time_estimate"]), (4.5, 0.25))
+        self.assertEqual(first["signal"], "motion")
+        self.assertGreaterEqual(first["motion_outside"], 0.5)
+        self.assertEqual(warn.call_args.kwargs["review_points"], result["review_points"])
+
+        # At 1 fps, a 4-second video has no frame to seek to after 3.0.
+        with patch.object(self.fit, "sample_crop_frames",
+                          return_value=([(2.7, outside), (3.7, outside)], self.W, self.H)), \
+             patch.object(self.fit, "warn"):
+            result = self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 0, 4,
+                                         output_video={"duration": 4, "fps": 1})
+        self.assertEqual([p["output_time_estimate"] for p in result["review_points"]], [2.7, None])
+
     def test_left_heavy_motion_is_review_anchor_near_0(self):
         c = self.fit.crop_loss(self.moving(2, 7, 6, 13), self.W, self.H, self.WINDOW, "x")
         self.assertEqual(c["verdict"], "review", c)
@@ -5915,6 +6111,35 @@ class FitCropLossTests(unittest.TestCase):
         self.assertEqual(c["verdict"], "ok", c)
         self.assertLess(c["motion_outside"], 0.5)
         self.assertAlmostEqual(c["suggested_anchor"], 0.5, delta=0.1)
+
+    def bars(self, xs, shift=0):
+        buf = bytearray(self.W * self.H)
+        for y in range(4, 14):
+            for x in xs:
+                buf[y * self.W + x + shift] = 255
+        return bytes(buf)
+
+    def test_motion_spread_over_the_frame_is_not_off_centre(self):
+        """#630: a 16:9 to 9:16 crop cuts 68% of the width, so motion spread evenly over the frame
+        (a pan, handheld footage, testsrc2) has more than half of it outside. That is the area
+        share, not content off centre: ok. Motion at both edges is review, and the remedy does not
+        name the centred anchor the run already used."""
+        from unittest.mock import patch
+
+        spread = list(range(0, 31, 3))
+        c = self.fit.crop_loss([(self.bars(spread), self.bars(spread, 1))] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertGreater(c["motion_outside"], 0.5, c)
+        self.assertEqual(c["verdict"], "ok", c)
+        edges = [1, 2, 3, 28, 29, 30]
+        pair = (self.bars(edges), self.bars([0, 1, 2, 29, 30, 31]))  # both move outward: centred
+        c = self.fit.crop_loss([pair] * 3, self.W, self.H, self.WINDOW, "x")
+        self.assertEqual((c["verdict"], c["suggested_anchor"]), ("review", 0.5), c)
+        with patch.object(self.fit, "sample_crop_frames", return_value=([(1.0, pair)], self.W, self.H)), \
+             patch.object(self.fit, "warn") as warn:
+            self.fit.check_crop("clip.mp4", [], self.W, self.H, ("x", *self.WINDOW), 0, 2)
+        message = warn.call_args.args[0]
+        self.assertNotIn("--crop-x", message)
+        self.assertIn("--fit pad", message)
 
     def test_flat_frames_are_unmeasured_without_division_by_zero(self):
         for fill in (0, 128):
@@ -7311,6 +7536,30 @@ class LeanBuildTests(unittest.TestCase):
         cues.write_text("00:00:00,500 --> 00:00:02,500 Hello\n0:03-0:05 World\n", encoding="utf-8")
         script("caption.py", "--text", str(cues), "--write-srt", str(OUT / "same_line_out.srt"))
         self.assertIn("Hello", (OUT / "same_line_out.srt").read_text(encoding="utf-8"))
+
+    def test_drop_frame_labels_convert_and_refuse_skipped_frames(self):
+        from caption import parse_text_cues
+        OUT.mkdir(parents=True, exist_ok=True)
+        cues = OUT / "drop_frame_valid.txt"
+        for fps, first, second in ((29.97, "02", "03"), (59.94, "04", "06")):
+            with self.subTest(fps=fps):
+                cues.write_text(f"00:01:00;{first}@{fps} --> 00:01:00;{second}@{fps} First minute\n"
+                                f"00:10:00;00 --> 00:10:01;00 Tenth minute\n", encoding="utf-8")
+                result = parse_text_cues(str(cues), 3, 0, fps)
+                self.assertAlmostEqual(result[0][0], 60.06, places=6)
+                self.assertAlmostEqual(result[1][0], 599.9994, places=6)
+                self.assertAlmostEqual(result[1][1] - result[1][0], 1.001, places=6)
+        cues.write_text("00:01:00;00 --> 00:01:02;00 Invalid\n", encoding="utf-8")
+        proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
+                      "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
+        self.assertIn("not a valid label", json.loads(proc.stdout)["error"]["message"])
+        cues.write_text("0-00:00:02;00@oops Malformed endpoint\n", encoding="utf-8")
+        proc = script("caption.py", "--text", cues, "--fps", "29.97", "--json",
+                      "--write-srt", OUT / "invalid_drop.srt", expect_fail=True)
+        self.assertIn("malformed drop-frame timing", json.loads(proc.stdout)["error"]["message"])
+        ordinary_text = "2019-2020; text"
+        cues.write_text(ordinary_text + "\n", encoding="utf-8")
+        self.assertEqual(parse_text_cues(str(cues), 3, 0, 29.97), [(0, 3, ordinary_text)])
 
     def test_look_draws_the_sheet_without_timecodes_on_a_build_without_drawtext(self):
         """#394: the default sheet needs drawtext only for its stamps; without it the step every

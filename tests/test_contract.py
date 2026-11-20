@@ -892,7 +892,9 @@ class ContractTests(unittest.TestCase):
         next `## `, so that release's notes were the three-line stub above the real section."""
         headings = re.findall(r"(?m)^## (\S+)", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
         self.assertEqual(sorted(h for h in set(headings) if headings.count(h) > 1), [])
-        self.assertEqual(headings[0], "Unreleased")
+        # a hand-bumped major writes its own section on top (#632, 4.0.0); otherwise Unreleased
+        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+        self.assertIn(headings[0], ("Unreleased", version))
 
     def test_every_fuzz_target_runs_on_its_seeds(self):
         """ClusterFuzzLite builds fuzz/*_fuzzer.py with atheris; without atheris each target runs
@@ -1342,7 +1344,8 @@ class ContractTests(unittest.TestCase):
         or -slower picture (caught in review of #91's fix, before it shipped). fit.py must not
         call run_keeping_subtitles() when it's changing speed -- dropping the subtitle track is
         the honest outcome, reported via dropped_non_av_streams: true, not a silently-wrong one."""
-        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("speed_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "speed",
+                              "-o", self.out("speed_fit.mkv"), "--json").stdout)
         self.assertTrue(doc["dropped_non_av_streams"])
         kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout
         self.assertNotIn("subtitle", kinds)
@@ -1357,14 +1360,16 @@ class ContractTests(unittest.TestCase):
         def codes(doc):
             return [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings") or []]
 
-        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "-o", self.out("warn_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "speed",
+                              "-o", self.out("warn_fit.mkv"), "--json").stdout)
         large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
                  if w["code"] == "large_speed_change"]
         self.assertEqual(len(large), 1, doc.get("diagnostics"))
         self.assertAlmostEqual(large[0]["factor"], 3.0, delta=0.05)  # the 6s fixture at 2s
         self.assertEqual(large[0]["threshold"], 1.15)
         # the same size of change downwards (6s stretched to 12s, 0.5x) is reported too
-        doc = json.loads(tool("fit", self.subbed, "--duration", "12", "-o", self.out("slow_fit.mkv"), "--json").stdout)
+        doc = json.loads(tool("fit", self.subbed, "--duration", "12", "--method", "speed",
+                              "-o", self.out("slow_fit.mkv"), "--json").stdout)
         large = [w for w in (doc.get("diagnostics") or {}).get("warnings") or []
                  if w["code"] == "large_speed_change"]
         self.assertEqual(len(large), 1, doc.get("diagnostics"))
@@ -1375,6 +1380,37 @@ class ContractTests(unittest.TestCase):
         # and neither is a trim to the reported case's target: nothing was retimed
         doc = json.loads(tool("fit", self.subbed, "--duration", "2", "--method", "trim", "-o", self.out("trim_fit.mkv"), "--json").stdout)
         self.assertNotIn("large_speed_change", codes(doc))
+
+    def test_fit_refuses_a_large_implicit_retime_in_the_plan_and_real_run(self):
+        source = self.out("103_8_seconds.mp4")
+        sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=10:d=103.8",
+           "-c:v", "libx264", "-preset", "ultrafast", source)
+        output = self.out("shortened.mp4")
+        args = (source, "--duration", "60", "-o", output, "--json")
+        for flags in ((), ("--dry-run",)):
+            with self.subTest(flags=flags):
+                process = tool("fit", *args, *flags, check=False)
+                self.assertNotEqual(process.returncode, 0)
+                result = json.loads(process.stdout)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["error"]["reason"], "fit_method_required")
+                self.assertEqual(result["error"]["details"],
+                                 {"factor": 1.73, "threshold": 1.15, "source_duration": 103.8, "target_duration": 60.0})
+                self.assertEqual(result["commands"], [])
+                self.assertFalse(output.exists())
+        plan = json.loads(tool("fit", *args, "--method", "speed", "--dry-run").stdout)
+        self.assertAlmostEqual(plan["timing"]["speed_factor"], 1.73)
+        self.assertIn("large_speed_change", [row["code"] for row in plan["diagnostics"]["warnings"]])
+        self.assertFalse(plan["verified"])
+
+        small_source = self.out("62_seconds.mp4")
+        sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=64x48:r=10:d=62",
+           "-c:v", "libx264", "-preset", "ultrafast", small_source)
+        small = json.loads(tool("fit", small_source, "--duration", "60", "-o", output, "--json").stdout)
+        self.assertAlmostEqual(small["timing"]["speed_factor"], 62 / 60)
+        self.assertTrue(small["verified"])
+        codes = [row["code"] for row in (small.get("diagnostics") or {}).get("warnings", [])]
+        self.assertNotIn("large_speed_change", codes)
 
     def test_fit_reports_timing_in_dry_run_saved_plan_and_result(self):
         output, plan = self.out("fit_timing.mp4"), self.out("fit_timing.json")
@@ -1467,6 +1503,12 @@ sys.exit(fit.main())
         self.assertTrue(os.path.exists(out))
         cc = doc["crop_check"]
         self.assertEqual((cc["verdict"], cc["axis"], cc["basis"]), ("review", "x", "luma_motion_proxy"), cc)
+        times = [point["output_time_estimate"] for point in cc["review_points"]]
+        self.assertTrue(times)
+        self.assertEqual(times, sorted(set(times)))
+        first_frame = self.out("crop_left_review.png")
+        tool("look", out, "--at", str(times[0]), "--no-timecode", "-o", first_frame, "--json")
+        self.assertTrue(os.path.exists(first_frame))
         self.assertGreater(cc["samples"], 0)
         self.assertGreaterEqual(cc["motion_outside"], 0.5)
         self.assertLessEqual(cc["suggested_anchor"], 0.15)
@@ -2605,6 +2647,49 @@ sys.exit(fit.main())
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return [json.loads(line) for line in proc.stdout.strip().splitlines()]
 
+    def test_mcp_progress_is_opt_in_and_relays_a_nested_encode(self):
+        project = self.out("progress.project.json")
+        output = self.out("progress.mp4")
+        project.write_text(json.dumps({"output": str(output), "clips": [{"src": str(self.src)}],
+                                       "fit": {"width": 96, "height": 64}}), encoding="utf-8")
+        params = {"name": "render", "arguments": {"argv": [str(project), "--fast", "--overwrite"]}}
+        requests = [{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                     "params": {**params, "_meta": {"progressToken": 0}}},
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "render", "_meta": {"progressToken": "plan"},
+                                "arguments": {"argv": [str(project), "--dry-run", "--overwrite"]}}}]
+        replies = self._rpc(requests)
+        self.assertEqual([reply["id"] for reply in replies if "id" in reply], [1, 2, 3])
+        updates = [reply["params"] for reply in replies if reply.get("method") == "notifications/progress"]
+        self.assertTrue(updates, replies)
+        self.assertEqual([row["progress"] for row in updates], list(range(1, len(updates) + 1)))
+        for row in updates:
+            self.assertEqual(row["progressToken"], 0)
+            self.assertNotIn("total", row)
+            self.assertRegex(row["message"], r"%(?:\s|$)|s processed$")
+        self.assertEqual(replies[0]["id"], 1)
+        self.assertEqual(replies[-2]["id"], 2)
+        self.assertTrue(replies[-2]["result"]["structuredContent"]["verified"])
+        self.assertTrue(replies[-1]["result"]["structuredContent"]["dry_run"])
+
+    def test_mcp_progress_advances_across_stages_and_stops_when_cancelled(self):
+        req = {"jsonrpc": "2.0", "params": {"_meta": {"progressToken": "render-1"}}}
+        entry, out = {"cancelled": False}, io.BytesIO()
+        report = mcp_server._progress_reporter(req, entry, out)
+        with unittest.mock.patch.object(mcp_server.time, "monotonic", side_effect=(1, 1.1, 1.6, 2.5)):
+            report("90.0%")
+            report("95.0%")  # too close to the first update
+            report("0.1s processed")  # the next stage starts on its own clock
+            entry["cancelled"] = True
+            report("1.0s processed")
+        rows = [json.loads(line)["params"] for line in out.getvalue().splitlines()]
+        self.assertEqual(rows, [{"progressToken": "render-1", "progress": 1, "message": "90.0%"},
+                                {"progressToken": "render-1", "progress": 2, "message": "0.1s processed"}])
+        for invalid in (True, 1.5, {}):
+            req["params"]["_meta"]["progressToken"] = invalid
+            self.assertIsNone(mcp_server._progress_reporter(req, entry, out))
+
     @staticmethod
     def _norm(obj):
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
@@ -2851,6 +2936,23 @@ sys.exit(fit.main())
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
+    def test_4_0_splits_the_promise_by_tool(self):
+        """4.0.0: the 12 core tools are `stable`, the other 30 `beta`; the contract says which, the
+        two lists do not drift apart, and the docs describe both halves and every 4.0 change."""
+        stability = {t["name"]: t["stability"] for t in self.contract["tools"]}
+        self.assertEqual({n for n, s in stability.items() if s == "stable"}, set(_contract.MCP_CORE_TOOLS))
+        self.assertEqual(set(stability.values()), {"stable", "beta"})
+        self.assertEqual(sum(1 for s in stability.values() if s == "beta"), len(stability) - 12)
+        doc = (ROOT / "docs" / "contract.md").read_text(encoding="utf-8")
+        self.assertIn("## Stability guarantee (4.x)", doc)
+        self.assertIn("## What 4.0 changed", doc)
+        for reason in ("fit_method_required", "input_empty", "input_is_directory", "input_not_media",
+                       "input_permission_denied", "output_extension_unknown"):
+            self.assertIn(reason, self.contract["json_output"]["error_reasons"], reason)
+            self.assertIn(reason, doc.split("## What 4.0 changed", 1)[1].split("\n## ", 1)[0], reason)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("contract.md#stability-guarantee-4x", readme)
+        self.assertIn("contract.md#what-40-changed", readme)
     def test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager(self):
         """`npx ffmpeg-skill setup` is the one command: the skill for every agent whose home
         directory exists (Claude Code when none does), FFmpeg through brew / winget / apt-get when
@@ -3091,6 +3193,39 @@ sys.exit(fit.main())
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
                       "ffmpeg_version", "new")
 
+    def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
+        """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
+        fc-scan that fails is, never an exception that stops the caption; an empty folder that
+        lists is no coverage (False)."""
+        import importlib
+        import tempfile
+        from unittest import mock
+        sys.path.insert(0, str(SCRIPTS))
+        fonts = importlib.import_module("_common.fonts")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(fonts, "_safe_which", return_value="/bin/true"):
+            self.assertIs(fonts._scan_font_coverage(tmp, "latin"), False)
+            with mock.patch.object(fonts.os, "listdir", side_effect=PermissionError("denied")):
+                self.assertIsNone(fonts._scan_font_coverage(tmp, "latin"))
+
+    def test_an_optional_probe_and_a_dash_named_playlist_review_of_636(self):
+        """Review of #636: an optional probe of an empty file or a folder returns {} as a failed
+        ffprobe did, instead of exiting the caller; a playlist named like an option (-list.m3u8)
+        is refused as a playlist, while a media file named that way still opens."""
+        import tempfile
+        sys.path.insert(0, str(SCRIPTS))
+        import importlib
+        probe_mod = importlib.import_module("_common.probe")
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "empty.mp4"
+            empty.write_bytes(b"")
+            self.assertEqual(probe_mod.probe(str(empty), required=False), {})
+            self.assertEqual(probe_mod.probe(tmp, required=False), {})
+            (Path(tmp) / "-list.m3u8").write_text("#EXTM3U\n#EXTINF:1,\nhttp://example.invalid/a.ts\n", encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), "--json", "--", "-list.m3u8"],
+                                  capture_output=True, text=True, cwd=tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("playlist", proc.stdout + proc.stderr)
+
     def test_every_defect_names_its_class_and_what_changed_so_it_cannot_recur(self):
         """docs/defect-ledger.jsonl (#632): a defect is not closed by repairing the one place it
         was reported. Each fix adds a line: the class (the twenty review questions, an FFmpeg
@@ -3137,10 +3272,85 @@ sys.exit(fit.main())
                 "     def test_b(self):\n         pass\n+    def test_c(self):\n+        pass\n"
                 "@@ -40,3 +40,3 @@ def test_d(self):\n-        a = 1\n+        a = 2\n")
         self.assertEqual(proof.changed_tests(diff), {"test_x": ["test_a", "test_c", "test_d"]})
-        # with the head's source the class is kept: U.test_d, not any test_d (review of #635)
-        source = "class T:\n" + "\n" * 28 + "class U:\n"
+        # with the head's source each line is placed by the parsed module (review of #635)
+        lines = ["import unittest", "class T(unittest.TestCase):"] + ["    pass"] * 7
+        lines += ["    def test_a(self):", "        x = 1", "        y = 3", "    def helper(self):",
+                  "        z = 2", "    def test_b(self):", "        pass", "    def test_c(self):", "        pass"]
+        lines += ["    s = 0"] * (38 - len(lines)) + ["class U(unittest.TestCase):", "    def test_d(self):", "        a = 2"]
+        source = "\n".join(lines) + "\n"
         self.assertEqual(proof.changed_tests(diff, lambda module: source),
                          {"test_x": ["T.test_a", "T.test_c", "U.test_d"]})
+        # a `class` line inside a string is not a class; a decorator-only edit is the test below
+        # it; a line deleted just above the next class is the test it was in, not the next
+        # class's same-named test; the lines of a removed test are nobody's
+        head = "\n".join([
+            "import unittest",                       # 1
+            "class A(unittest.TestCase):",           # 2
+            "    def test_guard(self):",             # 3
+            "        self.assertTrue(True)",         # 4
+            "    @unittest.skipIf(False, 'x')",      # 5
+            "    def test_b(self):",                 # 6
+            "        s = '''",                       # 7
+            "class B:",                              # 8
+            "'''",                                   # 9
+            "    def test_c(self):",                 # 10
+            "        pass  # edited",                # 11
+            "class B(unittest.TestCase):",           # 12
+            "    def test_guard(self):",             # 13
+            "        self.fail('other')",            # 14
+        ]) + "\n"
+        edits = ("+++ b/tests/test_x.py\n"
+                 "@@ -3,3 +3,2 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                 "         self.assertTrue(True)\n-        self.assertEqual(1, 2)\n"
+                 "@@ -6,2 +5,2 @@ def test_guard(self):\n-    @unittest.skipIf(True, 'x')\n+    @unittest.skipIf(False, 'x')\n"
+                 "     def test_b(self):\n"
+                 "@@ -11,3 +10,3 @@ class B:\n     def test_c(self):\n-        pass\n+        pass  # edited\n")
+        self.assertEqual(proof.changed_tests(edits, lambda module: head),
+                         {"test_x": ["A.test_guard", "A.test_b", "A.test_c"]})
+        boundary = ("+++ b/tests/test_x.py\n@@ -10,4 +10,3 @@ def test_b(self):\n     def test_c(self):\n"
+                    "         pass  # edited\n-        self.assertEqual(1, 2)\n class B(unittest.TestCase):\n")
+        self.assertEqual(proof.changed_tests(boundary, lambda module: head), {"test_x": ["A.test_c"]})
+        removed = ("+++ b/tests/test_x.py\n@@ -3,6 +3,4 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                   "         self.assertTrue(True)\n-    def test_gone(self):\n-        pass\n"
+                   "     @unittest.skipIf(False, 'x')\n")
+        self.assertEqual(proof.changed_tests(removed, lambda module: head), {})
+        # a removed test's decorator is not its neighbour's; a decorator deleted from a surviving
+        # test is that test's (review of #636)
+        gone = ("+++ b/tests/test_x.py\n@@ -3,6 +3,3 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                "         self.assertTrue(True)\n-    @unittest.skip('x')\n-    def test_gone(self):\n-        pass\n"
+                "     @unittest.skipIf(False, 'x')\n")
+        self.assertEqual(proof.changed_tests(gone, lambda module: head), {})
+        undecorated = ("+++ b/tests/test_x.py\n@@ -5,3 +5,2 @@ def test_guard(self):\n     @unittest.skipIf(False, 'x')\n"
+                       "-    @unittest.skip('y')\n     def test_b(self):\n")
+        self.assertEqual(proof.changed_tests(undecorated, lambda module: head), {"test_x": ["A.test_b"]})
+        # an `@` line deeper than the method is body text (a string), not a decorator
+        in_body = ("+++ b/tests/test_x.py\n@@ -3,3 +3,2 @@ class A(unittest.TestCase):\n     def test_guard(self):\n"
+                   "-        @header\n         self.assertTrue(True)\n")
+        self.assertEqual(proof.changed_tests(in_body, lambda module: head), {"test_x": ["A.test_guard"]})
+        # an `@` line at column zero inside a string: only the base's parsed module tells it from a
+        # decorator (review of #636)
+        base_src = ("import unittest\nclass T(unittest.TestCase):\n    def test_example(self):\n"
+                    "        expected = \"\"\"first\n@header\nlast\"\"\"\n        self.assertIn('first', expected)\n")
+        head_src = base_src.replace("@header\n", "")
+        in_string = ("+++ b/tests/test_x.py\n@@ -3,4 +3,3 @@ class T(unittest.TestCase):\n     def test_example(self):\n"
+                     "         expected = \"\"\"first\n-@header\n last\"\"\"\n")
+        self.assertEqual(proof.changed_tests(in_string, lambda module: head_src, lambda module: base_src),
+                         {"test_x": ["T.test_example"]})
+        # with the base's module a deleted line is the test it was in on the base's side: a
+        # decorator deleted from a helper inside a test is that test's, and the lines of a class
+        # the change removed are nobody's, not the test above them (review of #636)
+        base_two = ("import unittest\nclass A(unittest.TestCase):\n    def test_a(self):\n        @staticmethod\n"
+                    "        def helper():\n            return 1\n        self.assertEqual(helper(), 1)\n"
+                    "class B(unittest.TestCase):\n    def test_b(self):\n        pass\n")
+        head_two = base_two.replace("        @staticmethod\n", "")
+        helper_deco = ("+++ b/tests/test_x.py\n@@ -3,4 +3,3 @@ class A(unittest.TestCase):\n     def test_a(self):\n"
+                       "-        @staticmethod\n         def helper():\n             return 1\n")
+        self.assertEqual(proof.changed_tests(helper_deco, lambda module: head_two, lambda module: base_two),
+                         {"test_x": ["A.test_a"]})
+        no_b = base_two.split("class B")[0]
+        class_gone = ("+++ b/tests/test_x.py\n@@ -6,5 +6,2 @@ class A(unittest.TestCase):\n             return 1\n"
+                      "         self.assertEqual(helper(), 1)\n-class B(unittest.TestCase):\n-    def test_b(self):\n-        pass\n")
+        self.assertEqual(proof.changed_tests(class_gone, lambda module: no_b, lambda module: base_two), {})
         # a helper defined inside a test keeps the test; a sibling helper ends it
         nested = ("+++ b/tests/test_x.py\n@@ -1,6 +1,6 @@ class T:\n     def test_a(self):\n         def codes():\n"
                   "             return 1\n-        self.assertEqual(1, 2)\n+        self.assertEqual(1, 1)\n")
@@ -3464,7 +3674,7 @@ sys.exit(fit.main())
         outdir.mkdir(exist_ok=True)
         cases = {
             "cut": [self.src, "--start", "1", "--end", "3", "-o", outdir / "cut.mp4"],
-            "fit": [self.src, "--duration", "3", "-o", outdir / "fit.mp4"],
+            "fit": [self.src, "--duration", "3", "--method", "speed", "-o", outdir / "fit.mp4"],
             "caption": [self.src, "--text", self.cues, "-o", outdir / "cap.mp4"],
             "overlay": [self.src, "--image", self.logo, "-o", outdir / "ov.mp4"],
             "graphics": [self.src, "--template", "title", "--title", "T", "-o", outdir / "gfx.mp4"],
@@ -3942,6 +4152,17 @@ sys.exit(fit.main())
         doc = json.loads(proc.stdout)
         self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["code"]), ("failed", "timeout", "TIMEOUT"))
         self.assertIn("sleeper.py", doc["error"]["message"])
+        sleeper.write_text("import sys, time\n"
+                           "print('[ffmpeg-skill progress] 1.0s encoded', file=sys.stderr, flush=True)\n"
+                           "print('diagnostic tail', file=sys.stderr, flush=True)\n"
+                           "time.sleep(30)\n")
+        updates = []
+        streamed = _common.run_tool([str(sleeper)], per_call=-14.5, on_progress=updates.append)
+        self.assertEqual(streamed.returncode, 124)
+        self.assertEqual(json.loads(streamed.stdout)["error"]["kind"], "timeout")
+        self.assertEqual(updates, ["1.0s encoded"])
+        self.assertIn("diagnostic tail", streamed.stderr)
+        self.assertNotIn("[ffmpeg-skill progress]", streamed.stderr)
         _common.STATE.reset()
 
     def test_mcp_argv_timeout_zero_clears_the_outer_ceiling(self):
@@ -4135,7 +4356,7 @@ sys.exit(fit.main())
         doc = json.loads(proc.stdout)
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("--start", doc["error"]["message"])
-        proc = tool("fit", self.src, "--duration", "00:00:01:15", "--dry-run", "--json", "-o", self.out("smpte_fit.mp4"))
+        proc = tool("fit", self.src, "--duration", "00:00:01:15", "--method", "speed", "--dry-run", "--json", "-o", self.out("smpte_fit.mp4"))
         self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
         proc = tool("background", "--duration", "00:00:01:15", "--fps", "30", "--width", "64", "--height", "64", "--dry-run", "--json", "-o", self.out("smpte_bg.mp4"))
         self.assertIn("1.500", " ".join(map(str, json.loads(proc.stdout)["commands"])))
@@ -4469,7 +4690,7 @@ sys.exit(fit.main())
         # F8
         odd = self.out("odd.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=641x359:rate=30", "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "2", "-pix_fmt", "yuv444p", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", odd)
-        for name, extra in (("cut", ["--start", "0.5", "--end", "1.5", "--accurate"]), ("fit", ["--duration", "1"]), ("color", ["--correct", "--exposure", "0.2"]), ("overlay", ["--text", "hi"])):
+        for name, extra in (("cut", ["--start", "0.5", "--end", "1.5", "--accurate"]), ("fit", ["--duration", "1", "--method", "speed"]), ("color", ["--correct", "--exposure", "0.2"]), ("overlay", ["--text", "hi"])):
             doc = json.loads(tool(name, odd, *extra, "--fast", "--json", "-o", self.out(f"odd_{name}.mp4")).stdout)
             self.assertEqual(doc["status"], "completed", name)
             self.assertEqual((doc["probe"]["video"]["width"] % 2, doc["probe"]["video"]["height"] % 2), (0, 0), name)
@@ -4513,7 +4734,7 @@ sys.exit(fit.main())
         self.assertIn("fade=t=in", doc["commands"][-1]); self.assertNotIn("fade=t=out", doc["commands"][-1])
         doc = json.loads(tool("overlay", self.src, "--image", self.logo, "--fade", "0.5", "--end", "4", "--dry-run", "--json", "-o", self.out("e6_ov2.mp4")).stdout)
         self.assertIn("fade=t=out:st=3.500", doc["commands"][-1])
-        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--json", "-o", self.out("e6_x.mp4")).stdout)
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "--json", "-o", self.out("e6_x.mp4")).stdout)
         self.assertEqual((doc["loudness"]["target_lufs"], doc["loudness"]["ok"]), (-14, False), doc["loudness"])
         self.assertTrue(any("loudness.py -I -14 --tp -1" in n for n in doc["notes"]), doc.get("notes"))
         norm = self.out("e6_norm.mp4")
@@ -4549,10 +4770,11 @@ sys.exit(fit.main())
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness", "duration"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
-        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("vf_x.mp4"), "--json").stdout)
+        doc = json.loads(tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "-o", self.out("vf_x.mp4"), "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertEqual([(s["step"], s["ok"]) for s in doc["verification"]],
-                         [("probe", True), ("loudness", False), ("duration", True), ("streams", True),
+                         [("probe", True), ("loudness", False), ("duration", True), ("codec", True),
+                          ("frame_size", True), ("frame_rate", True), ("streams", True),
                           ("stream_lengths", True), ("decode", True)])
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_dry.mp4"), "--dry-run", "--json").stdout)
         self.assertEqual((doc["verified"], doc["verification"]), (False, []))
@@ -4624,7 +4846,7 @@ sys.exit(fit.main())
         proc = tool("render", plan, "--json", check=False)
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
         xplan = self.out("r6_x.json")
-        tool("export", self.src, "--preset", "x", "--fast", "-o", self.out("r6_x.mp4"), "--plan", xplan)
+        tool("export", self.src, "--preset", "x", "--fast", "--no-normalize", "-o", self.out("r6_x.mp4"), "--plan", xplan)
         doc = json.loads(tool("render", xplan, "--json").stdout)
         self.assertEqual((doc["status"], doc["verified"]), ("completed", False))
         self.assertTrue(has_step(doc["verification"], {"step": "check", "ok": False, "platform": "x"}))
@@ -5603,7 +5825,7 @@ sys.exit(fit.main())
             "cut": [self.src, "--start", "1", "--end", "3", "--accurate", "-o", self.out("v_cut.mp4")],
             "audio": [self.wav, "-o", self.out("v_au.mp3")],
             "silence": [self.src, "-o", self.out("v_sil.mp4")],
-            "fit": [self.src, "--duration", "3", "-o", self.out("v_fit.mp4")],
+            "fit": [self.src, "--duration", "3", "--method", "speed", "-o", self.out("v_fit.mp4")],
             "export": [self.src, "--preset", "x", "-o", self.out("v_exp.mp4")],
             "caption": [self.src, "--text", self.cues, "-o", self.out("v_cap.mp4")],
             "overlay": [self.src, "--image", self.logo, "-o", self.out("v_ov.mp4")],
@@ -5950,7 +6172,13 @@ def garbage_payload(p):
                     "export.probe = lambda path, role=None, **k: dict(real(path, role=role, **k), duration=%s) "
                     "if role == 'output' and path == %r else real(path, role=role, **k); sys.exit(export.main())"
                     % (str(SCRIPTS), str(self.src), str(out), seeded, str(out)))
-            doc = json.loads(sh(sys.executable, "-c", seed).stdout)
+            proc = sh(sys.executable, "-c", seed, check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            doc = json.loads(proc.stdout)
+            self.assertEqual((doc["status"], doc["error"]["kind"], doc["verified"]),
+                             ("failed", "verification", False))
+            self.assertEqual(doc["output"], str(out))
+            self.assertTrue(out.is_file())
             step = next(s for s in doc["verification"] if s["step"] == "duration")
             self.assertFalse(step["ok"], seeded)
             self.assertFalse(doc["verified"], seeded)
@@ -7023,7 +7251,7 @@ class SilentResultTests(unittest.TestCase):
         """design-decisions: a spec miss is completed + verified false, not a failure. The row
         said ok and nothing more; it now says verified: false and which step's check failed, and
         the batch's own verified is the conjunction of its items'."""
-        folder, recipe = self.batch_folder("bunver", [["export.py", "{in}", "--preset", "x", "-o", "{out}"]])
+        folder, recipe = self.batch_folder("bunver", [["export.py", "{in}", "--preset", "x", "--no-normalize", "-o", "{out}"]])
         doc = json.loads(tool("batch", folder, "--recipe", recipe, "--fast", "--json").stdout)
         row = doc["results"][0]
         self.assertEqual((row["ok"], row["verified"]), (True, False))
@@ -8700,8 +8928,8 @@ class DoctorDetectionTests(unittest.TestCase):
         expected = {s for s in DETECTED_SCRIPTS if s != "latin"}
         self.assertEqual(set(d["fonts"]["scripts"]), expected)
         self.assertEqual(expected, {"ja", "zh", "ko", "ar", "he", "hi", "bn", "ta", "th", "lo", "ru", "el",
-                                    "pa", "gu", "te", "kn", "ml", "si", "km", "my"},
-                         "bn/ta/lo added in 1.15; pa gu te kn ml si km my after 3.8.7 (A65, #457)")
+                                    "pa", "gu", "te", "kn", "ml", "si", "km", "my", "vi"},
+                         "vi uses a separate font coverage lookup for Vietnamese")
         for name, entry in d["fonts"]["scripts"].items():
             with self.subTest(script=name):
                 self.assertIn(entry["status"], ("available", "missing", "unknown"))
@@ -10885,7 +11113,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         self.assertIsNone(json.loads(tool("probe", self.nolength, "--json").stdout)["duration"])  # the fixture
         n, c = self.nolength, self.clip
         cases = {
-            "fit speed": ("fit", n, "--duration", "1"),
+            "fit speed": ("fit", n, "--duration", "1", "--method", "speed"),
             "fit trim": ("fit", n, "--duration", "1", "--method", "trim"),
             "freeze": ("freeze", n, "--at", "1", "--hold", "1"),
             "speedramp": ("speedramp", n, "--segment", "0-2:2.0"),
@@ -10923,7 +11151,8 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
         remux = self.work / "unread_remux.mkv"
         self.doc("export", n, "--preset", "copy", "-o", remux)
         self.assertGreater(json.loads(tool("probe", remux, "--json").stdout)["duration"], 1.9)
-        doc, _ = self.doc("fit", remux, "--duration", "1", "-o", self.work / "unread_fit.mp4")
+        doc, _ = self.doc("fit", remux, "--duration", "1", "--method", "speed",
+                          "-o", self.work / "unread_fit.mp4")
         self.assertEqual((doc["status"], doc["verified"]), ("completed", True))
         # a tool that does not compute with the length still runs on the file as it is
         doc, _ = self.doc("fit", n, "--width", "80", "-o", self.work / "unread_scaled.mp4")
@@ -11187,7 +11416,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", beat)
         cases = {
             "probe": [c], "probe --analyze": [c, "--analyze"], "check": [c, "--platform", "x"], "cut": [c, "--start", "1", "--end", "3", *o()],
-            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", *o()],
+            "cut --snap": [beat, "--start", "1.1", "--end", "3.2", "--snap", "beats", *o()], "fit": [c, "--duration", "3", "--method", "speed", *o()],
             "metadata": [c, "--title", "t", *o()], "metadata --auto-chapters": [c, "--auto-chapters", *o()],
             "caption": [c, "--text", cues, *o()], "overlay": [c, "--image", logo, *o()],
             "graphics": [c, "--template", "title", "--title", "T", *o()], "audio": [c, "--voice", "light", *o()],
@@ -11968,7 +12197,7 @@ class SharedCodeAudit465Tests(unittest.TestCase):
         guarded = ["ffmpeg", "-pattern_type", "none", "-i", "a%d.png", "out.mp4"]
         self.assertEqual(runner.guard_input_formats(guarded), guarded, "an input that has one keeps one")
         self.assertEqual(runner.guard_input_formats(["ffprobe", "-v", "error", "a%d.png"]),
-                         ["ffprobe", "-v", "error", "-pattern_type", "none", "a%d.png"])
+                         ["ffprobe", "-v", "error", "-f", "image2", "-pattern_type", "none", "a%d.png"])
         # the real thing: grid.py with a still named st%d.png beside a decoy st1.png
         ffmpeg("-f", "lavfi", "-i", "color=c=0x00ff00:s=64x64", "-frames:v", "1", "-update", "1", str(self.work / "green.png"))
         os.replace(self.work / "green.png", self.work / "st%d.png")
@@ -12688,6 +12917,299 @@ class ReviewOf530Tests(unittest.TestCase):
                     os.kill(pid, signal.SIGKILL)
                 except OSError:
                     pass
+
+
+class BasicsAudit558Tests(unittest.TestCase):
+    """Seven ordinary things from the basics audit of 3.10.0 (#558), one test per class: a `%`
+    in a still's name, an output extension no muxer has, an input that is empty, a directory,
+    not media or not readable, the contract printed into a pipe that closes, and an input name
+    that starts with a dash. (The colon in a relative subtitle path is in test_picture.py.)
+    docs/design-decisions.md, "After 3.10.1 -- file names and unusable inputs (#558)"."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls._tmp = tempfile.TemporaryDirectory()
+        w = cls.work = Path(cls._tmp.name)
+        cls.clip = w / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10", "-f", "lavfi", "-i", "sine=duration=2",
+               "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(cls.clip))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def doc(self, name, *args, cwd=None):
+        proc = tool(name, *args, check=False, cwd=cwd)
+        try:
+            return json.loads(proc.stdout)
+        except ValueError:
+            self.fail(f"{name} printed no JSON document (exit {proc.returncode}):\n{proc.stderr[-800:]}")
+
+    @staticmethod
+    def pixel(path, at="0.5", crop="8:8:8:8"):
+        """The mean (r, g, b) of a small patch of one decoded frame."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", at, "-i", str(path), "-vf", f"crop={crop},scale=1:1:flags=area",
+                              "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE, check=True).stdout
+        return tuple(raw[:3])
+
+    def test_a_percent_in_a_still_name_is_that_file_pattern_or_not(self):
+        """`-pattern_type none` went in front of every image name with a `%`, but FFmpeg opens a
+        name that is not a pattern (`a%20b.png`, `50%.png`) with png_pipe, which has no such
+        option: the run failed as kind ffmpeg. The image2 demuxer is named now, so a literal `%`
+        and a `%d` that must not be expanded are both read as the one file. Measured as pixels:
+        the still is red, the file a pattern would have opened is blue."""
+        runner = sys.modules["_common.runner"]
+        self.assertEqual(runner.still_input_args("a%20b.png"), ["-f", "image2", "-pattern_type", "none"])
+        self.assertEqual(runner.still_input_args("take%d.mp4"), [], "a video is not read by image2")
+        self.assertEqual(runner.still_input_args("plain.png"), [])
+        work = self.work / "pct"
+        work.mkdir(exist_ok=True)
+        for ext in ("png", "jpg"):
+            red = work / f"red.{ext}"
+            ffmpeg("-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", "-update", "1", str(red))
+            for decoy in ("pat1", "seq001"):
+                ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=32x32", "-frames:v", "1", "-update", "1", str(work / f"{decoy}.{ext}"))
+            for stem in ("a%20b", "50%", "pat%d", "seq%03d"):
+                still = work / f"{stem}.{ext}"
+                shutil.copyfile(red, still)
+                with self.subTest(still=still.name, tool="probe"):
+                    meta = self.doc("probe", still, "--json")
+                    self.assertEqual((meta["video"]["width"], meta["video"]["height"]), (32, 32), meta)
+                with self.subTest(still=still.name, tool="overlay"):
+                    out = work / "ov.mp4"
+                    doc = self.doc("overlay", self.clip, "--image", still, "--position", "top-left", "--margin", "0",
+                                   "-o", out, "--fast", "--overwrite", "--json")
+                    self.assertEqual(doc["status"], "completed", doc.get("error"))
+                    r, _g, b = self.pixel(out)
+                    self.assertGreater(r, 150, f"the red {still.name} was drawn: {(r, _g, b)}")
+                    self.assertLess(b, 100, (r, _g, b))
+        still = work / "a%20b.png"
+        with self.subTest(tool="insert"):
+            out = work / "ins.mp4"
+            doc = self.doc("insert", still, "--duration", "0.5", "-o", out, "--fast", "--overwrite", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            r, _g, b = self.pixel(out, at="0.2", crop="8:8:iw/2-4:ih/2-4")
+            self.assertGreater(r, 150)
+            self.assertLess(b, 100)
+        with self.subTest(tool="broll"):
+            out = work / "broll.mp4"
+            doc = self.doc("broll", self.clip, "--insert", work / "pat%d.png", "--at", "0.5", "--duration", "0.5",
+                           "-o", out, "--fast", "--overwrite", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            r, _g, b = self.pixel(out, at="0.7", crop="8:8:iw/2-4:ih/2-4")
+            self.assertGreater(r, 150, "the still itself, not pat1.png")
+            self.assertLess(b, 100)
+
+    def test_an_output_extension_no_muxer_has_is_refused_before_ffmpeg(self):
+        """`-o weird.xyz` failed inside ffmpeg (kind ffmpeg) after a dry run that completed. It is
+        refused as input, dry runs included, by the build's own muxer list; an extension the build
+        does map to a muxer is never refused, whatever its case, nor one named with `-f`."""
+        runner = sys.modules["_common.runner"]
+        for name, args in (("fit", ["--aspect", "1:1"]), ("cut", ["--start", "0", "--end", "1"]), ("audio", ["--voice", "light"])):
+            for dry in (["--dry-run"], []):
+                with self.subTest(tool=name, dry=dry):
+                    target = self.work / f"weird_{name}.xyz"
+                    doc = self.doc(name, self.clip, *args, "-o", target, "--json", *dry)
+                    err = doc.get("error") or {}
+                    self.assertEqual((doc["status"], err.get("kind"), err.get("reason")),
+                                     ("failed", "input", "output_extension_unknown"), doc)
+                    self.assertEqual(err["details"]["extension"], ".xyz")
+                    self.assertIn(".mp4", err["hint"])
+                    self.assertEqual(doc.get("commands"), [], "refused before any ffmpeg command was planned or run")
+                    self.assertFalse(target.exists())
+        known = runner._muxer_extensions()
+        self.assertTrue(known, "this build's muxer list could be read")
+        self.assertLessEqual({".mp4", ".mkv", ".mov", ".wav"}, known)
+        self.assertNotIn(".xyz", known)
+
+        class Refused(Exception):
+            pass
+
+        def refused(*_a, **_k):
+            raise Refused()
+
+        with unittest.mock.patch.object(runner, "refuse", side_effect=refused):
+            # every extension this build maps to a muxer, in either case, and .mka (the Matroska
+            # audio muxer shares its name with Matroska, so `-h muxer=` never lists it)
+            for ext in sorted(known | {".mka"}):
+                runner._refuse_unknown_extension(f"out{ext}")
+                runner._refuse_unknown_extension(f"out{ext.upper()}")
+            runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "out.MKV"])
+            runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "-f", "matroska", "out.xyz"])
+            with self.assertRaises(Refused):
+                runner._check_output_extension(["ffmpeg", "-f", "lavfi", "-i", "color", "out.xyz"])
+            # a build that cannot be asked refuses nothing
+            with unittest.mock.patch.object(runner, "_MUXER_EXT", [None]):
+                runner._check_output_extension(["ffmpeg", "-i", "in.mp4", "out.xyz"])
+        outside = sorted(known - runner._COMMON_OUTPUT_EXT)
+        if ".3g2" in outside:  # an extension the skill does not name, which the build has to be asked about
+            doc = self.doc("fit", self.clip, "--aspect", "1:1", "-o", self.work / "kept.3g2", "--dry-run", "--json")
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+
+    def test_an_input_that_cannot_be_media_says_which_it_is(self):
+        """An empty file, a directory and a text file came back as ffprobe's raw lines, with the
+        address of its context and no reason or hint. Each says what it is, kind input."""
+        work = self.work / "unusable"
+        work.mkdir(exist_ok=True)
+        empty, folder, text = work / "empty.mp4", work / "folder.mp4", work / "notes.mp4"
+        empty.write_bytes(b"")
+        folder.mkdir(exist_ok=True)
+        text.write_bytes(b"not a media file\n" * 40)
+        address = re.compile(r"@ (?:0x)?[0-9A-Fa-f]{6,}")
+        for path, reason in ((empty, "input_empty"), (folder, "input_is_directory"), (text, "input_not_media")):
+            for name, args in (("probe", []), ("fit", ["--aspect", "1:1", "-o", work / "out.mp4"]),
+                               ("fit", ["--aspect", "1:1", "-o", work / "out.mp4", "--dry-run"]),
+                               ("loudness", ["--measure-only"])):
+                with self.subTest(input=path.name, tool=name, args=args[-1:]):
+                    doc = self.doc(name, path, *args, "--json")
+                    err = doc.get("error") or {}
+                    self.assertEqual((doc["status"], err.get("kind"), err.get("reason")), ("failed", "input", reason), doc)
+                    self.assertTrue(err.get("hint"), err)
+                    self.assertIn(path.name, err["message"])
+                    self.assertIsNone(address.search(err["message"]), err["message"])
+                    self.assertEqual(err["details"]["path"], str(path))
+        self.assertFalse((work / "out.mp4").exists())
+        self.assertEqual(text.read_bytes(), b"not a media file\n" * 40)
+        # ffprobe's own words stay in the message, without the context prefix that carries an address
+        probe_mod = sys.modules["_common.probe"]
+        cleaned = probe_mod._LOG_CONTEXT_RE.sub("", "[mov,mp4,m4a,3gp,3g2,mj2 @ 0x55d15dcc31c0] moov atom not found\n"
+                                                    "[matroska,webm @ 000001e5a9c4b2c0] EBML header parsing failed")
+        self.assertEqual(cleaned, "moov atom not found\nEBML header parsing failed")
+
+    def test_a_file_the_user_may_not_reach_is_not_reported_as_missing(self):
+        """An input inside a directory the user may not search was "input not found": os.path.exists()
+        is False for EACCES as for ENOENT. It is `input_permission_denied` now, a dry run included;
+        a path that is not there is still "not found"."""
+        runner = sys.modules["_common.runner"]
+        with unittest.mock.patch("os.stat", side_effect=PermissionError(13, "Permission denied")):
+            self.assertTrue(runner.path_denied("locked/a.mp4"))
+            self.assertEqual(runner.absent_word("locked/a.mp4"), "permission denied")
+        with unittest.mock.patch("os.stat", side_effect=FileNotFoundError(2, "No such file or directory")):
+            self.assertFalse(runner.path_denied("gone.mp4"))
+            self.assertEqual(runner.absent_word("gone.mp4"), "not found")
+        gone = self.doc("probe", self.work / "gone.mp4", "--json")
+        self.assertIn("not found", gone["error"]["message"])
+        self.assertIsNone(gone["error"].get("reason"))
+        if os.name == "nt":
+            self.skipTest("a directory's mode does not stop a search on Windows")
+        base = self.work / "perm"
+        locked = base / "locked"
+        locked.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.clip, locked / "a.mp4")
+        shutil.copyfile(self.clip, base / "noread.mp4")
+        other_user = []
+        if os.geteuid() == 0:
+            # root reads everything: run the tool as nobody, which needs every directory on the
+            # way to be open to it (a temp folder under a private one is not: denied all the same)
+            setpriv = shutil.which("setpriv")
+            if not setpriv:
+                self.skipTest("root without setpriv cannot be denied a file")
+            other_user = [setpriv, "--reuid=65534", "--regid=65534", "--clear-groups"]
+            for d in (self.work, base):
+                os.chmod(d, 0o755)
+            os.chmod(locked, 0o700)
+            os.chmod(base / "noread.mp4", 0o600)
+            # the checkout itself may sit under a folder nobody cannot enter (/root is 0700):
+            # then the tool never starts as nobody, and that is no answer about the input
+            reach = subprocess.run([*other_user, sys.executable, "-c", "import sys; open(sys.argv[1]).close(); "
+                                    "import os; os.listdir(sys.argv[2])", str(SCRIPTS / "probe.py"), str(base)],
+                                   capture_output=True, text=True)
+            if reach.returncode:
+                self.skipTest("nobody cannot reach this checkout's scripts or the test folder")
+        else:
+            os.chmod(locked, 0o000)
+            os.chmod(base / "noread.mp4", 0o000)
+        try:
+            for path in (locked / "a.mp4", base / "noread.mp4"):
+                for name, args in (("probe", []), ("fit", ["--aspect", "1:1", "-o", self.work / "perm_out.mp4"]),
+                                   ("fit", ["--aspect", "1:1", "-o", self.work / "perm_out.mp4", "--dry-run"])):
+                    with self.subTest(input=path.name, tool=name, args=args[-1:]):
+                        proc = sh(*other_user, sys.executable, SCRIPTS / f"{name}.py", path, *args, "--json", check=False)
+                        doc = json.loads(proc.stdout)
+                        err = doc.get("error") or {}
+                        self.assertEqual((doc["status"], err.get("kind"), err.get("reason")),
+                                         ("failed", "input", "input_permission_denied"), (doc, proc.stderr[-300:]))
+                        self.assertIn("permission denied", err["message"])
+                        self.assertNotIn("not found", err["message"])
+                        self.assertTrue(err.get("hint"))
+            # behind a closed directory and a file that is there but unreadable alike (review of
+            # the 4.0 branch: the second reached ffprobe and said "unreadable: ... Permission denied")
+            for path in (locked / "a.mp4", base / "noread.mp4"):
+                proc = sh(*other_user, sys.executable, SCRIPTS / "join.py", path, self.clip,
+                          "-o", self.work / "perm_join.mp4", "--json", check=False)
+                problems = json.loads(proc.stdout).get("problems") or []
+                self.assertEqual([p["reason"] for p in problems if p["index"] == 0], ["permission denied"], (path.name, proc.stdout[-600:]))
+        finally:
+            os.chmod(locked, 0o700)
+            os.chmod(base / "noread.mp4", 0o600)
+        self.assertFalse((self.work / "perm_out.mp4").exists())
+
+    @unittest.skipIf(os.name == "nt", "how a closed pipe is reported to a writer on Windows is not verified")
+    def test_the_contract_into_a_pipe_that_closes_ends_quietly(self):
+        """README's quick start pipes `contract --json` into `head -40`: the document is far longer
+        than a pipe's buffer, and the write after the reader left raised BrokenPipeError (a
+        traceback, exit 1). The reader got what it asked for: no traceback, exit 0."""
+        for argv in (["--json"], ["--json", "--static"], ["--json", "--tool", "cut"]):
+            with self.subTest(argv=argv):
+                child = subprocess.Popen([sys.executable, str(SCRIPTS / "_contract.py"), *argv],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    self.assertEqual(child.stdout.read(1), b"{")
+                    child.stdout.close()
+                    err = child.stderr.read().decode("utf-8", "replace")
+                    code = child.wait(timeout=120)
+                finally:
+                    child.stderr.close()
+                    if child.poll() is None:
+                        child.kill()
+                self.assertNotIn("Traceback", err)
+                self.assertNotIn("BrokenPipe", err)
+                self.assertEqual(code, 0, err[-400:])
+        whole = sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static")
+        self.assertGreater(len(whole.stdout), 70000, "the document is longer than a pipe's buffer, so the case above is the real one")
+        self.assertEqual(json.loads(whole.stdout)["contract_version"], sys.modules["_contract"].CONTRACT_VERSION)
+
+    def test_an_input_name_starting_with_a_dash_is_read_as_a_file(self):
+        """File-name robustness: ffprobe takes its input as a bare argument, so `-report` and
+        `-dash.mp4` were read as options ("You have to specify one input file"), and `-report`
+        left an ffprobe log file in the working directory. A relative name that starts with a dash
+        reaches ffmpeg and ffprobe as `./name`, and a default output named after it is a file too."""
+        runner = sys.modules["_common.runner"]
+        self.assertEqual(runner.file_arg("-take.mp4"), "./-take.mp4")
+        for kept in ("take.mp4", "./-take.mp4", "dir/-take.mp4", "/abs/-take.mp4", "-", "C:\\clips\\-take.mp4", "C:/clips/take.mp4"):
+            self.assertEqual(runner.file_arg(kept), kept)
+        self.assertEqual(runner.guard_input_names(["ffmpeg", "-y", "-i", "-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"]),
+                         ["ffmpeg", "-y", "-i", "./-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"])
+        self.assertEqual(runner.guard_input_names(["ffprobe", "-version"]), ["ffprobe", "-version"], "an option stays an option")
+        work = self.work / "dash"
+        work.mkdir(exist_ok=True)
+        for name in ("-report", "-dash.mp4"):
+            shutil.copyfile(self.clip, work / name)
+        for name in ("-report", "-dash.mp4"):
+            with self.subTest(input=name, tool="probe"):
+                meta = self.doc("probe", "--json", "--", name, cwd=work)
+                self.assertEqual((meta.get("video") or {}).get("width"), 160, meta)
+                self.assertEqual(meta["file"], name, "the name is reported as it was given")
+            with self.subTest(input=name, tool="cut"):
+                out = work / f"cut{len(name)}.mp4"
+                doc = self.doc("cut", "--start", "0", "--end", "1", "-o", out, "--json", "--", name, cwd=work)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                self.assertTrue(all(f"-i ./{name}" in c for c in doc["commands"] if " -i " in c), doc["commands"])
+                self.assertEqual(self.doc("probe", out, "--json")["video"]["width"], 160)
+        with self.subTest(tool="fit", output="default"):
+            doc = self.doc("fit", "./-dash.mp4", "--aspect", "1:1", "--fast", "--json", cwd=work)
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            self.assertTrue((work / "-dash_fit.mp4").is_file(), sorted(p.name for p in work.iterdir()))
+        with self.subTest(tool="verify"):
+            doc = self.doc("verify", "./-dash.mp4", "--quick", "--out", work / "verify_out", "--json", cwd=work)
+            failed = [(s["step"], s.get("error")) for f in doc["files"] for s in f["steps"] if not s["ok"]]
+            self.assertEqual(failed, [], "each step was given the input as a file")
+        logs = sorted(p.name for p in work.iterdir() if p.suffix == ".log")
+        self.assertEqual(logs, [], "no ffmpeg or ffprobe log file was written beside the caller")
+        # an output that starts with a dash is still the caller's to rename (the existing refusal)
+        doc = self.doc("fit", "./-dash.mp4", "--aspect", "1:1", "--json", "--dry-run", "--output=-out.mp4", cwd=work)
+        self.assertEqual(doc["error"]["reason"], "output_looks_like_option")
 
 
 if __name__ == "__main__":

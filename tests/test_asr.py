@@ -26,11 +26,6 @@ from _fixtures import MediaFixtures, OUT, script, sh  # noqa: E402
 from _common import asr  # noqa: E402
 
 
-def _assumed(doc):
-    """The result document's top-level notes that say English was assumed."""
-    return [n for n in doc.get("notes") or [] if n.startswith("English was assumed")]
-
-
 class ParakeetCppModelTests(unittest.TestCase):
     """parakeet.cpp runs only with a .gguf it can find: an explicit --model is enough, for a
     forced engine and for --engine auto alike."""
@@ -122,7 +117,7 @@ class ParakeetRoutingTests(unittest.TestCase):
             route = asr.parakeet_route("auto", None, "a.wav", sh_, subprocess)
             self.assertEqual(route.first, ["parakeet-mlx", "parakeet.cpp"])
             self.assertEqual(route.last, ())
-            self.assertIn("assumed English", route.facts["routing"])
+            self.assertEqual(route.facts["routing"], asr.ROUTING_ASSUMED_ENGLISH)
 
     def test_english_only_model_refuses_another_language(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -150,8 +145,8 @@ class ParakeetRoutingTests(unittest.TestCase):
 class UndetectedLanguageTests(unittest.TestCase):
     """Review of #305: with no --language and nothing to detect one, auto handed the speech to the
     English-only Parakeet model and the only trace was `transcription.routing`. A Whisper engine
-    that can run now goes first; only with none does Parakeet run on English assumed, and then
-    the caller gets a top-level `notes` line saying the transcript may be wrong."""
+    that can run now goes first; with none, an English-only Parakeet model is refused (4.0.0:
+    it ran on English assumed, with a top-level `notes` line saying so)."""
 
     def setUp(self):
         self.mlx_only = mock.Mock(which=lambda n: "/x/parakeet-mlx" if n == "parakeet-mlx" else None)
@@ -164,7 +159,7 @@ class UndetectedLanguageTests(unittest.TestCase):
         self.assertEqual(route.last, asr.PARAKEET_ENGINES)
         self.assertEqual(route.facts, {"routing": asr.ROUTING_UNDETECTED_WHISPER})
 
-    def test_only_parakeet_runs_on_english_assumed(self):
+    def test_only_parakeet_is_the_first_route_when_no_whisper_can_run(self):
         with mock.patch.object(asr, "detect_language", return_value=None), \
                 mock.patch.object(asr, "_whisper_ready", return_value=False):
             route = asr.parakeet_route("auto", None, "a.wav", self.mlx_only, subprocess)
@@ -195,11 +190,6 @@ class UndetectedLanguageTests(unittest.TestCase):
         stub = type(sys)("faster_whisper")  # a module with no __spec__, as a test stub is
         with mock.patch.dict(sys.modules, {"faster_whisper": stub}):
             self.assertTrue(asr._whisper_ready(self.mlx_only, "base"))
-
-    def test_the_note_names_the_callers_flag(self):
-        self.assertIn("--filler-lang", asr.assumed_english_note("--filler-lang"))
-        self.assertIn("install a Whisper engine", asr.assumed_english_note())
-        self.assertIn("fix the Whisper engine", asr.assumed_english_note(whisper_failed=True))
 
 
 class _FakeEngines:
@@ -338,17 +328,17 @@ class WhisperFailureTests(_BridgeHarness, unittest.TestCase):
         self.assertEqual(extra["engines"], [{"engine": "faster-whisper", "reason": asr.ENGINE_FAILED_REASON,
                                              "detail": "found but failed: cannot fetch Systran/faster-whisper-base: offline"}])
 
-    def test_parakeet_runs_last_after_a_crashed_faster_whisper(self):
-        with tempfile.TemporaryDirectory() as d:
-            run = self._with(["parakeet-mlx"], lambda: asr.transcribe_result("talk.mp4", os.path.join(d, "a.srt"), None, "base"),
-                             faster_whisper=_crashing_faster_whisper())
-        self.assertEqual(run.engine, "parakeet-mlx")
-        self.assertEqual(run.facts["routing"], asr.ROUTING_LAST_RESORT)
-        self.assertEqual(run.notes, [asr.assumed_english_note(whisper_failed=True)])
-        words = self._with(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4"),
-                           faster_whisper=_crashing_faster_whisper())
-        self.assertEqual((words.engine, len(words.words)), ("parakeet-mlx", 5))
-        self.assertEqual(words.notes, [asr.assumed_english_note("--filler-lang", whisper_failed=True)])
+    def test_an_english_only_parakeet_does_not_run_after_a_crashed_faster_whisper(self):
+        """4.0.0: with the language unknown, the English-only model is not the last resort any
+        more. The refusal names the engine that failed and the one not run, with the caller's flag."""
+        for call, flag in ((lambda d: asr.transcribe_result("talk.mp4", os.path.join(d, "a.srt"), None, "base"), "--language"),
+                           (lambda d: asr.transcribe_words_result("talk.mp4"), "--filler-lang")):
+            with tempfile.TemporaryDirectory() as d:
+                msg, kind, extra = self._refusal(["parakeet-mlx"], lambda: call(d), faster_whisper=_crashing_faster_whisper())
+            self.assertEqual((kind, extra.get("reason")), ("input", asr.ENGINE_FAILED_REASON))
+            self.assertEqual([(e["engine"], e["reason"]) for e in extra["engines"]],
+                             [("faster-whisper", asr.ENGINE_FAILED_REASON), ("parakeet-mlx", asr.ENGLISH_ONLY_REASON)])
+            self.assertIn(f"name it with {flag}", msg)
 
     def test_a_crashed_faster_whisper_word_run_is_still_refused_by_name_without_parakeet(self):
         """No Parakeet to fall back on: silence.py keeps its "<engine> ran but produced no
@@ -390,7 +380,6 @@ class TranscriptionStateTests(_BridgeHarness, unittest.TestCase):
             self.assertEqual(second.words, [])
             self.assertEqual(second.cues, [(0.0, 1.5, "Bonjour tout le monde")])
             self.assertEqual(second.facts, {"routing": "requested", "engine": "whisper.cpp", "model": "base", "language": None})
-            self.assertEqual(second.notes, [])
 
             # a word run in between and after: its own words, engine and facts only
             third = self._with(["whisper-cli", "parakeet-mlx"],
@@ -611,8 +600,8 @@ class WhisperLanguageTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         # an installed Parakeet takes --language auto as the undetected route, not as "not English"
         fake = _FakeEngines(["parakeet-mlx"])
         with mock.patch.object(asr, "detect_language", return_value=None):
-            run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "auto", "base"), fake=fake)
-        self.assertEqual((run.engine, run.facts["routing"]), ("parakeet-mlx", asr.ROUTING_ASSUMED_ENGLISH))
+            run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, "auto", "mlx-community/parakeet-tdt-0.6b-v3"), fake=fake)
+        self.assertEqual((run.engine, run.facts["routing"]), ("parakeet-mlx", asr.ROUTING_PARAKEET_MODEL + asr.ROUTING_MULTILINGUAL))
 
     def test_the_language_an_engine_decoded_is_reported_when_nothing_was_named(self):
         """faster-whisper's detected language and openai-whisper's JSON `language` are read back the way
@@ -735,14 +724,14 @@ class AutoRoutingFallbackTests(_SrtDir, _BridgeHarness, unittest.TestCase):
 
     def test_undetected_speech_reaches_faster_whisper_after_a_failed_whisper_cpp(self):
         """_whisper_ready() counted faster-whisper, but the word path stopped at the failed
-        whisper.cpp and ran Parakeet on English assumed, saying no Whisper engine transcribed it."""
+        whisper.cpp and went straight to Parakeet, saying no Whisper engine transcribed it."""
         fake = _FakeEngines(["whisper-cli", "parakeet-mlx"], fail=["whisper-cli"])
         run = self._with([], lambda: asr.transcribe_words_result("talk.mp4"), faster_whisper=_faster_whisper_with_words(),
                          fake=fake)
         self.assertEqual(run.engine, "faster-whisper")
         self.assertEqual([w["word"] for w in run.words], ["Bonjour", "euh"])
         self.assertEqual(run.facts["routing"], asr.ROUTING_UNDETECTED_WHISPER)
-        self.assertEqual((run.notes, fake.ran("parakeet-mlx")), ([], []))
+        self.assertEqual(fake.ran("parakeet-mlx"), [])
 
     def test_without_parakeet_a_failed_whisper_cpp_word_run_is_named_as_before(self):
         """No routing decision rests on faster-whisper here: the engine that ran and failed is the
@@ -757,20 +746,17 @@ class AutoRoutingFallbackTests(_SrtDir, _BridgeHarness, unittest.TestCase):
         self.assertEqual((run.engine, run.facts["model"]), ("parakeet-mlx", v3))
         self.assertEqual(run.facts["routing"], "auto: --model names a Parakeet model and the language is not detectable "
                                                "here; the Parakeet model is multilingual")
-        self.assertEqual(run.notes, [])
         # the model from PARAKEET_MODEL, no Whisper engine: nothing assumed either
         run = self._with(["parakeet-mlx"], lambda: asr.transcribe_words_result("talk.mp4"), env={"PARAKEET_MODEL": v3})
         self.assertEqual(run.facts["model"], v3)
-        self.assertNotIn("assumed English", run.facts["routing"])
-        self.assertEqual(run.notes, [])
+        self.assertEqual(run.facts["routing"], asr.ROUTING_ASSUMED_ENGLISH + asr.ROUTING_MULTILINGUAL)
 
-    def test_an_english_only_parakeet_model_named_with_model_points_at_the_model(self):
-        """Not "no Whisper engine ... install one": a Whisper engine cannot load a Parakeet model."""
-        run = self._with(["parakeet-mlx", "whisper-cli"],
-                         lambda: asr.transcribe_result("talk.mp4", self.srt, None, asr.PARAKEET_MLX_DEFAULT_MODEL))
-        self.assertEqual(run.facts["routing"], asr.ROUTING_PARAKEET_MODEL)
-        self.assertEqual(run.notes, [asr.assumed_english_note(parakeet_model=True)])
-        self.assertNotIn("install a Whisper engine", run.notes[0])
+    def test_an_english_only_parakeet_model_named_with_model_is_not_run_on_speech_nobody_named(self):
+        """4.0.0: --model names the English-only model and the language is not known: it is not run."""
+        fake = _FakeEngines(["parakeet-mlx", "whisper-cli"])
+        run = self._with([], lambda: asr.transcribe_result("talk.mp4", self.srt, None, asr.PARAKEET_MLX_DEFAULT_MODEL), fake=fake)
+        self.assertEqual(fake.ran("parakeet-mlx"), [])
+        self.assertEqual((run.engine, run.facts["routing"]), ("whisper.cpp", asr.ROUTING_PARAKEET_MODEL + asr.ROUTING_PARAKEET_FAILED))
 
     def test_a_host_output_template_does_not_hide_parakeet_mlx_output(self):
         """parakeet-mlx names its file by $PARAKEET_OUTPUT_TEMPLATE; the bridge reads audio.json."""
@@ -986,7 +972,6 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
         self.assertEqual(doc["transcription"]["model"], asr.PARAKEET_MLX_DEFAULT_MODEL)
         self.assertIn("So um we start.", (OUT / "pk_auto.srt").read_text())
-        self.assertFalse(_assumed(doc), "English was named, not assumed")
 
     def test_caption_engine_flag_picks_parakeet_cpp(self):
         """One end-to-end parakeet.cpp run; flag-over-env precedence is a unit test above."""
@@ -996,7 +981,6 @@ class ParakeetEngineTests(MediaFixtures):
         self.assertIn("So um we start.", (OUT / "pk_cpp.srt").read_text())
         # a named engine runs as asked, with no language: no routing decision, so no warning
         self.assertEqual(doc["transcription"]["routing"], "requested")
-        self.assertFalse(_assumed(doc))
 
     def test_caption_mux_reports_the_transcription_too(self):
         """--mode mux wrote a soft subtitle track from the transcript but left `transcription` out of
@@ -1033,7 +1017,7 @@ class ParakeetEngineTests(MediaFixtures):
     def test_unreadable_engine_output_falls_through_instead_of_claiming_silence(self):
         """parakeet-mlx exited 0 but wrote something that is not a transcript: that is a failed
         run, so auto moves on to parakeet.cpp instead of reporting "no speech" in the video."""
-        doc = self._run_with_mlx_writing('{"sentences": 5}', "caption.py", "--transcribe", "--fast", "-o", OUT / "pk_garbage.mp4")
+        doc = self._run_with_mlx_writing('{"sentences": 5}', "caption.py", "--transcribe", "--language", "en", "--fast", "-o", OUT / "pk_garbage.mp4")
         self.assertEqual(doc["transcription"]["engine"], "parakeet.cpp")
 
     def test_filler_words_fall_through_an_engine_with_sentences_but_no_word_times(self):
@@ -1041,7 +1025,7 @@ class ParakeetEngineTests(MediaFixtures):
         word timings, which is all silence.py --filler needs -- so the next engine is tried."""
         body = json.dumps({"text": "So um we start.", "sentences": [{"text": "So um we start.", "start": 0.2, "end": 1.6,
                                                                      "tokens": [{"text": " So"}, 5]}]})
-        doc = self._run_with_mlx_writing(body, "silence.py", "--filler", "--transcribe", "--filler-list")
+        doc = self._run_with_mlx_writing(body, "silence.py", "--filler", "--transcribe", "--filler-list", "--filler-lang", "en")
         self.assertEqual(doc["filler"]["source"], "parakeet:parakeet.cpp")
         self.assertEqual([r["word"] for r in doc["filler"]["removed"]], ["um"])
 
@@ -1057,7 +1041,7 @@ class ParakeetEngineTests(MediaFixtures):
     def test_an_engine_that_heard_nothing_still_reports_no_speech(self):
         """What both real engines write for 3 s of silence (measured): an empty list. That is an
         answer, not a failure, so it is still the no-speech refusal and nothing else is tried."""
-        doc = self._run_with_mlx_writing('{"text": "", "sentences": []}', "caption.py", "--transcribe", "--fast",
+        doc = self._run_with_mlx_writing('{"text": "", "sentences": []}', "caption.py", "--transcribe", "--language", "en", "--fast",
                                          "-o", OUT / "pk_silent.mp4", expect_fail=True)
         self.assertEqual((doc["error"]["kind"], doc.get("reason"), doc.get("engine")), ("input", "no_speech", "parakeet-mlx"))
 
@@ -1072,9 +1056,9 @@ class ParakeetEngineTests(MediaFixtures):
             mlx = broken / "parakeet-mlx"
             mlx.write_text(f"#!/bin/sh\n: > '{ran}'\necho 'Metal device lost' >&2\nexit 3\n")
             mlx.chmod(0o755)
-            # only the fakes and ffmpeg on PATH: no host whisper can detect a language or take over,
-            # so auto assumes English and the order is parakeet-mlx, then parakeet.cpp
-            doc = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
+            # only the fakes and ffmpeg on PATH; the speech is named English, so the order is
+            # parakeet-mlx, then parakeet.cpp
+            doc = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--filler-lang", "en", "--json",
                                     env=self.env(PATH=str(broken))).stdout)
             mlx_ran = ran.exists()
         finally:
@@ -1116,21 +1100,27 @@ class ParakeetEngineTests(MediaFixtures):
         cli.chmod(0o755)
         return d, home
 
-    def test_no_language_and_only_parakeet_says_english_was_assumed(self):
-        """Review of #305: a Mac with parakeet-mlx and no Whisper captioning speech nobody named.
-        Parakeet still runs, but the result says, at the top level, that English was assumed."""
-        doc = json.loads(script("caption.py", self.src, "--transcribe", "--fast", "--json",
-                                "-o", OUT / "pk_assumed.mp4", env=self.env(PATH=str(self.bin))).stdout)
-        self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
-        self.assertEqual(doc["transcription"]["routing"], asr.ROUTING_ASSUMED_ENGLISH)
-        self.assertEqual(len(_assumed(doc)), 1, doc.get("notes"))
-        self.assertIn("--language", _assumed(doc)[0])
-        self.assertTrue(doc["verified"], "the render itself is still verified; the note carries the doubt")
+    def test_no_language_and_only_an_english_only_parakeet_is_refused_before_it_runs(self):
+        """4.0.0 (was: Parakeet ran and a note said English was assumed). A Mac with parakeet-mlx
+        and no Whisper, captioning speech nobody named: Japanese came out as English words, and
+        the note was read after the captions were burned. Now nothing is transcribed and nothing
+        is written; the refusal names the flag that names the language."""
+        out = OUT / "pk_assumed.mp4"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("caption.py", self.src, "--transcribe", "--fast", "--json", "-o", out,
+                                env=self.env(PATH=str(self.bin)), expect_fail=True).stdout)
+        self.assertEqual((doc["error"]["kind"], doc["reason"]), ("input", asr.ENGLISH_ONLY_REASON))
+        self.assertEqual({e["reason"] for e in doc["engines"]}, {asr.ENGLISH_ONLY_REASON})
+        self.assertIn("name it with --language", doc["error"]["message"])
+        self.assertFalse(out.exists())
         fil = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
-                                env=self.env(PATH=str(self.bin))).stdout)
-        self.assertEqual(fil["filler"]["source"], "parakeet:parakeet-mlx")
-        self.assertEqual(len(_assumed(fil)), 1, fil.get("notes"))
-        self.assertIn("--filler-lang", _assumed(fil)[0])
+                                env=self.env(PATH=str(self.bin)), expect_fail=True).stdout)
+        self.assertEqual(fil["reason"], asr.ENGLISH_ONLY_REASON)
+        self.assertIn("name it with --filler-lang", fil["error"]["message"])
+        # named, it runs as before
+        named = json.loads(script("caption.py", self.src, "--transcribe", "--language", "en", "--fast", "--json", "-o", out,
+                                  env=self.env(PATH=str(self.bin))).stdout)
+        self.assertEqual((named["transcription"]["engine"], named["transcription"]["routing"]), ("parakeet-mlx", "auto: --language is English"))
 
     def test_no_language_goes_to_whisper_before_parakeet(self):
         """The same machine with whisper.cpp installed but no language it can detect: Whisper,
@@ -1156,31 +1146,29 @@ class ParakeetEngineTests(MediaFixtures):
             self.assertEqual(argv[argv.index("-l") + 1], "auto", argv)
             self.assertEqual(argv[argv.index("-mc") + 1], "0", argv)  # #318: no previous-text conditioning
         self.assertIn("Bonjour tout le monde", (OUT / "pk_whisperfirst.srt").read_text())
-        self.assertFalse(_assumed(doc))
         self.assertEqual(fil["filler"]["source"], "whisper:whisper.cpp")
         self.assertEqual(fil["filler"]["transcription"]["routing"], asr.ROUTING_UNDETECTED_WHISPER)
         self.assertNotIn("notes", fil)
 
-    def test_parakeet_runs_last_when_every_whisper_engine_fails(self):
-        """Whisper went first and failed: Parakeet is still better than refusing, on English
-        assumed, and the note says which fix applies."""
+    def test_an_english_only_parakeet_is_not_the_last_resort_when_every_whisper_engine_fails(self):
+        """4.0.0 (was: Parakeet ran last on English assumed). Whisper went first and failed, and
+        the language is still unknown: the refusal names the engine that failed and the one not run."""
         d, home = self._with_whisper_cli(fail=True)
         try:
             env = self.env(PATH=str(d), HOME=str(home))
             doc = json.loads(script("caption.py", self.src, "--transcribe", "--mode", "mux", "--json",
-                                    "-o", OUT / "pk_lastresort.mp4", env=env).stdout)
+                                    "-o", OUT / "pk_lastresort.mp4", env=env, expect_fail=True).stdout)
             fil = json.loads(script("silence.py", self.src, "--filler", "--transcribe", "--filler-list", "--json",
-                                    env=env).stdout)
+                                    env=env, expect_fail=True).stdout)
         finally:
             shutil.rmtree(d, ignore_errors=True)
             shutil.rmtree(home, ignore_errors=True)
-        self.assertEqual(doc["transcription"]["engine"], "parakeet-mlx")
-        self.assertEqual(doc["transcription"]["routing"], asr.ROUTING_LAST_RESORT)
-        self.assertEqual(len(_assumed(doc)), 1, doc.get("notes"))
-        self.assertIn("fix the Whisper engine", _assumed(doc)[0])
-        self.assertEqual(fil["filler"]["source"], "parakeet:parakeet-mlx")
-        self.assertEqual(fil["filler"]["transcription"]["routing"], asr.ROUTING_LAST_RESORT)
-        self.assertEqual(len(_assumed(fil)), 1, fil.get("notes"))
+        for got, flag in ((doc, "--language"), (fil, "--filler-lang")):
+            self.assertEqual((got["error"]["kind"], got["reason"]), ("input", asr.ENGINE_FAILED_REASON))
+            self.assertEqual({e["engine"]: e["reason"] for e in got["engines"] if e["engine"] in ("whisper.cpp", "parakeet-mlx")},
+                             {"whisper.cpp": asr.ENGINE_FAILED_REASON, "parakeet-mlx": asr.ENGLISH_ONLY_REASON})
+            self.assertIn(f"name it with {flag}", got["error"]["message"])
+            self.assertIn("name the spoken language", got["error"]["hint"])
 
     def test_the_machine_model_reaches_caption_and_silence(self):
         """#328 through the real parsers: $FFMPEG_SKILL_ASR_MODEL is the model when no --model is given,

@@ -12,12 +12,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, integrated_lufs,  # noqa: E402
+from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, SCRIPTS, _is_faststart, frame_rgb, integrated_lufs,  # noqa: E402
                        make_multistream, script, sh, written_track)
 from _common import probe  # noqa: E402
 from _common.decision import AUDIO_CODECS  # noqa: E402
@@ -53,6 +54,78 @@ class AudioTests(MediaFixtures):
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (640, 360))
         self.assertIsNotNone(m["audio"])
         self.assertClose(m["duration"], 12.0, 0.3)
+
+    def test_waveform_stills_mark_the_requested_clock_and_verify_each_png(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            source = root / "step.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               r"aevalsrc=0.4*sin(2*PI*230*t)*if(lt(t\,2)\,0.2\,0.85):s=48000:d=4", source)
+            output = root / "points.png"
+            flags = ("--at", "0", "--at", "2", "--at", "4", "--window", "2", "--width", "480",
+                     "--height", "160", "-o", output, "--json")
+            dry = json.loads(script("waveform.py", source, *flags, "--dry-run").stdout)
+            self.assertFalse(dry["verified"])
+            self.assertNotIn("waveforms", dry)
+            self.assertFalse(any(root.glob("*.png")))
+            doc = json.loads(script("waveform.py", source, *flags).stdout)
+            self.assertTrue(doc["verified"], doc["verification"])
+            self.assertEqual(doc["waveforms"], dry["planned_waveforms"])
+            self.assertEqual([Path(p).name for p in doc["outputs"]],
+                             ["points_01.png", "points_02.png", "points_03.png"])
+            self.assertEqual([(r["start"], r["end"]) for r in doc["waveforms"]], [(0, 1), (1, 3), (3, 4)])
+            self.assertEqual(sum(s["step"] == "waveform_image" and s["ok"] for s in doc["verification"]), 3)
+            middle = doc["waveforms"][1]
+            x = middle["marker_x"]
+            self.assertEqual(x, 240)
+            red, green, blue = frame_rgb(middle["output"], 0, x, 55)
+            self.assertTrue(red > 240 and 145 < green < 190 and 45 < blue < 90)
+            self.assertLess(frame_rgb(middle["output"], 0, 180, 87)[1], 20)
+            self.assertGreater(frame_rgb(middle["output"], 0, 300, 87)[1], 200)
+            for last in ("5", "2"):
+                stem = root / f"check_{last}.png"
+                protected = root / "check_2_02.png"
+                if last == "2":
+                    protected.write_bytes(b"keep me")
+                proc = sh(sys.executable, SCRIPTS / "waveform.py", source, "--at", "1", "--at", last,
+                          "-o", stem, "--json", expect_fail=True)
+                error = json.loads(proc.stdout)["error"]
+                if last == "2":
+                    self.assertEqual(error["reason"], "output_exists")
+                    self.assertEqual(protected.read_bytes(), b"keep me")
+                else:
+                    self.assertIn("outside the input", error["message"])
+                self.assertFalse((root / f"check_{last}_01.png").exists())
+
+    def test_waveform_still_marker_aligns_with_nondisible_sample_bins(self):
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            source = root / "step.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               r"aevalsrc=0.8*between(t\,2\,2.005):s=44100:d=4", source)
+            output = root / "marker.png"
+            result = json.loads(script("waveform.py", source, "--at", "2", "--window", "2",
+                                       "--height", "160", "-o", output, "--json").stdout)
+            marker = result["waveforms"][0]["marker_x"]
+            self.assertEqual(marker, 980)
+            self.assertGreater(frame_rgb(output, 0, marker + 3, 87)[1], 200)
+            self.assertLess(frame_rgb(output, 0, marker - 3, 87)[1], 20)
+
+    def test_waveform_still_refuses_a_video_only_flag_by_name(self):
+        """--at draws PNGs: --fps, --silence-threshold, --quality and the other video-output flags
+        were accepted and ignored; each is refused by name, and --color, which the PNG draws, is not."""
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            source = Path(tmp) / "tone.wav"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=3", source)
+            for flags, name in ((("--fps", "60"), "--fps"), (("--silence-threshold", "-30"), "--silence-threshold"),
+                                (("--quality", "10"), "--quality"), (("--fast",), "--fast")):
+                proc = script("waveform.py", source, "--at", "1", *flags, "-o", Path(tmp) / "w.png", "--json",
+                              expect_fail=True)
+                self.assertIn(f"{name} only applies to the video output", json.loads(proc.stdout)["error"]["message"])
+                self.assertFalse((Path(tmp) / "w.png").exists())
+            done = json.loads(script("waveform.py", source, "--at", "1", "--color", "red", "-o", Path(tmp) / "w.png",
+                                     "--json").stdout)
+            self.assertEqual(done["status"], "completed", done)
 
     def test_waveform_spectrum_style(self):
         out = OUT / "waveform2.mp4"
@@ -160,6 +233,42 @@ class AudioTests(MediaFixtures):
         # a sound that starts with its picture is not touched
         plan = json.loads(script("audio.py", self.src, "--gain", "1", "-o", d / "plain.wav", "--dry-run", "--overwrite", "--json").stdout)
         self.assertNotIn("first_pts", str(plan["commands"][-1]))
+
+    def test_loudness_keeps_each_sound_where_its_picture_is(self):
+        """loudnorm's output frames jumped about 0.1 s in time after a stretch of digital silence
+        (FFmpeg 6.1) while its samples ran on: beside a copied picture every beep after the first
+        played 89 ms late, and atrim cut as much off the end. Since 4.0.0 export.py normalises
+        platform presets by default (#579), so every reels/youtube export with silent gaps did it."""
+        from _fixtures import av_offsets_ms, make_flash_beep
+        src = make_flash_beep(OUT / "loud_flash_beep.mp4")
+        out = OUT / "loud_flash_beep_norm.mp4"
+        script("loudness.py", src, "-I", "-14", "--tp", "-1", "-o", out, "--overwrite")
+        offsets = av_offsets_ms(out)
+        self.assertEqual(len(offsets), 4, offsets)
+        self.assertLessEqual(max(abs(o) for o in offsets), 18, f"flash minus beep {offsets} ms")
+        times = [float(t.strip(",")) for t in subprocess.check_output(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)],
+            text=True).split()]
+        self.assertLess(max(b - a for a, b in zip(times, times[1:])), 0.03, "a jump in the sound's timestamps")
+        # a gap in the source's sound stays where it is, in both modes and on every build: it is
+        # filled with silence before loudnorm. The dynamic-mode restamp closed it, and so did
+        # swresample's own threshold for a gap under 100 ms, so every later beep played early by
+        # the gap's length (0.8 s and 85 ms here). What is checked is the thing a viewer sees,
+        # flash against beep, not how a build stamps its packets (review of #636)
+        for name, cut in (("gap80", "between(t,0.70,0.78)"), ("gap800", "between(t,1.60,2.40)")):
+            short = OUT / f"loud_flash_beep_{name}.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", f"aselect='not({cut})'", "-c:v", "copy", "-c:a", "aac", short)
+            self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, f"fixture {name}: the gapped source is in sync")
+            modes = set()
+            for target in ("-14", "-30"):
+                with self.subTest(gap=name, target=target):
+                    fixed = OUT / f"loud_flash_beep_{name}_{target[1:]}.mp4"
+                    doc = json.loads(script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite", "--json").stdout)
+                    modes.add(doc["result"]["loudnorm_mode"])
+                    offsets = av_offsets_ms(fixed)
+                    self.assertEqual(len(offsets), 4, offsets)
+                    self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
+            self.assertEqual(modes, {"dynamic", "linear"}, "the two targets are there to run both loudnorm modes")
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"
@@ -448,7 +557,7 @@ class AudioTests(MediaFixtures):
         script("cut.py", mp3, "--start", "2", "--end", "6", "-o", cut_mp3)
         self.assertClose(probe(str(cut_mp3))["duration"], 4.0, 0.1)
         # picture-only scripts refuse clearly instead of failing inside ffmpeg
-        for argv in (("fit.py", "--duration", "5"), ("export.py", "--preset", "youtube"), ("look.py",)):
+        for argv in (("fit.py", "--duration", "5", "--method", "speed"), ("export.py", "--preset", "youtube"), ("look.py",)):
             proc = script(argv[0], self.mic, *argv[1:], "-o", OUT / "nope.out", expect_fail=True)
             self.assertIn("no video stream", proc.stderr)
 
@@ -1193,6 +1302,8 @@ class AudiogramTests(MediaFixtures):
                 self.assertEqual(doc["loudness"]["lufs"], "-inf")
                 self.assertTrue(doc["loudness"]["silent"])
                 self.assertFalse(doc["loudness"]["ok"])
+                self.assertFalse(doc["loudness"]["normalized"])
+                self.assertIn("loudness measured without export correction: -inf LUFS", proc.stderr)
                 self.assertTrue(any(n.startswith("output audio is silent") for n in doc["notes"]))
                 self.assertFalse(any("run loudness.py" in n for n in doc["notes"]))
 

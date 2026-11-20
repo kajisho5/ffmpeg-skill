@@ -5,6 +5,7 @@
     python3 tests/test_all.py            # every group
 """
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -13,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -24,6 +26,207 @@ from _common import font_for_script, probe, shell_quote  # noqa: E402
 
 class OrchestrationTests(MediaFixtures):
     """Render, batch and multicam, plus the toolkit-wide invariants every script has to satisfy."""
+
+    def test_the_review_page_shows_the_plan_and_the_result_and_saves_an_edited_project(self):
+        """#633, 4.0.0: scripts/_review.py writes a folder with an index.html for a render project:
+        stills at each clip's in point, middle and out point, the dry run's stages, the measured
+        result of a run, and fields whose edited project the page saves. Standalone use only: it
+        is not a contract tool and the MCP server does not list it, so a caller that owns the
+        review (Velisa) never reaches it."""
+        work = OUT / "review_page"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        tiny_clip(work / "src.mp4", "testsrc2=s=320x180:r=30", seconds=6, audio=True)
+        proj = work / "proj.json"
+        proj.write_text(json.dumps({"output": "out.mp4", "clips": [{"src": "src.mp4", "in": 1, "out": 3}, {"src": "src.mp4", "in": 4}]}),
+                        encoding="utf-8")
+        run = json.loads(sh(sys.executable, SCRIPTS / "render.py", proj, "--json", "--overwrite", cwd=work).stdout)
+        (work / "run.json").write_text(json.dumps(run), encoding="utf-8")
+        page_path = Path(sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "run.json").stdout.strip())
+        self.assertEqual(page_path, work / "proj.review" / "index.html")
+        def embedded(path):  # the one document the page is built from
+            text = Path(path).read_text(encoding="utf-8")
+            return text, json.loads(re.search(r'<script id="data">window\.REVIEW_DATA = (.*?);</script>', text, re.S).group(1))
+        page, data = embedded(page_path)
+        stills = sorted(p.name for p in (page_path.parent / "stills").glob("*.jpg"))
+        self.assertEqual([n for n in stills if n.startswith("clip")], [f"clip{i}_{k}.jpg" for i in range(2) for k in range(3)])
+        self.assertEqual(len([n for n in stills if n.startswith("out_")]), 6, stills)
+        self.assertEqual(data["stages"], ["clips", "join"], "the dry run ran even though out.mp4 is already there")
+        self.assertEqual(data["result"]["probe"]["duration"], run["probe"]["duration"])
+        self.assertEqual([(c["s"], c["a"]) for c in data["clips"]], [(0, 1.0), (0, 4.0)])
+        self.assertEqual(data["clips"][0]["b"], 3.0)
+        self.assertAlmostEqual(data["clips"][1]["b"], 6.0, delta=0.2, msg="a clip with no out ends where its source does")
+        self.assertEqual(data["clips"][0]["stills"], [f"stills/clip0_{k}.jpg" for k in range(3)])
+        self.assertEqual([s["path"] for s in data["sources"]], ["src.mp4"], "one card per file, however many clips use it")
+        self.assertEqual({s["codec_type"] for s in data["sources"][0]["probe"]["streams"]}, {"video", "audio"})
+        self.assertEqual((data["cue_file"], data["cues"]), (None, []), "a project with no cue file has no caption track")
+        # the output plays from where it is, and its sound is drawn from the file, not invented
+        self.assertEqual(data["out"]["video"], (work / "out.mp4").resolve().as_uri())
+        self.assertEqual(data["out"]["wave"], "stills/wave.png")
+        self.assertGreater((page_path.parent / "stills" / "wave.png").stat().st_size, 0)
+        # every tool's flags come from the contract, never a list kept in the page
+        contract = json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)
+        self.assertEqual({n: t["p"] for n, t in data["tools"].items()}, {t["name"]: t["input_schema"]["properties"] for t in contract["tools"]})
+        self.assertEqual(set(data["safe"]["reels"]), {"top", "bottom", "left", "right"})
+        self.assertNotIn("/*DATA*/", page)
+        self.assertNotIn('getElementById("data")', page, "the data is the script's own value, never text read back from the document")
+        for needed in ('id="app"', "data-clip", "data-prompt", "navigator.clipboard"):  # the screen, the clip fields, the instruction
+            self.assertIn(needed, page)
+        self.assertNotRegex(page, r'(src|href)="https?://', "the page asks the network for nothing")
+        # a cue file the project names is read into the caption track
+        (work / "cues.srt").write_text("1\n00:00:00,500 --> 00:00:01,500\nhello <b>\n", encoding="utf-8")
+        cued = work / "cued.json"
+        cued.write_text(json.dumps({"output": "c.mp4", "clips": [{"src": "src.mp4"}], "captions": {"srt": "cues.srt"}}), encoding="utf-8")
+        _, with_cues = embedded(sh(sys.executable, SCRIPTS / "_review.py", cued, "-o", work / "cued_review").stdout.strip())
+        self.assertEqual((with_cues["cue_file"], with_cues["cues"]), ("cues.srt", [[0.5, 1.5, "hello <b>"]]))
+        self.assertEqual(with_cues["result"], None)
+        self.assertEqual(with_cues["out"], {"video": None, "stills": [], "wave": None}, "not rendered: nothing to play, and it says so")
+        # a second page into the same folder is refused unless --overwrite
+        again = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj)], capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(again.returncode, 1, again.stderr)
+        self.assertIn("--overwrite", again.stderr)
+        # check rows show their status and value; a run with no probe has sound "not measured"
+        failed = {"status": "failed", "verified": False, "check": {"ok": False, "checks": [
+            {"check": "loudness", "status": "FAIL", "value": "-30.1 LUFS", "expected": "-14 LUFS"},
+            {"check": "codec", "status": "PASS", "value": "h264", "expected": "h264"}]}}
+        (work / "failed.json").write_text(json.dumps(failed), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", proj, "--result", work / "failed.json", "-o", work / "failed_review")
+        page, data = embedded(work / "failed_review" / "index.html")
+        self.assertEqual(data["result"], failed, "the run's document as it is: the page marks a missing probe as not measured")
+        self.assertEqual(data["out"], {"video": None, "stills": [], "wave": None})
+        self.assertIn('"output probe"', page)
+        # review of #636: the render command runs from anywhere and is quoted; a folder of other
+        # files is not a review folder; a null bound is an empty field
+        self.assertIn(str(SCRIPTS / "render.py"), data["run"])
+        self.assertIn(str(proj), data["run"])
+        media = work / "media"
+        media.mkdir(exist_ok=True)
+        (media / "clip0_0.jpg").write_bytes(b"not ours")
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(media)],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual((media / "clip0_0.jpg").read_bytes(), b"not ours")
+        nulls = work / "nulls.json"
+        nulls.write_text(json.dumps({"output": "n.mp4", "clips": [{"src": "src.mp4", "in": None, "out": None}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", nulls, "-o", work / "nulls_review")
+        _, data = embedded(work / "nulls_review" / "index.html")
+        self.assertEqual(data["project"]["clips"][0], {"src": "src.mp4", "in": None, "out": None}, "null stays null, never the word None")
+        self.assertEqual(data["clips"][0]["a"], 0.0)
+        self.assertAlmostEqual(data["clips"][0]["b"], 6.0, delta=0.2)
+        # an existing review folder that also holds a project input: the input is never touched,
+        # and a stills folder the tool did not make is refused (review of #636)
+        reused = work / "reused"
+        reused.mkdir(exist_ok=True)
+        (reused / "index.html").write_text("old", encoding="utf-8")
+        (reused / "clip0_0.jpg").write_bytes(b"overlay")
+        overlaid = work / "overlaid.json"
+        overlaid.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "src.mp4"}],
+                                        "overlays": [{"image": str(reused / "clip0_0.jpg")}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", overlaid, "-o", reused, "--overwrite")
+        self.assertEqual((reused / "clip0_0.jpg").read_bytes(), b"overlay")
+        self.assertTrue((reused / "stills" / "clip0_0.jpg").stat().st_size > 0)
+        foreign = work / "foreign"
+        (foreign / "stills").mkdir(parents=True, exist_ok=True)
+        (foreign / "index.html").write_text("old", encoding="utf-8")
+        (foreign / "stills" / "mine.jpg").write_bytes(b"keep")
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(foreign), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual((foreign / "stills" / "mine.jpg").read_bytes(), b"keep")
+        # the documents this run reads, kept in a marked stills folder, are inputs too; and only
+        # this tool's own stills are ever removed from it (review of #636)
+        marked = reused / "stills"
+        kept_json = marked / "run.json"
+        kept_json.write_text(json.dumps({"status": "completed", "output": "out.mp4"}), encoding="utf-8")
+        (marked / "notes.txt").write_text("mine", encoding="utf-8")
+        again = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(overlaid), "--result", str(kept_json),
+                                "-o", str(reused), "--overwrite"], capture_output=True, text=True, cwd="/")
+        self.assertEqual(again.returncode, 1, again.stderr)
+        self.assertTrue(kept_json.exists())
+        kept_json.unlink()
+        sh(sys.executable, SCRIPTS / "_review.py", overlaid, "-o", reused, "--overwrite")
+        self.assertEqual((marked / "notes.txt").read_text(encoding="utf-8"), "mine")
+        # a relative output is read from the project's folder, wherever the page is built from
+        rel = work / "rel.json"
+        rel.write_text(json.dumps({"status": "completed", "output": "out.mp4", "probe": run["probe"]}), encoding="utf-8")
+        subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "--result", str(rel), "-o",
+                        str(work / "rel_review")], check=True, capture_output=True, text=True, cwd="/")
+        self.assertTrue((work / "rel_review" / "stills" / "out_0.jpg").exists())
+        # literal text longer than a file name may be is not a path; a project named index.html
+        # in the review folder is never overwritten by the page (review of #636)
+        long_text = work / "long.json"
+        long_text.write_text(json.dumps({"output": "l.mp4", "clips": [{"src": "src.mp4"}],
+                                         "overlays": [{"text": "x" * 300}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", long_text, "-o", work / "long_review")
+        self.assertTrue((work / "long_review" / "index.html").exists())
+        inside = work / "inside"
+        inside.mkdir(exist_ok=True)
+        as_page = inside / "index.html"
+        as_page.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": str(work / "src.mp4")}]}), encoding="utf-8")
+        before = as_page.read_bytes()
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(as_page), "-o", str(inside), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual(as_page.read_bytes(), before)
+        # a marker or a page name that links to an input is replaced as a name, never written
+        # through: the input keeps its bytes (review of #636)
+        linked = work / "linked"
+        (linked / "stills").mkdir(parents=True, exist_ok=True)
+        (linked / "index.html").write_text("<html>earlier page</html>", encoding="utf-8")  # so the marker check is reached
+        precious = work / "precious.txt"
+        precious.write_text("keep me", encoding="utf-8")
+        try:  # a Windows runner without symlink rights cannot make one: that half is skipped there
+            (linked / "stills" / ".ffmpeg-skill-review-stills").symlink_to(precious)
+        except OSError:
+            pass
+        else:
+            refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(linked),
+                                      "--overwrite"], capture_output=True, text=True, cwd=str(work))
+            self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertIn("was not made by the review page", refused.stderr)
+            self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+            # a link already standing at the temporary name the page used to be written through
+            # is not followed: the temporary file is created exclusively
+            if str(SCRIPTS) not in sys.path:
+                sys.path.insert(0, str(SCRIPTS))
+            review = importlib.import_module("_review")
+            target = linked / "page.html"
+            (linked / f".page.html.{os.getpid()}.tmp").symlink_to(precious)
+            review.write_new(target, "new page")
+            self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+            self.assertEqual(target.read_text(encoding="utf-8"), "new page")
+        hard = work / "hard"
+        hard.mkdir(exist_ok=True)
+        os.link(precious, hard / "index.html")
+        sh(sys.executable, SCRIPTS / "_review.py", proj, "-o", hard, "--overwrite")
+        self.assertEqual(precious.read_text(encoding="utf-8"), "keep me")
+        self.assertIn("<html", (hard / "index.html").read_text(encoding="utf-8"))
+        if os.name == "posix":  # the page is as readable as any file, not owner-only like a temporary file
+            self.assertEqual((hard / "index.html").stat().st_mode & 0o044, 0o044)
+        # a page name hard-linked to an input of this run is that input under another name:
+        # refused by file identity, and the input keeps its bytes (review of #636)
+        as_input = work / "as_input"
+        as_input.mkdir(exist_ok=True)
+        os.link(proj, as_input / "index.html")
+        kept = Path(proj).read_bytes()
+        refused = subprocess.run([sys.executable, str(SCRIPTS / "_review.py"), str(proj), "-o", str(as_input), "--overwrite"],
+                                 capture_output=True, text=True, cwd=str(work))
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn("is an input of this run", refused.stderr)
+        self.assertEqual(Path(proj).read_bytes(), kept)
+        # the project the page embeds is the project as given, and </script> in it cannot end the script
+        hostile = work / "hostile.json"
+        hostile.write_text(json.dumps({"output": "o.mp4", "clips": [{"src": "a</script><b>.mp4"}]}), encoding="utf-8")
+        sh(sys.executable, SCRIPTS / "_review.py", hostile, "-o", work / "hostile_review")
+        page, data = embedded(work / "hostile_review" / "index.html")
+        self.assertNotIn("</script><b>", page)
+        self.assertNotIn("<b>.mp4", page, "no < of the data reaches the HTML parser")
+        self.assertEqual(data["project"]["clips"][0]["src"], "a</script><b>.mp4")
+        # standalone only: not a contract tool, not on the MCP server, reached through npx review
+        self.assertNotIn("_review", [t["name"] for t in contract["tools"]])
+        self.assertNotIn("_review", (ROOT / "mcp" / "server.py").read_text(encoding="utf-8"))
+        self.assertIn("args[0] === 'review'", (ROOT / "bin" / "install.js").read_text(encoding="utf-8"))
+        self.assertIn("scripts/_review.py", (ROOT / "SKILL.md").read_text(encoding="utf-8"))
 
     # ------------------------------------------- 1.17: a project may ask for beat-snapped clips
     def test_render_forwards_snap_to_the_clip_cut(self):
@@ -244,7 +447,7 @@ class OrchestrationTests(MediaFixtures):
     def test_dry_run_and_json_on_every_script(self):
         cases = [
             ("cut.py", [self.src, "--start", "1", "--end", "3"]),
-            ("fit.py", [self.src, "--duration", "6"]),
+            ("fit.py", [self.src, "--duration", "6", "--method", "speed"]),
             ("caption.py", [self.src, "--srt", OUT / "cues.srt"]),
             ("overlay.py", [self.src, "--image", self.logo]),
             ("export.py", [self.src, "--preset", "x"]),
@@ -711,6 +914,17 @@ class OrchestrationTests(MediaFixtures):
         }), encoding="utf-8")
         data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
         self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
+        # 4.0.0: export.py normalises a platform preset by default (#579); a project's own loudness
+        # stage keeps its level, so render passes --no-normalize (the -24 LUFS fails x's -14)
+        proj.write_text(json.dumps({
+            "output": "render_normalize_own_stage.mp4",
+            "clips": [{"src": "source.mp4"}],
+            "loudness": {"lufs": -24},
+            "export": {"preset": "x"},
+            "check": {"platform": "x"},
+        }), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
+        self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "FAIL")
 
     def test_render_project(self):
         proj = OUT / "project.json"
@@ -1173,6 +1387,44 @@ class OrchestrationTests(MediaFixtures):
         self.assertTrue({"black", "frozen", "silence"} <= rows[True], rows)
         self.assertFalse({"black", "frozen", "silence"} & rows[None], rows)
 
+    def test_delivery_templates_check_written_content_and_allow_project_opt_out(self):
+        templates = SCRIPTS.parent / "templates"
+        for path in templates.glob("*.json"):
+            with self.subTest(template=path.stem):
+                self.assertIs(json.loads(path.read_text(encoding="utf-8"))["check"].get("content"), True)
+
+        tmp = tempfile.TemporaryDirectory(dir=OUT)
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name)
+        source = tiny_clip(folder / "black.mp4", "color=black:s=160x90:r=30", seconds=3, audio=True)
+        output = folder / "checked.mp4"
+        args = ("render.py", source, "--template", "youtube", "--fast", "-o", output, "--json")
+        dry = json.loads(script(*args, "--dry-run").stdout)
+        self.assertFalse(dry["verified"])
+        self.assertIsNone(dry["check"])
+        skip = next(d for d in dry["diagnostics"]["skipped"] if d["code"] == "check_dry_run")
+        self.assertIs(skip["content"], True)
+        self.assertFalse(output.exists())
+
+        result = json.loads(script(*args, expect_fail=True).stdout)
+        self.assertEqual(result["error"]["kind"], "verification")
+        self.assertIn("black", [r["check"] for r in result["check"]["checks"] if r["status"] == "FAIL"])
+        self.assertTrue(output.is_file())
+
+        project_file = folder / "project.json"
+        script(*args, "--write-project", project_file)
+        project = json.loads(project_file.read_text(encoding="utf-8"))
+        self.assertIs(project["check"]["content"], True)
+        project["check"]["content"] = False
+        project["output"] = str(folder / "opt_out.mp4")
+        project_file.write_text(json.dumps(project), encoding="utf-8")
+        opt_out = json.loads(script("render.py", project_file, "--fast", "--json").stdout)
+        self.assertTrue(opt_out["verified"])
+        self.assertEqual(opt_out["check"]["platform"], "youtube")
+        rows = {row["check"] for row in opt_out["check"]["checks"]}
+        self.assertIn("loudness", rows)
+        self.assertNotIn("black", rows)
+
     def test_render_exits_nonzero_when_the_check_stage_fails(self):
         """A render whose deliverable fails its own check stage must not report success."""
         proj = OUT / "project_bad_check.json"
@@ -1520,7 +1772,7 @@ class OrchestrationTests(MediaFixtures):
         recipe = folder / "batch.json"
         recipe.write_text(json.dumps({
             "glob": "*.mp4", "output_dir": "out", "suffix": "_j",
-            "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+            "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         return folder, recipe
 
     def test_jobs_summary_is_identical_to_serial(self):
@@ -1555,7 +1807,7 @@ class OrchestrationTests(MediaFixtures):
                 recipe = folder / "batch.json"
                 recipe.write_text(json.dumps({
                     "glob": "*.mp4", "output_dir": "out", "suffix": "_o",
-                    "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                    "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
                 first = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast",
                                           "--jobs", jobs, "--json").stdout)
                 self.assertEqual([Path(r["file"]).name for r in first["results"]],
@@ -1814,7 +2066,7 @@ class OrchestrationTests(MediaFixtures):
             (folder / name).write_bytes(Path(self.src).read_bytes())
         recipe = folder / "batch.json"
         recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out", "suffix": "_final",
-                                      "steps": [["fit.py", "{in}", "--duration", "5", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
+                                      "steps": [["fit.py", "{in}", "--duration", "5", "--method", "speed", "-o", "{out}"], ["export.py", "{in}", "--preset", "x", "-o", "{out}"]]}))
         data = json.loads(script("batch.py", folder, "--recipe", recipe, "--fast", "--json").stdout)
         self.assertEqual(data["processed"], 2)
         self.assertFalse(any(r.get("cached") for r in data["results"]))
@@ -1878,7 +2130,7 @@ class OrchestrationTests(MediaFixtures):
         # a recipe with no cut.py step reports nothing -- the key isn't invented from nowhere
         recipe2 = folder / "batch_no_cut.json"
         recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
-                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--fast", "--json").stdout)
         self.assertIsNone(data2["cut_stream_copy"])
         self.assertNotIn("cut_reencoded", data2["results"][0])
@@ -1918,7 +2170,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(cached["cut_reencode_reasons"], {"unknown": 1})
         recipe2 = folder / "batch_no_cut.json"
         recipe2.write_text(json.dumps({"glob": "*.mp4", "output_dir": "out2", "suffix": "_nc",
-                                       "steps": [["fit.py", "{in}", "--duration", "3", "-o", "{out}"]]}))
+                                       "steps": [["fit.py", "{in}", "--duration", "3", "--method", "speed", "-o", "{out}"]]}))
         data2 = json.loads(script("batch.py", folder, "--recipe", recipe2, "--dry-run", "--json").stdout)
         self.assertIsNone(data2["cut_reencode_reasons"])
         self.assertIsNone(data2["cut_stream_copy"])
@@ -3451,7 +3703,7 @@ class Issue429DecidedTests(unittest.TestCase):
 
     def test_a_batch_step_that_writes_without_out_stops_the_batch(self):
         folder = self._folder("no_out")
-        recipe = self._recipe(folder, [["metadata.py", "{in}", "--title", "T"], ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+        recipe = self._recipe(folder, [["metadata.py", "{in}", "--title", "T"], ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]])
         stray = folder / "in" / "a_meta.mp4"
         for dry in (True, False):
             with self.subTest(dry_run=dry):
@@ -3465,7 +3717,7 @@ class Issue429DecidedTests(unittest.TestCase):
                 self.assertFalse(list((folder / "out").glob("*.mp4")))
         # a step that only reads (output null) is untouched, as is one that names its own -o
         recipe = self._recipe(folder, [["check.py", "{in}"], ["look.py", "{in}", "-o", "{in}.png"],
-                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]], "r2.json")
+                                       ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]], "r2.json")
         shutil.rmtree(folder / "in")
         (folder / "in").mkdir()
         shutil.copy(self.clip, folder / "in" / "a.mp4")
@@ -3508,7 +3760,7 @@ class Issue429DecidedTests(unittest.TestCase):
     def test_a_batch_records_a_side_file_lost_with_an_intermediate(self):
         folder = self._folder("side", n=1)
         recipe = self._recipe(folder, [["caption.py", "{in}", "--text", str(self.cues), "-o", "{out}"],
-                                       ["fit.py", "{in}", "--duration", "1", "-o", "{out}"]])
+                                       ["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"]])
         rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe)
         self.assertEqual(rc, 0, err[-800:])
         lost = [s for s in doc["diagnostics"]["skipped"] if s["code"] == "batch_side_file_not_delivered"]
@@ -3536,7 +3788,7 @@ class Issue429DecidedTests(unittest.TestCase):
         self.assertFalse(edited.get("cached"), "an edited side input is a change the cache must see")
         self.assertNotEqual(red, blue)
         # a side input built from a later step's {in} (an intermediate) cannot be keyed: never served
-        recipe = self._recipe(folder, [["fit.py", "{in}", "--duration", "1", "-o", "{out}"],
+        recipe = self._recipe(folder, [["fit.py", "{in}", "--duration", "1", "--method", "speed", "-o", "{out}"],
                                        ["check.py", "{in}", "--compare", "{in}.ref.mp4"]], "r2.json")
         rc, doc, _ = self._run("batch.py", folder / "in", "--recipe", recipe, "--overwrite")
         self.assertEqual(doc["results"][0]["cache_miss"], {"reason": "side_input_unresolved", "step": 1, "argument": "{in}.ref.mp4"})
@@ -3625,7 +3877,7 @@ class Issue429DecidedTests(unittest.TestCase):
         self.assertEqual(with_flags(["a", "--", "b"], ["--json"]), ["a", "--json", "--", "b"])
         self.assertEqual(with_flags(["a", "b"], ["--json"]), ["a", "b", "--json"])
         folder = self._folder("dashdash", n=1)
-        recipe = self._recipe(folder, [["fit.py", "--duration", "1", "-o", "{out}", "--", "{in}"]])
+        recipe = self._recipe(folder, [["fit.py", "--duration", "1", "--method", "speed", "-o", "{out}", "--", "{in}"]])
         rc, doc, err = self._run("batch.py", folder / "in", "--recipe", recipe, "--dry-run")
         self.assertEqual((rc, doc["status"]), (0, "completed"), err[-800:])
 

@@ -434,6 +434,7 @@
    "list",
    "max_mb",
    "no_hw",
+   "no_normalize",
    "no_scale",
    "normalize",
    "output",
@@ -1276,6 +1277,7 @@
   "name": "waveform",
   "properties": [
    "argv",
+   "at",
    "audio_stream",
    "background",
    "brand",
@@ -1309,7 +1311,8 @@
    "title",
    "vis_height",
    "waveform_mode",
-   "width"
+   "width",
+   "window"
   ],
   "required": []
  }

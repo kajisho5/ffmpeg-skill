@@ -358,11 +358,11 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
       <figure class="session" id="session" aria-labelledby="sess-cap">
         <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>claude code · local</span></div>
         <div class="body">
-          <p class="prompt" data-i="sess.q">Take interview.mp4, keep 0:45–3:10 and 5:00–6:30, and make it exactly 60 seconds for Reels.</p>
+          <p class="prompt" data-i="sess.q">Take interview.mp4, keep 0:45–1:20 and 5:00–5:35, and make it exactly 60 seconds for Reels.</p>
           <ol class="runs">
             <li><code>probe.py interview.mp4</code><span class="tag" data-i="sess.t1">measured</span></li>
-            <li><code>cut.py --segments 0:45-3:10,5:00-6:30</code><span></span></li>
-            <li><code>fit.py --duration 60 --aspect 9:16 --fit crop</code><span></span></li>
+            <li><code>cut.py --segments 0:45-1:20,5:00-5:35</code><span></span></li>
+            <li><code>fit.py --duration 60 --method speed --aspect 9:16 --fit crop</code><span></span></li>
             <li><code>export.py --preset reels</code><span></span></li>
             <li><code>check.py --platform reels</code><span class="pass">PASS</span></li>
             <li><code>look.py</code><span class="tag" data-i="sess.t2">contact sheet</span></li>
@@ -557,7 +557,7 @@ footer.site{margin-top:96px;border-top:1px solid var(--ink-line);padding:28px 0 
     "hero.h": "コーディング AI に、\n動画編集ソフトを。",
     "hero.p": "Claude Code、Cursor、Codex、そのほかの MCP クライアントが、あなたのパソコンの FFmpeg で映像を編集し、仕上がりを自分で確かめます。",
     "fact.1": "クラウド不要", "fact.2": "API キー不要", "fact.3": "Python 標準ライブラリだけ",
-    "sess.q": "interview.mp4 の 0:45〜3:10 と 5:00〜6:30 を残して、Reels 用にちょうど 60 秒にして。",
+    "sess.q": "interview.mp4 の 0:45〜1:20 と 5:00〜5:35 を残して、Reels 用にちょうど 60 秒にして。",
     "sess.t1": "実測", "sess.t2": "コンタクトシート", "sess.cap": "README のクイックスタートにある頼み方と、そのためにエージェントが実行するツール。",
     "fl.h": "教えるのは、この手順", "fl.s": "どの作業も、この順番で",
     "fl.1": "測る", "fl.1s": "実際のファイルを調べる", "fl.2": "編集", "fl.2s": "できるだけ無劣化で", "fl.3": "検査", "fl.3s": "出す先の基準で", "fl.4": "確認", "fl.4s": "仕上がりを見る",

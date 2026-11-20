@@ -108,6 +108,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.10.0 — a refused stream costs only itself, and an output is what its name says (#539)](#after-3100--a-refused-stream-costs-only-itself-and-an-output-is-what-its-name-says-539)
 - [After 3.10.1 — an HDR or BT.2020 RGB source is made YUV with the matrix its line tags (#544)](#after-3101--an-hdr-or-bt2020-rgb-source-is-made-yuv-with-the-matrix-its-line-tags-544)
 - [After 3.14.1 — `npx ffmpeg-skill setup`, one command for a new machine](#after-3141--npx-ffmpeg-skill-setup-one-command-for-a-new-machine)
+- [After 3.13.2 — file names and unusable inputs (#558)](#after-3132--file-names-and-unusable-inputs-558)
+- [4.0.0 — a review page for standalone use (#633)](#400--a-review-page-for-standalone-use-633)
 <!-- contents:end -->
 
 ## Time limits
@@ -1494,19 +1496,23 @@ not a new file format this tool would have to maintain.
   decides; without one whisper.cpp's detector (the smallest multilingual ggml model, a second
   or less) decides. When neither can name the language, a Whisper engine that can run goes first
   (Parakeet only if every Whisper engine fails): a fast English transcript is not worth a
-  confidently wrong one. Only when no Whisper engine is installed, or every one failed, does
-  Parakeet run on English assumed, and then the result's top-level `notes` says the transcript is
-  wrong if the speech is not English -- `transcription.routing` alone was too quiet for a caller
-  that reads `verified`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
+  confidently wrong one. When no Whisper engine is installed, or every one failed, the
+  English-only model is not run at all (4.0.0): the call is refused before anything is transcribed
+  or written (`reason: english_only`, or `engine_failed` when a Whisper engine ran and failed), and
+  the refusal names the flag that names the language. Until 3.x it ran on English assumed and a
+  top-level `notes` line said so; a note is read after Japanese has been burned in as English
+  words, and a caller that reads `verified` never read it. The price: English speech on a machine
+  with only Parakeet needs `--language en`. "Goes first" means a Whisper engine that detects the language: whisper.cpp
   is passed `-l auto` when nothing named the language (its own default is `-l en`, which decoded
   every unnamed language as English, in 2.5.1 too), else the named or detected one, and an
   English-only Whisper model (`base.en`, `ggml-*.en.bin`, quantised too: `ggml-base.en-q5_1.bin`) does
   not count as one for routing. Known gap: with whisper.cpp as the only engine and such a model, undetected
-  speech is decoded as English and the run adds no note.
-  A named `--engine parakeet-*` runs as asked, with no note, and so does a Parakeet model named
-  with `--model` or `PARAKEET_MODEL`: a multilingual (v3) one assumes nothing and gets no note; an
-  English-only one named with `--model` gets the note, pointing at a v3 model rather than at a
-  Whisper engine, which cannot load it. Measured on 8 min of LibriSpeech
+  speech is decoded as English.
+  A named `--engine parakeet-*` runs as asked: naming the engine is naming what it does. A
+  multilingual (v3) Parakeet model named with `--model` or `PARAKEET_MODEL` assumes nothing and
+  runs under `auto`; an English-only one named with `--model` is not run on speech nobody named.
+  Tests: `test_no_language_and_only_an_english_only_parakeet_is_refused_before_it_runs`,
+  `test_an_english_only_parakeet_is_not_the_last_resort_when_every_whisper_engine_fails`. Measured on 8 min of LibriSpeech
   (contributor's figures, Apple Silicon): parakeet-mlx v2 2.8% WER at ~120× real time, whisper
   large-v3-turbo 2.4% at ~39×. Tests: `ParakeetRoutingTests`, `ParakeetEngineTests`,
   `UndetectedLanguageTests`, `WhisperLanguageTests`, `AutoRoutingFallbackTests`.
@@ -4452,7 +4458,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   started, and the dry run completed. `run()` refuses it as `kind: input`,
   `output_extension_missing`, unless the command names a format with `-f` after its last input.
   An unknown extension (`out.xyz`) is still left to the muxer: telling which of FFmpeg's 200-odd
-  muxers a build has would cost a process per run. Side files are not checked, and `look.py` takes
+  muxers a build has would cost a process per run. (Changed by #558, "After 3.13.2 — file names": it is
+  refused, and the build is asked only for an extension outside the common ones.) Side files are not checked, and `look.py` takes
   an `-o` without an image extension as a stem in every mode (`<stem>_sheet.png`,
   `<stem>_vs_<other>_<i>_<t>s.png`, `<stem>_<t>s.png`), as the decision above already said for
   `--at`. Code: `runner._check_output_extension()`. Tests:
@@ -4726,6 +4733,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
 - **Read RIFF/WAVE inputs as WAV (#518).** FFmpeg 9.0.2 can misidentify ordinary
   PCM audio as MPEG-TS. The same input-format helper now uses the file header
   for probes, edits and measurements. Explicit input formats take precedence.
+  Since #558 the guard is `-f image2 -pattern_type none` ("After 3.13.2 — file names"): the option alone failed
+  for a name that is not a pattern.
 - **Two paths are one file when they resolve alike or when the file is the same (device and
   inode)** (A5). `run()`'s output-is-input guard compared resolved strings, so a hard link to the
   input and, on a case-insensitive volume, the input's name in another case were written over.
@@ -6087,3 +6096,140 @@ before it was changed. Five classes are changed, two are left for a decision.
   `test_setup_installs_for_the_agents_found_and_only_runs_a_named_package_manager`
   (tests/test_contract.py). The three install commands are tested against a stand-in for the
   package manager; none has been run by this test on a machine without FFmpeg.
+
+## After 3.13.2 — file names and unusable inputs (#558)
+
+Seven items of the basics audit of 3.10.0, each reproduced on FFmpeg 6.1.1 (Linux, Python 3.11)
+before it was changed. Nothing here was run on FFmpeg 7.1, 8 or 9, on macOS or on Windows; what
+is said about them is reasoned and marked so.
+
+- **A still with a `%` in its name is opened with `-f image2 -pattern_type none`.** The A7 entry
+  above put `-pattern_type none` alone in front of every image name with a `%`. FFmpeg chooses
+  image2 by itself only for a name it reads as a pattern (`logo%d.png`); `a%20b.png` and `50%.png`
+  are opened by `png_pipe` (`jpeg_pipe`, ...), which has no such option, and every tool given one
+  failed as `kind: ffmpeg` ("Option pattern_type not found": `overlay --image`, `insert`,
+  `broll --insert`, `probe`). Naming the demuxer makes both cases one: measured for `a%20b`,
+  `50%`, `p%d` and `q%03d` as `.png` and `.jpg` (the decoded pixel is the file's own, not the
+  numbered neighbour's), and the decode of a `%`-named file is byte-identical with and without the
+  two options for the 20 of the 21 extensions in `_IMAGE2_EXT` this build writes (`.xpm` it
+  cannot write). Forced, image2 takes the codec from the extension, as it already did for a `%d`
+  name: a JPEG named `x%20y.png` does not open (it did not before either). That `image2` accepts
+  `pattern_type none` on 7.1 to 9 is reasoned from the A7 guard having passed CI there for `%d`
+  names, which image2 was already reading. Code: `runner.still_input_args()`. Test:
+  `BasicsAudit558Tests.test_a_percent_in_a_still_name_is_that_file_pattern_or_not`; the exact
+  argument list `test_a_percent_in_a_still_path_never_opens_another_file` pins moved with it.
+- **A relative path with a colon in its first segment is written `./...` inside a filter.**
+  `escape_filter_path()` went through `Path()`, which drops a leading `./`, so
+  `caption.py --srt ./a:b.srt` reached the subtitles filter as `a\\:b.srt`; the filter opens its
+  file through libavformat, which read `a` as a protocol ("Protocol not found"). `d:e/c.srt` failed
+  the same way, and so does `metadata=print:file=` given such a name directly. `lut3d`, drawtext's
+  `fontfile`/`textfile` and `ssim`'s `stats_file` open with `fopen` and worked before; `./name` is
+  the same file to them. An absolute path is unchanged. On Windows the path is judged as a Windows
+  path (`PureWindowsPath`): `C:/x`, `C:\x` and the drive-relative `C:x` keep their form, because
+  the drive's colon is escaped and is not a scheme; that branch is tested with `_on_windows()`
+  patched, not on Windows. The callers are `caption.py` (subtitles, ass, fontsdir), `graphics.py`
+  (ass, fontsdir), `color.py` (lut3d), `stabilize.py` (its own temp path), `_common.drawtext`
+  (fontfile, textfile), `_contract.py`'s drawtext check, `_common.emoji` and `_common.probe`
+  (temp paths). Test:
+  `PictureTests.test_a_relative_path_with_a_colon_inside_a_filter_is_opened_as_a_file`.
+- **An output extension the build maps to no muxer is refused before ffmpeg**
+  (`output_extension_unknown`, `kind: input`, dry runs included). This changes the sentence in
+  "the sweep of A159" above, "An unknown extension (`out.xyz`) is still left to the muxer: telling
+  which of FFmpeg's 200-odd muxers a build has would cost a process per run": the cost falls only
+  on a run whose extension is outside `runner._COMMON_OUTPUT_EXT` (the extensions the skill names
+  and a few every build has), and is paid once per process. For any other extension the build is
+  asked: the names from `ffmpeg -muxers` and each one's "Common extensions:" line from
+  `ffmpeg -h muxer=NAME` (about 190 short processes, 8 at a time: 1.9 s wall on 4 cores here).
+  FFmpeg chooses the muxer by the extension alone, without case, so that list decides; `.mka` is
+  in the common set because the Matroska audio muxer shares the name `matroska` and `-h muxer=`
+  never lists it. When the build cannot be asked, or one muxer cannot be read, nothing is
+  refused and the command runs as before; a `-f` after the last input exempts the output, as it
+  does for a missing extension. A static table was not used: it would refuse an extension a
+  later FFmpeg adds. Measured on 6.1.1: the 26 tools of `tests/sweep.py` that take `-o`, and
+  `join`, `multicam`, `broll`, `grid`, `insert`, `background` and `waveform` by hand, failed as
+  `kind: ffmpeg` with a completed dry run and refuse now in both (`render.py --template` refuses
+  through its export stage; a project with no export stage has its own rule for the extension). That the two
+  listings have the same shape on 7.1 to 9 is not verified; if they do not, the answer is "cannot
+  be asked" and the old behaviour. Code: `runner._refuse_unknown_extension()`. Test:
+  `BasicsAudit558Tests.test_an_output_extension_no_muxer_has_is_refused_before_ffmpeg`.
+- **An input that cannot be media says which it is.** `probe()` refuses a directory
+  (`input_is_directory`), an empty file (`input_empty`) and a file ffprobe cannot read
+  (`input_not_media`) with a hint each, where it used to pass on ffprobe's lines ("moov atom not
+  found" behind a `[mov,mp4,... @ 0x...]` prefix whose address differs on every run). The
+  not-media message still opens with "ffprobe failed on PATH", which `verify.py`'s report rows and
+  two existing tests match, and keeps ffprobe's own words without the prefix. A file cut short
+  and a text file named `.mp4` get the same reason: ffprobe says the same of both. An output this
+  run wrote is not judged here (`role="output"` is unchanged), and an ffmpeg failure's stderr
+  (`kind: ffmpeg`) still carries the prefixes. Code: `probe._refuse_unusable_input()`,
+  `probe._refuse_not_media()`. Test: `test_an_input_that_cannot_be_media_says_which_it_is`.
+- **A file the user may not reach is "permission denied", not "not found"**
+  (`input_permission_denied`). `os.path.exists()` is false for EACCES as for ENOENT.
+  `runner.path_denied()` tells them apart (`os.stat` raising `PermissionError`, or a file that is
+  there and not readable), for a real run and a dry run: a dry run used to take such an input for
+  an earlier stage's output that was not written yet. A path that is not there stays "input not
+  found" with no reason, as before. The same word is used where a tool names a missing file
+  itself: `join.py`'s, `audio.py`'s and `render.py`'s problem lists (`reason: "permission
+  denied"` beside `"missing"`), `verify.py` (which raised a traceback from `Path.is_dir()`), and
+  the SRT, ASS, LUT, chapters, brand, `--image` and layer files. Not changed: side files checked
+  with `os.path.isfile()` by tools not listed here. On Windows a directory's mode does not stop a
+  search, so only the mocked half of the test runs there. Test:
+  `test_a_file_the_user_may_not_reach_is_not_reported_as_missing`.
+- **`_contract.py` ends quietly when its reader has gone.** `contract --json | head -40`, README's
+  quick start, closed the pipe on a document of about 990 KB; `print()` raised `BrokenPipeError`
+  (a traceback, exit 1). It exits 0 with nothing on stderr. The tools write their document with
+  `sys.stdout.write()`, which on Python 3.11 here returned normally for a 5 MB document into a
+  closed pipe, so they are not changed; other Python versions were not measured. How Windows
+  reports a closed pipe to the writer is not verified, and the test is skipped there. Test:
+  `test_the_contract_into_a_pipe_that_closes_ends_quietly`.
+- **An input name starting with a dash is read as a file.** ffprobe takes its input as a bare
+  argument, so `-report` and `-dash.mp4` (given after `--`) were read as options: "You have to
+  specify one input file", and for `-report` an `ffprobe-*.log` written into the working
+  directory. `runner.guard_input_names()` writes such a name `./name` where the command is built:
+  each `-i` value of an ffmpeg command, and the last argument of an ffprobe command when a file
+  of that name exists (which tells it from an option such as `-version`). `run()`,
+  `run_analysis()`, the frame readers of `_common.alpha` and `_common.probe` and the stream
+  checks inside `runner` all pass through it; documents and messages keep the name as given.
+  Three places passed such a name on by themselves and are changed too: `default_output()`
+  (`./-dash.mp4` gave the default output `-dash_fit.mp4`, which the output guard then refused),
+  `verify.py` (its `Path` dropped the `./` before the name reached a step's parser) and
+  `report.py` (`--after=-x.mp4`). An explicit output starting with a dash is still refused with
+  the `./NAME` hint (`output_looks_like_option`), as decided. Not changed: `verify.py` also drops
+  the `./` of a name with a colon (`./co:lon.mp4` is then refused as a URL with the hint to write
+  `./`), and a `--font-file` starting with a dash is drawn but its family is not read by
+  `fc-scan`. `./name` with a forward slash is a file to ffmpeg on Windows as well (reasoned, not
+  run). Test: `test_an_input_name_starting_with_a_dash_is_read_as_a_file`.
+
+## 4.0.0 — a review page for standalone use (#633)
+
+- **It is not one of the tools.** `scripts/_review.py` and `npx ffmpeg-skill review` are the only
+  ways in; `contract --json` does not list it and the MCP server does not expose it. A caller that
+  owns the review (Velisa) reaches the skill through the contract or the MCP server, so it never
+  sees the page and needs no switch to turn it off. Nothing on the machine is searched for
+  Velisa: a check for another product's files would break when that product moves them.
+- **The page runs nothing.** Re-editing means editing the render project: the page saves the
+  edited JSON and shows the `render.py` command and a sentence to give the agent. A page that ran
+  ffmpeg would need a local server, and the run would bypass the agent that reports the result.
+- **It is one screen built from one document.** `_review.py` measures (ffprobe per source, three
+  stills per clip, six stills and a waveform of the output, the dry run's stages) and embeds one
+  JSON document with the project, the run's result as given, and each tool's flags from
+  `_contract.py --json --static`; `scripts/_review.html` holds the markup, styles and script and
+  derives everything it shows from that document. The page measures nothing and recomputes
+  nothing: a row is green only where the run's own `ok` is true or `check.py` said PASS.
+- **An instruction, not an edit.** Only a clip's in, out and speed change the saved project. A
+  tool flag, a caption's text, a marker or a range becomes a line of the instruction with the
+  element's number: the agent that runs the tools is the one that knows how a flag maps onto the
+  project, and it reports the result.
+- **The caption shown after a caption setting is changed is labelled a likeness** and is drawn
+  under the picture, not over it: the picture already carries the burned captions of the last run.
+- **A file the browser cannot play falls back to the six stills**, and the page says so. No proxy
+  is encoded: that would be a second render nobody asked for.
+- **A still that ffmpeg could not write says "no still"**, and a measurement the run did not make
+  says "not measured": the page shows what was measured, never a placeholder that looks like data.
+- **The plan's dry run passes `--overwrite`**: it writes nothing, and without the flag an output
+  left by the run being reviewed refused it, so the page said the plan had no stages.
+- Code: `scripts/_review.py`, `scripts/_review.html`, `bin/install.js` (`review`). Test:
+  `test_the_review_page_shows_the_plan_and_the_result_and_saves_an_edited_project`
+  (tests/test_orchestration.py) checks the embedded document and every write guard. The page's own
+  script (selection, the instruction, clip edits, playback, the four languages) was checked in
+  Chromium at 1440x900 and 1920x1080 with `.claude/skills/review-page-ui/SKILL.md`; CI has no
+  browser, so a change to `_review.html` is checked that way before it is pushed.

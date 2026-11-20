@@ -33,6 +33,10 @@ Ask a short question only when the answer changes the output materially and the 
   A `crop_content_off_centre` warning means the crop discarded noticeable luma motion or detail. Compare contact sheets of the kept time range in the source and the cropped output before choosing the suggested anchor or switching to `--fit pad`.
 - Anything else (transition type, caption style): pick the conventional default, say what you picked, offer the alternative in one line.
 
+Delivery templates include black, frozen, silence and other applicable content rows. Use
+`check.py --content` for the same measurements on a standalone delivery. Include warnings
+and the `unverified` list so a reviewer knows what to watch or listen for.
+
 ## Audio-only files
 
 Use `.mka` for Matroska audio. A compatible `cut` keeps the source codec when it
