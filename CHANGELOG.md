@@ -4,8 +4,17 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.1.3
+
+_Automated release: version and notes generated from pull requests merged since 4.1.2._
+
 - **Edge values are probed, and the probe is a skill.** `tests/edge_values.py` gives every numeric option of the single-input tools a zero, a negative and a huge value in a dry run and lists the calls that ran or hung; `.claude/skills/edge-probe/SKILL.md` has the loop, with the few properties a tool should keep. The first round is #645: 558 calls, 344 refused, two options that hang on a huge value. Nothing in the tools changes here.
 - **A number outside what an option takes is refused, on every tool.** `cropdetect.py --samples 1000000000` and `graphics.py --template countdown --from 1000000000` gave no answer; `caption.py --size -1` and `overlay.py --font-size 1000000000` wrote a file; `fit.py --width 1000000000` failed inside ffmpeg with a message that named no option (#645). One shared step now reads every numeric option: a range the help states as `a..b` is the range taken, a negative is refused unless the help names one (a level in dB, an angle, `-1 = never`), and no value is past a million (a sample count aside). The answer names the option and prints its help. Ranges that were missing are in the help: `cropdetect --samples` 1..100, `graphics --from` 0..600, `overlay --font-size` 1..2000, `audio --gain` -96..96, the widths of `fit`, `look`, `proxy` and `waveform` up to 16384; `scenes --threshold` is 0..100 as its help said. The same probe that found 213 accepted edge values now finds 104, each one a value its help describes.
+- fix: a number outside what its option takes is refused on every tool (#648)
+- docs: edge values are probed by tests/edge_values.py, and the probe is a skill (#646)
+
 ## 4.1.2
 
 _Automated release: version and notes generated from pull requests merged since 4.1.1._
