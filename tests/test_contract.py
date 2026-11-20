@@ -13402,6 +13402,28 @@ class StumbleLedgerTests(unittest.TestCase):
         tools = {t["name"]: t["input_schema"]["properties"] for t in json.loads(sh(sys.executable, SCRIPTS / "_contract.py", "--json", "--static").stdout)["tools"]}
         self.assertEqual(tools["verify"]["seconds"]["cli"], ["--duration", "--seconds"])
 
+    def test_a_mistake_with_one_answer_is_followed_by_the_corrected_command(self):
+        """A caller that copies does better with the command than with advice: GLM 5.3 Flash went from
+        25 to 58 calls that ran of 126 once it read the answers. Where one answer is left for every
+        mistake on the line, the usage error ends with `try:` and the whole corrected command."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", "x.mp4"],
+                                                 capture_output=True, text=True, encoding="utf-8").stderr
+        for tool, argv, fixed in (("cut", ("--strat", "1", "--end", "2"), "--start 1 --end 2"),
+                                  ("denoise", ("--strength", "strong"), "--strength high"),
+                                  ("silence", ("--threshold", "-30dB", "--min-silence", "0.8s"), "--threshold=-30 --min-silence 0.8")):
+            with self.subTest(tool=tool, argv=argv):
+                answer = run(tool, *argv).rsplit("error:", 1)[-1]
+                self.assertRegex(answer, rf"\ntry: python3 \S*{tool}\.py \S+ {re.escape(fixed)} -o x\.mp4")
+                # and the corrected command is one the tool takes
+                again = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *fixed.split(), "-o", "x.mp4", "--dry-run"],
+                                       capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(again.returncode, 0, again.stderr[-300:])
+        # no `try:` when a mistake has no single answer: a guess would be copied as if it were known
+        for tool, argv in (("cut", ("--start", "1", "--end", "2", "--bogus")), ("export", ("--codec", "hevc")), ("stabilize", ("--zoom=5%", "--wat"))):
+            with self.subTest(tool=tool, argv=argv):
+                self.assertNotIn("try:", run(tool, *argv))
+
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
     # no other tool may take one, and a name two tools share means one thing and one type.
