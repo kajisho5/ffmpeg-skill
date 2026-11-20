@@ -259,13 +259,16 @@ class AudioTests(MediaFixtures):
             short = OUT / f"loud_flash_beep_{name}.mp4"
             sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", f"aselect='not({cut})'", "-c:v", "copy", "-c:a", "aac", short)
             self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, f"fixture {name}: the gapped source is in sync")
+            modes = set()
             for target in ("-14", "-30"):
                 with self.subTest(gap=name, target=target):
                     fixed = OUT / f"loud_flash_beep_{name}_{target[1:]}.mp4"
-                    script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite")
+                    doc = json.loads(script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite", "--json").stdout)
+                    modes.add(doc["result"]["loudnorm_mode"])
                     offsets = av_offsets_ms(fixed)
                     self.assertEqual(len(offsets), 4, offsets)
                     self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
+            self.assertEqual(modes, {"dynamic", "linear"}, "the two targets are there to run both loudnorm modes")
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"
