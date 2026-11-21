@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.4.0
+
+_Automated release: version and notes generated from pull requests merged since 4.3.6._
+
 ### Added
 
 - **`audio.py --mute`: the sound is removed in one call.** The picture and subtitles are copied;
@@ -22,6 +28,7 @@
 - **An enlargement is Lanczos.** When `fit.py` or an `export.py` preset writes a frame larger than
   the picture, the scale uses `-sws_flags lanczos`; a frame of the source's size or smaller is the
   command it was.
+- feat: a small 9:16 frame is said, an enlargement is Lanczos, and mute, fade and a delivery length are one call (#669)
 
 ## 4.3.6
 
