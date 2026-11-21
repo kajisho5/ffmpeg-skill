@@ -5452,14 +5452,16 @@ the slot at 0.519 s, "After 3.8.14").
   read back in `probe.video.pix_fmt`. Not verified on another libvidstab: one that took RGB would
   still get the YUV copy. Code: `stabilize.main()`. Test: `test_stabilize_takes_an_rgb_source`.
 - **`caption.py --fonts-dir DIR --font NAME` names a face of DIR only where libass's pick is
-  certain** (#531). libass looks NAME up among the faces in DIR and, with none of that name, asks
-  fontconfig as it does without a fonts dir; the result said `how: fonts_dir`,
-  `substituted: false` whatever DIR held, an empty folder or a text file named `.ttf` included.
-  DIR's own files are now read with `fc-scan` and their name tables. Without a face of that name
-  the font is reported as a run without `--fonts-dir` reports it (fontconfig's answer,
-  `substituted: true` and a `font_substituted` fallback only when it is another family; an
-  installed family is its own file, and on Windows the family is given to libass by name, both
-  `substituted: false`; `fonts_dir` still named), and a note says the folder had no such face.
+  certain** (#531, #545). DIR's own files are read with `fc-scan` and their name tables.
+  A literal directory miss reports `file: null`, `how: fonts_dir`, the family as asked and
+  `substituted: false`, with a note that the face is not established. The earlier assumption
+  that a miss behaves like no directory was disproved by the #545 alias experiment: fontconfig
+  mapped Review545 to the uninstalled Unique Sans in DIR. Global `fc-match` returned installed
+  DejaVu Sans, while libass's `fontselect` log selected Unique Sans after alias expansion.
+  This conservative reporting also applies to an empty directory; it does not change rendering.
+  Only faces whose `%{outline}` is true are candidates: a regular upright bitmap-only BDF was
+  reported as selected, but libass rejected it and drew DejaVu Sans. `%{scalable}` is insufficient
+  for color bitmap fonts. A missing or unreadable outline field establishes no file either.
   "That name" is libass 0.17's match, each part checked by drawing on 0.17.1 with fontconfig given
   no fonts, so a face not matched drew nothing: the family is the Microsoft-platform name ID 1 only
   (`Inter` is not a family of `Inter-Black.otf`, whose ID 1 is `Inter Black`; fontconfig also lists
@@ -5489,11 +5491,10 @@ the slot at 0.519 s, "After 3.8.14").
   It is reported, not refused: an installed family found by fontconfig is drawn as asked, and
   `--font NAME` without `--fonts-dir` is not refused either. This differs from the font *file*
   check of 3.8.18 ("After 3.8.17"), which refuses a file the caller names that is not a font: here
-  the caller named a family, and only the folder lacked it. Checked by drawing: the burn with the
-  missing family and the burn naming the family reported are the same picture. When fc-scan
+  the caller named a family, and only the folder lacked it. When fc-scan
   cannot read the folder (no fontconfig), the family is reported as asked with a note that it was
   not checked. Code: `fonts.fonts_dir_face()`, `fonts._sfnt_names()`, `caption.main()`. Tests:
-  `test_a_fonts_dir_without_the_asked_face_reports_the_substitution`,
+  `test_a_fonts_dir_miss_reports_no_established_face`, `FontsDir545Tests`,
   `test_a_fonts_dir_face_is_matched_as_libass_matches_it`.
 - **`fit.py` reports where the picture sits in the frame it wrote, measured** (#519). After
   `--aspect`, `--width` or `--height` the result has `picture`: `{measured, x, y, width, height,
