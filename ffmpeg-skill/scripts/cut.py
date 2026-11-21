@@ -63,7 +63,7 @@ from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT
 from _common import require_tool
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
 from _common.runner import subtitle_codec_for, subtitle_container_holds
-from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
 from _common.decision import UNWRITTEN_AUDIO_EXT
@@ -1690,8 +1690,8 @@ def main() -> int:
     # a start or end written in milliseconds is cut on the frame it reads back to (#653): the nearest
     # frame when that is within half a millisecond either way (1.902 and 1.935 for the frames at
     # 1.9019 and 1.93527), never one before the first; a sound-only output or a VFR picture has no
-    # grid. Here and not in grid_at_or_after, which every tool that cuts on a frame shares
-    on_frame = lambda t, rate=0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta), v0=stream_starts(meta)[0]: g if rate and (n := round((t - v0) * rate)) >= 0 and abs((g := v0 + n / rate) - t) <= 0.0005 else t
+    # grid (decision.on_frame; grid_at_or_after itself is unchanged, since a length also goes through it)
+    on_frame = lambda t, rate=0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta): decision_on_frame(t, stream_starts(meta)[0], rate)
     segments = [(on_frame(s), min(on_frame(e), total or math.inf)) for s, e in requested]
     video = meta.get("video") or {}
     if video.get("fps") and not is_audio_output(args.output or ""):
