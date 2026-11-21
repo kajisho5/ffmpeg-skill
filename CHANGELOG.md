@@ -6,21 +6,15 @@
 
 ### Fixed
 
-- **A crop that keeps less than half of the picture is said (#688).** `fit.py`, `export.py` and
-  `join.py` with `--fit crop` into a frame of the other shape (a 16:9 clip into 9:16 keeps 32%)
-  now warn `picture_mostly_cropped` with the fraction kept, as a pad that leaves the picture small
-  has since 4.3.4. The file is unchanged.
-- **Chapters follow a change of time (#696).** `pad.py --start`, `reverse.py`, `speedramp.py`,
-  `freeze.py` and `fit.py --method speed|trim` left a source's chapters at the source's times;
-  they are now moved, mirrored or scaled with the picture, clipped to the output, and a chapter
-  left with no length is dropped. MP4 and MOV still start their first chapter at 0 (the
-  container's chapter track has no gap); Matroska keeps the exact times.
 - **`cut.py --segments`, `cut.py --remove` and `silence.py` move the chapters with the ranges they
   keep (#696).** A join of several ranges kept the source's chapters at the source's times, past
   the output's end. Found by the new time guard, not by a report.
 - **Any tool that changes the length and leaves chapters behind now says so (#696).** The common
   result writer warns `chapters_not_retimed` when an output of another length carries chapters and
   its tool declared no time map.
+
+### Added
+
 - **Every class of defect fixed three times has a guard that runs every tool (#698).**
   `tests/test_guards.py` runs all the tools (the multi-input ones included) on a 16:9, 5.1,
   chaptered, subtitled clip with stdin left open, and fails on: chapters left at the source's
@@ -31,6 +25,23 @@
   defect back. `docs/defect-guards.json` lists them, and `revert_proof.py` refuses a fix of a
   class with three ledger entries and no guard, so the next class that keeps coming back gets
   one before its fourth fix.
+
+## 4.5.2
+
+_Automated release: version and notes generated from pull requests merged since 4.5.1._
+
+### Fixed
+
+- **A crop that keeps less than half of the picture is said (#688).** `fit.py`, `export.py` and
+  `join.py` with `--fit crop` into a frame of the other shape (a 16:9 clip into 9:16 keeps 32%)
+  now warn `picture_mostly_cropped` with the fraction kept, as a pad that leaves the picture small
+  has since 4.3.4. The file is unchanged.
+- **Chapters follow a change of time (#696).** `pad.py --start`, `reverse.py`, `speedramp.py`,
+  `freeze.py` and `fit.py --method speed|trim` left a source's chapters at the source's times;
+  they are now moved, mirrored or scaled with the picture, clipped to the output, and a chapter
+  left with no length is dropped. MP4 and MOV still start their first chapter at 0 (the
+  container's chapter track has no gap); Matroska keeps the exact times.
+- fix: a crop that keeps less than half of the picture is said, and chapters follow a change of time (#697)
 
 ## 4.5.1
 
