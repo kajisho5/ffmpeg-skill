@@ -87,23 +87,31 @@ def main():
     sys.path.insert(0, str(ROOT / "tests"))
     from _fixtures import make_tones_take
     ref8, take = make_tones_take(WORK / "clock_ref.mp4", dur=8), make_tones_take(WORK / "clock_take.mp4", start=1.0, audio_late=0.3, dur=7)
-    n = 8 * 48000
-    as_left = "aresample=async=1:first_pts=0,adelay=1000:all=1,apad"
-    for label, af, tail, video, extra in (
-            ("as left running", as_left, ["-t", "8.000"], ["-c:v", "copy"], ["-movflags", "+faststart"]),
-            ("without faststart", as_left, ["-t", "8.000"], ["-c:v", "copy"], []),
-            ("without aresample", "adelay=1000:all=1,apad", ["-t", "8.000"], ["-c:v", "copy"], []),
-            ("without adelay", "aresample=async=1:first_pts=0,apad", ["-t", "8.000"], ["-c:v", "copy"], []),
-            ("without apad", "aresample=async=1:first_pts=0,adelay=1000:all=1", ["-t", "8.000"], ["-c:v", "copy"], []),
-            ("apad=whole_len,atrim=end_sample, no -t", f"aresample=async=1:first_pts=0,adelay=1000:all=1,apad=whole_len={n},atrim=end_sample={n}", [], ["-c:v", "copy"], []),
-            ("apad=whole_len,atrim=end_sample, -t", f"aresample=async=1:first_pts=0,adelay=1000:all=1,apad=whole_len={n},atrim=end_sample={n}", ["-t", "8.000"], ["-c:v", "copy"], []),
-            ("apad,atrim=end=8, no -t", as_left + ",atrim=end=8", [], ["-c:v", "copy"], []),
-            ("picture encoded", as_left, ["-t", "8.000"], ["-c:v", "libx264", "-preset", "ultrafast"], []),
-            ("-shortest", as_left, ["-shortest"], ["-c:v", "copy"], []),
-            ("-t as an input option of the picture too", as_left, ["-t", "8.000"], ["-c:v", "copy"], ["-fflags", "+shortest", "-max_interleave_delta", "0"])):
-        out = WORK / "clock_out.mp4"
-        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", ref8, "-i", take, "-map", "0:v:0", "-map", "1:a:0", *video, *extra, "-af", af, "-c:a", "aac", "-b:a", "192k", *tail, out, timeout=30)
-        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT, file so far " + str(out.stat().st_size if out.exists() else None) if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
+    from _fixtures import TONES
+    src12, lav = WORK / "source.mp4", WORK / "lavmic.wav"
+    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+       "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", src12)
+    sh("ffmpeg", "-y", "-v", "error", "-ss", "2.5", "-i", src12, "-vn", "-c:a", "pcm_s16le", lav)
+    sine = WORK / "sine95.wav"
+    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=660:d=9.5:r=48000", sine)
+    for f in (lav, take, sine):
+        print(f.name, sh("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,sample_rate,channels,channel_layout,start_time,duration,duration_ts,sample_fmt", "-of", "csv=p=0", f)[1].decode().strip())
+    print("-- sound alone, to nowhere: which filter chain never ends")
+    for source, chains in ((lav, ("anull", "adelay=2500:all=1", "adelay=2500", "adelay=2500|2500", "adelay=120000S:all=1", "aformat=channel_layouts=mono,adelay=2500:all=1",
+                                  "aresample=48000,adelay=2500:all=1", "asetpts=PTS+2.5/TB,aresample=async=1:first_pts=0", "adelay=2500:all=1,apad=whole_dur=12",
+                                  "adelay=2500:all=1,atrim=end=11", "adelay=2400:all=1", "adelay=2500:all=1,asetnsamples=1024")),
+                          (sine, ("adelay=2500:all=1", "adelay=2500:all=1,apad=whole_dur=12")),
+                          (take, ("aresample=async=1:first_pts=0", "adelay=1000:all=1", "aresample=async=1:first_pts=0,adelay=1000:all=1", "aresample=async=1:first_pts=0,adelay=900:all=1",
+                                  "asetpts=PTS+1/TB,aresample=async=1:first_pts=0"))):
+        for chain in chains:
+            for sink in (["-f", "null", "-"], ["-c:a", "aac", WORK / "alone.m4a"]):
+                code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", source, "-vn", "-af", chain, *sink, timeout=20)
+                print(source.name, "|", chain, "|", "null" if sink[0] == "-f" else "aac", "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", err[-160:])
+    print("-- under the copied picture, -t 12")
+    for chain in ("adelay=2500:all=1,apad", "asetpts=PTS+2.5/TB,aresample=async=1:first_pts=0,apad", "adelay=2400:all=1,apad"):
+        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src12, "-f", "wav", "-i", lav, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                                "-af", chain, "-c:a", "aac", "-b:a", "192k", "-t", "12.000", WORK / "under.mp4", timeout=20)
+        print(chain, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else json.dumps({k: counts(WORK / "under.mp4", 48000)[k] for k in ("decoded_samples", "stream")}), err[-160:])
 
 if __name__ == "__main__":
     main()
