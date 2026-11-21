@@ -212,7 +212,8 @@ def main() -> int:
             added = [x for x in added if x[0] != "spelling"]
         # options the owner named while the freeze holds, each "<tool> <option>": listed, never open-ended
         named = set(budget.get("feature_freeze_named") or ())
-        added = [x for x in added if f"{x[1]} {x[2].lstrip('-').replace('-', '_')}" not in named]
+        # "* <name>": named for every tool (a result field the common writer adds to all of them)
+        added = [x for x in added if not {f"{x[1]} {x[2].lstrip('-').replace('-', '_')}", f"* {x[2].lstrip('-').replace('-', '_')}"} & named]
         if added:
             print("feature freeze (.github/code-budget.json): this change adds to the contract: "
                   + ", ".join(" ".join(x).strip() for x in added[:8]) + (" ..." if len(added) > 8 else ""))

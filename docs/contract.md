@@ -786,6 +786,11 @@ runs a shell, evaluates strings, or executes anything other than the named scrip
 
 ## JSON output
 
+`wrote` is the document's first line after `status` when a media file was written: its length, `(ASKED N s: M s
+longer|shorter)` when that misses `expected_duration` by more than 40 ms, the frame and rate, and
+whether it holds picture and sound. It restates measured fields for a reader of the top of the
+document; a program reads `probe` and `duration_error_ms`.
+
 The common result writer computes `verified` from the output probe or an equivalent
 artifact check and requires every verification step to pass. `lossless` is true
 only when a successful FFmpeg stream-copy write can be traced to the current
