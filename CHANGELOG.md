@@ -4,24 +4,7 @@
 
 ## Unreleased
 
-### Added
-
-- **`audio.py --mute`: the sound is removed in one call.** The picture and subtitles are copied;
-  nothing is re-encoded.
-- **`fit.py --fade-in S --fade-out S`: a fade from and to black, picture and sound together.** The
-  fade-out ends at the output's length, with `--duration` too. `audio.py --fade-in/--fade-out`
-  stays the sound-only fade.
-- **`export.py --duration S`: a delivery of the first S seconds**, for "a Reel of the first 15
-  seconds" (`--preset reels --fit crop --duration 15`). `--max-mb` sizes for the shorter length.
-
-### Changed
-
-- **A 9:16 frame smaller than a delivery frame is said.** `fit.py --aspect 9:16` on a 1280x720
-  clip keeps the source's size and writes 406x720, as before; the result now says so and names
-  `--width 1080` for the usual 1080x1920. SKILL.md's "make it vertical" row asks for it.
-- **An enlargement is Lanczos.** When `fit.py` or an `export.py` preset writes a frame larger than
-  the picture, the scale uses `-sws_flags lanczos`; a frame of the source's size or smaller is the
-  command it was.
+(nothing yet)
 
 ## 4.4.0
 
