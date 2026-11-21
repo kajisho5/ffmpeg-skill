@@ -73,31 +73,29 @@ def main():
                        ("verify --quick file", [sys.executable, ROOT / "scripts" / "verify.py", ref, "--quick", "--json"])):
         code, out, err, took = sh(*cmd, timeout=150)
         print(label, "exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", out.decode("utf-8", "replace")[-700:], err[-1500:])
-    print("\n== apad with an output -t, the shape sync --replace-audio writes")
-    for label, tail in (("-af apad -t 6", ["-af", "apad", "-c:a", "aac", "-t", "6.000"]),
-                        ("-af apad=whole_dur=6", ["-af", "apad=whole_dur=6", "-c:a", "aac"]),
-                        ("-af apad -shortest", ["-af", "apad", "-c:a", "aac", "-shortest"]),
-                        ("-af apad,atrim=end=6", ["-af", "apad,atrim=end=6", "-c:a", "aac"]),
-                        ("-af apad -t 6, video encoded", ["-af", "apad", "-c:a", "aac", "-c:v", "libx264", "-preset", "ultrafast", "-t", "6.000"])):
-        video = [] if "-c:v" in tail else ["-c:v", "copy"]
-        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", ref, "-ss", "0.3", "-i", mic, "-map", "0:v:0", "-map", "1:a:0", *video, *tail, WORK / "apad.mp4", timeout=60)
-        print(label, "exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", err[-300:])
-    print("\n== the tests that timed out, one at a time, with what is still running after 150 s")
-    for test in ("test_sync_detects_offset_and_replaces_audio", "test_a_late_sound_is_measured_and_placed_on_its_files_clock", "test_verify_kit_runs_on_real_world_fixtures"):
-        started = time.time()
-        p = subprocess.Popen([sys.executable, "-m", "unittest", "tests.test_analysis", "-k", test], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        try:
-            out, _ = p.communicate(timeout=150)
-            print(test, "exit", p.returncode, f"{time.time() - started:.1f}s", out.decode("utf-8", "replace")[-1200:])
-        except subprocess.TimeoutExpired:
-            print(test, "STILL RUNNING after 150 s; processes:")
-            if sys.platform == "win32":
-                print(sh("powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'ff|python' } | ForEach-Object { $_.ProcessId.ToString() + ' <- ' + $_.ParentProcessId + ' ' + $_.CommandLine }")[1].decode("utf-8", "replace")[-6000:])
-                sh("taskkill", "/F", "/T", "/PID", str(p.pid))
-            else:
-                print(sh("ps", "-eo", "pid,ppid,etime,args")[1].decode()[-3000:])
-                p.kill()
-            p.communicate()
+    print("\n== a delayed, padded sound under a copied picture: which spelling ends (sync --replace-audio writes the first)")
+    n = 12 * 48000
+    long_ref = WORK / "ref12.mp4"
+    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=12:s=320x240:r=25", "-f", "lavfi", "-i", "sine=f=440:d=12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", long_ref)
+    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=660:d=8:r=48000", mic)
+    for label, af, tail, video in (
+            ("adelay,apad -t 12", "adelay=2500:all=1,apad", ["-t", "12.000"], ["-c:v", "copy"]),
+            ("apad -t 12 (no delay)", "apad", ["-t", "12.000"], ["-c:v", "copy"]),
+            ("adelay -t 12 (no pad)", "adelay=2500:all=1", ["-t", "12.000"], ["-c:v", "copy"]),
+            ("adelay,apad=whole_dur=12 -t 12", "adelay=2500:all=1,apad=whole_dur=12", ["-t", "12.000"], ["-c:v", "copy"]),
+            ("adelay,apad,atrim=end=12", "adelay=2500:all=1,apad,atrim=end=12", [], ["-c:v", "copy"]),
+            ("adelay,apad=whole_len,atrim=end_sample", f"adelay=2500:all=1,apad=whole_len={n},atrim=end_sample={n}", [], ["-c:v", "copy"]),
+            ("adelay,apad=whole_len,atrim=end_sample -t 12", f"adelay=2500:all=1,apad=whole_len={n},atrim=end_sample={n}", ["-t", "12.000"], ["-c:v", "copy"]),
+            ("adelay,apad -t 12, picture encoded", "adelay=2500:all=1,apad", ["-t", "12.000"], ["-c:v", "libx264", "-preset", "ultrafast"]),
+            ("adelay,apad -shortest", "adelay=2500:all=1,apad", ["-shortest"], ["-c:v", "copy"]),
+            ("adelay,apad -t 12 -filter_complex", None, ["-t", "12.000"], ["-c:v", "copy"])):
+        out = WORK / "delayed.mp4"
+        graph = ["-map", "0:v:0", "-map", "1:a:0", "-af", af] if af else ["-filter_complex", "[1:a:0]adelay=2500:all=1,apad[a]", "-map", "0:v:0", "-map", "[a]"]
+        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", long_ref, "-f", "wav", "-i", mic, *graph, *video, "-c:a", "aac", *tail, out, timeout=40)
+        if code is None and sys.platform == "win32":
+            sh("taskkill", "/F", "/IM", "ffmpeg.exe")
+            time.sleep(1)
+        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
 
 if __name__ == "__main__":
     main()
