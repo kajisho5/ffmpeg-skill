@@ -1262,7 +1262,7 @@ def main() -> int:
     sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
     sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")
     sty.add_argument("--shadow", type=float, default=0.0, help="shadow depth (default 0)")
-    sty.add_argument("--bold", action="store_true")
+    sty.add_argument("--bold", action="store_true", help="bold caption text")
     sty.add_argument("--position", choices=sorted(ALIGN), default=None, help="on-screen placement (default bottom)")
     sty.add_argument("--margin", type=int, default=None, help="vertical margin from the edge in ASS units (default 30, or the --platform safe zone)")
     sty.add_argument("--platform", choices=PLATFORM_CHOICES, default=None,
@@ -1315,7 +1315,7 @@ def main() -> int:
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
     enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
-    enc.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    enc.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args(_glue_negative_offset(sys.argv[1:]))
     apply_common(args)

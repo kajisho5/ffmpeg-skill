@@ -571,7 +571,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output file (default: <name>_<preset>.<ext>)")
     ap.add_argument("--preset", choices=PRESET_CHOICES, help="delivery preset (aliases: " + ", ".join(a for a in _ALIASES if resolve_platform(a) in PRESETS) + ")")
     ap.add_argument("--fit", choices=["pad", "crop"], default="pad", help="how to reach the preset frame when aspect differs (default pad)")
-    ap.add_argument("--pad-color", default="black")
+    ap.add_argument("--pad-color", default="black", help="pad colour when the picture is padded to the preset's frame, e.g. black, white, 0x101010 (default black)")
     add_pad_fill_args(ap)
     ap.add_argument("--no-scale", action="store_true", help="keep source resolution even for platform presets")
     ap.add_argument("--allow-long", action="store_true", help="do not trim to the platform's max duration")

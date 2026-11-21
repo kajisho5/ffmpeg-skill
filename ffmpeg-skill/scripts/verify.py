@@ -145,7 +145,7 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         return r
     # argv[1] is the step's input: one named -take.mp4 is given as ./-take.mp4, or the step's
     # parser reads it as an option (collect()'s Path drops a ./ the caller wrote, #558)
-    child = subprocess.Popen([sys.executable, str(HERE / argv[0]), file_arg(argv[1])] + argv[2:] + _forwarded(argv) + ["--json"], stdout=subprocess.PIPE,
+    child = subprocess.Popen([sys.executable, str(HERE / argv[0]), file_arg(argv[1])] + argv[2:] + _forwarded(argv) + ["--json"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     # watched like run_tool()'s child (review of #530): a SIGTERM or Ctrl-C to verify.py stops the
     # step through stop_children() -- its own handler removes its partial output and lock --
