@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.1
+
+_Automated release: version and notes generated from pull requests merged since 4.3.0._
+
 ### Fixed
 
 - **FFmpeg 9.1: a tool that writes AAC no longer runs until its time limit (#659).** 9.1 made a new
@@ -12,6 +18,7 @@
   FFmpeg 9.1.0. From 9.1 on, every AAC track is written with the coder that was the default until
   then (`-aac_coder twoloop`, visible in the plan); on older builds the commands are unchanged. A
   command that names a coder keeps it.
+- fix: from FFmpeg 9.1 on, AAC is written with the coder that was the default until then (#660)
 
 ## 4.3.0
 
