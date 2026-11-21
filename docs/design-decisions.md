@@ -121,6 +121,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.4 — no child is given the caller's stdin (#664)](#after-434--no-child-is-given-the-callers-stdin-664)
 - [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
 - [After 4.4.1 — an unmeasured substitution is null (#663)](#after-441--an-unmeasured-substitution-is-null-663)
+- [After 4.4.1 — the first line of a result is for a reader](#after-441--the-first-line-of-a-result-is-for-a-reader)
 <!-- contents:end -->
 
 ## Time limits
@@ -6502,3 +6503,14 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   the field was told the asked font was drawn when nothing had established that. `true` and
   `false` keep their meaning for an established file. Pinned by the `--fonts-dir` tests in
   tests/test_picture.py.
+## After 4.4.1 — the first line of a result is for a reader
+
+- **`wrote` restates measured fields in one sentence, first in the document.** The document was
+  written for a program: the length is in `probe.duration`, what was asked in `expected_duration`,
+  the difference in `duration_error_ms`, and `verified` says the file is sound, not that it is the
+  length asked. A model reads the first lines and reports from them. `wrote` adds no measurement
+  and changes no other field; the miss is shown above 40 ms (more than one frame at 25 fps) and
+  written in capitals because that is the part a reader skims past. `verified` is unchanged: a
+  stream copy that ends on a packet is a valid file (#620 stays open for whether a miss should
+  fail a delivery). Pinned by
+  `test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses`.

@@ -916,6 +916,13 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
                 extra[key] = None
         doc: Dict[str, Any] = {"status": "completed", "output": output, "dry_run": ctx.dry_run, "commands": list(ctx.commands)}
         probed = bool(meta and not meta.get("dry_run"))
+        if probed and meta.get("duration") is not None:
+            # the first thing a caller reads: what the file is, and where its length misses what
+            # was asked (a 120 ms miss of a stream copy sat in duration_error_ms under verified: true)
+            v, got, want = meta.get("video") or {}, float(meta["duration"]), extra.get("expected_duration")
+            miss = f" (ASKED {want:.3f} s: {abs(got - want):.3f} s {'longer' if got > want else 'shorter'})" if isinstance(want, (int, float)) and abs(got - want) > 0.04 else ""
+            shape = f", {v.get('width')}x{v.get('height')}, {v.get('fps')} fps" if v else ""
+            doc = {"status": "completed", "wrote": f"{got:.3f} s{miss}{shape}, " + ("picture and sound" if v and meta.get("audio") else "picture only" if v else "sound only"), **doc}
         if probed:
             doc["probe"] = meta
         identity = file_identity(output) if output and not ctx.dry_run else None

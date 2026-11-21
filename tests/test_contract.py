@@ -13514,6 +13514,25 @@ class StumbleLedgerTests(unittest.TestCase):
             refused = json.loads(run(clip, "--mute", "-o", str(Path(tmp) / "m.wav")).stdout)
             self.assertEqual(refused["error"]["kind"], "input")
 
+    def test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses(self):
+        """A stream-copied cut that landed 0.1 s past what was asked said `verified: true`, with the
+        miss in `duration_error_ms` further down; a model read the first lines and reported the cut
+        as done. `wrote` is first after `status`: the length, the miss in capitals when there is
+        one, the frame, and what the file holds. Nothing under --dry-run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = Path(tmp) / "c.mp4"
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30:d=4", "-f", "lavfi", "-i", "sine=d=4",
+                            "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(clip)], check=True)
+            run = lambda tool, *argv: json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), str(clip), *argv, "--json"],
+                                                                 capture_output=True, text=True, encoding="utf-8", timeout=300).stdout)
+            copied = run("cut", "--start", "1.2", "--end", "2.5", "-o", str(Path(tmp) / "a.mp4"))
+            self.assertEqual(list(copied)[:2], ["status", "wrote"])
+            self.assertRegex(copied["wrote"], r"^\d+\.\d{3} s \(ASKED 1\.300 s: 0\.\d{3} s longer\), 160x90, 30(\.0)? fps, picture and sound$")
+            exact = run("cut", "--start", "1.2", "--end", "2.5", "--accurate", "-o", str(Path(tmp) / "b.mp4"))
+            self.assertNotIn("ASKED", exact["wrote"])
+            self.assertTrue(run("audio", "-o", str(Path(tmp) / "s.wav"))["wrote"].endswith(" s, sound only"))
+            self.assertNotIn("wrote", run("fit", "--height", "64", "--dry-run", "-o", str(Path(tmp) / "d.mp4")))
+
     def test_a_fade_and_a_delivery_length_are_options(self):
         """Asked blind, four of five models wrote `--fade-in 1 --fade-out 1` for a fade from and to
         black and `export.py --preset reels --duration 15` for a Reel of the first 15 seconds; no
