@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, make_multistream,  # noqa: E402
                        sar_clip, script, sh, written_track)
-from _common import probe  # noqa: E402
+from _common import probe, runner  # noqa: E402
 from _common.color import is_rgb  # noqa: E402
 
 
@@ -94,6 +94,49 @@ class TruncatedInputTests(unittest.TestCase):
         self.assertGreater(len({round(b - a, 3) for a, b in zip(times, times[1:])}), 1)
         doc = json.loads(script("denoise.py", vfr, "--overwrite", "-o", self.dir / "vfr-out.mp4", "--json").stdout)
         self.assertTrue(doc["verified"])
+
+    def test_failure_classification_ignores_input_and_output_names(self):
+        out = self.dir / "Unknown encoder 'fake'.mp4"
+        for name in ("No space left on device.mkv", "File ended prematurely"):
+            short = self.dir / name
+            shutil.copyfile(self.sources[0][1], short)
+            doc = json.loads(script("crop.py", short, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                                    "--overwrite", "-o", out, "--json", expect_fail=True).stdout)
+            self.assertEqual(doc["error"]["reason"], "input_incomplete")
+            self.assertIn(str(short), doc["error"]["message"])
+            self.assertIn("export --preset copy --repair", doc["error"]["hint"])
+        broken = self.dir / "No space left on device.mp4"
+        broken.write_bytes(b"not a movie")
+        cmd = ["ffmpeg", "-v", "error", "-i", str(broken), "-f", "null", "-"]
+        proc = sh(*cmd, expect_fail=True)
+        self.assertIn("moov atom not found", proc.stderr)
+        ctx = runner.Context()
+        ctx.json = True
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            runner._fail(cmd, proc.returncode, proc.stderr, ctx=ctx)
+        doc = json.loads(output.getvalue())
+        self.assertEqual(doc["error"]["reason"], "input_incomplete")
+        self.assertIn(str(broken), doc["error"]["message"])
+
+    def test_incomplete_failure_keeps_explicit_context(self):
+        ctx = runner.Context()
+        ctx.json = ctx.hw = True
+        ctx.hw_source = "flag"
+        ctx.hw_notes.append("explicit request context")
+        out = self.dir / "ctx-failure.mp4"
+        out.unlink(missing_ok=True)
+        output = io.StringIO()
+        cmd = ["ffmpeg", "-v", "error", "-i", str(self.sources[0][1]), "-c:v", "libx264", str(out)]
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            runner.run(cmd, ctx=ctx, quiet=True)
+        doc = json.loads(output.getvalue())
+        self.assertEqual(doc["error"]["reason"], "input_incomplete")
+        self.assertEqual(doc["encoder"], "libx264")
+        self.assertTrue(doc["hw"]["requested"])
+        self.assertIn("explicit request context", doc["hw"]["notes"])
+        self.assertEqual(doc["commands"], ctx.commands)
+        self.assertFalse(out.exists())
 
     def test_explicit_repair_and_optional_analysis_still_measure_damage(self):
         for plain, short in self.sources:

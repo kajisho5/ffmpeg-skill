@@ -907,12 +907,11 @@ def classify_ffmpeg_failure(stderr: str) -> "Optional[Tuple[str, str, Dict[str, 
         m = pattern.search(stderr or "")
         if m:
             name = next((g for g in m.groups() if g), "")
-            details = {"name": name} if name else {}
-            return reason, hint.format(name or "that"), details
+            return reason, hint.format(name or "that"), {"name": name} if name else {}
     return None
 
 
-def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Context]" = None, retried: bool = False) -> None:
+def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Context]" = None, retried: bool = False, diagnostic: Optional[str] = None) -> None:
     # Partial-output cleanup already ran in the caller (_execute) for
     # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
     # The process exit code is always 1 for an ffmpeg failure: ffmpeg's own code (1, 69, 218, 234,
@@ -944,10 +943,12 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
                 ("ffmpeg reported no encoder-open or compression-session error, so the cause is not the GPU (see the message)"
                  if why is None else f"VideoToolbox refused it ({why}) and no CPU encoder line was recorded to retry with"))
         extra = {"encoder": enc, "hw": report}
-    cls = classify_ffmpeg_failure(stderr)
+    for path in (p for arg in (*shape_of(cmd).inputs, str(cmd[-1])) for p in (arg, os.path.basename(arg)) if diagnostic is None and p not in ("", "-") and classify_ffmpeg_failure(p)):
+        stderr = stderr.replace(path, "<path>")
+    cls = classify_ffmpeg_failure(stderr if diagnostic is None else diagnostic)
     if cls:
         extra["hint"] = cls[1]
-    die(f"command {'reported an error despite exit 0' if returncode == 0 else f'failed ({returncode})'}: {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode,
+    die(f"command {'reported an error despite exit 0' if returncode == 0 else f'failed ({returncode})'}: {what}\n{tail}", code=1, kind="ffmpeg", ctx=ctx, ffmpeg_returncode=returncode,
         error_extra={"reason": cls[0], "details": cls[2]} if cls else None, **extra)
 
 
@@ -2657,7 +2658,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                 record_fallback("source has odd dimensions; scaling to even before encoding (yuv420p needs it)",
                                 "odd_dimensions_scaled_even", ctx=ctx, output=cmd[-1], scale=EVEN_SCALE)
                 ctx.commands[-1] = _cmdline(retry[:-1] + [cmd[-1]])
-                return _execute(retry), retry
+                return _execute(retry, ctx), retry
             if "not divisible by 2" in (proc.stderr or ""):
                 die("the source has odd dimensions (width or height not divisible by 2) and this tool's filter graph "
                     "cannot pad them itself; make them even first, e.g. fit.py --width/--height, then retry",
@@ -2665,7 +2666,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
             return proc, ran
 
         # `tried` is the last command run: the CPU fallback swaps its encoder line in
-        proc, tried = even_retry(_execute(exec_cmd), exec_cmd)
+        proc, tried = even_retry(_execute(exec_cmd, ctx), exec_cmd)
         retried = False
         if proc.returncode != 0 and is_ffmpeg and ctx.hw_swaps:
             cpu_cmd = _hw_fallback(tried, ctx)
@@ -2688,7 +2689,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                         # echoed like the first attempt, so a caller that reads the "$ " lines
                         # (render.py's stages) records the command that really ran
                         info("$ " + ctx.commands[-1], ctx=ctx)
-                    proc, tried = even_retry(_execute(cpu_cmd), cpu_cmd)
+                    proc, tried = even_retry(_execute(cpu_cmd, ctx), cpu_cmd)
                     retried = True
                     # the outcome replaces the line above: a failure document must not claim a
                     # re-encode that did not happen, and hw.fallback is the same claim as a flag
@@ -2767,7 +2768,7 @@ def long_filters_in_files(cmd: Sequence[str]) -> "Any":
                 os.remove(path)
 
 
-def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
+def _execute(exec_cmd: List[str], ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """One attempt; incomplete input stops before retries or output promotion."""
     with long_filters_in_files(exec_cmd) as cmd:
         if STATE.progress and _is_ffmpeg(cmd) and cmd[-1] != "-":
@@ -2778,7 +2779,7 @@ def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
             marker = next((line for line in (proc.stderr or "").splitlines() if INCOMPLETE_INPUT.search(line)), None)
             if marker and not any(a == "-err_detect" and b == "ignore_err" for a, b in zip(cmd, cmd[1:])):
                 _cleanup_partial_output(cmd)
-                _fail(cmd, proc.returncode, f"inputs: {', '.join(shape_of(cmd).inputs)}\n{marker[:500]}")
+                _fail(cmd, proc.returncode, f"inputs: {', '.join(shape_of(cmd).inputs)}\n{marker[:500]}", ctx=ctx, diagnostic=INCOMPLETE_INPUT.search(marker).group(0))
             if proc.returncode:
                 _cleanup_partial_output(cmd)
             else:
