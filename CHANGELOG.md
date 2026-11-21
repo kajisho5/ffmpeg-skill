@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.4.1
+
+_Automated release: version and notes generated from pull requests merged since 4.4.0._
+
 ### Fixed
 
 - **A position given in milliseconds is its frame in `freeze.py`, `broll.py` and `speedramp.py` too
@@ -20,6 +26,8 @@
   need the steps (a delivery, a long or overwriting job, an edit that changes what the picture
   shows). Nine routing rows are merged into their neighbours to stay inside the 220-line budget;
   no request loses its row.
+- fix: a position given in milliseconds is its frame in freeze, broll and speedramp too (#672)
+- docs(skill): one ordinary edit is one call (#670)
 
 ## 4.4.0
 
