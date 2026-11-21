@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A position given in milliseconds is its frame in `freeze.py`, `broll.py` and `speedramp.py` too
+  (#653).** At 30000/1001, `freeze.py --at 1.902` held the frame after the one at 1.9019 s,
+  `broll.py --at 1.902` began the cutaway a frame late, and a `speedramp.py` segment ending at
+  1.902 changed speed a frame late. The three now read the time as `cut.py` does since 4.3.6: the
+  nearest frame when it is within half a millisecond.
+
 ### Changed
 
 - **SKILL.md: one ordinary edit is one call.** The workflow's eight steps (probe, dry-run, run,

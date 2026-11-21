@@ -1413,6 +1413,25 @@ class CutJoinTests(unittest.TestCase):
         proc = script("cut.py", src, "--start", "1.9", "--end", "1.92", "--accurate", "--overwrite", "-o", out, expect_fail=True)
         self.assertIn("shorter than one frame", proc.stderr)
 
+    def test_a_position_given_in_milliseconds_is_its_frame_in_the_tools_that_take_one(self):
+        """The siblings of #653: freeze.py --at, broll.py --at and a speedramp.py segment bound read
+        1.902 as the frame after the one at 1.9019 (30000/1001), so the hold, the cutaway and the
+        speed change each began a frame late. The same command is built for the millisecond time
+        as for the exact one, and a time half a frame away is left alone."""
+        src = DIR / "ntsc_av.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=30000/1001:d=4", "-f", "lavfi", "-i", "sine=d=4",
+           "-c:v", "libx264", "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        graph = lambda tool, *argv: json.loads(script(tool, src, *argv, "--dry-run", "--json", "-o", DIR / "ms_out.mp4").stdout)["commands"][-1]
+        for tool, argv in (("freeze.py", lambda t: ("--at", t, "--hold", "1")),
+                           ("broll.py", lambda t: ("--insert", src, "--at", t, "--end", "3")),
+                           ("speedramp.py", lambda t: ("--segment", f"0-{t}:1.0", "--segment", f"{t}-4:2.0"))):
+            self.assertEqual(graph(tool, *argv("1.902")), graph(tool, *argv("1.9019")), tool)
+            self.assertNotEqual(graph(tool, *argv("1.92")), graph(tool, *argv("1.9019")), tool)
+        out = DIR / "ms_freeze.mp4"
+        script("freeze.py", src, "--at", "1.902", "--hold", "1", "--overwrite", "-o", out)
+        was, got = gray_frames(src), gray_frames(out)[70]  # a frame from the middle of the hold
+        self.assertGreater(psnr(got, was[57]), psnr(got, was[58]) + 3, "the held frame is the one at 1.9019 s")
+
     def test_a_wav_join_stays_a_lossless_copy(self):
         """PCM has no extradata at all; a "missing means incompatible" rule would have sent every
         multi-segment WAV cut to a re-encode."""
