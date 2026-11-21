@@ -1907,7 +1907,7 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
             return [w.get("fraction") for w in (doc.get("diagnostics") or {}).get("warnings", []) if w.get("code") == "picture_mostly_cropped"]
         self.assertEqual(fractions("fit.py", src, "--aspect", "9:16", "--width", "1080", "--fit", "crop"), [0.316])
         self.assertEqual(fractions("export.py", src, "--preset", "reels", "--fit", "crop"), [0.316])
-        self.assertEqual(fractions("join.py", src, src, "--width", "1080", "--height", "1920", "--fit", "crop", "--transition", "none"), [0.316, 0.316])
+        self.assertEqual(fractions("join.py", src, src, "--width", "1080", "--height", "1920", "--fit", "crop", "--transition", "none"), [0.316])  # the same clip twice: one warning
         self.assertEqual(fractions("fit.py", src, "--aspect", "4:3", "--fit", "crop"), [])
         self.assertEqual(fractions("export.py", src, "--preset", "youtube", "--fit", "crop"), [])
 
