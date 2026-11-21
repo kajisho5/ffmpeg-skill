@@ -545,6 +545,10 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
         "timecode_value": out["timecode"].get("value"),
         "audio_channels": (_to_int(audio.get("channels")) or 0) if audio else 0,
         "has_video": bool(video), "has_audio": bool(audio),
+        # the guard on time-bearing items (emit.source_carry): the length, and where the chapters are
+        "duration": out.get("duration"),
+        "chapter_times": [(round(_to_float(c.get("start_time")) or 0.0, 2), round(_to_float(c.get("end_time")) or 0.0, 2))
+                          for c in (raw.get("chapters") or [])],
     }
     return out
 

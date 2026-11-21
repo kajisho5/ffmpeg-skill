@@ -15,6 +15,14 @@
   they are now moved, mirrored or scaled with the picture, clipped to the output, and a chapter
   left with no length is dropped. MP4 and MOV still start their first chapter at 0 (the
   container's chapter track has no gap); Matroska keeps the exact times.
+- **`cut.py --segments`, `cut.py --remove` and `silence.py` move the chapters with the ranges they
+  keep (#696).** A join of several ranges kept the source's chapters at the source's times, past
+  the output's end. Found by the new time guard, not by a report.
+- **Any tool that changes the length and leaves chapters behind now says so (#696).** The common
+  result writer warns `chapters_not_retimed` when an output of another length carries chapters and
+  its tool declared no time map. Every tool is run against it in `tests/test_guards.py`, and a
+  class of defect fixed three times needs such a guard before the next fix (`docs/defect-guards.json`,
+  checked by `revert_proof.py`).
 
 ## 4.5.1
 

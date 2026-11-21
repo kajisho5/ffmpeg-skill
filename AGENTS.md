@@ -17,6 +17,13 @@
   the defect's class without naming the tool, run `python3 tests/sweep.py INPUT --baseline PLAIN`
   and the path-parity checks in `.claude/skills/sibling-sweep/SKILL.md`, then fix the shared cause
   or file the siblings in one issue. The PR body says what was swept and what it showed.
+- **A class that keeps coming back gets a guard, not another fix.** `docs/defect-guards.json`
+  lists every class of `docs/defect-ledger.jsonl` with three or more entries and the test in
+  `tests/test_guards.py` that runs every tool and fails wherever the class shows. A fix of a class
+  whose guard is still `pending` does not pass `revert_proof.py`: write the guard in the same PR
+  (or before it), and where the class can be seen while a tool runs, detect it in the common
+  result writer and make the tool declare what it did (`runner.declare_time_map` is the pattern).
+  The ledger line's `mechanism` names the guard, not only the tool that was fixed.
 - **Before a push, ask the reviewer's questions yourself.**
   `.claude/skills/code-review/references/reviewer-findings.md` groups the 353 findings an outside
   reviewer made on earlier PRs into twenty questions (path guards against every input and output,
