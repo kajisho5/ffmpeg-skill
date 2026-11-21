@@ -15,11 +15,13 @@ import re
 import shlex
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import MediaFixtures, OUT, SCRIPTS, TONES, frame_rgb, legal_range_clip, sar_clip, tiny_clip, _ass_advance, _ass_ink_columns, _ass_ink_rows, _emoji_assets, _families_for, _family_installed, _frame_ink, _is_faststart, _no_fontconfig, _pixel_at, script, sh  # noqa: E402
@@ -4198,8 +4200,8 @@ class ScriptFontTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             collection = Path(root) / "custom.ttc"
             collection.touch()
-            faces = (f"{collection}\t0\tCustom\tCustom-Regular\tTrueType\t80\t0\tCustom Regular\n"
-                     f"{collection}\t1\tCustom\tCustom-Bold\tTrueType\t200\t0\tCustom Bold\n")
+            faces = (f"{collection}\t0\tCustom\tCustom-Regular\tTrueType\t80\t0\tCustom Regular\tTrue\n"
+                     f"{collection}\t1\tCustom\tCustom-Bold\tTrueType\t200\t0\tCustom Bold\tTrue\n")
             with unittest.mock.patch.object(fonts, "_safe_which", return_value="fc-scan"), \
                  unittest.mock.patch.object(fonts.subprocess, "run") as scan, \
                  unittest.mock.patch.object(fonts, "warn") as warn:
@@ -8372,11 +8374,8 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
                         for channel, want in zip(got, (0xC0, 0x30, 0x28)):
                             self.assertLessEqual(abs(channel - want), 4)
 
-    def test_a_fonts_dir_without_the_asked_face_reports_the_substitution(self):
-        """caption.py --fonts-dir DIR --font NAME reported font_used.substituted false whatever DIR
-        held: libass looks NAME up in DIR and, with no face of that name there, asks fontconfig as
-        without --fonts-dir. The folder is now read for the face (fc-scan), and without it the font
-        is reported as fontconfig resolves it, a substitution included."""
+    def test_a_fonts_dir_miss_reports_no_established_face(self):
+        """A directory miss cannot establish which face libass selects through fontconfig."""
         if _no_fontconfig() or not shutil.which("fc-scan") or platform.system() == "Windows":
             self.skipTest("needs fontconfig's fc-scan and fc-match")
         face = default_font_file("DejaVu Sans")
@@ -8407,20 +8406,18 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
             with self.subTest(fonts_dir=fonts_dir.name):
                 doc, frame = burn(fonts_dir, "No Such Family 531", f"missing_{fonts_dir.name}")
                 used = doc["font_used"]
-                self.assertTrue(used["substituted"], used)
+                self.assertEqual((used["file"], used["how"], used["family"]), (None, "fonts_dir", "No Such Family 531"))
                 self.assertEqual(used["fonts_dir"], str(fonts_dir))
-                self.assertIn("font_substituted", [f["code"] for f in (doc.get("diagnostics") or {}).get("fallbacks", [])])
-                # what was drawn is the family reported: the same burn asking for it by name
-                _doc, named = burn(fonts_dir, used["family"], f"named_{fonts_dir.name}")
-                self.assertEqual(frame, named, f"libass drew {used['family']}")
+                self.assertTrue(any("alias" in n for n in doc.get("notes", [])))
         # the face that is in the folder is the one reported, by its file
         doc, _ = burn(with_face, "DejaVu Sans", "in_dir")
         used = doc["font_used"]
         self.assertEqual((used["how"], used["substituted"], used["file"]), ("fonts_dir", False, str(with_face / os.path.basename(face))))
-        # an installed family missing from the folder resolves to its own file: no substitution
+        # even an installed family missing from the folder is not claimed as measured
         doc, _ = burn(empty, "DejaVu Sans", "installed_not_in_dir")
         used = doc["font_used"]
-        self.assertEqual((used["how"], used["substituted"], used["fonts_dir"]), ("resolved", False, str(empty)), used)
+        self.assertEqual((used["how"], used["substituted"], used["fonts_dir"]), ("fonts_dir", False, str(empty)), used)
+        self.assertIsNone(used["file"])
 
     def test_a_fonts_dir_face_is_matched_as_libass_matches_it(self):
         """--fonts-dir names a file only where libass's pick is certain. A face libass does not match
@@ -8569,6 +8566,134 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
                                  ("fonts_dir", want, "DejaVu Sans", False))
                 self.assertEqual(any("only in other styles" in n for n in doc.get("notes") or []), want is None, doc.get("notes"))
 
+
+
+class FontsDir545Tests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if _no_fontconfig() or not shutil.which("fc-scan") or platform.system() == "Windows":
+            raise unittest.SkipTest("needs fontconfig's fc-scan and fc-match")
+        cls.root = OUT / "fonts545"
+        cls.root.mkdir(parents=True, exist_ok=True)
+        cls.base = default_font_file("DejaVu Sans")
+        if not cls.base or "dejavu" not in os.path.basename(cls.base).lower():
+            raise unittest.SkipTest("needs DejaVu Sans")
+        for name in ("private", "bitmap", "competing", "empty"):
+            (cls.root / name).mkdir(exist_ok=True)
+        cls.face(cls.root / "private" / "private.ttf", 400, False)
+        cls.face(cls.root / "competing" / "semibold.ttf", 600, False)
+        cls.face(cls.root / "competing" / "italic.ttf", 700, True)
+        (cls.root / "bitmap" / "face.bdf").write_text("STARTFONT 2.1\nFONT -misc-TriageBitmap545-medium-r-normal--8-80-75-75-p-80-iso10646-1\nSIZE 8 75 75\nFONTBOUNDINGBOX 8 8 0 0\nSTARTPROPERTIES 13\nFONT_ASCENT 8\nFONT_DESCENT 0\nFAMILY_NAME \"Bitmap545\"\nWEIGHT_NAME \"Regular\"\nSLANT \"R\"\nPIXEL_SIZE 8\nPOINT_SIZE 80\nRESOLUTION_X 75\nRESOLUTION_Y 75\nSPACING \"P\"\nAVERAGE_WIDTH 80\nCHARSET_REGISTRY \"ISO10646\"\nCHARSET_ENCODING \"1\"\nENDPROPERTIES\nCHARS 1\nSTARTCHAR A\nENCODING 65\nSWIDTH 1000 0\nDWIDTH 8 0\nBBX 8 8 0 0\nBITMAP\n7E\n42\n42\n7E\n42\n42\n42\n00\nENDCHAR\nENDFONT\n", encoding="ascii")
+        cls.source = cls.root / "source.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=25:d=1",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", cls.source)
+        cls.cues = cls.root / "cue.srt"
+        cls.cues.write_text("1\n00:00:00,000 --> 00:00:01,000\nAAA\n", encoding="utf-8")
+        for alias in (False, True):
+            conf = cls.root / f"fonts-{alias}.conf"
+            conf.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+                            f'<dir>{escape(str(Path(cls.base).parent))}</dir><cachedir>{escape(str(cls.root / "cache"))}</cachedir>'
+                            + ('<alias><family>Review545</family><prefer><family>Unique Sans</family></prefer></alias>' if alias else '')
+                            + '</fontconfig>', encoding="utf-8")
+
+    @classmethod
+    def face(cls, out, weight, italic):
+        data = bytearray(Path(cls.base).read_bytes().replace(b"DejaVu", b"Unique")
+                         .replace("DejaVu".encode("utf-16-be"), "Unique".encode("utf-16-be")))
+        for i in range(struct.unpack_from(">H", data, 4)[0]):
+            rec = 12 + i * 16
+            tag, _, off, length = struct.unpack_from(">4sIII", data, rec)
+            if tag == b"OS/2":
+                struct.pack_into(">H", data, off + 4, weight)
+                struct.pack_into(">H", data, off + 62, 33 if italic else (64 if weight == 400 else 0))
+            elif tag == b"head":
+                struct.pack_into(">H", data, off + 44, 3 if italic else 0)
+            elif tag == b"post":
+                struct.pack_into(">i", data, off + 4, -12 * 65536 if italic else 0)
+            table = bytes(data[off:off + length]) + b"\0" * (-length % 4)
+            struct.pack_into(">I", data, rec + 4, sum(struct.unpack(f">{len(table) // 4}I", table)) & 0xffffffff)
+        out.write_bytes(data)
+
+    def burn(self, folder, family, alias=False, bold=False, karaoke=False):
+        env = dict(os.environ, FONTCONFIG_FILE=str(self.root / f"fonts-{alias}.conf"))
+        out = self.root / f"{folder}-{alias}-{bold}-{karaoke}.mp4"
+        doc = json.loads(script("caption.py", self.source, "--srt", self.cues, "--fonts-dir", self.root / folder,
+                                "--font", family, "--overwrite", "-o", out, "--json",
+                                *(["--bold"] if bold else []), *(["--karaoke"] if karaoke else []), env=env).stdout)
+        cmd = shlex.split(doc["commands"][-1])
+        cmd[cmd.index("-loglevel") + 1] = "info"
+        log = sh(*cmd[:-1], "-frames:v", "1", "-f", "null", "-", env=env).stderr
+        return doc, "\n".join(l for l in log.splitlines() if "fontselect:" in l or "Using font provider " in l)
+
+    def test_alias_does_not_claim_the_installed_fallback(self):
+        for karaoke in (False, True):
+            doc, selected = self.burn("private", "Review545", alias=True, karaoke=karaoke)
+            if "Using font provider fontconfig" in selected:
+                self.assertIn("Unique", selected, "libass must actually select the private alias")
+            self.assertIsNone(doc["font_used"]["file"])
+            self.assertEqual(doc["font_used"]["how"], "fonts_dir")
+            self.assertTrue(any("alias" in n for n in doc.get("notes", [])))
+        doc, selected = self.burn("private", "Review545")
+        if "Using font provider fontconfig" in selected:
+            self.assertNotIn("Unique", selected)
+        self.assertIsNone(doc["font_used"]["file"])
+
+    def test_alias_reporting_does_not_require_a_fontconfig_provider(self):
+        doc = {"font_used": {"file": None, "how": "fonts_dir"}, "notes": ["alias: face not established"]}
+        for provider in ("coretext", "directwrite", None):
+            log = (f"Using font provider {provider}\n" if provider else "") + "fontselect: (Review545, 400, 0) -> Arial, 0, Arial"
+            with unittest.mock.patch.object(self, "burn", return_value=(doc, log)) as burn:
+                self.test_alias_does_not_claim_the_installed_fallback()
+                self.assertEqual(burn.call_count, 3)
+            for used in ({"file": "unmeasured.ttf", "how": "fonts_dir"}, {"file": None, "how": "resolved"}):
+                with unittest.mock.patch.object(self, "burn", return_value=(dict(doc, font_used=used), log)), self.assertRaises(AssertionError):
+                    self.test_alias_does_not_claim_the_installed_fallback()
+
+    def test_unknown_outline_does_not_check_installed_vietnamese_coverage(self):
+        from _common import fonts
+        face = str(self.root / "private" / "private.ttf")
+        for suffix in ("", "\t", "\tunknown"):
+            text = f"{face}\t0\tUnique Sans\tUniqueSans\tTrueType\t80\t0\tUnique Sans" + suffix + "\n"
+            with unittest.mock.patch.object(fonts.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, text)), \
+                 unittest.mock.patch.object(fonts, "_installed_face_coverage", return_value=False) as installed, \
+                 unittest.mock.patch.object(fonts, "warn") as warn:
+                fonts.script_font_for_text("đã ăn", font="Unique Sans", font_explicit=True, fonts_dir=str(self.root / "private"))
+                self.assertEqual(warn.call_args.args[1], "font_coverage_unverified")
+                installed.assert_not_called()
+
+    def test_bitmap_does_not_claim_an_unusable_face(self):
+        scan = subprocess.run(["fc-scan", "--format", "%{outline}", str(self.root / "bitmap" / "face.bdf")],
+                              capture_output=True, text=True, timeout=10).stdout
+        if scan != "False":
+            self.skipTest("this FreeType build cannot scan the bitmap fixture")
+        doc, selected = self.burn("bitmap", "Bitmap545")
+        self.assertTrue(selected)
+        self.assertNotIn("Bitmap545, 0,", selected)
+        self.assertIsNone(doc["font_used"]["file"])
+
+    def test_exact_competing_empty_and_unavailable_scan_controls(self):
+        doc, selected = self.burn("private", "Unique Sans")
+        self.assertIn("Unique", selected)
+        self.assertEqual(doc["font_used"]["file"], str(self.root / "private" / "private.ttf"))
+        styles = sh("fc-scan", "--format", "%{weight}:%{slant}\n", *sorted((self.root / "competing").glob("*.ttf"))).stdout
+        self.assertEqual(set(styles.splitlines()), {"180:0", "200:100"})
+        doc, selected = self.burn("competing", "Unique Sans", bold=True)
+        self.assertIn("Unique", selected)
+        self.assertIsNone(doc["font_used"]["file"])
+        doc, _ = self.burn("empty", "DejaVu Sans")
+        self.assertEqual((doc["font_used"]["file"], doc["font_used"]["how"]), (None, "fonts_dir"))
+        from _common import fonts
+        with unittest.mock.patch.object(fonts, "_safe_which", return_value=None):
+            self.assertEqual(fonts.fonts_dir_face(str(self.root / "private"), "Unique Sans"), (None, None))
+
+    def test_missing_or_unreadable_outline_never_claims_a_file(self):
+        from _common import fonts
+        face = str(self.root / "private" / "private.ttf")
+        for suffix in ("", "\t", "\tunknown", "\tFalse"):
+            text = f"{face}\t0\tUnique Sans\tUniqueSans\tTrueType\t80\t0\tUnique Sans" + suffix + "\n"
+            with unittest.mock.patch.object(fonts.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, text)):
+                self.assertEqual(fonts.fonts_dir_face(str(self.root / "private"), "Unique Sans"),
+                                 (None, False if suffix == "\tFalse" else None))
 
 class HdrRgbSourceTests(unittest.TestCase):
     """#544: an RGB source that probes BT.2020 or HDR, re-encoded on the 10-bit line that keeps its colour."""
