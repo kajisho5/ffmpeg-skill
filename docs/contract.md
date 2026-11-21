@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.3.1`) | any release |
+| `skill.version` | the npm / package.json version (`4.3.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.3.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.3.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -1035,8 +1035,11 @@ An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 c
 `error.reason` and a `hint` when ffmpeg's own message names a cause a caller can act on
 (`_common.runner.FFMPEG_FAILURE_CLASSES`): `disk_full` ("No space left on device"),
 `encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
-get one that has it), `input_incomplete` ("moov atom not found": a cut-off recording or an
-unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. After 3.8.4 an ffmpeg
+get one that has it), `input_incomplete` ("moov atom not found", "File ended prematurely", or
+MOV/MP4's offset-specific "partial file", even with exit 0; missing media cannot be rebuilt)
+and `input_unreadable`. Explicit copy repair still measures damage without this refusal and
+writes the available part for editing if the input's index survives.
+After 3.8.4 an ffmpeg
 command a tool runs through `run()` that names an encoder (`-c:v`/`-c:a`/`-c:s` and their
 spellings, after the last input, for a stream kind the output keeps: not one `-an`/`-vn`/`-sn`
 drops or no input file carries) or a filter (`-vf`, `-af`, `-filter:v`, `-filter:a`,

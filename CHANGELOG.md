@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 4.3.2
+
+_Automated release: version and notes generated from pull requests merged since 4.3.1._
+
+- fix: an incomplete indexed input fails before its partial output is accepted (#661)
+
 ## 4.3.1
 
 _Automated release: version and notes generated from pull requests merged since 4.3.0._

@@ -20,8 +20,163 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, make_multistream,  # noqa: E402
                        sar_clip, script, sh, written_track)
-from _common import probe  # noqa: E402
+from _common import probe, runner  # noqa: E402
 from _common.color import is_rgb  # noqa: E402
+
+
+class TruncatedInputTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "truncated_input"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cues = cls.dir / "cues.srt"
+        cues.write_text("1\n00:00:00,000 --> 00:00:03,500\nKept subtitle\n", encoding="utf-8")
+        cls.sources = []
+        for ext in ("mkv", "mp4"):
+            plain, short = cls.dir / f"plain.{ext}", cls.dir / f"truncated.{ext}"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=4",
+               "-f", "lavfi", "-i", "sine=r=48000:d=4", "-i", cues,
+               "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "aac", "-c:s", "srt" if ext == "mkv" else "mov_text",
+               *([] if ext == "mkv" else ["-movflags", "+faststart"]), plain)
+            data = plain.read_bytes()
+            short.write_bytes(data[:len(data) // 3])
+            cls.sources.append((plain, short))
+
+    def test_truncated_inputs_fail_before_stream_retry_or_promotion(self):
+        for plain, short in self.sources:
+            self.assertGreater(probe(str(short))["duration"], 3.9)
+            raw = sh("ffmpeg", "-v", "error", "-i", short, "-f", "null", "-")
+            marker = "File ended prematurely" if short.suffix == ".mkv" else "partial file"
+            self.assertIn(marker, raw.stderr, "fixture reaches the demuxer's zero-exit truncation path")
+            for tool, flags in (("crop.py", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]),
+                                ("denoise.py", [])):
+                for progress in ([], ["--progress"]):
+                    with self.subTest(source=short, tool=tool, progress=progress):
+                        out = self.dir / f"{tool}-{short.suffix[1:]}-{bool(progress)}.mp4"
+                        out.unlink(missing_ok=True)
+                        doc = json.loads(script(tool, short, *flags, *progress, "-o", out, "--json",
+                                                expect_fail=True).stdout)
+                        self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["reason"]),
+                                         ("failed", "ffmpeg", "input_incomplete"))
+                        self.assertEqual(doc["ffmpeg_returncode"], 0)
+                        self.assertIn(str(short), doc["error"]["message"])
+                        self.assertIn(marker, doc["error"]["message"])
+                        self.assertIn("export --preset copy --repair", doc["error"]["hint"])
+                        self.assertIn("missing index cannot be rebuilt", doc["error"]["hint"])
+                        self.assertFalse(out.exists(), "partial output removed")
+                        self.assertEqual(len(doc["commands"]), 1, "no subtitle/data fallback encode")
+                        original = b"existing deliverable"
+                        out.write_bytes(original)
+                        script(tool, short, *flags, *progress, "--overwrite", "-o", out, "--json", expect_fail=True)
+                        self.assertEqual(out.read_bytes(), original)
+
+    def test_clean_short_trim_vfr_and_dry_run_controls(self):
+        for plain, short in self.sources:
+            out = self.dir / f"clean-{plain.suffix[1:]}.mp4"
+            doc = json.loads(script("denoise.py", plain, "--overwrite", "-o", out, "--json").stdout)
+            self.assertTrue(doc["verified"])
+            self.assertGreater(probe(str(out))["duration"], 3.9)
+            doc = json.loads(script("cut.py", plain, "--accurate", "--start", "0", "--end", "0.3",
+                                    "--overwrite", "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            doc = json.loads(script("denoise.py", short, "--dry-run", "--overwrite", "-o", out, "--json").stdout)
+            self.assertTrue(doc["dry_run"])
+            self.assertFalse(doc["verified"])
+        vfr = self.dir / "vfr.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.sources[1][0], "-map", "0:v", "-an",
+           "-vf", "select='not(mod(n,3))+not(mod(n,7))'", "-fps_mode", "vfr", "-c:v", "libx264", vfr)
+        frames = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
+                               "-show_entries", "frame=best_effort_timestamp_time", "-of", "json", vfr).stdout)["frames"]
+        times = [float(f["best_effort_timestamp_time"]) for f in frames]
+        self.assertGreater(len({round(b - a, 3) for a, b in zip(times, times[1:])}), 1)
+        doc = json.loads(script("denoise.py", vfr, "--overwrite", "-o", self.dir / "vfr-out.mp4", "--json").stdout)
+        self.assertTrue(doc["verified"])
+
+    def test_failure_classification_ignores_input_and_output_names(self):
+        out = self.dir / "Unknown encoder 'fake'.mp4"
+        for name in ("No space left on device.mkv", "File ended prematurely"):
+            short = self.dir / name
+            shutil.copyfile(self.sources[0][1], short)
+            doc = json.loads(script("crop.py", short, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                                    "--overwrite", "-o", out, "--json", expect_fail=True).stdout)
+            self.assertEqual(doc["error"]["reason"], "input_incomplete")
+            self.assertIn(str(short), doc["error"]["message"])
+            self.assertIn("export --preset copy --repair", doc["error"]["hint"])
+        broken = self.dir / "No space left on device.mp4"
+        broken.write_bytes(b"not a movie")
+        cmd = ["ffmpeg", "-v", "error", "-i", str(broken), "-f", "null", "-"]
+        proc = sh(*cmd, expect_fail=True)
+        self.assertIn("moov atom not found", proc.stderr)
+        ctx = runner.Context()
+        ctx.json = True
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            runner._fail(cmd, proc.returncode, proc.stderr, ctx=ctx)
+        doc = json.loads(output.getvalue())
+        self.assertEqual(doc["error"]["reason"], "input_incomplete")
+        self.assertIn(str(broken), doc["error"]["message"])
+
+    def test_filename_masking_preserves_genuine_diagnostics(self):
+        for name in ("No space left on device", str(self.dir / "No space left on device")):
+            for cmd in (["ffmpeg", "-i", name, "out.mkv"], ["ffmpeg", "-i", "in.mkv", name]):
+                stderr = f"Error opening output file {cmd[-1]}.\nError opening output files: No space left on device\n"
+                ctx = runner.Context()
+                ctx.json = True
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    runner._fail(cmd, 1, stderr, ctx=ctx)
+                doc = json.loads(output.getvalue())
+                self.assertEqual(doc["error"]["reason"], "disk_full")
+                self.assertIn("No space left on device", doc["error"]["message"])
+                self.assertIn("space", doc["error"]["hint"])
+
+    def test_incomplete_failure_keeps_explicit_context(self):
+        ctx = runner.Context()
+        ctx.json = ctx.hw = True
+        ctx.hw_source = "flag"
+        ctx.hw_notes.append("explicit request context")
+        out = self.dir / "ctx-failure.mp4"
+        out.unlink(missing_ok=True)
+        output = io.StringIO()
+        cmd = ["ffmpeg", "-v", "error", "-i", str(self.sources[0][1]), "-c:v", "libx264", str(out)]
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            runner.run(cmd, ctx=ctx, quiet=True)
+        doc = json.loads(output.getvalue())
+        self.assertEqual(doc["error"]["reason"], "input_incomplete")
+        self.assertEqual(doc["encoder"], "libx264")
+        self.assertTrue(doc["hw"]["requested"])
+        self.assertIn("explicit request context", doc["hw"]["notes"])
+        self.assertEqual(doc["commands"], ctx.commands)
+        self.assertFalse(out.exists())
+
+    def test_explicit_repair_and_optional_analysis_still_measure_damage(self):
+        for plain, short in self.sources:
+            out = self.dir / f"repair-{short.suffix[1:]}.mkv"
+            doc = json.loads(script("export.py", short, "--preset", "copy", "--repair", "--overwrite",
+                                    "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            self.assertGreater(doc["repair"]["before"]["decode_errors"], 0)
+            self.assertTrue(out.exists())
+            edited = self.dir / f"repaired-crop-{short.suffix[1:]}.mp4"
+            proc = script("crop.py", out, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                          "--overwrite", "-o", edited, "--json")
+            cropped = json.loads(proc.stdout)
+            self.assertEqual(cropped["status"], "completed")
+            self.assertTrue(cropped["verified"])
+            self.assertNotRegex(proc.stderr, r"File ended prematurely|partial file")
+            self.assertAlmostEqual(probe(str(edited))["duration"], 1.3, delta=0.3)
+
+    def test_marker_scope(self):
+        from _common.runner import INCOMPLETE_INPUT, classify_ffmpeg_failure
+        for line in ("File ended prematurely", "File ended prematurely at pos. 42 (0x2a)",
+                     "stream 1, offset 0xABC: partial file", "root atom offset 0x10: partial file"):
+            self.assertIsNotNone(INCOMPLETE_INPUT.search(line))
+            self.assertEqual(classify_ffmpeg_failure(line)[0], "input_incomplete")
+        for line in ("EOF", "End of file", "partial file", "Invalid NAL unit size", "ac-tex damaged at 5 0", ""):
+            self.assertIsNone(INCOMPLETE_INPUT.search(line))
 
 
 class DeliveryTests(MediaFixtures):

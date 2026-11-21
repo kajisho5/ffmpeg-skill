@@ -59,6 +59,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [2.24 — join.py --copy and cut.py --remove](#224--joinpy---copy-and-cutpy---remove)
 - [2.24 — output identity and check.py --compare](#224--output-identity-and-checkpy---compare)
 - [2.24 — export.py --max-mb](#224--exportpy---max-mb)
+- [Incomplete indexed input stops a media write (#470)](#incomplete-indexed-input-stops-a-media-write-470)
 - [2.24 — export.py --repair](#224--exportpy---repair)
 - [3.1.5 — both streams on one clock (#409)](#315--both-streams-on-one-clock-409)
 - [3.1.5 — square pixels, and the geometry audit (#411)](#315--square-pixels-and-the-geometry-audit-411)
@@ -2734,6 +2735,31 @@ What was decided there:
   size), a source with no duration, and a budget that leaves under 100 kb/s for the picture. A
   size that small makes an unwatchable file the user did not ask for, so the refusal says the
   bitrate it would have been. Same test.
+
+## Incomplete indexed input stops a media write (#470)
+
+- A media command through `runner.run()` fails with `kind: ffmpeg`, reason `input_incomplete`,
+  when the demuxer says `File ended prematurely` (including 6.1's positional suffix) or MOV/MP4's
+  offset-specific `partial file`, even if the child exits 0. The failure names the command's
+  inputs and the matched diagnostic, keeps the raw return code, removes the attempt's output,
+  and happens before output promotion or stream fallback. Captured and progress runs share the
+  completion step. `TruncatedInputTests` generates indexed MKV and faststart MP4 files, cuts
+  their payloads, and checks both paths, an existing output, clean inputs, short trims and VFR.
+  Classification uses the matched diagnostic, not the displayed input names; other failures
+  redact known input/output names containing error markers in filename contexts before classification, without
+  changing the displayed stderr. `TruncatedInputTests` covers a misleading filename on both
+  paths, genuine diagnostics equal to a basename, and an explicit request context, which every
+  attempt forwards to the failure report.
+- This is not a duration comparison or a general corruption refusal. Short/sparse streams,
+  stills, VFR and requested trims do not become invalid because of their lengths. A TS prefix
+  ending at a clean packet/PES boundary can look exactly like a legitimate shorter recording:
+  no diagnostic and no longer advertised duration, so truncation is undetectable without an
+  external expectation. Generic decoder corruption stays outside this matcher.
+- Explicit copy repair (`-err_detect ignore_err`) keeps its salvage behavior, and
+  `run_analysis(check=False)` still measures damage without this refusal. Repair accepts these
+  indexed truncated fixtures and writes their available media as an editable copy, but cannot
+  restore missing media. The hint offers this salvage path when the recording's index survives.
+  A missing `moov` is still unreadable even with repair.
 
 ## 2.24 — export.py --repair
 
