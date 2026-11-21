@@ -120,6 +120,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.4 — a frame to look at is the source's pixels](#after-434--a-frame-to-look-at-is-the-sources-pixels)
 - [After 4.3.4 — no child is given the caller's stdin (#664)](#after-434--no-child-is-given-the-callers-stdin-664)
 - [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
+- [After 4.4.1 — an unmeasured substitution is null (#663)](#after-441--an-unmeasured-substitution-is-null-663)
 <!-- contents:end -->
 
 ## Time limits
@@ -6492,3 +6493,12 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 - **SKILL.md's "make it vertical" row asks for `--width 1080`**, so the first call writes 1080x1920.
 - Pinned by `test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos`
   (tests/test_delivery.py).
+
+## After 4.4.1 — an unmeasured substitution is null (#663)
+
+- **`font_used.substituted` is `null` wherever `file` is `null`.** The field was documented as a
+  boolean, and the decision is that `false` beside an unknown file was a defect from the start (a
+  failed measurement reported as a measured "no"), not a shape to deprecate: a reader that keys on
+  the field was told the asked font was drawn when nothing had established that. `true` and
+  `false` keep their meaning for an established file. Pinned by the `--fonts-dir` tests in
+  tests/test_picture.py.

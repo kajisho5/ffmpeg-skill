@@ -8416,7 +8416,7 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
         # even an installed family missing from the folder is not claimed as measured
         doc, _ = burn(empty, "DejaVu Sans", "installed_not_in_dir")
         used = doc["font_used"]
-        self.assertEqual((used["how"], used["substituted"], used["fonts_dir"]), ("fonts_dir", False, str(empty)), used)
+        self.assertEqual((used["how"], used["substituted"], used["fonts_dir"]), ("fonts_dir", None, str(empty)), used)  # no file, so not measured (#663)
         self.assertIsNone(used["file"])
 
     def test_a_fonts_dir_face_is_matched_as_libass_matches_it(self):
@@ -8563,7 +8563,7 @@ class RgbStabilizeAndFontsDirTests(unittest.TestCase):
                 self.assertEqual(doc["status"], "completed", doc.get("error"))
                 used = doc["font_used"]
                 self.assertEqual((used["how"], used["file"], used["family"], used["substituted"]),
-                                 ("fonts_dir", want, "DejaVu Sans", False))
+                                 ("fonts_dir", want, "DejaVu Sans", False if want else None))  # null with no file (#663)
                 self.assertEqual(any("only in other styles" in n for n in doc.get("notes") or []), want is None, doc.get("notes"))
 
 

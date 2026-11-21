@@ -135,10 +135,10 @@ def font_choice(asked: "Optional[str]", *, font_file: "Optional[str]" = None, sc
                 script_file = face["file"]
         return {"asked": asked, "file": script_file, "family": script_family, "how": "script", "substituted": False}
     if renderer == "libass" and platform.system() == "Windows":
-        return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": False}
+        return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": None}
     found = resolve_font((asked or "") + weight)
     if not found["file"]:
-        return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": False}
+        return {"asked": asked, "file": None, "family": asked, "how": "by_name", "substituted": None}
     return {"asked": asked, "file": found["file"], "family": found["family"], "how": "resolved",
             "substituted": bool(found["substituted"]), "via": found["via"]}
 
