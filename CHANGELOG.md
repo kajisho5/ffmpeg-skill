@@ -12,6 +12,19 @@
   A stream-copied cut that lands on a keyframe said `verified: true` with the miss in
   `duration_error_ms` further down, and a caller that read the top reported the cut as exact.
 
+## 4.5.0
+
+_Automated release: version and notes generated from pull requests merged since 4.4.2._
+
+### Added
+
+- **`wrote`: the first line of a result says what was written and where it misses.** Every tool
+  that writes a media file now puts one line first in its `--json` document:
+  `"wrote": "7.620 s (ASKED 7.500 s: 0.120 s longer), 1920x1080, 24.0 fps, picture and sound"`.
+  A stream-copied cut that lands on a keyframe said `verified: true` with the miss in
+  `duration_error_ms` further down, and a caller that read the top reported the cut as exact.
+- feat: the first line of a result says what was written and where it misses (#693)
+
 ## 4.4.2
 
 _Automated release: version and notes generated from pull requests merged since 4.4.1._
