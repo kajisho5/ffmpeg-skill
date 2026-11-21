@@ -216,8 +216,6 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# The canonical destination names.
-PLATFORM_NAMES: List[str] = sorted(PLATFORMS)
 # The spellings people actually write for those destinations. resolve() maps them onto the
 # canonical name, and every tool's --platform/--safe/--preset accepts both, so
 # `--platform youtube-shorts` and `--platform shorts` are the same request everywhere.

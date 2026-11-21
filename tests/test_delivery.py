@@ -1894,6 +1894,44 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
         rgb = frame_rgb(out, 0.5, 8, 360)
         self.assertGreater(rgb[0], 180, rgb)
 
+    def test_a_picture_that_is_mostly_bars_in_the_frame_is_said(self):
+        """#665: a 720x1280 clip through `export --preset youtube` came out 1920x1080 with the picture
+        a third of the frame, `verified: true` and nothing said (a reader's test of 4.2.2). The file
+        is the frame the preset asks for; the warning says what that did to the picture and names
+        the other outcomes. A frame of the source's shape, a crop, a blurred background (a chosen
+        look) and a square frame around 16:9 (56%) say nothing."""
+        from _fixtures import tiny_clip
+        tall, wide = OUT / "small_frame_tall.mp4", OUT / "small_frame_wide.mp4"
+        tiny_clip(tall, "testsrc2=s=180x320:r=25", audio=True)
+        tiny_clip(wide, "testsrc2=s=320x180:r=25", audio=True)
+
+        def warned(tool, src, *args):
+            doc = json.loads(script(tool, src, *args, "-o", OUT / "small_frame_out.mp4", "--overwrite", "--json").stdout)
+            return [w for w in (doc.get("diagnostics") or {}).get("warnings") or [] if w["code"] == "picture_small_in_frame"], doc
+
+        for tool, src, args, frame in (("export.py", tall, ["--preset", "youtube", "--no-normalize"], "1920x1080"),
+                                       ("export.py", wide, ["--preset", "reels", "--no-normalize"], "1080x1920"),
+                                       ("fit.py", wide, ["--aspect", "9:16"], None)):
+            with self.subTest(tool=tool, args=args):
+                got, doc = warned(tool, src, *args)
+                self.assertEqual(len(got), 1, doc.get("diagnostics"))
+                self.assertAlmostEqual(got[0]["fraction"], 0.316, delta=0.01)
+                self.assertIn("--fit crop", got[0]["message"])
+                if frame:
+                    self.assertEqual(got[0]["frame"], frame)
+                # said, and no verification step added: the file is the frame asked for
+                self.assertNotIn("picture", json.dumps([s for s in doc["verification"] if s.get("ok") is False]))
+        for tool, src, args in (("export.py", wide, ["--preset", "youtube", "--no-normalize"]),
+                                ("export.py", tall, ["--preset", "reels", "--no-normalize"]),
+                                ("export.py", wide, ["--preset", "reels", "--fit", "crop", "--no-normalize"]),
+                                ("export.py", wide, ["--preset", "reels", "--pad-fill", "blur", "--no-normalize"]),
+                                ("export.py", wide, ["--preset", "linkedin", "--no-normalize"]),
+                                ("fit.py", wide, ["--aspect", "9:16", "--fit", "blur"]),
+                                ("fit.py", wide, ["--aspect", "9:16", "--fit", "crop"]),
+                                ("fit.py", wide, ["--aspect", "1:1"])):
+            with self.subTest(tool=tool, args=args, says="nothing"):
+                self.assertEqual(warned(tool, src, *args)[0], [])
+
 
 class KeyFillRangeTests(unittest.TestCase):
     def test_key_luma_maps_transparency_to_legal_video_levels(self):

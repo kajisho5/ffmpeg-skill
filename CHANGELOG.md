@@ -4,7 +4,15 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A picture that ends up mostly bars is said (#665).** A 720x1280 clip through
+  `export.py --preset youtube` was written as 1920x1080 with the picture a third of the frame,
+  `verified: true`, and no word about it; the same for a landscape clip into `reels` and for
+  `fit.py --aspect 9:16` with its default `pad`. `diagnostics.warnings` now carries
+  `picture_small_in_frame` (the fraction, the source size, the frame) when a solid-colour pad leaves
+  the picture less than half of the frame, and the message names `--fit crop` and the presets of
+  the other shape. The file written is unchanged. Found by a reader's test of 4.2.2.
 
 ## 4.3.3
 

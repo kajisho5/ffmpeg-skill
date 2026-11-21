@@ -116,6 +116,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.2.1 — one file per `-o` (#562)](#after-421--one-file-per--o-562)
 - [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
 - [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
+- [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
 <!-- contents:end -->
 
 ## Time limits
@@ -6409,3 +6410,19 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   that workflow on demand.
 - Pinned by `test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1`
   (tests/test_orchestration.py).
+
+## After 4.3.3 — a picture that is mostly bars is said, not changed (#665)
+
+- **`picture_small_in_frame` is a warning, and the default stays `pad`.** A clip of one shape in a
+  frame of the other (9:16 in 16:9, or the reverse) fills 32% of it. The file is what the preset's
+  frame asks for, so `verified` stays true and nothing is refused: a preset is a delivery
+  specification, and cropping, or choosing another preset for the caller, would be a guess about
+  what they mean to deliver. What was missing is the sentence: how much of the frame the picture
+  fills, and the two other outcomes (`--fit crop`; a preset of the source's shape).
+- **The line is half of the frame.** Below it the bars are most of what a viewer sees. A 16:9 clip
+  in a square frame fills 56% and says nothing; 4:3 in 16:9 fills 75%.
+- **A blurred background says nothing.** `--pad-fill blur` and `fit --fit blur` are asked for by
+  name and are the look a caller chose for exactly this case.
+- **One place:** `decision.pad_filters`, where `export.py` and `fit.py` build a solid-colour pad, so
+  `render.py`'s fit stage says it too. Pinned by
+  `test_a_picture_that_is_mostly_bars_in_the_frame_is_said` (tests/test_delivery.py).

@@ -34,7 +34,6 @@ ADVANCE_EM = {"ja": 1.0, "zh": 1.0, "ko": 1.0, "th": 1.0, "hi": 0.7, "ar": 0.6, 
 # Per-character atoms broke `시작|합니다` and, once a pass moved the break, joined the halves
 # with no space (`늦지마세요`) while the result said text_unchanged.
 NO_SPACE_SCRIPTS = ("ja", "zh")
-NO_BOUNDARY_SCRIPTS = ("th",)   # per-character breaking would chop words: keep the run whole
 
 
 # Per-character Latin advances in em, read off DejaVu Sans (the default caption family, and close
