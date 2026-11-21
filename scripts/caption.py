@@ -1978,7 +1978,7 @@ def main() -> int:
         if found is False:
             note(f"font: no outline face in {args.fonts_dir} is named '{asked}'; libass may pick a directory face through a fontconfig alias, so the face is not established")
         elif found is None:
-            note(f"font: whether {args.fonts_dir} holds a face named '{asked}' could not be read (no fc-scan); "
+            note(f"font: whether {args.fonts_dir} holds a face named '{asked}' could not be read (fc-scan unavailable or incomplete metadata); "
                  "font_used reports it as asked")
         elif face is None:
             note(f"font: {args.fonts_dir} holds '{asked}' only in other styles than the one asked "

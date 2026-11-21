@@ -8623,18 +8623,43 @@ class FontsDir545Tests(unittest.TestCase):
         cmd = shlex.split(doc["commands"][-1])
         cmd[cmd.index("-loglevel") + 1] = "info"
         log = sh(*cmd[:-1], "-frames:v", "1", "-f", "null", "-", env=env).stderr
-        return doc, "\n".join(l for l in log.splitlines() if "fontselect:" in l)
+        return doc, "\n".join(l for l in log.splitlines() if "fontselect:" in l or "Using font provider " in l)
 
     def test_alias_does_not_claim_the_installed_fallback(self):
         for karaoke in (False, True):
             doc, selected = self.burn("private", "Review545", alias=True, karaoke=karaoke)
-            self.assertIn("Unique", selected, "libass must actually select the private alias")
+            if "Using font provider fontconfig" in selected:
+                self.assertIn("Unique", selected, "libass must actually select the private alias")
             self.assertIsNone(doc["font_used"]["file"])
             self.assertEqual(doc["font_used"]["how"], "fonts_dir")
             self.assertTrue(any("alias" in n for n in doc.get("notes", [])))
         doc, selected = self.burn("private", "Review545")
-        self.assertNotIn("Unique", selected)
+        if "Using font provider fontconfig" in selected:
+            self.assertNotIn("Unique", selected)
         self.assertIsNone(doc["font_used"]["file"])
+
+    def test_alias_reporting_does_not_require_a_fontconfig_provider(self):
+        doc = {"font_used": {"file": None, "how": "fonts_dir"}, "notes": ["alias: face not established"]}
+        for provider in ("coretext", "directwrite", None):
+            log = (f"Using font provider {provider}\n" if provider else "") + "fontselect: (Review545, 400, 0) -> Arial, 0, Arial"
+            with unittest.mock.patch.object(self, "burn", return_value=(doc, log)) as burn:
+                self.test_alias_does_not_claim_the_installed_fallback()
+                self.assertEqual(burn.call_count, 3)
+            for used in ({"file": "unmeasured.ttf", "how": "fonts_dir"}, {"file": None, "how": "resolved"}):
+                with unittest.mock.patch.object(self, "burn", return_value=(dict(doc, font_used=used), log)), self.assertRaises(AssertionError):
+                    self.test_alias_does_not_claim_the_installed_fallback()
+
+    def test_unknown_outline_does_not_check_installed_vietnamese_coverage(self):
+        from _common import fonts
+        face = str(self.root / "private" / "private.ttf")
+        for suffix in ("", "\t", "\tunknown"):
+            text = f"{face}\t0\tUnique Sans\tUniqueSans\tTrueType\t80\t0\tUnique Sans" + suffix + "\n"
+            with unittest.mock.patch.object(fonts.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, text)), \
+                 unittest.mock.patch.object(fonts, "_installed_face_coverage", return_value=False) as installed, \
+                 unittest.mock.patch.object(fonts, "warn") as warn:
+                fonts.script_font_for_text("đã ăn", font="Unique Sans", font_explicit=True, fonts_dir=str(self.root / "private"))
+                self.assertEqual(warn.call_args.args[1], "font_coverage_unverified")
+                installed.assert_not_called()
 
     def test_bitmap_does_not_claim_an_unusable_face(self):
         scan = subprocess.run(["fc-scan", "--format", "%{outline}", str(self.root / "bitmap" / "face.bdf")],
@@ -8667,7 +8692,8 @@ class FontsDir545Tests(unittest.TestCase):
         for suffix in ("", "\t", "\tunknown", "\tFalse"):
             text = f"{face}\t0\tUnique Sans\tUniqueSans\tTrueType\t80\t0\tUnique Sans" + suffix + "\n"
             with unittest.mock.patch.object(fonts.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, text)):
-                self.assertIsNone(fonts.fonts_dir_face(str(self.root / "private"), "Unique Sans")[0])
+                self.assertEqual(fonts.fonts_dir_face(str(self.root / "private"), "Unique Sans"),
+                                 (None, False if suffix == "\tFalse" else None))
 
 class HdrRgbSourceTests(unittest.TestCase):
     """#544: an RGB source that probes BT.2020 or HDR, re-encoded on the 10-bit line that keeps its colour."""

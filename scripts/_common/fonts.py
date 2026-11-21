@@ -739,7 +739,9 @@ def _fonts_dir_face(fonts_dir: str, family: str, bold: bool) -> "Tuple[Optional[
     exact, named, other_styles = [], [], False
     for line in lines:
         cells = line.split("\t")
-        if len(cells) < 9 or not cells[0] or cells[8].strip().lower() != "true":
+        if len(cells) < 9 or cells[8].strip().lower() not in ("true", "false"):
+            return None, None
+        if not cells[0] or cells[8].strip().lower() != "true":
             continue
         path, index, fc_family, psname, fontformat, fc_weight, slant, fc_full = cells[:8]
         try:

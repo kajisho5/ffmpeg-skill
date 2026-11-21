@@ -5461,7 +5461,10 @@ the slot at 0.519 s, "After 3.8.14").
   This conservative reporting also applies to an empty directory; it does not change rendering.
   Only faces whose `%{outline}` is true are candidates: a regular upright bitmap-only BDF was
   reported as selected, but libass rejected it and drew DejaVu Sans. `%{scalable}` is insufficient
-  for color bitmap fonts. A missing or unreadable outline field establishes no file either.
+  for color bitmap fonts. A missing or unreadable outline field establishes no file either:
+  it is unknown, not a confirmed miss, so Vietnamese coverage is not inferred from an installed
+  substitute. Alias-selection tests inspect the provider from the same replay: only fontconfig
+  expands the private fontconfig alias; unresolved-reporting assertions also run for native providers.
   "That name" is libass 0.17's match, each part checked by drawing on 0.17.1 with fontconfig given
   no fonts, so a face not matched drew nothing: the family is the Microsoft-platform name ID 1 only
   (`Inter` is not a family of `Inter-Black.otf`, whose ID 1 is `Inter Black`; fontconfig also lists
