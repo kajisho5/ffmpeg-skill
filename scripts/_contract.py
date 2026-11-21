@@ -637,8 +637,8 @@ FONT_USED_SCHEMA = {
                    "that ties is the same family and style); file null, with a note, when the folder holds the family only in "
                    "other styles (libass picks among those and the installed faces; not measured) or could not be read; a "
                    "literal miss also reports file null, how fonts_dir and the family as asked: libass may select a directory face through a "
-                   "fontconfig alias, so the face is not established (substituted false is not a measured absence of substitution)), ass_styles (caption.py --ass: the file's own styles name the fonts). substituted: the "
-                   "file is not the asked family (also a diagnostics.fallbacks entry, font_substituted). overlay.py: with --text; "
+                   "fontconfig alias, so the face is not established), ass_styles (caption.py --ass: the file's own styles name the fonts). substituted: true when the "
+                   "file is not the asked family (also a diagnostics.fallbacks entry, font_substituted), false when it is, and null wherever file is null: no face was established, so nothing was measured. overlay.py: with --text; "
                    "grid.py: with --label auto",
 }
 
