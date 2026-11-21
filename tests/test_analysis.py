@@ -2637,7 +2637,8 @@ class GeometryAuditAnalysisTests(unittest.TestCase):
     def test_look_shows_a_non_square_pixel_source_at_its_display_aspect(self):
         out = OUT / "g411a_sar_at.png"
         script("look.py", self.sar, "--at", "1", "--no-timecode", "-o", out)
-        self.assertEqual(png_size(out), (1280, 720))
+        # the displayed picture's own 320x180: squared, and not enlarged to --width's 1280
+        self.assertEqual(png_size(out), (320, 180))
 
     def test_scenes_sheet_picks_each_scene_start_by_time_on_vfr(self):
         doc = json.loads(script("scenes.py", self.vfr, "--sheet", OUT / "g411a_vfr_sheet.png", "--no-timecode",
