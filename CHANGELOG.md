@@ -4,12 +4,19 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.5
+
+_Automated release: version and notes generated from pull requests merged since 4.3.4._
+
 ### Fixed
 
 - **`look.py --at` no longer enlarges the frame.** Every frame was written at `--width` (default
   1280): a 720x1280 clip's frame came out 1280x2276, interpolated and over 2 MB. A frame taken to
   inspect is now at most `--width` wide and never wider than the source; contact sheets and
   `--compare` images keep the width asked. Found by a reader's test of 4.2.2.
+- fix: look.py --at no longer enlarges the frame (#667)
 
 ## 4.3.4
 
