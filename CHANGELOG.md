@@ -10,7 +10,7 @@
   check, verify, look) read as the path for every request, and a model took a plain cut or resize
   through all of them. A paragraph now says which requests need one call with `--json` and which
   need the steps (a delivery, a long or overwriting job, an edit that changes what the picture
-  shows). Fifteen routing rows are merged into their neighbours to stay inside the 220-line budget;
+  shows). Nine routing rows are merged into their neighbours to stay inside the 220-line budget;
   no request loses its row.
 
 ## 4.4.0
