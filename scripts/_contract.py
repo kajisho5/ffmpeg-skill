@@ -561,6 +561,7 @@ DIAGNOSTIC_CODES = {
     "repair_incomplete": ("warnings", "export.py --repair: decode errors remain after the remux (a damaged frame needs a re-encode); {timestamp_warnings, decode_errors}"),
     "legalize_residual": ("warnings", "color.py --legalize: samples of the encoded file are still outside the legal range after the clamp (the encoder's error around clamped areas); the shares are in legalize.output"),
     "picture_small_in_frame": ("warnings", "export.py, fit.py (--fit pad with a solid colour): the picture fills less than half of the frame it was padded into, as a 9:16 clip in a 16:9 preset does (32%); the file is the frame asked for; {fraction, source, frame}"),
+    "picture_mostly_cropped": ("warnings", "export.py, fit.py, join.py (--fit crop): the crop keeps less than half of the picture, as a 16:9 clip cropped to 9:16 keeps 32%; {fraction, source, frame}. The file is what was asked; --fit pad or blur keeps all of it (#688)"),
     "size_over_limit": ("warnings", "export.py --max-mb: the written file is over the size asked for (the encoder overshot its bitrate); {size, limit}"),
     "loudness_outside_spec": ("warnings", "export.py: the written file's loudness is outside the platform's spec (normalized: after --normalize too); {platform, lufs, tp, normalized}"),
     "smart_fallback": ("fallbacks", "cut.py --smart could not make or verify the smart cut, so the whole cut was re-encoded as --accurate would (smart.reason says why); {reason_code}"),
