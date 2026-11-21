@@ -6522,7 +6522,12 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   fixed in the tool it was reported in, and the next tool had the same defect (#470, #653, #696).
   `docs/defect-guards.json` lists every class with three or more entries and the test in
   `tests/test_guards.py` that runs every tool for it; `revert_proof.py` refuses a fix of a due
-  class whose guard is pending (#698 lists claim, not_measured, surface and automation).
+  class whose guard is pending. All five classes due on 2026-11-22 have one (#698).
+- **A guard that skips what failed guards nothing.** The first claim guard passed with broll
+  folding 5.1 to stereo: its fixture was cut short by its subtitle track, broll refused, and the
+  refusal was skipped. Each guard now also fails when a tool it runs did not complete, and each
+  was checked by putting the old defect back (broll's stereo mix, audio.py's stream order, the
+  bars and crop warnings, font_used.substituted) and seeing it fail.
 - **The time guard detects, the tool declares.** `emit.source_carry` cannot know a tool's time
   map, so it does not judge the chapters; it says `chapters_not_retimed` when the length changed
   and the tool declared nothing. A tool maps them (`with_mapped_chapters`) or declares why

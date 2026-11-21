@@ -20,9 +20,17 @@
   the output's end. Found by the new time guard, not by a report.
 - **Any tool that changes the length and leaves chapters behind now says so (#696).** The common
   result writer warns `chapters_not_retimed` when an output of another length carries chapters and
-  its tool declared no time map. Every tool is run against it in `tests/test_guards.py`, and a
-  class of defect fixed three times needs such a guard before the next fix (`docs/defect-guards.json`,
-  checked by `revert_proof.py`).
+  its tool declared no time map.
+- **Every class of defect fixed three times has a guard that runs every tool (#698).**
+  `tests/test_guards.py` runs all the tools (the multi-input ones included) on a 16:9, 5.1,
+  chaptered, subtitled clip with stdin left open, and fails on: chapters left at the source's
+  times (time), a lost channel or a picture mostly bars or cropped away with nothing said
+  (claim), a dry run that reports a measurement, or a record that judges a file it does not name
+  (not_measured), the sound before the picture or a result whose first line is not `wrote`
+  (surface), a tool that waits on an open stdin (automation). Each was checked by putting the old
+  defect back. `docs/defect-guards.json` lists them, and `revert_proof.py` refuses a fix of a
+  class with three ledger entries and no guard, so the next class that keeps coming back gets
+  one before its fourth fix.
 
 ## 4.5.1
 
