@@ -48,13 +48,8 @@ import sys
 from fractions import Fraction
 from typing import Any, List, Optional
 
-<<<<<<< HEAD
-from _common.runner import require_tool, run_analysis
-from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
-=======
 from _common.runner import require_tool, run_analysis, with_mapped_chapters
-from _common.decision import SEEK_MARGIN, enlarge_args, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
->>>>>>> chap
+from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
