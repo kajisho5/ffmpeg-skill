@@ -349,13 +349,25 @@ class ContractTests(unittest.TestCase):
             self.assertTrue((ROOT / rel).is_file(), rel)
         pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json",
+                         ".codex-plugin/plugin.json", "gemini-extension.json"):
             doc = json.loads((ROOT / manifest).read_text(encoding="utf-8"))
             self.assertEqual((doc["name"], doc["version"]), ("ffmpeg-skill", pkg["version"]), manifest)
             self.assertTrue(doc.get("description"), manifest)
             self.assertGreaterEqual(release.count(manifest), 2, f"{manifest}: bumped and staged by release.yml")
         cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue((ROOT / cursor["logo"]).is_file(), "the logo is a committed, relative path")
+        codex = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        logo = codex["interface"]["logo"]
+        self.assertTrue((ROOT / (logo[2:] if logo.startswith("./") else logo)).is_file(),
+                        "the Codex logo is a committed, relative path inside the plugin")
+        agents_market = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        self.assertEqual(agents_market["name"], "ffmpeg-skill")
+        self.assertEqual([p["name"] for p in agents_market["plugins"]], ["ffmpeg-skill"])
+        self.assertEqual(agents_market["plugins"][0]["source"],
+                         {"source": "local", "path": "./"})
+        self.assertEqual(codex["skills"], "./skills/")
+        self.assertNotIn("mcpServers", codex)
         # the npm installer copies one skill directory: the plugin copy must not ride along, or an
         # agent's skills folder would hold the same skill twice
         self.assertNotIn("skills/", pkg["files"])
@@ -985,11 +997,13 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(market["plugins"][0]["source"], {
             "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
         self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
-        # every `marketplace add` line in the README carries the flag, however many there are
-        self.assertEqual(readme_text.count("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
-                         readme_text.count("marketplace add kajisho5/ffmpeg-skill"))
-        for host in ("claude plugin marketplace add", "codex plugin marketplace add"):
-            self.assertIn(f"{host} kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        # Claude still sparse-checks out .claude-plugin; every Claude `marketplace add` keeps the flag.
+        # Codex uses the agent-agnostic .agents/plugins/marketplace.json and does not need --sparse.
+        self.assertEqual(readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
+                         readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill"))
+        self.assertIn("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill\n", readme_text)
+        self.assertIn("codex plugin add ffmpeg-skill@ffmpeg-skill", readme_text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)
