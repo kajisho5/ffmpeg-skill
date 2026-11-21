@@ -20,8 +20,8 @@
     "redact rect",
     "metadata chapter",
     "audio mute",
-    "fit fade-in",
-    "fit fade-out",
+    "fit fade_in",
+    "fit fade_out",
     "export duration"
   ],
   "feature_freeze_named_why": "2026-11-21, the owner's decision after nine models were given the same blind tasks: three shapes most of them wrote and no tool took (a proxy by its height, a redaction rectangle in one value, chapters on the command line) are added while the freeze holds. The list names each option; anything not on it is still refused. 2026-11-21, the owner's decision after the with/without-skill benchmark: 'remove the sound' had no direct option, and the three small models spent their 20 turns looking for one (audio.py --mute). Same day, same decision: a fade in and out of picture and sound (fit.py --fade-in/--fade-out) and a delivery's length (export.py --duration); four of five models asked blind wrote those option names.",
