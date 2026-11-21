@@ -118,6 +118,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
 - [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
 - [After 4.3.4 — a frame to look at is the source's pixels](#after-434--a-frame-to-look-at-is-the-sources-pixels)
+- [After 4.3.4 — no child is given the caller's stdin (#664)](#after-434--no-child-is-given-the-callers-stdin-664)
 <!-- contents:end -->
 
 ## Time limits
@@ -1775,6 +1776,15 @@ not a new file format this tool would have to maintain.
   `test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length`,
   `test_the_recut_cuts_on_the_frame_grid_and_states_the_sources_rate`,
   `test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries` (on 7.0).
+- **A time written in milliseconds is the frame it reads back to (#653).** `cut.py` cuts each start
+  and end on the nearest frame when that frame is within half a millisecond either way: at
+  30000/1001, `--start 1.902` keeps the frame at 1.9019 s, as `--start 1.9019` does, and `--end 1.935`
+  is the frame at 1.93527. Never a frame before the first one, and a moved end is still capped at the
+  media's end. A time further from a frame still begins on the next one, and a cut under one frame is
+  still refused. `requested_start` and `requested_end` stay what was asked. The move is in `cut.py`
+  and not in the shared `grid_at_or_after`: `fit.py --duration 1.0014` on a 25 fps clip keeps 26
+  frames (`test_a_window_or_a_length_on_a_frame_time_keeps_that_frame`), and a tolerance in the
+  helper made it 25. Test: `test_a_time_given_in_milliseconds_is_read_back_to_its_frame`.
 - **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
   audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
   audio by the same seek margin and pads the audio to the segment origin
@@ -6435,3 +6445,14 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   for a 720x1280 frame). `--width 400` on a 1920-wide source still gives 400; `--width 4000`, or
   the default 1280 on a 720-wide source, gives the source's width. Sheets and `--compare` images
   are unchanged. Pinned by `test_a_frame_taken_to_look_at_is_not_enlarged` (tests/test_delivery.py).
+## After 4.3.4 — no child is given the caller's stdin (#664)
+
+- **Every process this skill starts has `stdin=DEVNULL`**: sibling scripts (`run_tool`,
+  `verify.py`'s steps) and every ffmpeg/ffprobe child started through `child_kwargs`. None of them
+  reads stdin (ffmpeg runs with `-nostdin`), and under the MCP server the caller's stdin is the
+  client's JSON-RPC pipe. On Windows a Python child that inherited it did not finish exiting while
+  the client held it open, so from 3.10.0 (worker-thread dispatch) no `tools/call` was answered
+  until the client hung up.
+- **The stdio tests read an answer before closing stdin.** The earlier ones closed it first, which
+  is the one sequence the defect did not show in. Pinned by
+  `test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open` (tests/test_contract.py).

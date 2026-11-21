@@ -1177,7 +1177,6 @@ def _fraction_rate(text: str) -> float:
 
 # the first frame at or after t on the source's grid; shared with the tools that cut both streams
 # on one set of bounds (#409)
-_grid_at_or_after = grid_at_or_after
 
 
 def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,
@@ -1223,8 +1222,8 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
             # output's grid, and the constant-rate output duplicated one (65 frames for 64 on
             # FFmpeg 6.1). The video trim sits half a frame before each grid point, so no FFmpeg
             # version rounds a frame on the boundary in or out.
-            a = m + (_grid_at_or_after(s, v0, rate) - s)
-            b = m + (_grid_at_or_after(e, v0, rate) - s)
+            a = m + (grid_at_or_after(s, v0, rate) - s)
+            b = m + (grid_at_or_after(e, v0, rate) - s)
             half = 0.5 / rate
         # both streams shift by the same constant, so an offset between them (audio that starts
         # late) survives; the audio is then padded to the segment's origin
@@ -1684,11 +1683,16 @@ def main() -> int:
     for s, e in segments:
         if total and s >= total:
             die(f"segment start {s:.3f}s is beyond the media duration {total:.3f}s")
-    segments = [(s, min(e, total) if total else e) for s, e in segments]
     # what was asked for, clamped to the media duration as in every 2.x release: requested_* and
     # expected_duration report this, and a segment the join below ends with the video (less than a
     # frame of sound trimmed) shows that trim in duration_delta_seconds and a note instead
-    requested = list(segments)
+    requested = [(s, min(e, total) if total else e) for s, e in segments]
+    # a start or end written in milliseconds is cut on the frame it reads back to (#653): the nearest
+    # frame when that is within half a millisecond either way (1.902 and 1.935 for the frames at
+    # 1.9019 and 1.93527), never one before the first; a sound-only output or a VFR picture has no
+    # grid. Here and not in grid_at_or_after, which every tool that cuts on a frame shares
+    on_frame = lambda t, rate=0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta), v0=stream_starts(meta)[0]: g if rate and (n := round((t - v0) * rate)) >= 0 and abs((g := v0 + n / rate) - t) <= 0.0005 else t
+    segments = [(on_frame(s), min(on_frame(e), total or math.inf)) for s, e in requested]
     video = meta.get("video") or {}
     if video.get("fps") and not is_audio_output(args.output or ""):
         # a video segment shorter than one frame has no picture to cut: a copy lands on a whole

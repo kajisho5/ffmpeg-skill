@@ -89,7 +89,7 @@ def main(force_route: Optional[str] = None) -> int:
                      help="which audio stream of the input to keep, 0-based in file order (probe.py lists them under "
                           "audio_streams) -- matters on a multi-track input (dubbed languages, M&E stems); default 0, "
                           "the first track, same as leaving it unset always did")
-    ap.add_argument("--template", choices=TEMPLATES, required=True)
+    ap.add_argument("--template", choices=TEMPLATES, required=True, help="graphic to draw: " + ", ".join(TEMPLATES))
     ap.add_argument("--brand", help="brand.json for colours, font, safe margin")
     ap.add_argument("--name", help="lower-third: name line")
     ap.add_argument("--title", help="title / chapter / bug / hook text, or lower-third second line")
@@ -108,8 +108,8 @@ def main(force_route: Optional[str] = None) -> int:
                          "(TikTok's description bar and like column, the Reels/Shorts chrome). An explicit --margin wins")
     ap.add_argument("--primary", help="override brand primary colour RRGGBB")
     ap.add_argument("--text-color", help="override text colour RRGGBB")
-    ap.add_argument("--font")
-    ap.add_argument("--font-file")
+    ap.add_argument("--font", help="font family (fontconfig name; default DejaVu Sans, or the --brand file's font)")
+    ap.add_argument("--font-file", help="explicit .ttf/.otf/.ttc path (use this for CJK fonts)")
     ap.add_argument("--lang", help="language code of the text (e.g. ja, zh, ko): the hint that says whether Han-only "
                                    "text is Chinese, Japanese or Korean when a font is picked by script")
     ap.add_argument("--scale", type=float, default=1.0, help="size multiplier (default 1)")
@@ -138,7 +138,7 @@ def main(force_route: Optional[str] = None) -> int:
                      help="emoji box as a multiple of the line's font size (default 1.0)")
     emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
-    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_alpha_args(ap)
     add_common(ap)
     args = ap.parse_args()
