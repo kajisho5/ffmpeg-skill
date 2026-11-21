@@ -2751,8 +2751,9 @@ What was decided there:
   external expectation. Generic decoder corruption stays outside this matcher.
 - Explicit copy repair (`-err_detect ignore_err`) keeps its salvage behavior, and
   `run_analysis(check=False)` still measures damage without this refusal. Repair accepts these
-  indexed truncated fixtures, but cannot restore missing media; the normal refusal asks for
-  another copy, not repair. A missing `moov` is still unreadable even with repair.
+  indexed truncated fixtures and writes their available media as an editable copy, but cannot
+  restore missing media. The hint offers this salvage path when the recording's index survives.
+  A missing `moov` is still unreadable even with repair.
 
 ## 2.24 — export.py --repair
 

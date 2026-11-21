@@ -895,7 +895,7 @@ FFMPEG_FAILURE_CLASSES = (
     (re.compile(r"No such filter: '([^']+)'|Filter '?([\w-]+)'? not found"),
      "filter_missing", "this ffmpeg build has no {0} filter: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"),
     (re.compile(r"moov atom not found|" + INCOMPLETE_INPUT.pattern), "input_incomplete",
-     "the input is incomplete: copy it again from its source; a missing index or missing media cannot be rebuilt"),
+     "the input is incomplete: copy it again from its source; if the recording itself was cut off but has its index, `export --preset copy --repair` writes the part that is there so it can be edited; a missing index cannot be rebuilt"),
     (re.compile(r"Invalid data found when processing input"), "input_unreadable",
      "ffmpeg cannot read the input as media: check that it plays and finished copying; `check.py --content` names damaged spans in a file that does"),
 )

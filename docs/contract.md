@@ -1037,7 +1037,8 @@ An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 c
 `encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
 get one that has it), `input_incomplete` ("moov atom not found", "File ended prematurely", or
 MOV/MP4's offset-specific "partial file", even with exit 0; missing media cannot be rebuilt)
-and `input_unreadable`. Explicit copy repair still measures damage without this refusal.
+and `input_unreadable`. Explicit copy repair still measures damage without this refusal and
+writes the available part for editing if the input's index survives.
 After 3.8.4 an ffmpeg
 command a tool runs through `run()` that names an encoder (`-c:v`/`-c:a`/`-c:s` and their
 spellings, after the last input, for a stream kind the output keeps: not one `-an`/`-vn`/`-sn`

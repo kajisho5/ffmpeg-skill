@@ -64,7 +64,8 @@ class TruncatedInputTests(unittest.TestCase):
                         self.assertEqual(doc["ffmpeg_returncode"], 0)
                         self.assertIn(str(short), doc["error"]["message"])
                         self.assertIn(marker, doc["error"]["message"])
-                        self.assertNotIn("repair", doc["error"]["hint"])
+                        self.assertIn("export --preset copy --repair", doc["error"]["hint"])
+                        self.assertIn("missing index cannot be rebuilt", doc["error"]["hint"])
                         self.assertFalse(out.exists(), "partial output removed")
                         self.assertEqual(len(doc["commands"]), 1, "no subtitle/data fallback encode")
                         original = b"existing deliverable"
@@ -102,6 +103,14 @@ class TruncatedInputTests(unittest.TestCase):
             self.assertEqual(doc["status"], "completed")
             self.assertGreater(doc["repair"]["before"]["decode_errors"], 0)
             self.assertTrue(out.exists())
+            edited = self.dir / f"repaired-crop-{short.suffix[1:]}.mp4"
+            proc = script("crop.py", out, "--x", "0", "--y", "0", "--width", "80", "--height", "60",
+                          "--overwrite", "-o", edited, "--json")
+            cropped = json.loads(proc.stdout)
+            self.assertEqual(cropped["status"], "completed")
+            self.assertTrue(cropped["verified"])
+            self.assertNotRegex(proc.stderr, r"File ended prematurely|partial file")
+            self.assertAlmostEqual(probe(str(edited))["duration"], 1.3, delta=0.3)
 
     def test_marker_scope(self):
         from _common.runner import INCOMPLETE_INPUT, classify_ffmpeg_failure
