@@ -15,6 +15,22 @@
 - **`broll.py --audio b|mix` keeps a 5.1 A-roll in 5.1 (#470).** It was folded to stereo with
   `verified: true`. Mono and stereo A-rolls are mixed in stereo as before.
 
+## 4.5.1
+
+_Automated release: version and notes generated from pull requests merged since 4.5.0._
+
+### Fixed
+
+- **A forced frame rate relabels the start timecode in every tool that takes `--fps` (#470).**
+  `proxy.py`, `denoise.py`, `crop.py`, `redact.py`, `straighten.py` and `sphere.py --fps 50` on a
+  25 fps source starting 01:00:00:12 kept 01:00:00:12; it is 01:00:00:24 at 50 now, as `fit.py`
+  already wrote.
+- **`audio.py` keeps the picture as the first stream (#470).** With the picture kept (`--voice`,
+  `--music`, `--replace`, ...) the sound was stream 0.
+- **`broll.py --audio b|mix` keeps a 5.1 A-roll in 5.1 (#470).** It was folded to stereo with
+  `verified: true`. Mono and stereo A-rolls are mixed in stereo as before.
+- fix: a forced frame rate relabels the timecode, audio.py keeps the picture first, broll keeps 5.1 (#695)
+
 ## 4.5.0
 
 _Automated release: version and notes generated from pull requests merged since 4.4.2._
