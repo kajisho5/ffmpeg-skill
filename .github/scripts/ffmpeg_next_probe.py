@@ -94,24 +94,37 @@ def main():
     sh("ffmpeg", "-y", "-v", "error", "-ss", "2.5", "-i", src12, "-vn", "-c:a", "pcm_s16le", lav)
     sine = WORK / "sine95.wav"
     sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=660:d=9.5:r=48000", sine)
-    for f in (lav, take, sine):
-        print(f.name, sh("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,sample_rate,channels,channel_layout,start_time,duration,duration_ts,sample_fmt", "-of", "csv=p=0", f)[1].decode().strip())
-    print("-- sound alone, to nowhere: which filter chain never ends")
-    for source, chains in ((lav, ("anull", "adelay=2500:all=1", "adelay=2500", "adelay=2500|2500", "adelay=120000S:all=1", "aformat=channel_layouts=mono,adelay=2500:all=1",
-                                  "aresample=48000,adelay=2500:all=1", "asetpts=PTS+2.5/TB,aresample=async=1:first_pts=0", "adelay=2500:all=1,apad=whole_dur=12",
-                                  "adelay=2500:all=1,atrim=end=11", "adelay=2400:all=1", "adelay=2500:all=1,asetnsamples=1024")),
-                          (sine, ("adelay=2500:all=1", "adelay=2500:all=1,apad=whole_dur=12")),
-                          (take, ("aresample=async=1:first_pts=0", "adelay=1000:all=1", "aresample=async=1:first_pts=0,adelay=1000:all=1", "aresample=async=1:first_pts=0,adelay=900:all=1",
-                                  "asetpts=PTS+1/TB,aresample=async=1:first_pts=0"))):
-        for chain in chains:
-            for sink in (["-f", "null", "-"], ["-c:a", "aac", WORK / "alone.m4a"]):
-                code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", source, "-vn", "-af", chain, *sink, timeout=20)
-                print(source.name, "|", chain, "|", "null" if sink[0] == "-f" else "aac", "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", err[-160:])
-    print("-- under the copied picture, -t 12")
-    for chain in ("adelay=2500:all=1,apad", "asetpts=PTS+2.5/TB,aresample=async=1:first_pts=0,apad", "adelay=2400:all=1,apad"):
-        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src12, "-f", "wav", "-i", lav, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
-                                "-af", chain, "-c:a", "aac", "-b:a", "192k", "-t", "12.000", WORK / "under.mp4", timeout=20)
-        print(chain, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else json.dumps({k: counts(WORK / "under.mp4", 48000)[k] for k in ("decoded_samples", "stream")}), err[-160:])
+    nob = WORK / "source_nob.mp4"
+    sh("ffmpeg", "-y", "-v", "error", "-i", src12, "-c:v", "libx264", "-preset", "veryfast", "-bf", "0", "-c:a", "copy", nob)
+    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+    out = WORK / "under.mp4"
+    tail = ["-c:a", "aac", "-b:a", "192k", "-t", "12.000", out]
+    pic, snd, lead = ["-i", src12], ["-f", "wav", "-i", lav], "adelay=2500:all=1,apad"
+    print("-- a late sound under a copied picture, -t 12: what lets it end")
+    for label, cmd in (
+            ("as sync writes it", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead] + tail),
+            ("no delay (control)", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", "apad"] + tail),
+            ("delay 100 ms", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", "adelay=100:all=1,apad"] + tail),
+            ("delay 1000 ms", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", "adelay=1000:all=1,apad"] + tail),
+            ("sound input first", base + snd + pic + ["-map", "1:v:0", "-map", "0:a:0", "-c:v", "copy", "-af", lead] + tail),
+            ("-filter_complex", base + pic + snd + ["-filter_complex", f"[1:a:0]{lead}[a]", "-map", "0:v:0", "-map", "[a]", "-c:v", "copy"] + tail),
+            ("-max_muxing_queue_size 9999", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead, "-max_muxing_queue_size", "9999"] + tail),
+            ("-thread_queue_size 4096", base + ["-thread_queue_size", "4096"] + pic + ["-thread_queue_size", "4096"] + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead] + tail),
+            ("-itsoffset 2.5 and aresample", base + pic + ["-itsoffset", "2.5"] + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", "aresample=async=1:first_pts=0,apad"] + tail),
+            ("picture encoded", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-preset", "ultrafast", "-af", lead] + tail),
+            ("picture without B-frames", base + ["-i", nob] + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead] + tail),
+            ("-shortest in place of -t", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead, "-c:a", "aac", "-shortest", out]),
+            ("-t 12 on the picture input too", base + ["-t", "12"] + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead] + tail),
+            ("silence joined ahead (concat)", base + pic + ["-f", "lavfi", "-t", "2.5", "-i", "anullsrc=r=48000:cl=mono"] + snd + ["-filter_complex", "[1:a][2:a]concat=n=2:v=0:a=1,apad[a]", "-map", "0:v:0", "-map", "[a]", "-c:v", "copy"] + tail),
+            ("-filter_threads 1 -threads 1", base + ["-filter_threads", "1"] + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead, "-threads", "1"] + tail),
+            ("to mkv", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead, "-c:a", "aac", "-t", "12.000", WORK / "under.mkv"]),
+            ("sound to pcm in mov", base + pic + snd + ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", lead, "-c:a", "pcm_s16le", "-t", "12.000", WORK / "under.mov"])):
+        code, _, err, took = sh(*cmd, timeout=20)
+        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "ok", err[-160:])
+    print("-- two steps: the sound alone, then both copied")
+    c1, _, e1, t1 = sh(*base, *snd, "-af", "adelay=2500:all=1,apad=whole_dur=12", "-c:a", "aac", "-b:a", "192k", WORK / "lead.m4a", timeout=20)
+    c2, _, e2, t2 = sh(*base, *pic, "-i", WORK / "lead.m4a", "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-t", "12.000", out, timeout=20)
+    print("step 1 exit", c1, f"{t1:.1f}s", e1[-100:], "| step 2 exit", c2, f"{t2:.1f}s", e2[-100:], json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}) if c2 == 0 else "")
 
 if __name__ == "__main__":
     main()
