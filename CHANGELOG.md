@@ -6,6 +6,12 @@
 
 (nothing yet)
 
+## 4.3.3
+
+_Automated release: version and notes generated from pull requests merged since 4.3.2._
+
+- fix: leave unestablished fonts-dir selections unresolved (#662)
+
 ## 4.3.2
 
 _Automated release: version and notes generated from pull requests merged since 4.3.1._

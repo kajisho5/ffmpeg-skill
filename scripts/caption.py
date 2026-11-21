@@ -1972,25 +1972,20 @@ def main() -> int:
         font_used = record_font_choice(font_choice(ass_font_name(args.font), script_file=font_file, script_family=font_family,
                                                    renderer="libass", bold=bool(args.bold)))
     else:
-        # libass looks the family up in the folder first and asks fontconfig when no face there
-        # has its name, so a folder without it drew another face and the result said
-        # substituted: false (#531). The folder is read for a face of that name; without one, the
-        # family is resolved as it is with no --fonts-dir (a substitution when that is another family).
+        # A literal directory miss does not rule out a fontconfig alias to a loaded face.
         asked = ass_font_name(args.font)
         face, found = fonts_dir_face(args.fonts_dir, asked, bold=bool(args.bold))
         if found is False:
-            note(f"font: no face in {args.fonts_dir} is named '{asked}', so libass asks fontconfig for it as without --fonts-dir")
-            font_used = dict(record_font_choice(font_choice(asked, renderer="libass", bold=bool(args.bold))), fonts_dir=args.fonts_dir)
-        else:
-            if found is None:
-                note(f"font: whether {args.fonts_dir} holds a face named '{asked}' could not be read (no fc-scan); "
-                     "font_used reports it as asked")
-            elif face is None:
-                note(f"font: {args.fonts_dir} holds '{asked}' only in other styles than the one asked "
-                     f"({'bold' if args.bold else 'regular'}, upright); libass picks among those and the installed "
-                     "faces of the family, so font_used names no file (not measured)")
-            font_used = {"asked": asked, "file": face, "family": asked, "how": "fonts_dir",
-                         "fonts_dir": args.fonts_dir, "substituted": False}
+            note(f"font: no outline face in {args.fonts_dir} is named '{asked}'; libass may pick a directory face through a fontconfig alias, so the face is not established")
+        elif found is None:
+            note(f"font: whether {args.fonts_dir} holds a face named '{asked}' could not be read (fc-scan unavailable or incomplete metadata); "
+                 "font_used reports it as asked")
+        elif face is None:
+            note(f"font: {args.fonts_dir} holds '{asked}' only in other styles than the one asked "
+                 f"({'bold' if args.bold else 'regular'}, upright); libass picks among those and the installed "
+                 "faces of the family, so font_used names no file (not measured)")
+        font_used = {"asked": asked, "file": face, "family": asked, "how": "fonts_dir",
+                     "fonts_dir": args.fonts_dir, "substituted": False}
     if font_file:
         args.font = font_family or args.font
         if not args.fonts_dir:
