@@ -17,12 +17,22 @@ WORK = Path(tempfile.mkdtemp(prefix="ffnext_"))
 
 
 def sh(*cmd, timeout=180):
+    """Run with a time limit. On Windows the feed's `ffmpeg` is a shim that starts the real one: killing
+    the shim leaves its child holding the pipes, so the whole tree is ended before the pipes are read."""
     started = time.time()
+    p = subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        p = subprocess.run([str(c) for c in cmd], capture_output=True, timeout=timeout)
-        return p.returncode, p.stdout, p.stderr.decode("utf-8", "replace"), time.time() - started
-    except subprocess.TimeoutExpired as e:
-        return None, e.stdout or b"", (e.stderr or b"").decode("utf-8", "replace"), time.time() - started
+        out, err = p.communicate(timeout=timeout)
+        return p.returncode, out, err.decode("utf-8", "replace"), time.time() - started
+    except subprocess.TimeoutExpired:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        p.kill()
+        try:
+            out, err = p.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b"(pipes still held)"
+        return None, out or b"", (err or b"").decode("utf-8", "replace"), time.time() - started
 
 
 def counts(path, rate):
@@ -93,9 +103,6 @@ def main():
             ("-t as an input option of the picture too", as_left, ["-t", "8.000"], ["-c:v", "copy"], ["-fflags", "+shortest", "-max_interleave_delta", "0"])):
         out = WORK / "clock_out.mp4"
         code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", ref8, "-i", take, "-map", "0:v:0", "-map", "1:a:0", *video, *extra, "-af", af, "-c:a", "aac", "-b:a", "192k", *tail, out, timeout=30)
-        if code is None and sys.platform == "win32":
-            sh("taskkill", "/F", "/IM", "ffmpeg.exe")
-            time.sleep(1)
         print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT, file so far " + str(out.stat().st_size if out.exists() else None) if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
 
 if __name__ == "__main__":
