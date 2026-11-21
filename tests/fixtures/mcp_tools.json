@@ -47,6 +47,7 @@
    "music_fade_out",
    "music_loop",
    "music_volume",
+   "mute",
    "on_silent",
    "output",
    "overwrite",

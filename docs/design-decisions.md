@@ -6442,6 +6442,11 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   the displayed picture on either side, so every other command is the one it was. It does not
   restore detail a 406x720 crop does not have (2.7x to 1080x1920); it keeps edges from softening
   further. A learned upscaler needs a model file and is outside what this skill ships.
+- **`audio.py --mute` removes the sound in one call** (same request): the picture and its
+  subtitles are copied and no sound track is written. The one way before was `proxy.py --no-audio`,
+  which re-encodes the picture; on the 24-request benchmark the three small models spent their 20
+  turns looking for a direct option. Nothing else is done in that run, and a sound-only input or
+  output is refused. Pinned by `test_the_sound_is_removed_in_one_call`.
 - **SKILL.md's "make it vertical" row asks for `--width 1080`**, so the first call writes 1080x1920.
 - Pinned by `test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos`
   (tests/test_delivery.py).

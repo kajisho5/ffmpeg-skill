@@ -13444,6 +13444,22 @@ class StumbleLedgerTests(unittest.TestCase):
             listed = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "json", str(out)], capture_output=True, text=True).stdout)["chapters"]
             self.assertEqual([(float(c["start_time"]), c["tags"]["title"]) for c in listed], [(0.0, "Intro"), (4.0, "Main part")])
 
+    def test_the_sound_is_removed_in_one_call(self):
+        """'Remove the sound' had no direct option: the one way was proxy.py --no-audio, which
+        re-encodes the picture, and three small models spent 20 turns each looking for another.
+        audio.py --mute copies the picture and writes no sound track."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            run = lambda src, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / "audio.py"), src, *argv, "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", timeout=300)
+            doc = json.loads(run(clip, "--mute", "-o", str(Path(tmp) / "m.mp4")).stdout)
+            self.assertEqual((doc["status"], doc["verified"], doc["lossless"], doc["probe"].get("audio")), ("completed", True, True, None))
+            self.assertIn("-c copy", doc["commands"][-1])
+            source = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "probe.py"), clip, "--json"], capture_output=True, text=True, encoding="utf-8").stdout)
+            self.assertAlmostEqual(doc["probe"]["duration"], source["duration"], delta=0.1)
+            refused = json.loads(run(clip, "--mute", "-o", str(Path(tmp) / "m.wav")).stdout)
+            self.assertEqual(refused["error"]["kind"], "input")
+
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
     # no other tool may take one, and a name two tools share means one thing and one type.
