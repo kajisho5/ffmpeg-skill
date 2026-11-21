@@ -119,6 +119,20 @@ class TruncatedInputTests(unittest.TestCase):
         self.assertEqual(doc["error"]["reason"], "input_incomplete")
         self.assertIn(str(broken), doc["error"]["message"])
 
+    def test_filename_masking_preserves_genuine_diagnostics(self):
+        for name in ("No space left on device", str(self.dir / "No space left on device")):
+            for cmd in (["ffmpeg", "-i", name, "out.mkv"], ["ffmpeg", "-i", "in.mkv", name]):
+                stderr = f"Error opening output file {cmd[-1]}.\nError opening output files: No space left on device\n"
+                ctx = runner.Context()
+                ctx.json = True
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    runner._fail(cmd, 1, stderr, ctx=ctx)
+                doc = json.loads(output.getvalue())
+                self.assertEqual(doc["error"]["reason"], "disk_full")
+                self.assertIn("No space left on device", doc["error"]["message"])
+                self.assertIn("space", doc["error"]["hint"])
+
     def test_incomplete_failure_keeps_explicit_context(self):
         ctx = runner.Context()
         ctx.json = ctx.hw = True

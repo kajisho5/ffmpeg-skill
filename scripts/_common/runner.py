@@ -944,7 +944,7 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
                  if why is None else f"VideoToolbox refused it ({why}) and no CPU encoder line was recorded to retry with"))
         extra = {"encoder": enc, "hw": report}
     for path in (p for arg in (*shape_of(cmd).inputs, str(cmd[-1])) for p in (arg, os.path.basename(arg)) if diagnostic is None and p not in ("", "-") and classify_ffmpeg_failure(p)):
-        stderr = stderr.replace(path, "<path>")
+        stderr = re.sub(r"(?m)(^|(?:file|input|output|for|to) ['\"]?)" + re.escape(path) + r"(?=['\"]|:|\.(?:\s|$))", r"\1<path>", stderr)
     cls = classify_ffmpeg_failure(stderr if diagnostic is None else diagnostic)
     if cls:
         extra["hint"] = cls[1]

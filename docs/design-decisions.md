@@ -2745,9 +2745,10 @@ What was decided there:
   completion step. `TruncatedInputTests` generates indexed MKV and faststart MP4 files, cuts
   their payloads, and checks both paths, an existing output, clean inputs, short trims and VFR.
   Classification uses the matched diagnostic, not the displayed input names; other failures
-  redact known input/output names containing error markers before classification, without
+  redact known input/output names containing error markers in filename contexts before classification, without
   changing the displayed stderr. `TruncatedInputTests` covers a misleading filename on both
-  paths and an explicit request context, which every attempt forwards to the failure report.
+  paths, genuine diagnostics equal to a basename, and an explicit request context, which every
+  attempt forwards to the failure report.
 - This is not a duration comparison or a general corruption refusal. Short/sparse streams,
   stills, VFR and requested trims do not become invalid because of their lengths. A TS prefix
   ending at a clean packet/PES boundary can look exactly like a legitimate shorter recording:
