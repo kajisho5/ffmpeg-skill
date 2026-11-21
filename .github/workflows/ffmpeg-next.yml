@@ -26,7 +26,13 @@ jobs:
       - name: Install the newest ffmpeg
         shell: pwsh
         run: |
-          choco install ffmpeg -y --no-progress
+          # the feed answers 503 under load (twice in a row on 2026-11-21): retry with backoff, as ci.yml does
+          for ($i = 1; $i -le 5; $i++) {
+            choco install ffmpeg -y --no-progress $(if ($i -gt 1) { '--force' })
+            if ($LASTEXITCODE -eq 0 -and (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { break }
+            if ($i -eq 5) { exit 1 }
+            Start-Sleep -Seconds (20 * $i)
+          }
           ffmpeg -version | Select-Object -First 1
       - name: Probe
         shell: bash
