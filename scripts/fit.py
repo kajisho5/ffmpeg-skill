@@ -49,7 +49,7 @@ from fractions import Fraction
 from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis
-from _common.decision import SEEK_MARGIN, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
+from _common.decision import SEEK_MARGIN, enlarge_args, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
@@ -591,6 +591,9 @@ def main() -> int:
     if args.aspect or args.width or args.height:
         # the one sizing rule, shared with render.py --export-timeline's sequence frame
         out_w, out_h = frame_size(parse_aspect(args.aspect) if args.aspect else None, args.width, args.height, sw, sh)
+        post += enlarge_args(meta, out_w, out_h)
+        if args.aspect and not (args.width or args.height) and out_w * out_h < sw * sh and out_w < (usual := (1080, 1920)[out_w > out_h]):
+            note(f"the frame is {out_w}x{out_h}: --aspect alone keeps the source's size and never enlarges; --width {usual} gives the usual delivery frame of this shape (enlarged {usual / out_w:.2g}x)")
         if args.fit == "crop" and sw and sh:
             # The scaled frame's margin on each axis is a multiple of 4 and the offset is computed
             # here, to even: crop floors an odd offset to the chroma grid of a 4:2:0 frame, so

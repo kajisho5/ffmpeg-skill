@@ -113,7 +113,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "smooth slow motion" | `fit.py in.mp4 --duration 20 --smooth interpolate` (a 10 s clip at half speed; `--duration` is the target length) |
 | "reverse this clip" | `reverse.py in.mp4` |
 | "loop it to fill 30 seconds", "seamless loop" | `loop.py clip.mp4 --duration 30` (`--crossfade 0.5` hides the seam) |
-| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --fit pad` (or `crop`, `blur`) |
+| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --width 1080 --fit crop` (1080x1920; `pad` keeps all of it with bars, `blur` with a blurred background; without `--width` the source's size is kept) |
 | "resize to a height/width" | `fit.py in.mp4 --height 1080` |
 | "crop to this exact box" | `crop.py in.mp4 --x 100 --y 0 --width 1080 --height 1920` |
 | "rotate 90 degrees", "mirror it" | `fit.py in.mp4 --rotate 90` (`--flip h`) |

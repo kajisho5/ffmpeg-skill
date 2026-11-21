@@ -117,6 +117,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
 - [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
 - [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
+- [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
 <!-- contents:end -->
 
 ## Time limits
@@ -6426,3 +6427,21 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 - **One place:** `decision.pad_filters`, where `export.py` and `fit.py` build a solid-colour pad, so
   `render.py`'s fit stage says it too. Pinned by
   `test_a_picture_that_is_mostly_bars_in_the_frame_is_said` (tests/test_delivery.py).
+
+## After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)
+
+- **`fit.py --aspect` alone still keeps the source's size.** That is the earlier decision (a 9:16
+  from 1920x1080 once came out 1920x3414, enlarged 3x unasked) and it stands: a 1280x720 clip made
+  9:16 is 406x720. What was missing is the next sentence. When `--aspect` alone made the frame
+  smaller than the source and narrower than the usual delivery frame of its shape (1080 wide for
+  portrait and square, 1920 for landscape), a note names the frame written and the `--width` that
+  gives the usual one, with the factor it enlarges by. The default is not changed: it would change
+  the size of every such result in 4.x.
+- **A frame larger than the picture is enlarged with Lanczos** (`-sws_flags lanczos`) in `fit.py`
+  and `export.py`, in place of swscale's default bicubic. Added only where the frame is larger than
+  the displayed picture on either side, so every other command is the one it was. It does not
+  restore detail a 406x720 crop does not have (2.7x to 1080x1920); it keeps edges from softening
+  further. A learned upscaler needs a model file and is outside what this skill ships.
+- **SKILL.md's "make it vertical" row asks for `--width 1080`**, so the first call writes 1080x1920.
+- Pinned by `test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos`
+  (tests/test_delivery.py).

@@ -50,7 +50,7 @@ from typing import Dict, List, Optional
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common.color import bt709_matrix_filter, hdr_rgb_matrix_args, hdr_rgb_matrix_filter
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
-from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
+from _common.decision import chain_with_rate, enlarge_args, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
@@ -774,7 +774,7 @@ def main() -> int:
         video = hw_preset_video(video, meta, bt709=tag_bt709)
     if args.max_mb is not None:
         video = size_video_args(args, video, p, meta, has_audio)
-    cmd += video
+    cmd += video + enlarge_args(meta, *((None, None) if args.no_scale else (p["w"], p["h"])))
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
