@@ -117,11 +117,9 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "keep only these parts", "remove the middle" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` (`--remove 1:00-1:30`) |
 | "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
 | "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
-| "the first 15 seconds, vertical" (a length and a shape) | one call: `fit.py in.mp4 --duration 15 --method trim --aspect 9:16 --fit crop` (exact length; a lossless `cut.py` ends on a packet, up to a GOP late) |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
-| "cut out the pauses", "jump cuts" | `silence.py in.mp4` |
+| "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`) |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
-| "just the real pauses, not inside a sentence" | `silence.py in.mp4 --speech-aware` |
 | "tighter inside a sentence, more room after one" | `silence.py in.mp4 --words w.json --min-silence 0.2 --sentence-min-silence 0.3 --sentence-margin-tail 0.3` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |
@@ -140,13 +138,11 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "it's grainy, clean it up" | `denoise.py in.mp4 --strength medium` |
 | "blur this face/plate", "remove this fixed logo" (known box) | `redact.py in.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` (`--mode delogo`) |
 | "stabilize this shaky footage" | `stabilize.py in.mp4` |
-| "are there black bars on this?" | `cropdetect.py in.mp4` |
+| "are there black bars on this?", "where does the subject move" | `cropdetect.py in.mp4` (`--motion-centre`) |
 | "iPhone HDR / Dolby Vision looks washed out" | `color.py clip.mov --to-sdr` (`--strip-dovi` keeps HDR) |
-| "apply this LUT", "convert the S-Log footage" | `color.py in.mp4 --lut grade.cube` |
-| "the colours are tagged wrong" | `color.py in.mp4 --retag bt709` |
+| "apply this LUT", "convert the S-Log footage", "the colours are tagged wrong" | `color.py in.mp4 --lut grade.cube` (`--retag bt709`) |
 | "brighten it", "fix white balance" | `color.py in.mp4 --correct --exposure 0.3 --temperature 5600` |
-| "burn in captions from this SRT", "caption it with these lines" | `caption.py in.mp4 --srt subs.srt` (`--text cues.txt`) |
-| "keep the subtitles toggleable" | `caption.py in.mp4 --srt subs.srt --mode mux` |
+| "burn in captions from this SRT", "caption it with these lines", "keep the subtitles toggleable" | `caption.py in.mp4 --srt subs.srt` (`--text cues.txt`; `--mode mux` keeps them toggleable) |
 | "captions are three lines on a Short" | `caption.py in.mp4 --srt subs.srt --max-lines 2` (keep the template's value; the size shrinks) |
 | "transcribe it and caption it", "words popping" | `caption.py in.mp4 --transcribe --animate pop --karaoke` |
 | "our logo top-right", "a watermark" | `overlay.py in.mp4 --image logo.png --position top-right --scale 200` |
@@ -155,30 +151,26 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "remove the green screen" | `overlay.py bg.mp4 --video green.mp4 --chromakey 0x00ff00` |
 | "a lower third", "hook card", "sticker", "meme text" | `graphics.py in.mp4 --template lower-third --name "..."` (or `hook`, `sticker`, `meme`) |
 | "use our brand fonts/colours/logo" | `--brand brand.json` on caption/overlay/graphics |
-| "sync the lav mic", "line up two cameras" | `sync.py camera.mp4 mic.wav --replace-audio` |
-| "the audio drifts out of sync" | `sync.py camera.mp4 rec.wav --fix-drift --replace-audio` |
+| "sync the lav mic", "line up two cameras", "the audio drifts out of sync" | `sync.py camera.mp4 mic.wav --replace-audio` (`--fix-drift` for drift) |
 | "normalise to -14 LUFS", "streaming and broadcast versions" | `loudness.py in.mp4` (`--versions streaming,ebu-r128`) |
 | "clean up the audio", "remove the hiss" | `audio.py in.mp4 --voice` (or `--denoise`) |
 | "music under the talking", "duck harder" | `audio.py in.mp4 --music bed.mp3 --duck --fade-out 3` |
 | "convert the 5.1 to stereo", "wider stereo" | `audio.py in.mov --downmix` (`--stereo-widen 0.5`) |
 | "swap in the narration track" | `audio.py in.mp4 --replace narration.wav` |
 | "give me the sound as WAV" | `audio.py in.mp4 -o in.wav` |
-| "speed the line up, same pitch", "exactly 96000 samples long" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` |
-| "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
+| "speed the line up, same pitch", "exactly 96000 samples long", "just the third mic", "resample to 48 kHz" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` (`--channel 2 --sample-rate 48000`) |
 | "fade in", "fade out to black" | `fit.py in.mp4 --fade-in 1 --fade-out 1` (picture and sound; sound alone: `audio.py --fade-in`) |
 | "remove the sound", "mute it" | `audio.py in.mp4 --mute` (the picture is copied; no sound track) |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
 | "make this a Reel / TikTok / Short / YouTube", "post it everywhere" | `render.py --template reels in.mp4 --cues cues.txt` (`--template all` for every platform; platform-sized export; 9:16 alone specifies shape) |
-| "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
+| "export for YouTube / Reels / X", "make a GIF preview", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`gif`, `prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
 | "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` (a preset of the clip's shape: `reels`/`shorts` for 9:16) |
 | "a Reel of the first 15 seconds" | `export.py in.mp4 --preset reels --fit crop --duration 15` |
-| "make a GIF preview" | `export.py in.mp4 --preset gif` |
 | "the recording is corrupted" | `export.py in.mp4 --preset copy --repair` |
 | "a small proxy file" | `proxy.py in.mp4 --width 640` |
-| "is this OK to upload?" | `check.py final.mp4 --platform reels` |
+| "is this OK to upload?", "is it broadcast legal?" | `check.py final.mp4 --platform reels` (`--levels ebu-r103`; clamp: `color.py in.mp4 --correct --legalize ebu-r103`) |
 | "how much quality was lost" / "did anything else change?" | `check.py final.mp4 --compare master.mp4` / `check.py new.mp4 --compare old.mp4 --expect-changed 12-18` (or `none`) |
-| "is it broadcast legal?" | `check.py final.mp4 --levels ebu-r103` (clamp: `color.py in.mp4 --correct --legalize ebu-r103`) |
 | "send me a summary of what you did" | `report.py --before raw.mov --after final.mp4 -o report.html` |
 | "title card", "Ken Burns on a photo" | `insert.py title.png --duration 3` (`--zoom in --pan right`) |
 | "a blank colour clip" | `background.py -o bg.mp4 --duration 3 --width 1920 --height 1080 --color 0x101010` |
@@ -199,7 +191,6 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "what's in this file", "is it Log?" | `probe.py in.mp4` (`--analyze`) |
 | "show me what it looks like", "title safe" | `look.py out.mp4 --tiles 3x2`, then view the PNG (`--at T --guides title,action`) |
 | "static vs moving shots", "speech or music" | `scenes.py in.mp4 --shots` (`--audio-peaks`, `--speech`) |
-| "where does the subject move" | `cropdetect.py in.mp4 --motion-centre` |
 | "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |
 
 ## Things that look right but are wrong
