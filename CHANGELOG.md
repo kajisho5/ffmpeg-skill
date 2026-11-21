@@ -4,7 +4,14 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **MCP on Windows: a `tools/call` is answered while the client keeps its pipe open (#664).** From
+  3.10.0 the response was written only when the client closed stdin: the tool ran and wrote its
+  file, but its process had inherited the server's stdin (the client's JSON-RPC pipe) and did not
+  finish exiting while that stayed open. A client that waits for the answer waited for ever. Every
+  child this skill starts now gets its own stdin. Reported, traced and fixed in one word by
+  @haikal2715.
 
 ## 4.3.4
 

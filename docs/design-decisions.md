@@ -117,6 +117,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
 - [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
 - [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
+- [After 4.3.4 — no child is given the caller's stdin (#664)](#after-434--no-child-is-given-the-callers-stdin-664)
 <!-- contents:end -->
 
 ## Time limits
@@ -6426,3 +6427,15 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 - **One place:** `decision.pad_filters`, where `export.py` and `fit.py` build a solid-colour pad, so
   `render.py`'s fit stage says it too. Pinned by
   `test_a_picture_that_is_mostly_bars_in_the_frame_is_said` (tests/test_delivery.py).
+
+## After 4.3.4 — no child is given the caller's stdin (#664)
+
+- **Every process this skill starts has `stdin=DEVNULL`**: sibling scripts (`run_tool`,
+  `verify.py`'s steps) and every ffmpeg/ffprobe child started through `child_kwargs`. None of them
+  reads stdin (ffmpeg runs with `-nostdin`), and under the MCP server the caller's stdin is the
+  client's JSON-RPC pipe. On Windows a Python child that inherited it did not finish exiting while
+  the client held it open, so from 3.10.0 (worker-thread dispatch) no `tools/call` was answered
+  until the client hung up.
+- **The stdio tests read an answer before closing stdin.** The earlier ones closed it first, which
+  is the one sequence the defect did not show in. Pinned by
+  `test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open` (tests/test_contract.py).

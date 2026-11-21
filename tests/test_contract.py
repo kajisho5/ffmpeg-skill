@@ -12425,6 +12425,50 @@ class SharedCodeAudit465Tests(unittest.TestCase):
                 except (OSError, ValueError):
                     pass
 
+    def test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open(self):
+        """#664: on Windows no tools/call was answered until the client closed stdin. The tool ran
+        and wrote its file; its Python process had inherited the server's stdin, the client's
+        JSON-RPC pipe, and did not finish exiting while that pipe was open, so the worker never got
+        to write the response. Every other stdio test here closes stdin before it reads an answer,
+        which is how three majors shipped with it. This one reads the answer first."""
+        clip = self.work / "mcp_open_pipe.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:d=1", "-c:v", "libx264", "-preset", "ultrafast", str(clip))
+        srv = subprocess.Popen([sys.executable, str(ROOT / "mcp" / "server.py")], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        import queue
+        import threading
+        lines: "queue.Queue[str]" = queue.Queue()
+        threading.Thread(target=lambda: [lines.put(l) for l in srv.stdout], daemon=True).start()
+        try:
+            for obj in ({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}},
+                        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "probe", "arguments": {"argv": [str(clip), "--json"]}}}):
+                srv.stdin.write(json.dumps(obj) + "\n")
+                srv.stdin.flush()
+            self.assertEqual(json.loads(lines.get(timeout=30))["id"], 1)
+            answer = json.loads(lines.get(timeout=60))  # stdin is still open here
+            self.assertEqual(answer["id"], 2)
+            self.assertFalse(answer["result"].get("isError"), answer)
+            self.assertIsNone(srv.poll(), "the server is still serving")
+        finally:
+            srv.kill()
+            srv.wait()
+            for pipe in (srv.stdin, srv.stdout):
+                try:
+                    pipe.close()
+                except (OSError, ValueError):
+                    pass
+        # and on every platform: no child this skill starts is given the caller's stdin
+        from unittest import mock
+        runner = importlib.import_module("_common.runner")
+        self.assertIs(runner.child_kwargs()["stdin"], subprocess.DEVNULL)
+        for call, where in ((lambda: runner.run_tool([str(SCRIPTS / "probe.py"), "--help"]), runner.subprocess),):
+            with mock.patch.object(where, "Popen", side_effect=RuntimeError("stop")) as popen:
+                with self.assertRaises(RuntimeError):
+                    call()
+            self.assertIs(popen.call_args.kwargs.get("stdin"), subprocess.DEVNULL)
+        self.assertIn("stdin=subprocess.DEVNULL", (SCRIPTS / "verify.py").read_text(encoding="utf-8"))
+
     def test_mcp_hdr_prompt_strip_dovi_changes_the_recipe(self):
         """A23: the hdr prompt took strip_dovi and filled the same message with or without it."""
         def text(args):
