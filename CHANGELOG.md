@@ -4,12 +4,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- **`font_used.substituted` is `null` where no face was established (#663).** `caption.py
-  --fonts-dir` with no face of the asked name, `--ass`, and a family looked up by name reported
-  `file: null` beside `substituted: false`, which reads as "not substituted". It is `null` there
-  now: `false` means the file is the asked family, `true` that it is another.
+(nothing yet)
 
 ## 4.4.2
 
