@@ -17,7 +17,7 @@ from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
 from _common.runner import absent_word, file_arg, read_json
-from _common.probe import AUDIO_MEDIA_EXT
+from _common.probe import AUDIO_MEDIA_EXT, display_size
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
 
@@ -62,6 +62,10 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
                    f"boxblur={radius}:2:{chroma}:2" + (f",eq=brightness=-{darken:g}" if darken else "")) + "[__fitbgb];"
                 f"[__fitfg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[__fitfgs];"
                 f"[__fitbgb][__fitfgs]overlay=(W-w)/2:(H-h)/2:format=auto")
+    # a picture of another shape is mostly bars in this frame (a 9:16 clip in 16:9 fills 32%): the
+    # file is what the frame asks for, and the caller may not have asked for that frame's shape
+    if meta is not None and not blank and all(d := display_size(meta.get("video"))) and (part := min(out_w / d[0], out_h / d[1]) ** 2 * d[0] * d[1] / (out_w * out_h)) < 0.5:
+        warn(f"the picture fills {part:.0%} of the {out_w}x{out_h} frame and the rest is bars: the source is {d[0]}x{d[1]}, another shape. --fit crop fills the frame; a frame of the source's shape keeps all of it (export.py: reels, shorts and tiktok are 9:16, youtube and facebook 16:9)", "picture_small_in_frame", fraction=round(part, 3), source=f"{d[0]}x{d[1]}", frame=f"{out_w}x{out_h}")
     pad = f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:color="
     return (f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
             + (pad + color if meta is None else drawn_chain(pad + color, meta, [color], pad + "black", tag="pad")))

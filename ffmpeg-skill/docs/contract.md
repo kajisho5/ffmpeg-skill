@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.3.3`) | any release |
+| `skill.version` | the npm / package.json version (`4.3.4`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.3.3", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.3.4", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -1197,7 +1197,7 @@ negative or above 500000 s, read as 0, no limit; a negative or too-long `--timeo
 tool used to print to stderr only (emoji fallbacks, silent or short inputs, memory-heavy jobs,
 `--strip-dovi` without Dolby Vision, `render.py`'s frame-from-preset and `--normalize` defaults).
 `render.py`'s plan, check and cache records (`check_dry_run`, `check_output_unparsed`, `cache_entry_damaged`, ...),
-`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `color.py`'s `legalize_residual`, `multicam.py`'s
+`export.py`'s `loudness_not_measured`, `loudness_outside_spec`, `colour_not_converted`, `size_over_limit` and `repair_incomplete`, `export.py` and `fit.py`'s `picture_small_in_frame`, `color.py`'s `legalize_residual`, `multicam.py`'s
 `camera_not_started`, `report.py`'s `report_section_missing` and `batch.py`'s cache records
 (`batch_cache_reset`, `batch_cache_output_changed`, ...) are listed there too. Every one of them
 still prints its stderr line; the record is additive.
