@@ -33,7 +33,7 @@ Every step in full: `references/workflow.md`.
 
 **One ordinary edit is one call.** A writing tool reads its input itself, refuses what it cannot do
 (the message says what to change) and verifies what it wrote: run it with `--json` and report from
-its document (`verified`, `probe`: duration, size, frame rate, streams). For a cut, resize, pad,
+its document (`wrote`, its first line, says the length and any miss against what was asked; `verified`). For a cut, resize, pad,
 rotation, speed, format or sound change, do not probe first, plan with `--dry-run`, re-probe, run
 `check.py` or `look.py`, or read `--help` when the table has the command. Steps 1, 3, 5, 6 and 8 are
 for a delivery (a platform, a template, three or more steps), a job of minutes or one that
