@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.4
+
+_Automated release: version and notes generated from pull requests merged since 4.3.3._
+
 ### Fixed
 
 - **A picture that ends up mostly bars is said (#665).** A 720x1280 clip through
@@ -13,6 +19,7 @@
   `picture_small_in_frame` (the fraction, the source size, the frame) when a solid-colour pad leaves
   the picture less than half of the frame, and the message names `--fit crop` and the presets of
   the other shape. The file written is unchanged. Found by a reader's test of 4.2.2.
+- fix: a picture that ends up mostly bars is said (#666)
 
 ## 4.3.3
 
