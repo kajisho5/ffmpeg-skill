@@ -217,6 +217,12 @@ def main() -> int:
             for c in cutaways:
                 c["s0"] = round((c["at"] if c["on"] is None else c["on"]) * MIX_RATE)
                 c["sn"] = round((c["length"] if c["on"] is None else c["span"]) * MIX_RATE)
+            # a multichannel A-roll keeps its layout: 5.1 was folded to stereo with `verified: true`
+            # and nothing said (#470); B is up-mixed to it. Mono and stereo are mixed in stereo
+            aa = meta_a.get("audio") or {}
+            layout = "stereo"
+            if has_audio_a and (aa.get("channels") or 0) > 2:
+                layout = aa["channel_layout"] if aa.get("channel_layout") not in (None, "", "unknown") else f"{aa['channels']}c"
             if has_audio_a:
                 # `b` mutes the A-roll over exactly the samples B's sound takes, on the A-roll's
                 # own clock: aeval's `t` is each sample's time, and the bounds sit half a sample
@@ -227,7 +233,7 @@ def main() -> int:
                 if args.audio == "b":
                     gate = ",aeval='val(ch)*not(" + "+".join(
                         f"between(t,{(c['s0'] - 0.5) / MIX_RATE:.9f},{(c['s0'] + c['sn'] - 0.5) / MIX_RATE:.9f})" for c in cutaways) + ")':c=same"
-                parts.append(f"[0:a:0]aformat=sample_rates=48000:channel_layouts=stereo{gate}[a0]")
+                parts.append(f"[0:a:0]aformat=sample_rates=48000:channel_layouts={layout}{gate}[a0]")
                 layers.append("[a0]")
             for i, c in enumerate(cutaways):
                 # B's sound is shifted by the same constant as its picture, whose first frame (the
@@ -244,7 +250,7 @@ def main() -> int:
                 # under `b` the layer is as many samples as the gate mutes, padded or cut
                 exact = f"apad=whole_len={c['sn']},atrim=end_sample={c['sn']}," if args.audio == "b" else ""
                 parts.append(f"[{i + 1}:a:0]{av_trim(first, first + length)[1]},"
-                             f"aformat=sample_rates=48000:channel_layouts=stereo,{exact}{delay}[ab{i}]")
+                             f"aformat=sample_rates=48000:channel_layouts={layout},{exact}{delay}[ab{i}]")
                 layers.append(f"[ab{i}]")
             # the mix ends with the A-roll, to the sample (#493): every layer is 48 kHz, so the count
             # is in that rate. `atrim=duration={:.3f}` and `-t {:.3f}` cut it to the millisecond. A
