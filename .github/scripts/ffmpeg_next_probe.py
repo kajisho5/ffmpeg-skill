@@ -73,29 +73,30 @@ def main():
                        ("verify --quick file", [sys.executable, ROOT / "scripts" / "verify.py", ref, "--quick", "--json"])):
         code, out, err, took = sh(*cmd, timeout=150)
         print(label, "exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", out.decode("utf-8", "replace")[-700:], err[-1500:])
-    print("\n== a delayed, padded sound under a copied picture: which spelling ends (sync --replace-audio writes the first)")
-    n = 12 * 48000
-    long_ref = WORK / "ref12.mp4"
-    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=12:s=320x240:r=25", "-f", "lavfi", "-i", "sine=f=440:d=12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", long_ref)
-    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=660:d=8:r=48000", mic)
-    for label, af, tail, video in (
-            ("adelay,apad -t 12", "adelay=2500:all=1,apad", ["-t", "12.000"], ["-c:v", "copy"]),
-            ("apad -t 12 (no delay)", "apad", ["-t", "12.000"], ["-c:v", "copy"]),
-            ("adelay -t 12 (no pad)", "adelay=2500:all=1", ["-t", "12.000"], ["-c:v", "copy"]),
-            ("adelay,apad=whole_dur=12 -t 12", "adelay=2500:all=1,apad=whole_dur=12", ["-t", "12.000"], ["-c:v", "copy"]),
-            ("adelay,apad,atrim=end=12", "adelay=2500:all=1,apad,atrim=end=12", [], ["-c:v", "copy"]),
-            ("adelay,apad=whole_len,atrim=end_sample", f"adelay=2500:all=1,apad=whole_len={n},atrim=end_sample={n}", [], ["-c:v", "copy"]),
-            ("adelay,apad=whole_len,atrim=end_sample -t 12", f"adelay=2500:all=1,apad=whole_len={n},atrim=end_sample={n}", ["-t", "12.000"], ["-c:v", "copy"]),
-            ("adelay,apad -t 12, picture encoded", "adelay=2500:all=1,apad", ["-t", "12.000"], ["-c:v", "libx264", "-preset", "ultrafast"]),
-            ("adelay,apad -shortest", "adelay=2500:all=1,apad", ["-shortest"], ["-c:v", "copy"]),
-            ("adelay,apad -t 12 -filter_complex", None, ["-t", "12.000"], ["-c:v", "copy"])):
-        out = WORK / "delayed.mp4"
-        graph = ["-map", "0:v:0", "-map", "1:a:0", "-af", af] if af else ["-filter_complex", "[1:a:0]adelay=2500:all=1,apad[a]", "-map", "0:v:0", "-map", "[a]"]
-        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", long_ref, "-f", "wav", "-i", mic, *graph, *video, "-c:a", "aac", *tail, out, timeout=40)
+    print("\n== the test's own fixtures (picture with B-frames), the command that was left running, and variants")
+    sys.path.insert(0, str(ROOT / "tests"))
+    from _fixtures import make_tones_take
+    ref8, take = make_tones_take(WORK / "clock_ref.mp4", dur=8), make_tones_take(WORK / "clock_take.mp4", start=1.0, audio_late=0.3, dur=7)
+    n = 8 * 48000
+    as_left = "aresample=async=1:first_pts=0,adelay=1000:all=1,apad"
+    for label, af, tail, video, extra in (
+            ("as left running", as_left, ["-t", "8.000"], ["-c:v", "copy"], ["-movflags", "+faststart"]),
+            ("without faststart", as_left, ["-t", "8.000"], ["-c:v", "copy"], []),
+            ("without aresample", "adelay=1000:all=1,apad", ["-t", "8.000"], ["-c:v", "copy"], []),
+            ("without adelay", "aresample=async=1:first_pts=0,apad", ["-t", "8.000"], ["-c:v", "copy"], []),
+            ("without apad", "aresample=async=1:first_pts=0,adelay=1000:all=1", ["-t", "8.000"], ["-c:v", "copy"], []),
+            ("apad=whole_len,atrim=end_sample, no -t", f"aresample=async=1:first_pts=0,adelay=1000:all=1,apad=whole_len={n},atrim=end_sample={n}", [], ["-c:v", "copy"], []),
+            ("apad=whole_len,atrim=end_sample, -t", f"aresample=async=1:first_pts=0,adelay=1000:all=1,apad=whole_len={n},atrim=end_sample={n}", ["-t", "8.000"], ["-c:v", "copy"], []),
+            ("apad,atrim=end=8, no -t", as_left + ",atrim=end=8", [], ["-c:v", "copy"], []),
+            ("picture encoded", as_left, ["-t", "8.000"], ["-c:v", "libx264", "-preset", "ultrafast"], []),
+            ("-shortest", as_left, ["-shortest"], ["-c:v", "copy"], []),
+            ("-t as an input option of the picture too", as_left, ["-t", "8.000"], ["-c:v", "copy"], ["-fflags", "+shortest", "-max_interleave_delta", "0"])):
+        out = WORK / "clock_out.mp4"
+        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", ref8, "-i", take, "-map", "0:v:0", "-map", "1:a:0", *video, *extra, "-af", af, "-c:a", "aac", "-b:a", "192k", *tail, out, timeout=30)
         if code is None and sys.platform == "win32":
             sh("taskkill", "/F", "/IM", "ffmpeg.exe")
             time.sleep(1)
-        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
+        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT, file so far " + str(out.stat().st_size if out.exists() else None) if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
 
 if __name__ == "__main__":
     main()
