@@ -22,9 +22,10 @@
     "audio mute",
     "fit fade_in",
     "fit fade_out",
-    "export duration"
+    "export duration",
+    "* wrote"
   ],
-  "feature_freeze_named_why": "2026-11-21, the owner's decision after nine models were given the same blind tasks: three shapes most of them wrote and no tool took (a proxy by its height, a redaction rectangle in one value, chapters on the command line) are added while the freeze holds. The list names each option; anything not on it is still refused. 2026-11-21, the owner's decision after the with/without-skill benchmark: 'remove the sound' had no direct option, and the three small models spent their 20 turns looking for one (audio.py --mute). Same day, same decision: a fade in and out of picture and sound (fit.py --fade-in/--fade-out) and a delivery's length (export.py --duration); four of five models asked blind wrote those option names.",
+  "feature_freeze_named_why": "2026-11-21, the owner's decision after nine models were given the same blind tasks: three shapes most of them wrote and no tool took (a proxy by its height, a redaction rectangle in one value, chapters on the command line) are added while the freeze holds. The list names each option; anything not on it is still refused. 2026-11-21, the owner's decision after the with/without-skill benchmark: 'remove the sound' had no direct option, and the three small models spent their 20 turns looking for one (audio.py --mute). Same day, same decision: a fade in and out of picture and sound (fit.py --fade-in/--fade-out) and a delivery's length (export.py --duration); four of five models asked blind wrote those option names. 2026-11-21, the maintainer left the choice to the agent: `wrote`, the first line of every writing tool's result (`* wrote`: one field, added by the common writer to all of them).",
   "feature_freeze_exception": {
     "version": "4.0.0",
     "decided": "#632: the features asked for most go into 4.0, this once; the freeze holds for every other change"
