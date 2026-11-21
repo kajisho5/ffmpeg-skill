@@ -452,11 +452,13 @@ def finite_float(text: str) -> float:
 SHARED = ("--dry-run", "--json", "--json-brief", "--progress", "--fast", "--timeout", "--overwrite", "--plan", "--output")  # on every tool
 
 
-def _teach(ap: "argparse.ArgumentParser") -> str:
-    """For each --flag on the command line this tool lacks: a near option, else the options whose help uses the word, and the tools that take it."""
+def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
+    """For each --flag on the command line this tool lacks: a near option, else the options whose help uses the word, and the tools
+    that take it. When one answer is left for every mistake, the corrected command line follows as `try:`, for a caller that copies."""
     import difflib
+    import shlex
     acts = {o: a for o, a in ap._option_string_actions.items() if o.startswith("--")}
-    here, tips = os.path.dirname(os.path.abspath(sys.argv[0])), ""
+    here, tips, fix = os.path.dirname(os.path.abspath(sys.argv[0])), "", {}
     for flag in dict.fromkeys(a.split("=")[0] for a in sys.argv[1:] if re.match(r"--[a-z]", a)):
         if not any(o.startswith(flag) for o in acts):
             word = flag[2:] if len(flag) > 5 and flag != "--from" else "\0"  # --to, --at and --from are in every help text
@@ -466,7 +468,28 @@ def _teach(ap: "argparse.ArgumentParser") -> str:
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
             tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
+            fix[flag] = (near + said)[0] if len(near + said) == 1 else None
+    # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
+    wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
+    if wrong:
+        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
+    words: List[str] = []
+    for a in ([] if None in fix.values() else sys.argv[1:]):
+        name, eq, rest = a.partition("=")
+        b = fix[name] + eq + rest if name in fix else re.sub(r"^(-?\d+(?:\.\d+)?)(dB|s|px|ms|%)$", r"\1", a, flags=re.I)
+        fix[""] = fix.get("") or b != a
+        # argparse reads `--threshold -30dB` as two options; joined with = the value stays the option's
+        if words and re.match(r"--[a-z][^=]*$", words[-1]) and re.match(r"-\d", b):
+            words[-1] += "=" + b
+        else:
+            words.append(b)
+    if fix.get(""):
+        # a POSIX shell's single quotes mean nothing to cmd.exe, and a Windows path needs no quoting there
+        tips += "\ntry: " + (subprocess.list2cmdline if os.name == "nt" else shlex.join)(["python3", sys.argv[0]] + words)
     return tips
+
+
+_OTHER_WORDS = {"strong": "high", "heavy": "high", "max": "high", "weak": "low", "light": "low", "mild": "low", "mid": "medium", "normal": "medium", "moderate": "medium"}
 
 
 def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
@@ -484,7 +507,7 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         if "is not a finite number" in message and {"--json", "--json-brief"} & set(sys.argv[1:]):
             STATE.json = True
             die(message.replace("argument ", "", 1))
-        usage_error(message + _teach(ap))
+        usage_error(message + _teach(ap, message))
 
     ap.error = error  # type: ignore[method-assign]
     STATE.parser = ap

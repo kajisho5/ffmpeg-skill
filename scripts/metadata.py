@@ -247,6 +247,7 @@ def main() -> int:
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_meta.<ext>)")
     ap.add_argument("--chapters", help="text file, one chapter per line: `TIME TITLE` (cut.py time syntax)")
+    ap.add_argument("--chapter", action="append", metavar="TIME=TITLE", help="one chapter, repeatable (--chapter 0:00=Intro --chapter 1:30=Main), instead of a --chapters file")
     ap.add_argument("--clear-chapters", action="store_true", help="remove every chapter marker the input carries")
     auto = ap.add_argument_group("proposed chapters (1.16)",
                                  "Chapter timestamps measured from the file's own structure instead of read from a "
@@ -293,6 +294,13 @@ def main() -> int:
     if args.silence_min < 0:
         # A185: a negative length reached silencedetect, which refused it (kind ffmpeg)
         die(f"--silence-min must be 0 or more seconds, got {args.silence_min:g}")
+    if args.chapter and not args.chapters:
+        # the same list --chapters reads, written beside nothing: a temporary file removed at exit
+        import atexit
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as listed:
+            listed.write("".join(c.replace("=", " ", 1) + "\n" for c in args.chapter))
+        args.chapters = listed.name
+        atexit.register(os.unlink, listed.name)
     tags = {k: getattr(args, k) for k in TAG_KEYS if getattr(args, k) is not None}
     if not args.chapters and not args.clear_chapters and not args.auto_chapters and not tags:
         die("nothing to write: give --chapters FILE, --auto-chapters, --clear-chapters and/or --title/--artist/...")
