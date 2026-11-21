@@ -4,9 +4,16 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.0
+
+_Automated release: version and notes generated from pull requests merged since 4.2.2._
+
 - **A wrong call is answered with the corrected command.** Where every mistake on the line has one answer, the usage error ends with `try:` and the whole command, ready to copy: `denoise.py --strength strong` gets `--strength high`, `silence.py --threshold -30dB --min-silence 0.8s` gets `--threshold=-30 --min-silence 0.8`, `cut.py --strat 1` gets `--start 1`. Nothing is suggested when a mistake has no single answer.
 - **Three things most models asked for.** `proxy.py --height 360` (the width follows), `redact.py --rect 100:40:180:60` (the rectangle in one value) and `metadata.py --chapter 0:00=Intro --chapter 1:30=Main` (chapters without a file). Each came from most of nine models given the same tasks blind.
 - `tests/first_try.py` gives a blind call a two-minute clip and real files for the names it invents (`b.mp4`, `music.mp3`, `a.srt`, `logo.png`), so a refusal is about the call. The strongest model's calls that run on the first try read 48 of 126 with it (39 before).
+- feat: the corrected command after a wrong call, and three options most models asked for (#656)
 
 ## 4.2.2
 
