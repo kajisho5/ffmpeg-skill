@@ -48,7 +48,7 @@ import sys
 from fractions import Fraction
 from typing import Any, List, Optional
 
-from _common.runner import require_tool, run_analysis
+from _common.runner import require_tool, run_analysis, with_mapped_chapters
 from _common.decision import SEEK_MARGIN, enlarge_args, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
@@ -688,6 +688,12 @@ def main() -> int:
     else:
         cmd += ["-an"]
     cmd += post
+    if retimed or kept:
+        # the chapters follow the retime or the trim (#470): FFmpeg kept them at the source's times
+        # (an output-side -ss is subtracted from them by FFmpeg, so it is added back here)
+        chap_lead = out_seek if kept else 0.0
+        cmd = with_mapped_chapters(cmd, meta, (lambda t: t / factor) if retimed else (lambda t: t - kept[0] + chap_lead),
+                                   target + chap_lead if kept else None)
     if retimed or "-ss" in pre_input:
         # A subtitle/data stream stream-copied by run_keeping_subtitles keeps the source's
         # original timestamps; --method speed retimes video (setpts) and audio (atempo) but has

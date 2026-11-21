@@ -3657,6 +3657,33 @@ def _drawtext_tmpdir(create: bool = True) -> str:
     return _DRAWTEXT_TMPDIR
 
 
+def with_mapped_chapters(cmd: "List[str]", meta: "Optional[Dict[str, Any]]", to_output: "Callable[[float], float]",
+                         length: "Optional[float]") -> "List[str]":
+    """`cmd` (without its output path) with the source's chapters moved onto the output's clock:
+    FFmpeg copies them as they were, so pad --start, a speed change, a reverse, a hold or a speed
+    ramp left them where the source had them (#470). `to_output` maps a source time to the
+    output's; each chapter is clipped to [0, length] and one left with no length is dropped. The
+    chapters go in as an ffmetadata input of their own, written into the run's private temp
+    directory when the command runs (flush_drawtext_textfiles), so a dry run writes nothing."""
+    chapters = (meta or {}).get("chapters") or []
+    if not chapters or "-map_chapters" in cmd:
+        return cmd
+    mapped = []
+    for c in chapters:
+        a, b = sorted((to_output(float(c["start"] or 0.0)), to_output(float(c["end"] or 0.0))))
+        a, b = max(a, 0.0), min(b, length) if length else b
+        if b - a >= 0.0005:
+            mapped.append((a, b, c.get("title") or ""))
+    esc = lambda v: "".join("\\" + ch if ch in "=;#\\\n" else ch for ch in v)
+    body = ";FFMETADATA1\n" + "".join(f"[CHAPTER]\nTIMEBASE=1/1000\nSTART={round(a * 1000)}\nEND={round(b * 1000)}\ntitle={esc(t)}\n"
+                                      for a, b, t in sorted(mapped))
+    path = os.path.join(_drawtext_tmpdir(create=not STATE.dry_run), f"chapters-{os.getpid()}-{len(_DRAWTEXT_PENDING)}.ffmeta")
+    _DRAWTEXT_PENDING[path] = body
+    last = max(i for i, a in enumerate(cmd) if a == "-i")
+    n = sum(1 for a in cmd if a == "-i")
+    return cmd[:last + 2] + ["-f", "ffmetadata", "-i", path] + cmd[last + 2:] + ["-map_chapters", str(n)]
+
+
 def flush_drawtext_textfiles(cmd: "Sequence[str]") -> "List[str]":
     """Write the drawn-text files this command actually names, and return their paths.
 

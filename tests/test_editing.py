@@ -4498,6 +4498,35 @@ class EditingTests(MediaFixtures):
                     self.assertNotIn("-read_intervals", run.call_args.args[0])
 
 
+    def test_chapters_follow_a_change_of_time(self):
+        """#470: FFmpeg copies a source's chapters as they were, so a tool that moves the picture in
+        time left them at the source's times: pad --start 1 kept 0-2 and 2-4, a reverse kept their
+        order, a speed ramp and fit --method speed did not scale them, a hold did not push them on.
+        Each tool maps them onto the output's clock (runner.with_mapped_chapters); Matroska keeps
+        a first chapter that does not start at 0, so the test writes .mkv."""
+        src = OUT / "chap_src.mkv"
+        meta = OUT / "chap_src.ffmeta"
+        meta.write_text(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=A\n"
+                        "[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=4000\ntitle=B\n", encoding="utf-8")
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4", "-f", "lavfi",
+           "-i", "sine=d=4", "-i", meta, "-map", "0:v", "-map", "1:a", "-map_chapters", "2", "-c:v", "libx264", "-preset", "ultrafast",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+
+        def chapters(tool, *argv):
+            out = OUT / f"chap_{tool[:-3]}.mkv"
+            script(tool, src, *argv, "-o", out, "--overwrite")
+            rows = sh("ffprobe", "-v", "error", "-show_entries", "chapter=start_time,end_time:chapter_tags=title", "-of", "csv=p=0", out).stdout.split()
+            return [(round(float(a), 1), round(float(b), 1), t) for a, b, t in (r.split(",") for r in rows)]
+        self.assertEqual(chapters("pad.py", "--start", "1"), [(1.0, 3.0, "A"), (3.0, 5.0, "B")])
+        self.assertEqual(chapters("reverse.py"), [(0.0, 2.0, "B"), (2.0, 4.0, "A")])
+        self.assertEqual(chapters("speedramp.py", "--segment", "0-2:1", "--segment", "2-4:2"), [(0.0, 2.0, "A"), (2.0, 3.0, "B")])
+        self.assertEqual(chapters("freeze.py", "--at", "1", "--hold", "1"), [(0.0, 3.0, "A"), (3.0, 5.0, "B")])
+        self.assertEqual(chapters("fit.py", "--duration", "2", "--method", "speed"), [(0.0, 1.0, "A"), (1.0, 2.0, "B")])
+        self.assertEqual(chapters("fit.py", "--duration", "2", "--method", "trim", "--from-center"), [(0.0, 1.0, "A"), (1.0, 2.0, "B")])
+        # a trim from the start keeps A whole and drops B, which starts where the output ends
+        self.assertEqual(chapters("fit.py", "--duration", "2", "--method", "trim"), [(0.0, 2.0, "A")])
+
+
 class OneClockTests(MediaFixtures):
     """#409: a tool that cuts, repeats, reverses or re-times both streams keeps them on one clock.
     Each fixture has a one-frame flash and a 40 ms beep at the same instant, so flash minus beep is
