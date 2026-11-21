@@ -9,7 +9,6 @@ from __future__ import annotations
 import math
 import os
 import re
-import argparse
 from fractions import Fraction
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
