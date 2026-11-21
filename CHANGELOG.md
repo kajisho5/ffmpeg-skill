@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.5.2
+
+_Automated release: version and notes generated from pull requests merged since 4.5.1._
+
 ### Fixed
 
 - **A crop that keeps less than half of the picture is said (#688).** `fit.py`, `export.py` and
@@ -15,6 +21,7 @@
   they are now moved, mirrored or scaled with the picture, clipped to the output, and a chapter
   left with no length is dropped. MP4 and MOV still start their first chapter at 0 (the
   container's chapter track has no gap); Matroska keeps the exact times.
+- fix: a crop that keeps less than half of the picture is said, and chapters follow a change of time (#697)
 
 ## 4.5.1
 
