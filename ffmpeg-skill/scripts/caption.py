@@ -1966,7 +1966,7 @@ def main() -> int:
     if args.ass:
         # the caller's own ASS names its fonts in its styles; this run does not choose them
         font_used = {"asked": None, "file": None, "family": None, "how": "ass_styles",
-                     "fonts_dir": args.fonts_dir or (os.path.dirname(font_file) if font_file else None), "substituted": False}
+                     "fonts_dir": args.fonts_dir or (os.path.dirname(font_file) if font_file else None), "substituted": None}
     elif font_file or not args.fonts_dir:
         # the family libass is given is the sanitised one (ass_font_name): that is what it resolves
         font_used = record_font_choice(font_choice(ass_font_name(args.font), script_file=font_file, script_family=font_family,
@@ -1985,7 +1985,7 @@ def main() -> int:
                  f"({'bold' if args.bold else 'regular'}, upright); libass picks among those and the installed "
                  "faces of the family, so font_used names no file (not measured)")
         font_used = {"asked": asked, "file": face, "family": asked, "how": "fonts_dir",
-                     "fonts_dir": args.fonts_dir, "substituted": False}
+                     "fonts_dir": args.fonts_dir, "substituted": False if face else None}  # no file, no measurement (#663)
     if font_file:
         args.font = font_family or args.font
         if not args.fonts_dir:
