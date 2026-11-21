@@ -1686,15 +1686,13 @@ def main() -> int:
     # what was asked for, clamped to the media duration as in every 2.x release: requested_* and
     # expected_duration report this, and a segment the join below ends with the video (less than a
     # frame of sound trimmed) shows that trim in duration_delta_seconds and a note instead
-    segments = [(s, min(e, total) if total else e) for s, e in segments]
-    requested = list(segments)
+    requested = [(s, min(e, total) if total else e) for s, e in segments]
     # a start or end written in milliseconds is cut on the frame it reads back to (#653): the nearest
     # frame when that is within half a millisecond either way (1.902 and 1.935 for the frames at
     # 1.9019 and 1.93527), never one before the first; a sound-only output or a VFR picture has no
     # grid. Here and not in grid_at_or_after, which every tool that cuts on a frame shares
-    rate, v0 = 0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta), stream_starts(meta)[0]
-    on_frame = lambda t: g if rate and (n := round((t - v0) * rate)) >= 0 and abs((g := v0 + n / rate) - t) <= 0.0005 else t
-    segments = [(on_frame(s), min(on_frame(e), total or math.inf)) for s, e in segments]
+    on_frame = lambda t, rate=0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta), v0=stream_starts(meta)[0]: g if rate and (n := round((t - v0) * rate)) >= 0 and abs((g := v0 + n / rate) - t) <= 0.0005 else t
+    segments = [(on_frame(s), min(on_frame(e), total or math.inf)) for s, e in requested]
     video = meta.get("video") or {}
     if video.get("fps") and not is_audio_output(args.output or ""):
         # a video segment shorter than one frame has no picture to cut: a copy lands on a whole

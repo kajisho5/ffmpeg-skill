@@ -4,7 +4,22 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **MCP on Windows: a `tools/call` is answered while the client keeps its pipe open (#664).** From
+  3.10.0 the response was written only when the client closed stdin: the tool ran and wrote its
+  file, but its process had inherited the server's stdin (the client's JSON-RPC pipe) and did not
+  finish exiting while that stayed open. A client that waits for the answer waited for ever. Every
+  child this skill starts now gets its own stdin. Reported, traced and fixed in one word by
+  @haikal2715.
+- **A time given in milliseconds is cut on its frame (#653).** At 30000/1001, `cut.py --start 1.902`
+  kept one frame fewer than `--start 1.9019` and `--end 1.902` one more: a boundary rounded to the
+  millisecond fell just after its frame. `cut.py` now cuts a start or end on the nearest frame when
+  that frame is within half a millisecond; `requested_start` and `requested_end` stay what was
+  asked. By @zfareed.
+- **Twenty options have their help text (#558).** `--help` showed twenty options of `graphics.py`,
+  `join.py`, `look.py`, `multicam.py`, `overlay.py`, `silence.py` and others with nothing after the
+  name; each now says what it takes, and a test refuses an option without help. By @zfareed.
 
 ## 4.3.5
 
@@ -16,12 +31,6 @@ _Automated release: version and notes generated from pull requests merged since 
   1280): a 720x1280 clip's frame came out 1280x2276, interpolated and over 2 MB. A frame taken to
   inspect is now at most `--width` wide and never wider than the source; contact sheets and
   `--compare` images keep the width asked. Found by a reader's test of 4.2.2.
-- **MCP on Windows: a `tools/call` is answered while the client keeps its pipe open (#664).** From
-  3.10.0 the response was written only when the client closed stdin: the tool ran and wrote its
-  file, but its process had inherited the server's stdin (the client's JSON-RPC pipe) and did not
-  finish exiting while that stayed open. A client that waits for the answer waited for ever. Every
-  child this skill starts now gets its own stdin. Reported, traced and fixed in one word by
-  @haikal2715.
 - fix: look.py --at no longer enlarges the frame (#667)
 
 ## 4.3.4
