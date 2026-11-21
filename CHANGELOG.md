@@ -10,6 +10,12 @@
   1280): a 720x1280 clip's frame came out 1280x2276, interpolated and over 2 MB. A frame taken to
   inspect is now at most `--width` wide and never wider than the source; contact sheets and
   `--compare` images keep the width asked. Found by a reader's test of 4.2.2.
+- **MCP on Windows: a `tools/call` is answered while the client keeps its pipe open (#664).** From
+  3.10.0 the response was written only when the client closed stdin: the tool ran and wrote its
+  file, but its process had inherited the server's stdin (the client's JSON-RPC pipe) and did not
+  finish exiting while that stayed open. A client that waits for the answer waited for ever. Every
+  child this skill starts now gets its own stdin. Reported, traced and fixed in one word by
+  @haikal2715.
 
 ## 4.3.4
 

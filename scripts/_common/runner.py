@@ -3025,7 +3025,10 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
     the client cancels). Tagged progress is streamed to `on_progress` or relayed to the MCP
     process through a parent tool such as render.py."""
     limit = child_limit(per_call)
-    child = subprocess.Popen([sys.executable] + list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+    # its own stdin, never ours: under the MCP server ours is the client's JSON-RPC pipe, and on
+    # Windows a Python child that inherited it did not finish exiting while the client held it open,
+    # so the answer to tools/call was written only when the client hung up (#664)
+    child = subprocess.Popen([sys.executable] + list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
     _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     if on_start is not None:
         on_start(child)
@@ -3336,7 +3339,8 @@ def _die_with_parent() -> None:
 
 def child_kwargs() -> Dict[str, Any]:
     """Extra Popen arguments for an ffmpeg/ffprobe child (see _die_with_parent)."""
-    return {"preexec_fn": _die_with_parent} if sys.platform.startswith("linux") else {}
+    # no child reads this process's stdin: under the MCP server that is the client's JSON-RPC pipe (#664)
+    return dict({"preexec_fn": _die_with_parent} if sys.platform.startswith("linux") else {}, stdin=subprocess.DEVNULL)
 
 
 def _run_captured(cmd: List[str]) -> subprocess.CompletedProcess:

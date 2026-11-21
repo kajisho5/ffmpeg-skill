@@ -403,7 +403,7 @@ def main() -> int:
     r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
     e = ap.add_argument_group("encoding")
     e.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
-    e.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    e.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     e.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
     args = ap.parse_args()
