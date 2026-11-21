@@ -85,7 +85,10 @@ jobs:
           $attempts = 5
           for ($i = 1; $i -le $attempts; $i++) {
             $force = if ($i -gt 1) { '--force' } else { '' }
-            choco install ffmpeg -y --no-progress $force
+            # Pinned: the feed moved to 9.1.0 on 2026-11-20 and the same commit that passed on 9.0.2
+            # then failed there (sound ending 148 samples late in grid/broll/multicam, sync and
+            # verify running past their time limit). Unpin when the 9.1 report is closed.
+            choco install ffmpeg --version 9.0.2 -y --no-progress $force
             $code = $LASTEXITCODE
             if ($code -eq 0 -and (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
               ffmpeg -version | Select-Object -First 1
