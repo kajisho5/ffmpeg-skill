@@ -64,7 +64,11 @@ jobs:
           python3 .github/scripts/revert_proof.py --base FETCH_HEAD --title "$PR_TITLE"
           echo "code=$?" >> "$GITHUB_OUTPUT"
   revert-proof:
-    if: always()
+    # not when the run was cancelled: an edit of the PR's description starts a new run, which
+    # cancels this one, and `always()` then failed this job on its two cancelled inputs and left a
+    # red check beside the new run's green one on the same commit (#686). A job that failed or
+    # timed out still reaches the check below and fails it.
+    if: ${{ !cancelled() }}
     needs: [revert-proof-ffmpeg-6, revert-proof-ffmpeg-8]
     runs-on: ubuntu-latest
     steps:
