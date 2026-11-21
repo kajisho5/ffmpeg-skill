@@ -57,16 +57,34 @@ def main():
         out = WORK / f"{label}.mp4"
         code, _, err, took = sh(sys.executable, ROOT / "scripts" / tool, *args, "-o", out, "--json")
         print(label, "exit", code, f"{took:.1f}s", json.dumps(counts(out, 48000)) if out.exists() else err[-600:])
-    print("\n== the calls that ran past their limit")
+    print("\n== the calls that ran past their limit (sync --replace-audio, verify on a folder)")
     sea = ROOT / "demos" / "footage" / "veo_sea.mp4"
-    late = WORK / "late.mp4"
-    sh("ffmpeg", "-y", "-v", "error", "-i", sea, "-t", "6", "-af", "adelay=300:all=1", "-c:v", "copy", "-c:a", "aac", late)
-    for label, cmd in (("verify", [sys.executable, ROOT / "scripts" / "verify.py", sea, "--json"]),
-                       ("sync", [sys.executable, ROOT / "scripts" / "sync.py", late, sea, "-o", WORK / "synced.mp4", "--json"]),
-                       ("sync dry-run", [sys.executable, ROOT / "scripts" / "sync.py", late, sea, "-o", WORK / "synced2.mp4", "--dry-run", "--json"])):
-        code, out, err, took = sh(*cmd, timeout=240)
-        print(label, "exit", code, f"{took:.1f}s", (out.decode("utf-8", "replace")[-500:] if code else ""), err[-800:] if code != 0 else "")
-
+    ref, mic, folder = WORK / "ref.mp4", WORK / "mic.wav", WORK / "kit"
+    sh("ffmpeg", "-y", "-v", "error", "-i", sea, "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", ref)
+    sh("ffmpeg", "-y", "-v", "error", "-i", ref, "-vn", "-af", "adelay=300:all=1", "-ar", "48000", mic)
+    folder.mkdir()
+    sh("ffmpeg", "-y", "-v", "error", "-i", ref, "-t", "2", "-c", "copy", folder / "a.mp4")
+    code, out, err, took = sh(sys.executable, ROOT / "scripts" / "sync.py", ref, mic, "--replace-audio", "-o", WORK / "synced.mp4", "--dry-run", "--json")
+    print("sync --replace-audio --dry-run exit", code, f"{took:.1f}s")
+    print(out.decode("utf-8", "replace")[-3000:], err[-500:])
+    for label, cmd in (("sync --replace-audio", [sys.executable, ROOT / "scripts" / "sync.py", ref, mic, "--replace-audio", "-o", WORK / "synced.mp4", "--overwrite"]),
+                       ("sync measure only", [sys.executable, ROOT / "scripts" / "sync.py", ref, mic, "--json"]),
+                       ("verify --quick folder", [sys.executable, ROOT / "scripts" / "verify.py", folder, "--quick", "--report", WORK / "verify.md", "--json"]),
+                       ("verify --quick file", [sys.executable, ROOT / "scripts" / "verify.py", ref, "--quick", "--json"])):
+        code, out, err, took = sh(*cmd, timeout=150)
+        print(label, "exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", out.decode("utf-8", "replace")[-700:], err[-1500:])
+    print("\n== apad with an output -t, the shape sync --replace-audio writes")
+    for label, tail in (("-af apad -t 6", ["-af", "apad", "-c:a", "aac", "-t", "6.000"]),
+                        ("-af apad=whole_dur=6", ["-af", "apad=whole_dur=6", "-c:a", "aac"]),
+                        ("-af apad -shortest", ["-af", "apad", "-c:a", "aac", "-shortest"]),
+                        ("-af apad,atrim=end=6", ["-af", "apad,atrim=end=6", "-c:a", "aac"]),
+                        ("-af apad -t 6, video encoded", ["-af", "apad", "-c:a", "aac", "-c:v", "libx264", "-preset", "ultrafast", "-t", "6.000"])):
+        video = [] if "-c:v" in tail else ["-c:v", "copy"]
+        code, _, err, took = sh("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", ref, "-ss", "0.3", "-i", mic, "-map", "0:v:0", "-map", "1:a:0", *video, *tail, WORK / "apad.mp4", timeout=60)
+        print(label, "exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "", err[-300:])
+    if sys.platform == "win32":  # ffmpeg children a timed-out call left behind: what they were asked to do
+        _, out, _, _ = sh("powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"name like 'ff%'\" | Select-Object -ExpandProperty CommandLine")
+        print("left running:", out.decode("utf-8", "replace")[-4000:])
 
 if __name__ == "__main__":
     main()
