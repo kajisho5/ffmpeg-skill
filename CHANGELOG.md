@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.6
+
+_Automated release: version and notes generated from pull requests merged since 4.3.5._
+
 ### Fixed
 
 - **MCP on Windows: a `tools/call` is answered while the client keeps its pipe open (#664).** From
@@ -20,6 +26,7 @@
 - **Twenty options have their help text (#558).** `--help` showed twenty options of `graphics.py`,
   `join.py`, `look.py`, `multicam.py`, `overlay.py`, `silence.py` and others with nothing after the
   name; each now says what it takes, and a test refuses an option without help. By @zfareed.
+- fix: MCP on Windows answers a tool call, a millisecond time is cut on its frame, twenty options have help (#668)
 
 ## 4.3.5
 
