@@ -1776,6 +1776,15 @@ not a new file format this tool would have to maintain.
   `test_a_short_segment_across_a_bframe_keyframe_never_cuts_a_negative_length`,
   `test_the_recut_cuts_on_the_frame_grid_and_states_the_sources_rate`,
   `test_mismatched_parts_are_recut_from_the_source_with_exact_boundaries` (on 7.0).
+- **A time written in milliseconds is the frame it reads back to (#653).** `cut.py` cuts each start
+  and end on the nearest frame when that frame is within half a millisecond either way: at
+  30000/1001, `--start 1.902` keeps the frame at 1.9019 s, as `--start 1.9019` does, and `--end 1.935`
+  is the frame at 1.93527. Never a frame before the first one, and a moved end is still capped at the
+  media's end. A time further from a frame still begins on the next one, and a cut under one frame is
+  still refused. `requested_start` and `requested_end` stay what was asked. The move is in `cut.py`
+  and not in the shared `grid_at_or_after`: `fit.py --duration 1.0014` on a 25 fps clip keeps 26
+  frames (`test_a_window_or_a_length_on_a_frame_time_keeps_that_frame`), and a tolerance in the
+  helper made it 25. Test: `test_a_time_given_in_milliseconds_is_read_back_to_its_frame`.
 - **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
   audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
   audio by the same seek margin and pads the audio to the segment origin
