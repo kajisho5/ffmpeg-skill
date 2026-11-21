@@ -228,7 +228,7 @@ def main() -> int:
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--compare-at", action="append", metavar="TIME",
                     help="seek time in the comparison file, one per --at. By default both use --at.")
-    ap.add_argument("--no-timecode", action="store_true")
+    ap.add_argument("--no-timecode", action="store_true", help="no burnt-in timecode stamps (a way out if drawtext itself is unusable, see doctor)")
     ap.add_argument("--safe", choices=PLATFORM_CHOICES, help="shade the zones this platform's UI covers (its description bar, "
                                                        "like column, status bar) so you can see whether anything readable is under them")
     ap.add_argument("--guides", metavar="LIST",

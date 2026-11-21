@@ -708,9 +708,9 @@ def main() -> int:
                     help="join by stream copy, no re-encode (needs --transition none): every clip must carry the same "
                          "video and audio parameters (codec, size, rate, pixel format, sample rate, channels); a clip "
                          "that does not is refused, by name, with what differs")
-    ap.add_argument("--pad-color", default="black")
+    ap.add_argument("--pad-color", default="black", help="pad colour when a clip's aspect differs, e.g. black, white, 0x101010 (default black)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
-    ap.add_argument("--preset", default="medium", choices=X264_PRESETS)
+    ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     aud = ap.add_argument_group("audio-only inputs")
     aud.add_argument("--sample-rate", type=int, help="output sample rate in Hz (default: first clip's)")
     aud.add_argument("--channels", type=int, choices=[1, 2, 6, 8], help="output channel count (default: the widest clip)")
