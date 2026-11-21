@@ -1035,8 +1035,10 @@ An ffmpeg run that fails keeps `kind: ffmpeg` and exit code 1, and since 3.1.0 c
 `error.reason` and a `hint` when ffmpeg's own message names a cause a caller can act on
 (`_common.runner.FFMPEG_FAILURE_CLASSES`): `disk_full` ("No space left on device"),
 `encoder_missing` and `filter_missing` (`details.name`; the build lacks it, `doctor` says how to
-get one that has it), `input_incomplete` ("moov atom not found": a cut-off recording or an
-unfinished copy, which `--repair` cannot rebuild) and `input_unreadable`. After 3.8.4 an ffmpeg
+get one that has it), `input_incomplete` ("moov atom not found", "File ended prematurely", or
+MOV/MP4's offset-specific "partial file", even with exit 0; missing media cannot be rebuilt)
+and `input_unreadable`. Explicit copy repair still measures damage without this refusal.
+After 3.8.4 an ffmpeg
 command a tool runs through `run()` that names an encoder (`-c:v`/`-c:a`/`-c:s` and their
 spellings, after the last input, for a stream kind the output keeps: not one `-an`/`-vn`/`-sn`
 drops or no input file carries) or a filter (`-vf`, `-af`, `-filter:v`, `-filter:a`,

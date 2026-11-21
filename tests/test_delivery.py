@@ -24,6 +24,95 @@ from _common import probe  # noqa: E402
 from _common.color import is_rgb  # noqa: E402
 
 
+class TruncatedInputTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "truncated_input"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cues = cls.dir / "cues.srt"
+        cues.write_text("1\n00:00:00,000 --> 00:00:03,500\nKept subtitle\n", encoding="utf-8")
+        cls.sources = []
+        for ext in ("mkv", "mp4"):
+            plain, short = cls.dir / f"plain.{ext}", cls.dir / f"truncated.{ext}"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=4",
+               "-f", "lavfi", "-i", "sine=r=48000:d=4", "-i", cues,
+               "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "aac", "-c:s", "srt" if ext == "mkv" else "mov_text",
+               *([] if ext == "mkv" else ["-movflags", "+faststart"]), plain)
+            data = plain.read_bytes()
+            short.write_bytes(data[:len(data) // 3])
+            cls.sources.append((plain, short))
+
+    def test_truncated_inputs_fail_before_stream_retry_or_promotion(self):
+        for plain, short in self.sources:
+            self.assertGreater(probe(str(short))["duration"], 3.9)
+            raw = sh("ffmpeg", "-v", "error", "-i", short, "-f", "null", "-")
+            marker = "File ended prematurely" if short.suffix == ".mkv" else "partial file"
+            self.assertIn(marker, raw.stderr, "fixture reaches the demuxer's zero-exit truncation path")
+            for tool, flags in (("crop.py", ["--x", "0", "--y", "0", "--width", "80", "--height", "60"]),
+                                ("denoise.py", [])):
+                for progress in ([], ["--progress"]):
+                    with self.subTest(source=short, tool=tool, progress=progress):
+                        out = self.dir / f"{tool}-{short.suffix[1:]}-{bool(progress)}.mp4"
+                        out.unlink(missing_ok=True)
+                        doc = json.loads(script(tool, short, *flags, *progress, "-o", out, "--json",
+                                                expect_fail=True).stdout)
+                        self.assertEqual((doc["status"], doc["error"]["kind"], doc["error"]["reason"]),
+                                         ("failed", "ffmpeg", "input_incomplete"))
+                        self.assertEqual(doc["ffmpeg_returncode"], 0)
+                        self.assertIn(str(short), doc["error"]["message"])
+                        self.assertIn(marker, doc["error"]["message"])
+                        self.assertNotIn("repair", doc["error"]["hint"])
+                        self.assertFalse(out.exists(), "partial output removed")
+                        self.assertEqual(len(doc["commands"]), 1, "no subtitle/data fallback encode")
+                        original = b"existing deliverable"
+                        out.write_bytes(original)
+                        script(tool, short, *flags, *progress, "--overwrite", "-o", out, "--json", expect_fail=True)
+                        self.assertEqual(out.read_bytes(), original)
+
+    def test_clean_short_trim_vfr_and_dry_run_controls(self):
+        for plain, short in self.sources:
+            out = self.dir / f"clean-{plain.suffix[1:]}.mp4"
+            doc = json.loads(script("denoise.py", plain, "--overwrite", "-o", out, "--json").stdout)
+            self.assertTrue(doc["verified"])
+            self.assertGreater(probe(str(out))["duration"], 3.9)
+            doc = json.loads(script("cut.py", plain, "--accurate", "--start", "0", "--end", "0.3",
+                                    "--overwrite", "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            doc = json.loads(script("denoise.py", short, "--dry-run", "--overwrite", "-o", out, "--json").stdout)
+            self.assertTrue(doc["dry_run"])
+            self.assertFalse(doc["verified"])
+        vfr = self.dir / "vfr.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.sources[1][0], "-map", "0:v", "-an",
+           "-vf", "select='not(mod(n,3))+not(mod(n,7))'", "-fps_mode", "vfr", "-c:v", "libx264", vfr)
+        frames = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
+                               "-show_entries", "frame=best_effort_timestamp_time", "-of", "json", vfr).stdout)["frames"]
+        times = [float(f["best_effort_timestamp_time"]) for f in frames]
+        self.assertGreater(len({round(b - a, 3) for a, b in zip(times, times[1:])}), 1)
+        doc = json.loads(script("denoise.py", vfr, "--overwrite", "-o", self.dir / "vfr-out.mp4", "--json").stdout)
+        self.assertTrue(doc["verified"])
+
+    def test_explicit_repair_and_optional_analysis_still_measure_damage(self):
+        for plain, short in self.sources:
+            out = self.dir / f"repair-{short.suffix[1:]}.mkv"
+            doc = json.loads(script("export.py", short, "--preset", "copy", "--repair", "--overwrite",
+                                    "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed")
+            self.assertGreater(doc["repair"]["before"]["decode_errors"], 0)
+            self.assertTrue(out.exists())
+
+    def test_marker_scope(self):
+        from _common.runner import INCOMPLETE_INPUT, classify_ffmpeg_failure
+        for line in ("File ended prematurely", "File ended prematurely at pos. 42 (0x2a)",
+                     "stream 1, offset 0xABC: partial file", "root atom offset 0x10: partial file"):
+            self.assertIsNotNone(INCOMPLETE_INPUT.search(line))
+            self.assertEqual(classify_ffmpeg_failure(line)[0], "input_incomplete")
+        for line in ("EOF", "End of file", "partial file", "Invalid NAL unit size", "ac-tex damaged at 5 0", ""):
+            self.assertIsNone(INCOMPLETE_INPUT.search(line))
+
+
 class DeliveryTests(MediaFixtures):
     """Export, proxy and the delivery templates."""
 

@@ -886,6 +886,7 @@ def _cleanup_partial_output(cmd: Sequence[str]) -> None:
 # ffmpeg's own words for the failures a caller can act on. Each pattern gives `error.reason` and a
 # hint; the kind stays "ffmpeg" and the exit code 1 (docs/design-decisions.md), so a caller that
 # keyed on those sees no change. Matched against the stderr tail, the first hit wins.
+INCOMPLETE_INPUT = re.compile(r"File ended prematurely(?: at pos\.[^\r\n]*)?|(?:stream \d+, offset|root atom offset) 0x[0-9a-fA-F]+: partial file")
 FFMPEG_FAILURE_CLASSES = (
     (re.compile(r"No space left on device"), "disk_full",
      "the disk the output is written to is full: free space there (or write elsewhere with -o) and run again"),
@@ -893,9 +894,8 @@ FFMPEG_FAILURE_CLASSES = (
      "encoder_missing", "this ffmpeg build has no {0} encoder: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"),
     (re.compile(r"No such filter: '([^']+)'|Filter '?([\w-]+)'? not found"),
      "filter_missing", "this ffmpeg build has no {0} filter: `python3 scripts/_contract.py doctor` lists what it has and how to get a fuller build"),
-    (re.compile(r"moov atom not found"), "input_incomplete",
-     "the input has no index (moov atom): a recording that was cut off or a copy that has not finished; "
-     "copy it again from its source. `export --preset copy --repair` cannot rebuild a missing index"),
+    (re.compile(r"moov atom not found|" + INCOMPLETE_INPUT.pattern), "input_incomplete",
+     "the input is incomplete: copy it again from its source; a missing index or missing media cannot be rebuilt"),
     (re.compile(r"Invalid data found when processing input"), "input_unreadable",
      "ffmpeg cannot read the input as media: check that it plays and finished copying; `check.py --content` names damaged spans in a file that does"),
 )
@@ -913,7 +913,7 @@ def classify_ffmpeg_failure(stderr: str) -> "Optional[Tuple[str, str, Dict[str, 
 
 
 def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Context]" = None, retried: bool = False) -> None:
-    # Partial-output cleanup already ran in the caller (_run_captured/_run_with_progress) for
+    # Partial-output cleanup already ran in the caller (_execute) for
     # every failed ffmpeg invocation, not just this check=True path -- see _cleanup_partial_output.
     # The process exit code is always 1 for an ffmpeg failure: ffmpeg's own code (1, 69, 218, 234,
     # a negative signal number...) varies by build and by the failing stage, and 124/127/130/143
@@ -947,7 +947,7 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
     cls = classify_ffmpeg_failure(stderr)
     if cls:
         extra["hint"] = cls[1]
-    die(f"command failed ({returncode}): {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode,
+    die(f"command {'reported an error despite exit 0' if returncode == 0 else f'failed ({returncode})'}: {what}\n{tail}", code=1, kind="ffmpeg", ffmpeg_returncode=returncode,
         error_extra={"reason": cls[0], "details": cls[2]} if cls else None, **extra)
 
 
@@ -2768,11 +2768,22 @@ def long_filters_in_files(cmd: Sequence[str]) -> "Any":
 
 
 def _execute(exec_cmd: List[str]) -> subprocess.CompletedProcess:
-    """One attempt, never exiting on failure (run() decides after its retries)."""
+    """One attempt; incomplete input stops before retries or output promotion."""
     with long_filters_in_files(exec_cmd) as cmd:
         if STATE.progress and _is_ffmpeg(cmd) and cmd[-1] != "-":
-            return _run_with_progress(cmd, False)
-        return _run_captured(cmd, False)
+            proc = _run_with_progress(cmd)
+        else:
+            proc = _run_captured(cmd)
+        if _is_ffmpeg(cmd):
+            marker = next((line for line in (proc.stderr or "").splitlines() if INCOMPLETE_INPUT.search(line)), None)
+            if marker and not any(a == "-err_detect" and b == "ignore_err" for a, b in zip(cmd, cmd[1:])):
+                _cleanup_partial_output(cmd)
+                _fail(cmd, proc.returncode, f"inputs: {', '.join(shape_of(cmd).inputs)}\n{marker[:500]}")
+            if proc.returncode:
+                _cleanup_partial_output(cmd)
+            else:
+                _remember_output(cmd)
+        return proc
 
 
 def run_analysis(cmd: Sequence[str], *, check: bool = True, text: bool = True, record: bool = False,
@@ -3318,7 +3329,7 @@ def child_kwargs() -> Dict[str, Any]:
     return {"preexec_fn": _die_with_parent} if sys.platform.startswith("linux") else {}
 
 
-def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
+def _run_captured(cmd: List[str]) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     limit = _limit_for(cmd)
     child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
@@ -3333,21 +3344,7 @@ def _run_captured(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
         _timed_out(cmd, limit or 0)
     finally:
         _unwatch(child)
-    proc = subprocess.CompletedProcess(list(cmd), child.returncode, out, err)
-    if proc.returncode == 0 and _is_ffmpeg(cmd):
-        _remember_output(cmd)
-    if proc.returncode != 0:
-        # Cleanup happens for every failed ffmpeg invocation, not just the check=True/_fail()
-        # path: a handful of scripts (cut.py, loudness.py, silence.py, sync.py) call run() with
-        # check=False so they can compose their own die() message from proc.stderr, but the
-        # partial-output risk is identical either way -- and for a script that retries into the
-        # same output path after a check=False failure (e.g. color.py's --retag copy-then-
-        # reencode fallback), removing the stale partial first is strictly safer than leaving it
-        # for -y to overwrite.
-        _cleanup_partial_output(cmd)
-        if check:
-            _fail(cmd, proc.returncode, proc.stderr)
-    return proc
+    return subprocess.CompletedProcess(list(cmd), child.returncode, out, err)
 
 
 def _progress_line(done: float, total: float, elapsed: float) -> str:
@@ -3358,7 +3355,7 @@ def _progress_line(done: float, total: float, elapsed: float) -> str:
     return f"\r  {done:7.1f}s encoded"
 
 
-def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProcess:
+def _run_with_progress(cmd: List[str]) -> subprocess.CompletedProcess:
     """Run ffmpeg with -progress on a pipe and print percent/ETA to stderr.
 
     The time limit is checked on a clock, not per progress line: a deadlocked ffmpeg (the very
@@ -3435,12 +3432,6 @@ def _run_with_progress(cmd: List[str], check: bool) -> subprocess.CompletedProce
     err_thread.join()
     err = "".join(err_chunks)
     clear_line()
-    if proc.returncode == 0:
-        _remember_output(cmd)
-    if proc.returncode != 0:
-        _cleanup_partial_output(cmd)
-        if check:
-            _fail(cmd, proc.returncode, err)
     return subprocess.CompletedProcess(full, proc.returncode, "", err)
 
 
