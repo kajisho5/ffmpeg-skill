@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.5.1
+
+_Automated release: version and notes generated from pull requests merged since 4.5.0._
+
 ### Fixed
 
 - **A forced frame rate relabels the start timecode in every tool that takes `--fps` (#470).**
@@ -14,6 +20,7 @@
   `--music`, `--replace`, ...) the sound was stream 0.
 - **`broll.py --audio b|mix` keeps a 5.1 A-roll in 5.1 (#470).** It was folded to stereo with
   `verified: true`. Mono and stereo A-rolls are mixed in stereo as before.
+- fix: a forced frame rate relabels the timecode, audio.py keeps the picture first, broll keeps 5.1 (#695)
 
 ## 4.5.0
 
