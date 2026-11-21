@@ -1836,6 +1836,25 @@ class SourceCarryTests(MediaFixtures):
             self.assertEqual(self._timecode_written(OUT / name), [want], args)
             self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), f"{args}: {doc.get('source_carry')}")
 
+    def test_every_tool_that_takes_fps_counts_the_start_timecode_at_it(self):
+        """#470: fit was fixed, and proxy, denoise, crop, redact, straighten and sphere --fps 50 on
+        a 25 fps source starting 01:00:00:12 still wrote 01:00:00:12 (0.48 s past the hour at 25,
+        0.24 s at 50). The label is relabelled where the rate is forced (decision.cfr_args), so
+        every tool that passes its --fps there gets it; the same rate leaves the label as it was."""
+        src = OUT / "tc25_tools.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=1",
+           "-f", "lavfi", "-i", "sine=d=1", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-timecode", "01:00:00:12", src)
+        tools = (("proxy.py", []), ("denoise.py", []), ("crop.py", ["--x", "0", "--y", "0", "--width", "80", "--height", "48"]),
+                 ("redact.py", ["--x", "0", "--y", "0", "--width", "40", "--height", "40"]), ("straighten.py", ["--degrees", "2"]),
+                 ("sphere.py", []))
+        for tool, extra in tools:
+            for fps, want in (("50", "01:00:00:24"), ("25", "01:00:00:12")):
+                out = OUT / f"tc25_{tool[:-3]}_{fps}.mov"
+                doc = json.loads(script(tool, src, *extra, "--fps", fps, "-o", out, "--overwrite", "--json").stdout)
+                self.assertEqual(doc["status"], "completed", (tool, doc.get("error")))
+                self.assertEqual(self._timecode_written(out), [want], (tool, fps))
+
     def test_the_start_label_rounds_once_and_a_rate_below_one_fps_drops_it(self):
         """00:00:00:02 at 25 fps plus 0.08 s is 4.8 frames at 30 fps: rounded once it is frame 5,
         and the source label and the offset rounded apart made it 2 + 2 = 4. A delivered rate
