@@ -9866,7 +9866,7 @@ class OutputChangedDuringRunTests(unittest.TestCase):
 
     def encode(self, during=None):
         """A stand-in for _execute(): ffmpeg writes `new` to its last argument, then `during` runs."""
-        def fake(exec_cmd):
+        def fake(exec_cmd, ctx=None):
             Path(exec_cmd[-1]).write_bytes(b"new")
             if during:
                 during()
