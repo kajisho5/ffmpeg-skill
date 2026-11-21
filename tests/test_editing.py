@@ -1155,9 +1155,13 @@ class EditingTests(MediaFixtures):
             return path
 
         def track_samples(path):
-            rows = sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0",
-                      "-show_entries", "packet=duration", "-of", "csv=p=0", path).stdout.split()
-            return sum(int(r.split(",")[0]) for r in rows) - 1024
+            packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
+                                    "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
+            # the end of the track is a short last packet (6.1), a short one that also states the
+            # samples dropped from its frame (9.0), or a full one that states them (9.1, #659): a
+            # packet holds the smaller of its duration and its 1024-sample frame less the drop
+            return sum(min(int(p["duration"]), 1024 - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", [])))
+                       for p in packets) - 1024
 
         def frames(path):
             return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",

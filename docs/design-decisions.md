@@ -114,6 +114,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.1.2 — a number outside what its option takes is refused in one place (#645)](#after-412--a-number-outside-what-its-option-takes-is-refused-in-one-place-645)
 - [After 4.2.1 — one file per `-o` (#562)](#after-421--one-file-per--o-562)
 - [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
+- [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
 <!-- contents:end -->
 
 ## Time limits
@@ -6357,3 +6358,24 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   error names `cut.py`.
 - Code: `scripts/_common/runner.py` (`_teach`), `scripts/proxy.py`, `scripts/redact.py`,
   `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py).
+
+## After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)
+
+- **Every AAC track is written with `-aac_coder twoloop` on FFmpeg 9.1 and later.** 9.1 changed
+  the encoder's default to a new coder (`nmr`). Measured on `9.1-essentials_build-www.gyan.dev`:
+  mono at 192k behind 0.1 s or 2.5 s of silence never returned (a 48-byte file after the time
+  limit), while 64k to 160k, 256k, the same sound as stereo, a 1.0 s delay, and `-aac_coder
+  twoloop` or `fast` at 192k all ended in 0.2 s. `twoloop` was the default up to 9.0, so the sound
+  is the one every older build writes. It is not a bitrate rule for mono: the cases that end and
+  the ones that do not were found by trying, and a rule drawn around them would be a guess about
+  an encoder that is not ours.
+- **It is one step on the path every command takes** (`runner.pin_aac_coder` in `run`), not an
+  argument added in the 25 tools that write AAC: a new tool cannot forget it, and the plan under
+  `--dry-run` shows it. Older builds get the command they always got, so no golden command
+  changes there. A command that names a coder keeps it.
+- **To be removed, not kept:** when a 9.x release returns from the probe's 192k mono case
+  (`.github/scripts/ffmpeg_next_probe.py`, run from the "ffmpeg next" workflow), the pin gets an
+  upper version. Until then CI installs a pinned FFmpeg on Windows; the feed's newest is read by
+  that workflow on demand.
+- Pinned by `test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1`
+  (tests/test_orchestration.py).

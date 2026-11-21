@@ -1,0 +1,39 @@
+# The newest FFmpeg the Windows feed offers, on the tests that broke when it moved (#659).
+# ci.yml pins the version the suite passes on; this is where the next one is read before unpinning.
+# Runs when asked, and on a pull request that changes this file or its probe.
+name: ffmpeg next
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/ffmpeg-next.yml", ".github/scripts/ffmpeg_next_probe.py"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.10"
+      - name: Install the newest ffmpeg
+        shell: pwsh
+        run: |
+          # the feed answers 503 under load (twice in a row on 2026-11-21): retry with backoff, as ci.yml does
+          for ($i = 1; $i -le 5; $i++) {
+            choco install ffmpeg -y --no-progress $(if ($i -gt 1) { '--force' })
+            if ($LASTEXITCODE -eq 0 -and (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { break }
+            if ($i -eq 5) { exit 1 }
+            Start-Sleep -Seconds (20 * $i)
+          }
+          ffmpeg -version | Select-Object -First 1
+      - name: Probe
+        shell: bash
+        run: python .github/scripts/ffmpeg_next_probe.py
