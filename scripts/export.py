@@ -50,7 +50,7 @@ from typing import Dict, List, Optional
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common.color import bt709_matrix_filter, hdr_rgb_matrix_args, hdr_rgb_matrix_filter
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
-from _common.decision import chain_with_rate, hw_preset_video, restate_last_swap
+from _common.decision import chain_with_rate, enlarge_args, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
@@ -545,6 +545,7 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
     dur = input_length(meta)  # the bitrate is the size over the length: no stated length is refused (#491)
     if p["max"] and not args.allow_long:
         dur = min(dur, float(p["max"]))
+    dur = min(dur, args.duration or dur)
     if dur <= 0:
         die("--max-mb needs the source's duration, which it does not report")
     audio_kbps = 0.0
@@ -580,6 +581,7 @@ def main() -> int:
                     help="--preset copy only: remux a damaged file -- timestamps regenerated, corrupt packets dropped, "
                          "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
                          "before and after; the input is never touched")
+    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds (a preset's own maximum still applies)")
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="the max size of the file: fit it under MB megabytes (MiB), a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
@@ -774,7 +776,7 @@ def main() -> int:
         video = hw_preset_video(video, meta, bt709=tag_bt709)
     if args.max_mb is not None:
         video = size_video_args(args, video, p, meta, has_audio)
-    cmd += video
+    cmd += video + enlarge_args(meta, *((None, None) if args.no_scale else (p["w"], p["h"])))
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
@@ -821,6 +823,8 @@ def main() -> int:
              f"(this tool's table as of {UPLOAD_LIMITS_AS_OF}, and platforms change it: "
              "use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
+    if args.duration and not (trimmed and args.duration >= p["max"]):
+        cmd += ["-t", f"{args.duration:.3f}"]
     damage_before = media_damage(args.input) if args.repair and not STATE.dry_run else None
     with tempfile.TemporaryDirectory(prefix="ffskill_2pass_") as passdir:
         if args.max_mb is not None:

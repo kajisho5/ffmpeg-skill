@@ -1950,6 +1950,31 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
         self.assertEqual(size("--at", "0.5", "--width", "4000"), (180, 320))
         self.assertEqual(size("--tiles", "2x1", "--width", "400")[0], 400 + 2 * 3)
 
+    def test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos(self):
+        """A 1280x720 clip made 9:16 with `fit.py --aspect 9:16` is 406x720: the source's size is
+        kept, by decision, and nothing said that a delivery frame is 1080x1920. And a frame that is
+        enlarged (fit with a size, an export preset larger than the clip) was scaled with swscale's
+        default. The note names the size option; an enlarging command carries `-sws_flags lanczos`;
+        a frame of the source's size or smaller is the command it was."""
+        from _fixtures import tiny_clip
+        src = tiny_clip(OUT / "enlarge_src.mp4", "testsrc2=s=320x180:r=25", audio=True)
+
+        def run_tool(tool, *args):
+            doc = json.loads(script(tool, src, *args, "-o", OUT / "enlarge_out.mp4", "--overwrite", "--json").stdout)
+            v = doc["probe"]["video"]
+            return (v["width"], v["height"]), any("-sws_flags lanczos" in c for c in doc["commands"]), " ".join(doc.get("notes") or [])
+
+        size, lanczos, notes = run_tool("fit.py", "--aspect", "9:16", "--fit", "crop")
+        self.assertEqual((size, lanczos), ((102, 180), False))
+        self.assertIn("--width 1080", notes)
+        size, lanczos, notes = run_tool("fit.py", "--aspect", "9:16", "--fit", "crop", "--width", "1080")
+        self.assertEqual((size, lanczos), ((1080, 1920), True))
+        self.assertNotIn("--width 1080 gives", notes)
+        self.assertEqual(run_tool("fit.py", "--height", "90")[:2], ((160, 90), False))
+        self.assertEqual(run_tool("fit.py", "--aspect", "16:9")[1:], (False, ""), "the source's own shape and size: nothing to say")
+        self.assertEqual(run_tool("export.py", "--preset", "x", "--no-normalize")[:2], ((1280, 720), True))
+        self.assertEqual(run_tool("export.py", "--preset", "x", "--no-scale", "--no-normalize")[:2], ((320, 180), False))
+
 
 class KeyFillRangeTests(unittest.TestCase):
     def test_key_luma_maps_transparency_to_legal_video_levels(self):
