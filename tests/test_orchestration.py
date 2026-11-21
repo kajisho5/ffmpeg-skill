@@ -487,9 +487,12 @@ class OrchestrationTests(MediaFixtures):
             return path
 
         def track_samples(path):
-            rows = sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0",
-                      "-show_entries", "packet=duration", "-of", "csv=p=0", path).stdout.split()
-            return sum(int(r.split(",")[0]) for r in rows) - 1024
+            packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
+                                    "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
+            # the end of the track is a short last packet up to FFmpeg 9.0 and, from 9.1, a full one
+            # with the samples to drop from it (#659): the count is the same either way
+            return sum(int(p["duration"]) - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", []))
+                       for p in packets) - 1024
 
         def frames(path):
             return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
@@ -2489,6 +2492,33 @@ class CommonFacadeTests(unittest.TestCase):
         importlib.reload(_common)
         self.assertEqual(runner.__file__, before)
         self.assertTrue(callable(_common.emit) and callable(_common.probe))
+
+    def test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1(self):
+        """#659: FFmpeg 9.1 made a new coder the AAC encoder's default and it never returns on some
+        sound (mono at 192k behind 0.1 s or 2.5 s of silence: `sync.py --replace-audio` ran to its
+        time limit on Windows, a file of 48 bytes). Every command passes run(), which from 9.1 on
+        names the coder that was the default before; older builds get the command they always got,
+        and a command that names a coder keeps it."""
+        from unittest import mock
+        from _common import runner
+        cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "o.mp4"]
+        self.assertEqual(runner.pin_aac_coder(cmd, (9, 1)), cmd[:7] + ["-aac_coder", "twoloop"] + cmd[7:])
+        self.assertEqual(runner.pin_aac_coder(cmd, (10, 0))[7:9], ["-aac_coder", "twoloop"])
+        self.assertEqual(runner.pin_aac_coder(cmd, (9, 0)), cmd)
+        self.assertEqual(runner.pin_aac_coder(cmd, (0, 0)), cmd, "an unreadable version takes the older spelling")
+        two = ["ffmpeg", "-i", "a.mov", "-c:a:0", "aac", "-acodec", "aac", "-codec:a:1", "aac", "o.mov"]
+        self.assertEqual(runner.pin_aac_coder(two, (9, 1)).count("twoloop"), 3)
+        named = cmd[:7] + ["-aac_coder", "fast"] + cmd[7:]
+        self.assertEqual(runner.pin_aac_coder(named, (9, 1)), named)
+        for other in (["ffmpeg", "-i", "a.mp4", "-c:a", "libopus", "o.mkv"], ["ffmpeg", "-i", "a.mp4", "-c", "copy", "o.mp4"]):
+            self.assertEqual(runner.pin_aac_coder(other, (9, 1)), other)
+        # and it is on the one path every command takes: the plan a caller reads names the coder
+        with mock.patch("_common.runner.ffmpeg_version", return_value=(9, 1)), mock.patch.object(runner.STATE, "dry_run", True), \
+                mock.patch.object(runner.STATE, "commands", []):
+            OUT.mkdir(parents=True, exist_ok=True)
+            src = tiny_clip(OUT / "pin_coder_src.mp4", "color=c=red:s=160x120:r=25", audio=True)
+            runner.run(["ffmpeg", "-y", "-i", str(src), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(OUT / "pin_coder.mp4")], quiet=True)
+            self.assertIn("-c:a aac -aac_coder twoloop -b:a 192k", runner.STATE.commands[-1])
 
 
 class TimelineExportTests(unittest.TestCase):

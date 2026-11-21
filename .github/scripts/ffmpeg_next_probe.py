@@ -120,7 +120,19 @@ def main():
             src = ["-f", "wav", "-i", lav, "-af", af]
         code, _, err, took = sh(*base, *src, *enc, m4a, timeout=15)
         print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else "ok", err[-120:])
-    print(sh("ffmpeg", "-hide_banner", "-h", "encoder=aac")[1].decode()[:1500])
+    print("-- the skill's own calls that never returned, with the coder named by the runner")
+    src12 = WORK / "source.mp4"
+    sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
+       "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", src12)
+    for label, a, b in (("sync --replace-audio, wav 2.5 s late", src12, lav), ("sync --replace-audio, take on its own clock", ref8, take)):
+        out = WORK / "synced_fixed.mp4"
+        code, doc, err, took = sh(sys.executable, ROOT / "scripts" / "sync.py", a, b, "--replace-audio", "-o", out, "--overwrite", "--json", timeout=120)
+        try:
+            command = json.loads(doc)["commands"][-1]
+        except Exception as e:
+            command = f"(no command: {e})"
+        print(label, "| exit", code, f"{took:.1f}s", "TIMED OUT" if code is None else json.dumps({k: counts(out, 48000)[k] for k in ("decoded_samples", "stream")}), err[-200:])
+        print("  ", command[-260:])
 
 if __name__ == "__main__":
     main()
