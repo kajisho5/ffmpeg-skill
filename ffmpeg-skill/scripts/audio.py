@@ -335,6 +335,7 @@ def main() -> int:
                             "medium = highpass, de-esser, denoise, gentle compression; strong = medium plus a harder de-esser, a second "
                             "compressor and a soft limiter at -1 dBFS. MCP/JSON callers may still send the 1.12 boolean true, "
                             "which is the bare flag and so means medium")
+    clean.add_argument("--mute", action="store_true", help="write the picture with no sound track at all (the picture is copied, not re-encoded); nothing else is done")
     clean.add_argument("--gain", type=float, help="gain in dB applied to the main track, -96..96")
     music = ap.add_argument_group("music")
     music.add_argument("--music", help="music file to mix underneath")
@@ -469,6 +470,12 @@ def main() -> int:
         die("input has no audio stream (use --replace to add one)")
     output = args.output or default_output(args.input, "audio")
     audio_out = is_audio_output(output)
+    if args.mute:  # the picture and its subtitles as they are, copied; the sound tracks left out
+        if not has_video or audio_out:
+            die("--mute leaves nothing to write: it needs a picture and a video output", kind="input")
+        run(ffmpeg_base() + ["-i", args.input, "-map", "0:V", "-map", "0:s?", "-c", "copy", output])
+        emit(output, expect_streams={"video": 1, "audio": 0})
+        return 0
     if args.bitrate is not None and Path(output).suffix.lower() in LOSSLESS_AUDIO_EXT:
         # A143: the rate used to be dropped without a word for every audio extension
         die(f"--bitrate has no effect on a lossless {Path(output).suffix.lower()} output; drop it, or write a lossy one (.m4a, .mp3, ...)")

@@ -104,8 +104,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | User says | Do |
 |-----------|----|
 | "cut from 1:20 to 2:05", "trim the first 10 s" | `cut.py input.mp4 --start 1:20 --end 2:05` |
-| "keep only these parts" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` |
-| "remove the middle" | `cut.py in.mp4 --remove 1:00-1:30` |
+| "keep only these parts", "remove the middle" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` (`--remove 1:00-1:30`) |
 | "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
 | "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
@@ -120,7 +119,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "smooth slow motion" | `fit.py in.mp4 --duration 20 --smooth interpolate` (a 10 s clip at half speed; `--duration` is the target length) |
 | "reverse this clip" | `reverse.py in.mp4` |
 | "loop it to fill 30 seconds", "seamless loop" | `loop.py clip.mp4 --duration 30` (`--crossfade 0.5` hides the seam) |
-| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --fit pad` (or `crop`, `blur`) |
+| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --width 1080 --fit crop` (1080x1920; `pad` keeps all of it with bars, `blur` with a blurred background; without `--width` the source's size is kept) |
 | "resize to a height/width" | `fit.py in.mp4 --height 1080` |
 | "crop to this exact box" | `crop.py in.mp4 --x 100 --y 0 --width 1080 --height 1920` |
 | "rotate 90 degrees", "mirror it" | `fit.py in.mp4 --rotate 90` (`--flip h`) |
@@ -128,16 +127,14 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "flat view out of this 360 video" | `sphere.py in.mp4 --yaw 90 --h-fov 100 --v-fov 70` |
 | "this old footage is interlaced" | `deinterlace.py in.mp4` |
 | "it's grainy, clean it up" | `denoise.py in.mp4 --strength medium` |
-| "blur this face/plate" (known box) | `redact.py in.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` |
-| "remove this fixed logo" (known box) | `redact.py in.mp4 --x 40 --y 20 --width 180 --height 60 --mode delogo` |
+| "blur this face/plate", "remove this fixed logo" (known box) | `redact.py in.mp4 --x 820 --y 140 --width 240 --height 240 --mode pixelate` (`--mode delogo`) |
 | "stabilize this shaky footage" | `stabilize.py in.mp4` |
 | "are there black bars on this?" | `cropdetect.py in.mp4` |
 | "iPhone HDR / Dolby Vision looks washed out" | `color.py clip.mov --to-sdr` (`--strip-dovi` keeps HDR) |
 | "apply this LUT", "convert the S-Log footage" | `color.py in.mp4 --lut grade.cube` |
 | "the colours are tagged wrong" | `color.py in.mp4 --retag bt709` |
 | "brighten it", "fix white balance" | `color.py in.mp4 --correct --exposure 0.3 --temperature 5600` |
-| "burn in captions from this SRT" | `caption.py in.mp4 --srt subs.srt` |
-| "caption it with these lines" | `caption.py in.mp4 --text cues.txt` |
+| "burn in captions from this SRT", "caption it with these lines" | `caption.py in.mp4 --srt subs.srt` (`--text cues.txt`) |
 | "keep the subtitles toggleable" | `caption.py in.mp4 --srt subs.srt --mode mux` |
 | "captions are three lines on a Short" | `caption.py in.mp4 --srt subs.srt --max-lines 2` (keep the template's value; the size shrinks) |
 | "transcribe it and caption it", "words popping" | `caption.py in.mp4 --transcribe --animate pop --karaoke` |
@@ -152,18 +149,19 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "normalise to -14 LUFS", "streaming and broadcast versions" | `loudness.py in.mp4` (`--versions streaming,ebu-r128`) |
 | "clean up the audio", "remove the hiss" | `audio.py in.mp4 --voice` (or `--denoise`) |
 | "music under the talking", "duck harder" | `audio.py in.mp4 --music bed.mp3 --duck --fade-out 3` |
-| "convert the 5.1 to stereo" | `audio.py in.mov --downmix` |
-| "wider stereo" | `audio.py band.wav --stereo-widen 0.5` |
+| "convert the 5.1 to stereo", "wider stereo" | `audio.py in.mov --downmix` (`--stereo-widen 0.5`) |
 | "swap in the narration track" | `audio.py in.mp4 --replace narration.wav` |
 | "give me the sound as WAV" | `audio.py in.mp4 -o in.wav` |
 | "speed the line up, same pitch", "exactly 96000 samples long" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` |
 | "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
+| "fade in", "fade out to black" | `fit.py in.mp4 --fade-in 1 --fade-out 1` (picture and sound; sound alone: `audio.py --fade-in`) |
+| "remove the sound", "mute it" | `audio.py in.mp4 --mute` (the picture is copied; no sound track) |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
-| "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` (platform-sized export; 9:16 alone specifies shape) |
-| "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
+| "make this a Reel / TikTok / Short / YouTube", "post it everywhere" | `render.py --template reels in.mp4 --cues cues.txt` (`--template all` for every platform; platform-sized export; 9:16 alone specifies shape) |
 | "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
-| "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |
+| "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` (a preset of the clip's shape: `reels`/`shorts` for 9:16) |
+| "a Reel of the first 15 seconds" | `export.py in.mp4 --preset reels --fit crop --duration 15` |
 | "make a GIF preview" | `export.py in.mp4 --preset gif` |
 | "the recording is corrupted" | `export.py in.mp4 --preset copy --repair` |
 | "a small proxy file" | `proxy.py in.mp4 --width 640` |
@@ -183,8 +181,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "a 4x2 grid of these videos" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 --transition fade --duration 0.5` |
 | "join them without re-encoding" | `join.py a.mp4 b.mp4 --copy --transition none` |
-| "several changes to one edit", 3+ steps | `render.py project.json` (`--init` writes one) |
-| "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` |
+| "several changes to one edit", 3+ steps, "I changed one stage, don't redo the rest" | `render.py project.json` (`--init` writes one; `--cache DIR` reuses unchanged stages) |
 | "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml` |
 | "every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` |
 | "three cameras, cut between them" | `multicam.py a.mp4 b.mp4 c.mp4 --switch energy` |
