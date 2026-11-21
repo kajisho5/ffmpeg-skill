@@ -3338,8 +3338,8 @@ def _die_with_parent() -> None:
 
 
 def child_kwargs() -> Dict[str, Any]:
-    """Extra Popen arguments for an ffmpeg/ffprobe child (see _die_with_parent). No child reads
-    this process's stdin: under the MCP server that is the client's JSON-RPC pipe (#664)."""
+    """Extra Popen arguments for an ffmpeg/ffprobe child (see _die_with_parent)."""
+    # no child reads this process's stdin: under the MCP server that is the client's JSON-RPC pipe (#664)
     return dict({"preexec_fn": _die_with_parent} if sys.platform.startswith("linux") else {}, stdin=subprocess.DEVNULL)
 
 
