@@ -1157,9 +1157,10 @@ class EditingTests(MediaFixtures):
         def track_samples(path):
             packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
                                     "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
-            # the end of the track is a short last packet up to FFmpeg 9.0 and, from 9.1, a full one
-            # with the samples to drop from it (#659): the count is the same either way
-            return sum(int(p["duration"]) - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", []))
+            # the end of the track is a short last packet (6.1), a short one that also states the
+            # samples dropped from its frame (9.0), or a full one that states them (9.1, #659): a
+            # packet holds the smaller of its duration and its 1024-sample frame less the drop
+            return sum(min(int(p["duration"]), 1024 - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", [])))
                        for p in packets) - 1024
 
         def frames(path):
