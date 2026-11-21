@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.3.5
+
+_Automated release: version and notes generated from pull requests merged since 4.3.4._
+
 ### Fixed
 
 - **`look.py --at` no longer enlarges the frame.** Every frame was written at `--width` (default
@@ -16,6 +22,7 @@
   finish exiting while that stayed open. A client that waits for the answer waited for ever. Every
   child this skill starts now gets its own stdin. Reported, traced and fixed in one word by
   @haikal2715.
+- fix: look.py --at no longer enlarges the frame (#667)
 
 ## 4.3.4
 
