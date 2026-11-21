@@ -545,6 +545,7 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
     dur = input_length(meta)  # the bitrate is the size over the length: no stated length is refused (#491)
     if p["max"] and not args.allow_long:
         dur = min(dur, float(p["max"]))
+    dur = min(dur, args.duration or dur)
     if dur <= 0:
         die("--max-mb needs the source's duration, which it does not report")
     audio_kbps = 0.0
@@ -580,6 +581,7 @@ def main() -> int:
                     help="--preset copy only: remux a damaged file -- timestamps regenerated, corrupt packets dropped, "
                          "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
                          "before and after; the input is never touched")
+    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds (a preset's own maximum still applies)")
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="the max size of the file: fit it under MB megabytes (MiB), a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
@@ -821,6 +823,8 @@ def main() -> int:
              f"(this tool's table as of {UPLOAD_LIMITS_AS_OF}, and platforms change it: "
              "use --allow-long to keep full length)")
         cmd += ["-t", f"{p['max']:.3f}"]
+    if args.duration and not (trimmed and args.duration >= p["max"]):
+        cmd += ["-t", f"{args.duration:.3f}"]
     damage_before = media_damage(args.input) if args.repair and not STATE.dry_run else None
     with tempfile.TemporaryDirectory(prefix="ffskill_2pass_") as passdir:
         if args.max_mb is not None:

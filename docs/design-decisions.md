@@ -6447,6 +6447,14 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   which re-encodes the picture; on the 24-request benchmark the three small models spent their 20
   turns looking for a direct option. Nothing else is done in that run, and a sound-only input or
   output is refused. Pinned by `test_the_sound_is_removed_in_one_call`.
+- **`fit.py --fade-in S --fade-out S` fades picture and sound together, from and to black.** The
+  names are the ones four of five models wrote when asked blind with only the tool names (they put
+  them on `render.py`, which takes a project; `fit.py` is where one clip's picture and sound are
+  already re-encoded over a known length). `audio.py --fade-in/--fade-out` stays the sound-only fade.
+  The fade is the last filter, on the delivered frame, and the fade-out ends at the output's length.
+- **`export.py --duration S` keeps the first S seconds** (three of five wrote that for "a Reel of
+  the first 15 seconds"). A preset's own maximum still applies, and `--max-mb` sizes for the
+  shorter length. Pinned by `test_a_fade_and_a_delivery_length_are_options`.
 - **SKILL.md's "make it vertical" row asks for `--width 1080`**, so the first call writes 1080x1920.
 - Pinned by `test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos`
   (tests/test_delivery.py).

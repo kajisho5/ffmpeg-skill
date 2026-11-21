@@ -398,6 +398,8 @@ def main() -> int:
     add_pad_fill_args(a)
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
     a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
+    a.add_argument("--fade-in", type=float, default=0.0, metavar="S", help="fade the picture and the sound in from black over this many seconds at the start")
+    a.add_argument("--fade-out", type=float, default=0.0, metavar="S", help="fade the picture and the sound out to black over this many seconds at the end")
     r = ap.add_argument_group("rotate / flip")
     r.add_argument("--rotate", type=int, choices=[90, 180, 270], help="rotate the picture clockwise by this angle in degrees")
     r.add_argument("--flip", choices=["h", "v"], help="mirror the picture horizontally (h) or vertically (v)")
@@ -413,7 +415,7 @@ def main() -> int:
 
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
-    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip:
+    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip and not (args.fade_in or args.fade_out):
         die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
     if not 0.0 <= args.crop_x <= 1.0:
         die(f"--crop-x must be 0..1, got {args.crop_x}")
@@ -652,6 +654,13 @@ def main() -> int:
         if square_pixels(meta["video"]):
             vf.insert(0, square_pixels(meta["video"]))
             note(square_pixels_note(meta["video"]))
+
+    # ---- fades: last, so they are drawn on the frame that is delivered, over its final length
+    total = min(target, src_dur) if args.duration and args.method == "trim" else target if args.duration else src_dur
+    for kind, secs, at in (("in", args.fade_in, 0.0), ("out", args.fade_out, total - args.fade_out)):
+        if secs > 0 and total > 0:
+            vf.append(f"fade=t={kind}:st={max(at, 0):.3f}:d={secs:g}")
+            af += [f"afade=t={kind}:st={max(at, 0):.3f}:d={secs:g}"] if has_audio else []
 
     # the start timecode is counted at the rate the output is delivered at: a --fps that changes
     # the rate relabels it (01:00:00:12 at 25 fps is 01:00:00:24 at 50) even with no trim, which

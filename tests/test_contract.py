@@ -13460,6 +13460,32 @@ class StumbleLedgerTests(unittest.TestCase):
             refused = json.loads(run(clip, "--mute", "-o", str(Path(tmp) / "m.wav")).stdout)
             self.assertEqual(refused["error"]["kind"], "input")
 
+    def test_a_fade_and_a_delivery_length_are_options(self):
+        """Asked blind, four of five models wrote `--fade-in 1 --fade-out 1` for a fade from and to
+        black and `export.py --preset reels --duration 15` for a Reel of the first 15 seconds; no
+        tool took either, and on the benchmark the fade cost every small model its 20 turns."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        with tempfile.TemporaryDirectory() as tmp:
+            run = lambda tool, *argv: json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "--json"],
+                                                                 capture_output=True, text=True, encoding="utf-8", timeout=600).stdout)
+            out = Path(tmp) / "f.mp4"
+            doc = run("fit", "--fade-in", "1", "--fade-out", "1", "-o", str(out))
+            self.assertEqual(doc["status"], "completed")
+            length = doc["probe"]["duration"]
+            self.assertIn(f"fade=t=out:st={length - 1:.1f}"[:-1], doc["commands"][-1])
+            self.assertIn("afade=t=in:st=0.000:d=1", doc["commands"][-1])
+
+            def luma(t):
+                raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(out), "-frames:v", "1", "-vf", "scale=16:9,format=gray", "-f", "rawvideo", "-"],
+                                     capture_output=True).stdout
+                return sum(raw) / max(len(raw), 1)
+            self.assertLess(luma(0.0), 20)
+            self.assertLess(luma(length - 0.08), 30)
+            self.assertGreater(luma(length / 2), 35)
+            doc = run("export", "--preset", "reels", "--fit", "crop", "--duration", "3", "--no-normalize", "-o", str(Path(tmp) / "e.mp4"))
+            self.assertAlmostEqual(doc["probe"]["duration"], 3.0, delta=0.05)
+            self.assertEqual((doc["probe"]["video"]["width"], doc["probe"]["video"]["height"]), (1080, 1920))
+
     # The option names decided on 2026-11-20 (docs/design-decisions.md, "One name per meaning"). The
     # tools on the right hold an older name for the same thing and keep it until the freeze lifts;
     # no other tool may take one, and a name two tools share means one thing and one type.
