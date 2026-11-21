@@ -15,6 +15,7 @@ import argparse
 import math
 import sys
 
+from _common.runner import with_mapped_chapters
 from _common import add_common, apply_common, aac_args, cfr_args, cfr_filter, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 from _common.decision import (HELD_FRAMES_WARN_BYTES, av_clip_length, av_trim, delivered_rate, frame_durations, frame_rate,
@@ -98,6 +99,8 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
+    span = float(meta.get("duration") or vdur or 0.0)
+    cmd = with_mapped_chapters(cmd, meta, lambda t: span - t, span)  # chapters mirrored with the picture (#470)
     cmd.append(output)
     run(cmd)
 

@@ -21,6 +21,7 @@ import sys
 from fractions import Fraction
 
 from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, silence_filter, stream_starts, tpad_length
+from _common.runner import with_mapped_chapters
 from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length, refuse_still
 
@@ -173,6 +174,8 @@ def main() -> int:
     else:
         cmd += ["-an"]
     if not holds_end:
+        moved = lead if at == 0 or cut_at <= v0 + 1e-6 else actual_hold
+        cmd = with_mapped_chapters(cmd, meta, lambda t: t + moved if t >= cut_at - 1e-6 else t, None)  # (#470)
         # the picture gains `hold` seconds at `at`; a stream-copied subtitle track would keep its
         # old timestamps and every cue after the freeze would fire early (same reasoning as
         # fit.py --method speed). Drop it rather than ship captions that lie. A hold of the last

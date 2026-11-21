@@ -16,11 +16,13 @@ Examples:
   python3 speedramp.py clip.mp4 --segment 0-2:2.0 --segment 2-6:1.0
 """
 import argparse
+import math
 import sys
 from fractions import Fraction
 from typing import Any, List, Tuple
 
 from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, stream_starts
+from _common.runner import with_mapped_chapters
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length, refuse_still
 
@@ -171,6 +173,12 @@ def main() -> int:
         cmd += aac_args()
     else:
         cmd += ["-an"]
+    edges = bounds + [math.inf]
+
+    def ramped(t: float) -> float:
+        # a source time on the output's clock: each segment's share of it at that segment's factor
+        return sum(max(0.0, min(t, edges[i + 1]) - edges[i]) / f for i, (_, _, f) in enumerate(segments)) - v0
+    cmd = with_mapped_chapters(cmd, meta, ramped, None)  # chapters follow the ramp (#470)
     cmd.append(output)
     run(cmd)
 

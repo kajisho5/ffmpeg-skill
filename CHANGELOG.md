@@ -26,6 +26,11 @@ _Automated release: version and notes generated from pull requests merged since 
 - **`broll.py --audio b|mix` keeps a 5.1 A-roll in 5.1 (#470).** It was folded to stereo with
   `verified: true`. Mono and stereo A-rolls are mixed in stereo as before.
 - fix: a forced frame rate relabels the timecode, audio.py keeps the picture first, broll keeps 5.1 (#695)
+- **Chapters follow a change of time (#470).** `pad.py --start`, `reverse.py`, `speedramp.py`,
+  `freeze.py` and `fit.py --method speed|trim` left a source's chapters at the source's times;
+  they are now moved, mirrored or scaled with the picture, clipped to the output, and a chapter
+  left with no length is dropped. MP4 and MOV still start their first chapter at 0 (the
+  container's chapter track has no gap); Matroska keeps the exact times.
 
 ## 4.5.0
 
