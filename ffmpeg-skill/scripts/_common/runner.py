@@ -2603,6 +2603,15 @@ def stream_copy_output(ctx: Context, output: str) -> bool:
                 and owned_identity(output) == identity)
 
 
+# FFmpeg 9.1 made a new coder (`nmr`) the AAC encoder's default, and it never returns on some
+# sound: mono at 192k behind 0.1 s or 2.5 s of silence ran until the time limit, a file of 48
+# bytes (#659; 64k to 160k, 256k, stereo and no silence all ended). From 9.1 on, every AAC track is
+# written with the coder that was the default until then, as on every older build; a command that
+# names a coder keeps it. `version` is for the test: the build on PATH otherwise.
+def pin_aac_coder(cmd: Sequence[str], version: "Optional[Tuple[int, int]]" = None) -> List[str]:
+    return [x for i, a in enumerate(cmd) for x in ([a, "-aac_coder", "twoloop"] if a == "aac" and i and "-aac_coder" not in cmd and (version or ffmpeg_version()) >= (9, 1) and re.fullmatch(r"-(c|codec):a(:\d+)?|-acodec", cmd[i - 1]) else [a])]
+
+
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
     """Run a command, echoing it to stderr unless quiet. Exits on failure when check=True.
 
@@ -2624,7 +2633,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         # that conversion as a -vf; it joins the tool's own graph here, before anything records
         # or runs the command (color.py imports this module, hence the late import)
         from _common.color import fold_bt709_matrix
-        cmd = fold_bt709_matrix(cmd)
+        cmd = pin_aac_coder(fold_bt709_matrix(cmd))
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_output_extension(cmd)
