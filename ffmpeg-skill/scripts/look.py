@@ -224,7 +224,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="output PNG (contact sheet / compare) or basename for --at frames")
     ap.add_argument("--at", action="append", help="time of a frame to extract (repeatable)")
     ap.add_argument("--tiles", default="4x3", help="contact sheet grid COLSxROWS, e.g. 4x3 for 12 frames (default 4x3)")
-    ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image in px, 2..16384 (default 1280)")
+    ap.add_argument("--width", type=int, default=1280, help="total width of the sheet / compare image in px, 2..16384 (default 1280); an --at frame is at most this wide and never enlarged")
     ap.add_argument("--compare", help="second video: place its frame next to the first (needs --at)")
     ap.add_argument("--compare-at", action="append", metavar="TIME",
                     help="seek time in the comparison file, one per --at. By default both use --at.")
@@ -395,7 +395,7 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale={args.width}:-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
+            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale='min({args.width},iw)':-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:
