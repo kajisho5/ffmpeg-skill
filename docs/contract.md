@@ -1094,7 +1094,7 @@ before, and, when `--json` was given, on stdout:
 ```json
 {"status": "failed", "exit_code": 1,
  "error": {"kind": "input | ffmpeg | output | missing_tool | timeout | verification | interrupted", "message": "...",
-           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | TIMEOUT | VERIFICATION_FAILED | INTERNAL_ERROR",
+           "code": "INPUT_INVALID | DEPENDENCY_MISSING | FFMPEG_EXECUTION_FAILED | OUTPUT_INVALID | TIMEOUT | VERIFICATION_FAILED | INTERRUPTED | INTERNAL_ERROR",
            "retryable": false,
            "hint": "optional: what to change", "reason": "optional, on a refusal: a code from error_reasons",
            "details": {"path": "optional, with reason: the facts the message is written from"}},

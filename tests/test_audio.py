@@ -314,6 +314,23 @@ class AudioTests(MediaFixtures):
         self.assertEqual(probe(str(out))["video"]["codec"], "h264", "video stream copied")
         self.assertTrue(_is_faststart(out), "audio.py's keep_video branch must write +faststart")
 
+    def test_the_picture_stays_stream_0_and_a_multichannel_a_roll_keeps_its_channels(self):
+        """#470: audio.py --voice wrote the sound as stream 0 and the picture as stream 1 (a player
+        or an NLE that takes the first stream as the picture took the sound); and broll.py
+        --audio b|mix folded a 5.1 A-roll to stereo with verified: true and nothing said."""
+        out = OUT / "audio_order.mp4"
+        script("audio.py", self.src, "--voice", "light", "-o", out, "--overwrite")
+        kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", out).stdout.split()
+        self.assertEqual(kinds[:2], ["video", "audio"])
+        a51 = OUT / "broll_a51.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=3", "-f", "lavfi",
+           "-i", "sine=d=3", "-filter_complex", "[1:a]pan=5.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0[a]", "-map", "0:v", "-map", "[a]",
+           "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", a51)
+        for mode, src, want in (("b", a51, 6), ("mix", a51, 6), ("mix", self.src, 2)):
+            out = OUT / f"broll_layout_{mode}.mp4"
+            script("broll.py", src, "--insert", self.src, "--at", "1", "--duration", "1", "--audio", mode, "-o", out, "--overwrite")
+            self.assertEqual(probe(str(out))["audio"]["channels"], want, (mode, str(src)))
+
     def test_audio_downmix_voice_and_ducking(self):
         out = OUT / "downmix.mp4"
         script("audio.py", self.surround, "--downmix", "--voice", "-o", out)
