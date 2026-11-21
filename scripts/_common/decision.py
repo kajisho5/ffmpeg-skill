@@ -505,6 +505,13 @@ def frame_durations(meta: Optional[Dict[str, Any]], rate: float) -> str:
     return f"fps={rate:.6f}"
 
 
+# a time written in milliseconds is the frame it reads back to (#653): the nearest frame when that
+# is within half a millisecond either way, never one before the first; any other time is itself.
+# For a position the caller names (a cut point, --at, a segment bound), not for a length
+def on_frame(t: float, v0: float, rate: float) -> float:
+    return g if rate and (n := round((t - v0) * rate)) >= 0 and abs((g := v0 + n / rate) - t) <= 0.0005 else t
+
+
 def grid_at_or_after(t: float, v0: float, rate: float) -> float:
     """The time of the first frame at or after `t` on a constant-rate grid starting at `v0`."""
     if not rate:

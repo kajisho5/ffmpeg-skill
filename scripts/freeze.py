@@ -20,7 +20,7 @@ import argparse
 import sys
 from fractions import Fraction
 
-from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, silence_filter, stream_starts, tpad_length
+from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, silence_filter, stream_starts, tpad_length
 from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length, refuse_still
 
@@ -74,7 +74,7 @@ def main() -> int:
         # 0.1 and 2.1 s). A hold is then counted in frames of that rate, the rate its frames are
         # cloned at.
         rate = delivered_rate(meta) or rate
-    cut_at = grid_at_or_after(at, v0, rate)
+    cut_at = grid_at_or_after(on_frame(at, v0, rate), v0, rate)  # --at 1.902 is the frame at 1.9019 (#653)
     # no frame at or after --at (no --at holds at the clip's end): the insert tail would be empty
     # and the hold lost, so hold the last frame as --mode extend does (#416 review)
     vend = v0 + (meta["video"].get("duration") or dur - v0)

@@ -23,7 +23,7 @@ import sys
 from typing import Any, Dict, List
 
 from _common.decision import (av_trim, conform_output_t, conform_to_length, frame_durations, frame_rate, frame_window,
-                              grid_at_or_after, silence_filter, stream_starts, window_expr, windowed_overlay_x)
+                              grid_at_or_after, on_frame, silence_filter, stream_starts, window_expr, windowed_overlay_x)
 from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, is_still_input, square_pixels, square_pixels_note, still_loop_args
@@ -120,8 +120,8 @@ def main() -> int:
         first = max(v0b, grid_at_or_after(start_b, v0b, rate_b))
         on = span = None
         if grid:
-            on = grid_at_or_after(at, v0a, rate_a)
-            span = grid_at_or_after(at + length, v0a, rate_a) - on
+            on = grid_at_or_after(on_frame(at, v0a, rate_a), v0a, rate_a)  # a millisecond time is its frame (#653)
+            span = grid_at_or_after(on_frame(at + length, v0a, rate_a), v0a, rate_a) - on
             if round(span * rate_a) < 1:
                 die(f"cutaway {i + 1}: no frame of the A-roll starts between {at:g}s and {at + length:g}s "
                     f"(its frames are {1 / rate_a:.4f}s apart): nothing would be shown")

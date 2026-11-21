@@ -1786,6 +1786,11 @@ not a new file format this tool would have to maintain.
   and not in the shared `grid_at_or_after`: `fit.py --duration 1.0014` on a 25 fps clip keeps 26
   frames (`test_a_window_or_a_length_on_a_frame_time_keeps_that_frame`), and a tolerance in the
   helper made it 25. Test: `test_a_time_given_in_milliseconds_is_read_back_to_its_frame`.
+- **The same reading for every named position (#653's siblings).** `decision.on_frame` is that
+  rule in one place, and `freeze.py --at`, `broll.py --at` (and the cutaway's end) and
+  `speedramp.py`'s segment bounds go through it, as `cut.py` does. Not a length: `fit.py --duration`
+  and the other callers of `grid_at_or_after` are as they were. Pinned by
+  `test_a_position_given_in_milliseconds_is_its_frame_in_the_tools_that_take_one`.
 - **Both streams of a segment shift by one constant.** A per-stream `PTS-STARTPTS` moved an
   audio track that starts 0.379 s after its video 0.379 s early. The re-cut shifts video and
   audio by the same seek margin and pads the audio to the segment origin

@@ -20,7 +20,7 @@ import sys
 from fractions import Fraction
 from typing import Any, List, Tuple
 
-from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, stream_starts
+from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, stream_starts
 from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length, refuse_still
 
@@ -105,12 +105,12 @@ def main() -> int:
     # closed on r_frame_rate, -r then resampled the joined picture and it drifted 113 ms late (#512)
     out_rate = delivered_rate(meta) or rate
     srate = int((meta.get("audio") or {}).get("sample_rate") or 0)
-    bounds = [v0] + [grid_at_or_after(end, v0, rate) for _, end, _ in segments[:-1]]
+    bounds = [v0] + [grid_at_or_after(on_frame(end, v0, rate), v0, rate) for _, end, _ in segments[:-1]]  # (#653)
     retimed = 0.0  # where the segment starts on the output's clock
     for i, (start, end, factor) in enumerate(segments):
         vlabel, alabel = f"v{i}", f"a{i}"
         to_eof = i == len(segments) - 1 and last_runs_to_eof
-        seg_end = None if to_eof else (bounds[i + 1] if i + 1 < len(bounds) else grid_at_or_after(end, v0, rate))
+        seg_end = None if to_eof else (bounds[i + 1] if i + 1 < len(bounds) else grid_at_or_after(on_frame(end, v0, rate), v0, rate))
         if seg_end is not None and seg_end <= bounds[i] + 1e-6:
             # both ends on the same frame: the trims would be empty and the factor reach no frame
             die(f"--segment {start:g}-{end:g}:{factor:g} holds no frame: both ends fall on the frame at "
