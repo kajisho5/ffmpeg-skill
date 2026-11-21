@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **A crop that keeps less than half of the picture is said (#688).** `fit.py`, `export.py` and
+  `join.py` with `--fit crop` into a frame of the other shape (a 16:9 clip into 9:16 keeps 32%)
+  now warn `picture_mostly_cropped` with the fraction kept, as a pad that leaves the picture small
+  has since 4.3.4. The file is unchanged.
 
 ## 4.5.1
 

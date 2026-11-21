@@ -1913,6 +1913,23 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
         rgb = frame_rgb(out, 0.5, 8, 360)
         self.assertGreater(rgb[0], 180, rgb)
 
+    def test_a_crop_that_keeps_less_than_half_of_the_picture_is_said(self):
+        """#688, the sibling of #665: `--fit crop` to a frame of the other shape cut away most of the
+        picture and said nothing (a 16:9 clip into 9:16 keeps the centre 32%). fit, export and join
+        warn `picture_mostly_cropped` with the fraction; a crop that keeps more than half (16:9 to
+        4:3, 75%) and a crop to the same shape say nothing. The file is unchanged."""
+        src = OUT / "wide_crop.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=25:d=1", "-f", "lavfi",
+           "-i", "sine=d=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+        def fractions(tool, *argv):
+            doc = json.loads(script(tool, *argv, "--dry-run", "-o", OUT / "crop_plan.mp4", "--json").stdout)
+            return [w.get("fraction") for w in (doc.get("diagnostics") or {}).get("warnings", []) if w.get("code") == "picture_mostly_cropped"]
+        self.assertEqual(fractions("fit.py", src, "--aspect", "9:16", "--width", "1080", "--fit", "crop"), [0.316])
+        self.assertEqual(fractions("export.py", src, "--preset", "reels", "--fit", "crop"), [0.316])
+        self.assertEqual(fractions("join.py", src, src, "--width", "1080", "--height", "1920", "--fit", "crop", "--transition", "none"), [0.316])  # the same clip twice: one warning
+        self.assertEqual(fractions("fit.py", src, "--aspect", "4:3", "--fit", "crop"), [])
+        self.assertEqual(fractions("export.py", src, "--preset", "youtube", "--fit", "crop"), [])
+
     def test_a_picture_that_is_mostly_bars_in_the_frame_is_said(self):
         """#665: a 720x1280 clip through `export --preset youtube` came out 1920x1080 with the picture
         a third of the frame, `verified: true` and nothing said (a reader's test of 4.2.2). The file

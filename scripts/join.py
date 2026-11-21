@@ -47,7 +47,7 @@ from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common.runner import path_denied, read_text_or_die, run_analysis
 from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
-from _common.decision import av_clip_length, av_trim, stream_starts
+from _common.decision import av_clip_length, av_trim, stream_starts, warn_mostly_cropped
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.timeline import exact_rate
 from _common.emit import input_length, refuse_still
@@ -943,6 +943,7 @@ def main() -> int:
         # every clip is squared at its display aspect before it is fitted (#411)
         sq = (square_pixels(metas[i].get("video")) + ",") if square_pixels(metas[i].get("video")) else ""
         if args.fit == "crop":
+            warn_mostly_cropped(metas[i].get("video"), w, h)
             return f"{sq}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
         pad = f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color="
         return (f"{sq}scale={w}:{h}:force_original_aspect_ratio=decrease,"

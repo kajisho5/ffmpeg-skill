@@ -71,6 +71,15 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
             + (pad + color if meta is None else drawn_chain(pad + color, meta, [color], pad + "black", tag="pad")))
 
 
+def warn_mostly_cropped(video: Optional[Dict[str, Any]], out_w: int, out_h: int) -> None:
+    """A crop to another shape that keeps less than half of the picture says so (#688), as a pad
+    that leaves the picture small does (picture_small_in_frame): a 1920x1080 clip cropped to 9:16
+    keeps the centre 32% of it. A warning only: a vertical crop of landscape footage is the usual
+    way to make a Short, and the file is what was asked for."""
+    if all(d := display_size(video)) and out_w and out_h and (part := min(out_w * d[1] / (out_h * d[0]), out_h * d[0] / (out_w * d[1]))) < 0.5:
+        warn(f"the crop keeps {part:.0%} of the picture: the source is {d[0]}x{d[1]} and the frame {out_w}x{out_h}, another shape. --fit pad keeps all of it with bars, --fit blur over a blurred copy", "picture_mostly_cropped", fraction=round(part, 3), source=f"{d[0]}x{d[1]}", frame=f"{out_w}x{out_h}")
+
+
 def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
                         help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
