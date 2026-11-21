@@ -3277,6 +3277,8 @@ def run_keeping_subtitles(cmd: List[str], output: str, relabel_timecode: bool = 
     `relabel_timecode`: the command writes its own start timecode (timeline.output_timecode_args),
     so a source's tmcd data track is not copied -- its label, at the source's rate, would win over
     the new one; the MOV/MP4 muxer builds the track again from the label."""
+    # a command that writes its own label (a -metadata:s:v:0 timecode=...) relabels whoever built it
+    relabel_timecode = relabel_timecode or any(a.startswith("timecode=") for a in cmd)
     skip_tmcd = ["-map", "-0:d:m:timecode"] if relabel_timecode else []
     src = next(iter(shape_of(cmd).inputs), None)
     sub_args = ["-map", "0:s?"] + carried_stream_maps(src, output, chapters=False) + subtitle_codec_args(src, output)

@@ -692,9 +692,10 @@ def main() -> int:
         graph.append(f"[{last}]{','.join(post)}[out]")
         last = "out"
 
-    cmd = ffmpeg_base() + inputs + ["-filter_complex", ";".join(graph), "-map", f"[{last}]"]
+    # the picture is mapped first, so it stays stream 0 as in the source (#470: the sound was 0)
+    cmd = ffmpeg_base() + inputs + ["-filter_complex", ";".join(graph)] + (["-map", "0:v:0"] if keep_video else []) + ["-map", f"[{last}]"]
     if keep_video:
-        cmd += ["-map", "0:v:0", "-c:v", "copy"]
+        cmd += ["-c:v", "copy"]
         if Path(output).suffix.lower() in (".mp4", ".mov", ".m4v"):
             cmd += ["-movflags", "+faststart"]
     elif has_video:

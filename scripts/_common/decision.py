@@ -716,7 +716,11 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
         return []
     rate = fps or v.get("fps") or 30.0
     rate = round(rate) if abs(rate - round(rate)) < 0.02 else rate
-    return ["-fps_mode", "cfr", "-r", f"{rate:g}"]
+    # a rate the caller asked for relabels the start timecode, counted at the new rate (#470:
+    # proxy/denoise/crop/redact/sphere/straighten --fps 50 kept 01:00:00:12, a 25 fps label)
+    from _common.timeline import output_timecode_args
+    relabel = output_timecode_args(meta, 0.0, rate) if fps and v.get("fps") and abs(float(fps) - float(v["fps"])) > 0.01 else []
+    return ["-fps_mode", "cfr", "-r", f"{rate:g}"] + relabel
 
 
 def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek: float = 0.0) -> str:
@@ -743,10 +747,11 @@ def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek
     args = cfr_args(meta, fps)
     if not args:
         return ""
+    rate = args[args.index("-r") + 1]
     if seek > 0:
-        return (f"setpts=PTS-{seek:.6f}/TB,fps={args[-1]}:start_time=0,"
+        return (f"setpts=PTS-{seek:.6f}/TB,fps={rate}:start_time=0,"
                 f"settb=AVTB,setpts=PTS+{seek:.6f}/TB")
-    return f"fps={args[-1]}"
+    return f"fps={rate}"
 
 
 def with_cfr(chain: str, meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> str:
