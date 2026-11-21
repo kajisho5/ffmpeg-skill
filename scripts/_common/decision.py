@@ -105,6 +105,13 @@ def _even(n: float) -> int:
     return v if v % 2 == 0 else v + 1
 
 
+# A frame larger than the picture is enlarged with Lanczos in place of swscale's default bicubic:
+# fewer soft edges where a 720p clip is delivered at 1080x1920. Nothing is added when the frame is
+# the picture's size or smaller, so those commands are the ones they were.
+def enlarge_args(meta: Optional[Dict[str, Any]], w: Optional[int], h: Optional[int]) -> List[str]:
+    return ["-sws_flags", "lanczos"] if w and h and all(d := display_size((meta or {}).get("video"))) and (w > d[0] or h > d[1]) else []
+
+
 def frame_size(ratio: Optional[Fraction], width: Optional[int], height: Optional[int],
                src_w: int, src_h: int) -> Tuple[int, int]:
     """The frame fit.py sizes for --aspect `ratio` (None: the source's own) and --width/--height,

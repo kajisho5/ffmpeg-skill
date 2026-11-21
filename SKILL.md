@@ -113,7 +113,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "smooth slow motion" | `fit.py in.mp4 --duration 20 --smooth interpolate` (a 10 s clip at half speed; `--duration` is the target length) |
 | "reverse this clip" | `reverse.py in.mp4` |
 | "loop it to fill 30 seconds", "seamless loop" | `loop.py clip.mp4 --duration 30` (`--crossfade 0.5` hides the seam) |
-| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --fit pad` (or `crop`, `blur`) |
+| "make it vertical / 9:16 / square" | `fit.py in.mp4 --aspect 9:16 --width 1080 --fit crop` (1080x1920; `pad` keeps all of it with bars, `blur` with a blurred background; without `--width` the source's size is kept) |
 | "resize to a height/width" | `fit.py in.mp4 --height 1080` |
 | "crop to this exact box" | `crop.py in.mp4 --x 100 --y 0 --width 1080 --height 1920` |
 | "rotate 90 degrees", "mirror it" | `fit.py in.mp4 --rotate 90` (`--flip h`) |
@@ -151,12 +151,15 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "give me the sound as WAV" | `audio.py in.mp4 -o in.wav` |
 | "speed the line up, same pitch", "exactly 96000 samples long" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` |
 | "just the third mic", "resample to 48 kHz" | `audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav` |
+| "fade in", "fade out to black" | `fit.py in.mp4 --fade-in 1 --fade-out 1` (picture and sound; sound alone: `audio.py --fade-in`) |
+| "remove the sound", "mute it" | `audio.py in.mp4 --mute` (the picture is copied; no sound track) |
 | "compress the voice", "limit the peaks", "gate the noise" | `audio.py in.mp4 --compress` (or `--limit`, `--gate`) |
 | "audiogram", "turn this podcast into a video" | `render.py --template audiogram ep.m4a --image cover.png` |
 | "make this a Reel / TikTok / Short / YouTube" | `render.py --template reels in.mp4 --cues cues.txt` (platform-sized export; 9:16 alone specifies shape) |
 | "post it everywhere" | `render.py --template all in.mp4 --cues cues.txt` |
 | "export for YouTube / Reels / X", "ProRes / DNxHR / alpha master", "key and fill" | `export.py in.mp4 --preset youtube` (`prores`, `dnxhr-hq`, `prores4444`, `key-fill`) |
-| "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` |
+| "under 25 MB" | `export.py in.mp4 --preset youtube --max-mb 25` (a preset of the clip's shape: `reels`/`shorts` for 9:16) |
+| "a Reel of the first 15 seconds" | `export.py in.mp4 --preset reels --fit crop --duration 15` |
 | "make a GIF preview" | `export.py in.mp4 --preset gif` |
 | "the recording is corrupted" | `export.py in.mp4 --preset copy --repair` |
 | "a small proxy file" | `proxy.py in.mp4 --width 640` |

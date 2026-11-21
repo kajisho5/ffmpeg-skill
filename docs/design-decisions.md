@@ -119,6 +119,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
 - [After 4.3.4 — a frame to look at is the source's pixels](#after-434--a-frame-to-look-at-is-the-sources-pixels)
 - [After 4.3.4 — no child is given the caller's stdin (#664)](#after-434--no-child-is-given-the-callers-stdin-664)
+- [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
 <!-- contents:end -->
 
 ## Time limits
@@ -6456,3 +6457,33 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 - **The stdio tests read an answer before closing stdin.** The earlier ones closed it first, which
   is the one sequence the defect did not show in. Pinned by
   `test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open` (tests/test_contract.py).
+## After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)
+
+- **`fit.py --aspect` alone still keeps the source's size.** That is the earlier decision (a 9:16
+  from 1920x1080 once came out 1920x3414, enlarged 3x unasked) and it stands: a 1280x720 clip made
+  9:16 is 406x720. What was missing is the next sentence. When `--aspect` alone made the frame
+  smaller than the source and narrower than the usual delivery frame of its shape (1080 wide for
+  portrait and square, 1920 for landscape), a note names the frame written and the `--width` that
+  gives the usual one, with the factor it enlarges by. The default is not changed: it would change
+  the size of every such result in 4.x.
+- **A frame larger than the picture is enlarged with Lanczos** (`-sws_flags lanczos`) in `fit.py`
+  and `export.py`, in place of swscale's default bicubic. Added only where the frame is larger than
+  the displayed picture on either side, so every other command is the one it was. It does not
+  restore detail a 406x720 crop does not have (2.7x to 1080x1920); it keeps edges from softening
+  further. A learned upscaler needs a model file and is outside what this skill ships.
+- **`audio.py --mute` removes the sound in one call** (same request): the picture and its
+  subtitles are copied and no sound track is written. The one way before was `proxy.py --no-audio`,
+  which re-encodes the picture; on the 24-request benchmark the three small models spent their 20
+  turns looking for a direct option. Nothing else is done in that run, and a sound-only input or
+  output is refused. Pinned by `test_the_sound_is_removed_in_one_call`.
+- **`fit.py --fade-in S --fade-out S` fades picture and sound together, from and to black.** The
+  names are the ones four of five models wrote when asked blind with only the tool names (they put
+  them on `render.py`, which takes a project; `fit.py` is where one clip's picture and sound are
+  already re-encoded over a known length). `audio.py --fade-in/--fade-out` stays the sound-only fade.
+  The fade is the last filter, on the delivered frame, and the fade-out ends at the output's length.
+- **`export.py --duration S` keeps the first S seconds** (three of five wrote that for "a Reel of
+  the first 15 seconds"). A preset's own maximum still applies, and `--max-mb` sizes for the
+  shorter length. Pinned by `test_a_fade_and_a_delivery_length_are_options`.
+- **SKILL.md's "make it vertical" row asks for `--width 1080`**, so the first call writes 1080x1920.
+- Pinned by `test_a_small_frame_is_said_and_an_enlarged_one_is_enlarged_with_lanczos`
+  (tests/test_delivery.py).
