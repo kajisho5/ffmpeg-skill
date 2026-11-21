@@ -117,6 +117,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.2.2 — the answer is a command, and three options by request](#after-422--the-answer-is-a-command-and-three-options-by-request)
 - [After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)](#after-430--the-aac-coder-is-named-from-ffmpeg-91-on-659)
 - [After 4.3.3 — a picture that is mostly bars is said, not changed (#665)](#after-433--a-picture-that-is-mostly-bars-is-said-not-changed-665)
+- [After 4.3.4 — a frame to look at is the source's pixels](#after-434--a-frame-to-look-at-is-the-sources-pixels)
 <!-- contents:end -->
 
 ## Time limits
@@ -6426,3 +6427,11 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 - **One place:** `decision.pad_filters`, where `export.py` and `fit.py` build a solid-colour pad, so
   `render.py`'s fit stage says it too. Pinned by
   `test_a_picture_that_is_mostly_bars_in_the_frame_is_said` (tests/test_delivery.py).
+
+## After 4.3.4 — a frame to look at is the source's pixels
+
+- **`look.py --at` treats `--width` as an upper bound.** A sheet's width is a layout choice; a
+  single frame is evidence, and enlarging it invents pixels (and tripled the file: 2.1 to 2.4 MB
+  for a 720x1280 frame). `--width 400` on a 1920-wide source still gives 400; `--width 4000`, or
+  the default 1280 on a 720-wide source, gives the source's width. Sheets and `--compare` images
+  are unchanged. Pinned by `test_a_frame_taken_to_look_at_is_not_enlarged` (tests/test_delivery.py).

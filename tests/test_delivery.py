@@ -1932,6 +1932,24 @@ class GeometryAuditDeliveryTests(unittest.TestCase):
             with self.subTest(tool=tool, args=args, says="nothing"):
                 self.assertEqual(warned(tool, src, *args)[0], [])
 
+    def test_a_frame_taken_to_look_at_is_not_enlarged(self):
+        """`look.py --at` scaled every frame to --width (default 1280): a 720x1280 clip's frame came
+        out 1280x2276, soft and over 2 MB (a reader's test of 4.2.2). A frame to inspect is the
+        source's pixels: --width is its upper bound. A sheet's width is still the one asked."""
+        from _fixtures import tiny_clip
+        src = tiny_clip(OUT / "look_small_src.mp4", "testsrc2=s=180x320:r=25")
+
+        def size(*args):
+            png = OUT / "look_small.png"
+            script("look.py", src, *args, "--no-timecode", "-o", png, "--overwrite")
+            v = probe(str(png))["video"]
+            return v["width"], v["height"]
+
+        self.assertEqual(size("--at", "0.5"), (180, 320))
+        self.assertEqual(size("--at", "0.5", "--width", "90"), (90, 160))
+        self.assertEqual(size("--at", "0.5", "--width", "4000"), (180, 320))
+        self.assertEqual(size("--tiles", "2x1", "--width", "400")[0], 400 + 2 * 3)
+
 
 class KeyFillRangeTests(unittest.TestCase):
     def test_key_luma_maps_transparency_to_legal_video_levels(self):
