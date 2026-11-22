@@ -8,6 +8,58 @@
 
 - **Warn when the FFmpeg build on PATH is outside the tested major range (`6–9`), unreadable, or a git/nightly build (#556).** `runner.TESTED_FFMPEG_MAJORS` (`(6, 9)`) stays pinned to the CI workflow; every tool records `ffmpeg_version_untested` once per run under `diagnostics.warnings` (and prints the warning to stderr, dry runs included) while proceeding normally, and `doctor` reports `ffmpeg_version` (`tested`, `untested`, `unreadable`, `git`, `unsupported`, `missing`) with the same warning line.
 
+## 4.7.0
+
+_Automated release: version and notes generated from pull requests merged since 4.6.5._
+
+### Added
+
+- **`audio.py --track FILE`: several audio tracks in one file, each with a name and a language (#420).**
+  The input's own sound (`--audio-stream`) and the first audio stream of each `--track` become one audio
+  stream apiece after the picture (stream-copied; an audio input writes none), in `.mov`, `.mkv` or `.mp4`.
+  Each is written as it is: its own channel layout, rate and length (nothing mixed, resampled, padded or
+  trimmed), as 24-bit PCM in `.mov` and `.mkv` and AAC in `.mp4`. `--track-name NAME` (also `--track-title`)
+  and `--track-lang CODE` (also `--track-language`) are repeated in track order, the input's sound first;
+  a language is an ISO 639-2 code of three lowercase letters. The result's `tracks` lists
+  `{index, file, title, language, channels, duration}` read back from the file, a `track_tags` step
+  checks the names and languages against it (`.mov` keeps only the languages QuickTime has a code for,
+  and says so by failing the step), and a track longer than the picture is kept whole with a
+  `track_longer_than_picture` warning. Refused, with `error.reason`: an output that is not
+  `.mov`, `.mkv` or `.mp4` (`track_container`; a WAV holds one stream, and FFmpeg's MXF muxer stores no
+  names or languages and cuts every track to the shortest), a flag that changes the sound
+  (`track_rebuilds_sound`), more titles or languages than tracks (`track_labels`) and a language that is
+  not three letters (`track_language`). A BWF or multitrack WAV with a start timecode is not written.
+- feat: audio.py --track adds named, language-tagged audio tracks (#420) (#714)
+
+## 4.6.5
+
+_Automated release: version and notes generated from pull requests merged since 4.6.4._
+
+### Fixed
+
+- **The mixing tools get #711's relabel too.** `grid.py`, `join.py`, `multicam.py`, `broll.py` and
+  `overlay.py` build each source's BT.709 conversion through their own helper, which 4.6.4's fix did not
+  reach. On FFmpeg 9 an HDR source in them could still be written with a bt709 stream under bt2020/PQ
+  container tags. One helper is now the BT.709 line's filter for every tool.
+
+### Added
+
+- **A guard for the colour class** (`test_guards.ColorGuard`, three ledger entries). Every tool that writes
+  video runs on an HDR RGB source, and any output whose tags mix SDR and HDR fails it.
+- fix: the mixing tools' BT.709 chains get the FFmpeg 9 relabel, and the colour class has a guard (#711) (#713)
+
+## 4.6.4
+
+_Automated release: version and notes generated from pull requests merged since 4.6.3._
+
+### Fixed
+
+- **On FFmpeg 9 a BT.709 preset over an HDR source wrote conflicting tags (#711).** The encoder's VUI
+  said bt709 and the mp4/mov `colr` box said bt2020/smpte2084, because FFmpeg 9 takes the container's
+  colour from the frames. The line now relabels the frames' primaries and transfer (`setparams`, no
+  pixel changes), so both say bt709. FFmpeg 6.1 to 8 wrote bt709 already and are unchanged.
+- fix: a BT.709 line's container tags agree with its stream on FFmpeg 9 (#711) (#712)
+
 ## 4.6.3
 
 _Automated release: version and notes generated from pull requests merged since 4.6.2._

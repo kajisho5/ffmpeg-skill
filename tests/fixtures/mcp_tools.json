@@ -59,6 +59,9 @@
    "stereo_widen",
    "tempo",
    "timeout",
+   "track",
+   "track_lang",
+   "track_name",
    "voice"
   ],
   "required": []

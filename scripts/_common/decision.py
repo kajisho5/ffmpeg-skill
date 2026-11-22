@@ -12,7 +12,7 @@ import re
 from fractions import Fraction
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.color import (as_limited, bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
+from _common.color import (as_limited, bt709_label_filter, bt709_line_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
                            hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
@@ -1268,7 +1268,7 @@ def matrix_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, A
         return f + "," if f else ""
     if keeps_source_tags() or ((line_meta or {}).get("video") or {}).get("bt2020_or_hdr"):
         return ""
-    f = bt709_matrix_filter(meta)
+    f = bt709_line_filter(meta)
     return f + "," if f else ""
 
 

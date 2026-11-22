@@ -125,6 +125,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.5.1 — a class that keeps coming back gets a guard](#after-451--a-class-that-keeps-coming-back-gets-a-guard)
 - [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
 - [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
+- [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
 <!-- contents:end -->
 
 ## Time limits
@@ -6617,3 +6618,80 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix` and
   `test_an_editing_master_of_an_hdr_rgb_source_keeps_its_tags_and_names_its_matrix`
   (tests/test_picture.py).
+
+## After 4.6.5 — several audio tracks in one file (#420)
+
+- **`audio.py --track FILE` writes each source as its own audio stream and changes none of them.**
+  The owner's request during the freeze (#420, named in `.github/code-budget.json`): dialogue, music
+  and effects stems in one MOV, MKV or MP4 for a stems step or an NLE package. The input's own sound
+  (`--audio-stream`) is track 0, then the first audio stream of each `--track` in order; no filter
+  graph runs, so every track keeps its channel layout, rate and length, and nothing is mixed,
+  resampled, padded or trimmed to the picture or to another track. Codecs: 24-bit PCM in `.mov` and
+  `.mkv`, `audio_codec_for()`'s AAC (`--bitrate`, 192k) in `.mp4`. `--bitrate` beside PCM is refused as
+  a flag that does nothing. The picture is stream-copied and subtitle and data tracks go through
+  `run_keeping_subtitles()` as in the rest of audio.py; an audio input writes no picture, and a
+  picture with no sound takes only the `--track` files (track 0 is then the first of them).
+- **The names are the issue's and the decided ones.** "one name per meaning" fixes a language as
+  `--lang`, so the option is `--track-lang`; the issue's `--track-language` is a second spelling (it
+  adds no code). The name of a track is `--track-name`, as the issue asks, with caption.py's
+  `--track-title` as its second spelling: the two tools' `track_title` could not share one contract
+  property, since caption.py's takes a string through `AppendPath` (an MCP caller sends one) and a
+  track list here is an array (`test_option_names_do_not_grow_apart`), so the property is
+  `track_name`. `--track-name` and `--track-lang` are repeated in track order and matched by
+  position; an empty value leaves that track as its source has it, which is the only way to name the third track
+  alone. A language is an ISO 639-2 code, three lowercase letters (caption.py's `--language` also
+  takes two-letter and regional tags for a subtitle track; an audio track in an MP4 or MOV stores
+  nothing for `en`, so it is refused here instead of converted); two tracks may share a language
+  (stems usually do).
+- **Refusals, not interactions.** `track_container` (an output that is not `.mov`, `.mkv` or `.mp4`),
+  `track_rebuilds_sound` (`--voice`, `--denoise`, `--gain`, `--music`, `--effects`, `--replace`, a
+  fade, a channel layout, `--tempo`, `--length-samples`, `--sample-rate`, the dynamics, `--mute`, and the
+  silence flags, which would be ignored: the hint is to run audio.py on each stem first and add the
+  results), `track_labels` (more titles or languages than tracks, counting the input's own sound),
+  `track_language`. All run under `--dry-run` too, before anything is probed except `track_labels`,
+  which needs to know whether the input has sound. `--track-name` or `--track-lang` without `--track`
+  is refused as a switch that is off.
+- **MXF is refused, measured on FFmpeg 6.1.1.** The request named it, and its muxer does not hold what
+  the other containers do: it takes 48 kHz only (a 44.1 kHz stem fails with "only 48khz is
+  implemented"); it takes the picture codecs of its own (a copied H.264 fails with "h264 profile not
+  supported", and a file with no picture with "there must be exactly one video stream"); a title and a
+  language given to it are not written (ffprobe reads neither back); and a 3 s picture with a 2 s and a
+  4 s track came out 2.0 s in every stream, which is the opposite of "kept as they are". The refusal
+  names that; it is revisited when a build is shown to write MXF names and unequal lengths. A resample
+  to 48 kHz was not added for it: nothing else in the mode resamples.
+- **A name is the title tag in Matroska and the handler name in MOV and MP4.** FFmpeg's MOV/MP4 muxer
+  writes no title atom (ffprobe 6.1.1 reads no `title` from either), and a track's name in QuickTime
+  and in NLEs is its handler name, so a name is written to both tags there and read back from
+  whichever the container holds, only where a name was asked (an unnamed track's `SoundHandler` is
+  the muxer's default, not a name). **A language is checked against the file, not against a list.**
+  MP4 and MKV keep any three-letter code; MOV keeps only the codes of QuickTime's table, which spells
+  German `ger` and Chinese `chi`: of `eng`, `jpn`, `fra`, `ger`, `chi` kept, `deu`, `zho`, `fre`, `zxx`,
+  `mul`, `qaa` and `und` read back as no language. The `track_tags` step compares what was asked with
+  what the file holds, so a MOV that dropped a language is `verified: false` with both lists in the
+  step; a table of the codes would be a claim about every FFmpeg build.
+- **The result reports the file.** `tracks` is `{index, file, title, language, channels, duration}` per
+  audio stream of the written file, from ffprobe's tags and channels and from the decoder's count of
+  samples (`decoded_samples()`, now per stream) over the rate, in seconds; a length that could not be
+  counted is `null` with a `track_duration` step, `reason: not_measured`. A dry run lists the names
+  and languages asked, with channels and duration null. The stream count is the `streams` step
+  (`expect_streams`). A track longer than the picture, by more than a frame of it, is kept whole and
+  raises `track_longer_than_picture`: the caller may have meant it to be cut, and audio.py has no
+  trim for a track (the warning is not a refusal: a stem longer than the picture is also ordinary).
+- **Not done.** A BWF or multitrack WAV with a start timecode (out of scope for #420). A track file
+  that starts after its own origin: FFmpeg rebases each input to 0 (measured: a stem whose start time
+  is 1.0 s is written from 0), as everywhere a file's own start is not carried. A mix of several
+  `--audio-stream`s of the input (one is taken; `audio_tracks_dropped` says so when the output ends with fewer audio streams than the input had).
+  A demo in `docs/demos.md` (the recent options of the freeze, `--mute` and `--audio-lead`, have none).
+- **The MCP listing grew by about 505 bytes**, which the two budgets of
+  `test_mcp_advertisement_payload_stays_within_documented_budgets` could not take (the full profile had
+  50 bytes of room, the default 250): both were raised by 500 (73,500 and 195,500), the descriptions of
+  the three options kept to a line each, the detail being here and in `references/scripts.md`.
+- Code: `audio.check_track_flags()`, `write_tracks()`, `read_tracks()`; `_contract.py` (the four reasons,
+  `track_longer_than_picture`, the `tracks` field). Tests: `AudioTracksTests` (tests/test_audio.py):
+  `test_three_tracks_keep_their_channels_lengths_names_and_languages_in_mov_and_mkv`,
+  `test_an_mp4_holds_the_tracks_as_aac_and_a_track_may_stay_unnamed`,
+  `test_a_track_that_a_container_did_not_keep_fails_the_tags_step`,
+  `test_an_audio_input_and_a_picture_with_no_sound_take_tracks_too`,
+  `test_track_refusals_name_their_reason_and_run_under_a_dry_run`,
+  `test_a_track_file_is_checked_and_the_output_may_not_be_one`,
+  `test_a_dry_run_lists_the_tracks_and_writes_nothing`.
