@@ -25,6 +25,17 @@
   defect back. `docs/defect-guards.json` lists them, and `revert_proof.py` refuses a fix of a
   class with three ledger entries and no guard, so the next class that keeps coming back gets
   one before its fourth fix.
+### Added
+
+- **`join.py --audio-lead S` (J-cut) and `--audio-lag S` (L-cut) (#675).** With `--transition none`,
+  the next clip's sound starts S seconds before its picture (lead), or the previous clip's sound runs
+  S seconds past the picture change (lag), at every boundary. Sync is kept, so each boundary costs S
+  seconds of a clip: two clips of 8 s and 6 s with S = 0.5 join to 13.5 s. S is whole frames of the
+  output rate; the result carries `audio_lead_seconds` / `audio_lag_seconds` and `expected_duration`
+  is the shortened length. Refused, with `error.reason`: with a transition, with `--copy`, both
+  flags together, and S under a frame or not shorter than a clip. SKILL.md routes "J-cut", "L-cut",
+  "cutaway", "cut-in", "reaction cut", "insert" and "smash cut" to their tools;
+  `references/requests.md` has the full table of editors' names.
 
 ## 4.5.2
 

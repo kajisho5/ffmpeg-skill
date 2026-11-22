@@ -2670,6 +2670,82 @@ class EditingTests(MediaFixtures):
         self.assertEqual(self._pts_steps(out), {0.0333})
         self.assertEqual(len(self._gray_frames(out)), 2 * 90)
 
+    def _cut_pair(self, d):
+        """Red with a 440 Hz tone for 8 s and blue with 880 Hz for 6 s: the colour at a time says whose picture
+        it is and the tone whose sound (#675)."""
+        d.mkdir(exist_ok=True)
+        for name, colour, hz, secs in (("red", "red", 440, 8), ("blue", "blue", 880, 6)):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={colour}:s=160x120:r=30:d={secs}",
+               "-f", "lavfi", "-i", f"sine=f={hz}:d={secs}:sample_rate=48000", "-c:v", "libx264", "-preset", "ultrafast",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", d / f"{name}.mp4")
+        return d / "red.mp4", d / "blue.mp4"
+
+    @staticmethod
+    def _colour_and_tone_at(path, t):
+        """('red'|'blue', 440|880) at `t` seconds: the picture's dominant channel, the louder of two narrow bands over 0.2 s."""
+        r, _g, b = frame_rgb(path, t, 80, 60)
+        levels = {}
+        for hz in (440, 880):
+            proc = sh("ffmpeg", "-nostdin", "-ss", t, "-t", "0.2", "-i", path, "-vn", "-af",
+                      f"bandpass=f={hz}:width_type=h:w=40,volumedetect", "-f", "null", "-")
+            levels[hz] = float(re.search(r"mean_volume:\s*(-?[0-9.]+) dB", proc.stderr).group(1))
+        return ("red" if r > b else "blue"), max(levels, key=levels.get)
+
+    def test_join_j_cut_starts_the_next_sound_before_its_picture(self):
+        """--audio-lead 0.5 (#675): red (8 s) then blue (6 s); the blue sound starts at 7.5 s under the last half
+        second of red, the blue picture from its 0.5 s on, so 13.5 s in all and sync is kept."""
+        red, blue = self._cut_pair(OUT / "join_j_cut")
+        out = OUT / "join_j_cut" / "j.mp4"
+        doc = json.loads(script("join.py", red, blue, "--transition", "none", "--audio-lead", "0.5", "--preset", "ultrafast",
+                                "--json", "-o", out).stdout)
+        self.assertEqual(doc["audio_lead_seconds"], 0.5)
+        self.assertNotIn("audio_lag_seconds", doc)
+        self.assertEqual(doc["expected_duration"], 13.5)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertClose(probe(str(out))["video"]["duration"], 13.5, 0.05, "8 + 6 - 0.5 s")
+        self.assertEqual(self._colour_and_tone_at(out, "7.0"), ("red", 440))
+        self.assertEqual(self._colour_and_tone_at(out, "7.75"), ("red", 880), "red's picture under blue's sound")
+        self.assertEqual(self._colour_and_tone_at(out, "8.5"), ("blue", 880))
+
+    def test_join_l_cut_keeps_the_last_sound_past_the_picture(self):
+        """--audio-lag 0.5 (#675): the red sound runs half a second into blue's picture; blue's sound starts at its
+        0.5 s, so the length is 13.5 s and the sync is kept."""
+        red, blue = self._cut_pair(OUT / "join_l_cut")
+        out = OUT / "join_l_cut" / "l.mp4"
+        doc = json.loads(script("join.py", red, blue, "--transition", "none", "--audio-lag", "0.5", "--preset", "ultrafast",
+                                "--json", "-o", out).stdout)
+        self.assertEqual(doc["audio_lag_seconds"], 0.5)
+        self.assertNotIn("audio_lead_seconds", doc)
+        self.assertEqual(doc["expected_duration"], 13.5)
+        self.assertTrue(doc["verified"], doc["verification"])
+        self.assertClose(probe(str(out))["video"]["duration"], 13.5, 0.05, "8 + 6 - 0.5 s")
+        self.assertEqual(self._colour_and_tone_at(out, "7.0"), ("red", 440))
+        self.assertEqual(self._colour_and_tone_at(out, "7.75"), ("blue", 440), "blue's picture over red's sound")
+        self.assertEqual(self._colour_and_tone_at(out, "8.5"), ("blue", 880))
+
+    def test_join_j_cut_and_l_cut_refusals(self):
+        """The J-cut and L-cut flags are refused, with a reason, under --dry-run too: with a transition, with --copy,
+        both together, a value as long as the clip it takes from, and on audio alone (#675)."""
+        red, blue = self._cut_pair(OUT / "join_cut_refusals")
+        base = ("join.py", red, blue, "--dry-run", "--json")
+        for flags, reason in ((("--audio-lead", "0.5"), "audio_cut_transition"),
+                              (("--audio-lag", "0.5", "--transition", "dissolve"), "audio_cut_transition"),
+                              (("--audio-lead", "0.5", "--transition", "none", "--copy"), "audio_cut_copy"),
+                              (("--audio-lead", "0.5", "--audio-lag", "0.5", "--transition", "none"), "audio_cut_both_flags"),
+                              (("--audio-lead", "6", "--transition", "none"), "audio_cut_too_long"),
+                              (("--audio-lag", "7", "--transition", "none"), "audio_cut_too_long"),
+                              (("--audio-lead", "0.001", "--transition", "none"), "audio_cut_too_long")):
+            doc = json.loads(script(*base, *flags, expect_fail=True).stdout)
+            self.assertEqual(doc["status"], "failed", flags)
+            self.assertEqual(doc["error"]["reason"], reason, flags)
+        wav = OUT / "join_cut_refusals" / "a.wav"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=d=2", wav)
+        proc = script("join.py", wav, wav, "--transition", "none", "--audio-lead", "0.5", "--dry-run", expect_fail=True)
+        self.assertIn("--audio-lead", proc.stderr)
+        # a plan with the flag at its boundary is not refused: 5.9 s is shorter than the 6 s clip
+        plan = json.loads(script(*base, "--transition", "none", "--audio-lag", "5.9").stdout)
+        self.assertEqual(plan["audio_lag_seconds"], 5.9)
+
     def test_join_none_starts_a_late_picture_at_its_cut(self):
         """A clip whose picture starts after 0 (a cut part whose first video packet sits at 0.08 s): the
         audio chains started at 0 but the video chain kept that offset, and the concat filter placed it

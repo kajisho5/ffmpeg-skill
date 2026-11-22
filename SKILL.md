@@ -140,7 +140,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "transcribe it and caption it", "words popping" | `caption.py in.mp4 --transcribe --animate pop --karaoke` |
 | "our logo top-right", "a watermark" | `overlay.py in.mp4 --image logo.png --position top-right --scale 200` |
 | "a title for the first 4 seconds" | `overlay.py in.mp4 --text "Title" --position top --start 0 --end 4` |
-| "picture-in-picture" | `overlay.py in.mp4 --video cam.mp4 --position bottom-right --scale 480` |
+| "picture-in-picture", "insert" (a picture on top) | `overlay.py in.mp4 --video cam.mp4 --position bottom-right --scale 480` |
 | "remove the green screen" | `overlay.py bg.mp4 --video green.mp4 --chromakey 0x00ff00` |
 | "a lower third", "hook card", "sticker", "meme text" | `graphics.py in.mp4 --template lower-third --name "..."` (or `hook`, `sticker`, `meme`) |
 | "use our brand fonts/colours/logo" | `--brand brand.json` on caption/overlay/graphics |
@@ -172,11 +172,12 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "waveform video" or "waveform at the cut" | `waveform.py ep.wav -o waveform.mp4` or `waveform.py ep.wav --at 12.4 -o cut.png` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
-| "cut to the product shot", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16 --audio b\|mix` |
+| "cut to the product shot", "B-roll over this bit", "cutaway", "cut-in", "reaction cut" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16 --audio b\|mix` |
 | "add chapters", "set the title / artist" | `metadata.py ep.mp4 --chapters chapters.txt` (`--title`, `--auto-chapters`) |
 | "a 4x2 grid of these videos" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 --transition fade --duration 0.5` |
-| "join them without re-encoding" | `join.py a.mp4 b.mp4 --copy --transition none` |
+| "join them without re-encoding", "smash cut" (a plain cut, no transition) | `join.py a.mp4 b.mp4 --copy --transition none` |
+| "J-cut" (next sound starts early), "L-cut" (last sound runs late) | `join.py a.mp4 b.mp4 --transition none --audio-lead 0.5` (`--audio-lag 0.5`; each costs 0.5 s of a clip) |
 | "several changes to one edit", 3+ steps, "I changed one stage, don't redo the rest" | `render.py project.json` (`--init` writes one; `--cache DIR` reuses unchanged stages) |
 | "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml` |
 | "every file in the folder", "use all the cores" | `batch.py FOLDER --recipe batch.json --jobs auto` |
