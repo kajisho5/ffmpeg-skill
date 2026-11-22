@@ -150,10 +150,11 @@ def hdr_rgb_matrix_filter(meta: Optional[Dict[str, Any]], line_meta: Optional[Di
 # An odd-sized BT.601 source is padded to even for the colorspace filter and cropped back to its
 # own size after it (bt709_matrix_filter): both wrap the conversion in the one -vf the merge finds.
 _EVEN_PAD = "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,"
-_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s"
-                               r"|(?:format=rgb24,)?scale=out_color_matrix=(?:%s):out_range=tv,format=yuva?444p10le)$"
+_BT709_RELABEL = "setparams=color_primaries=bt709:color_trc=bt709"
+_MATRIX_FILTER_RE = re.compile(r"^(?:(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s"
+                               r"|(?:format=rgb24,)?scale=out_color_matrix=(?:%s):out_range=tv,format=yuva?444p10le)(?:,%s)?|%s)$"
                                % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter()),
-                                  "|".join(sorted(set(_SWS_OUT_MATRIX.values())))))
+                                  "|".join(sorted(set(_SWS_OUT_MATRIX.values()))), re.escape(_BT709_RELABEL), re.escape(_BT709_RELABEL)))
 # [N:v], [N:v:0] and [N:V:0] (PROBED_VIDEO: the motion picture, not an attached cover)
 _INPUT_VIDEO_REF = re.compile(r"\[(\d+):[vV](?::0)?\]")
 
@@ -337,6 +338,10 @@ def bt709_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     valid as it stands for a command with no other filter; run() folds it into the tool's own
     -vf or -filter_complex (fold_bt709_matrix()) before the command is recorded or run."""
     f = bt709_matrix_filter(meta)
+    # FFmpeg 9 writes mp4/mov's colr box from the frames, which keep an HDR source's primaries and
+    # transfer: the VUI said bt709 and the container bt2020/PQ (#711). setparams relabels, converts nothing.
+    if ((meta or {}).get("video") or {}).get("bt2020_or_hdr") and ffmpeg_version() >= (9, 0):
+        f = ",".join(x for x in (f, _BT709_RELABEL) if x)
     return ["-vf", f] if f else []
 
 
