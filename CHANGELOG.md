@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.5.3
+
+_Automated release: version and notes generated from pull requests merged since 4.5.2._
+
 ### Fixed
 
 - **`cut.py --segments`, `cut.py --remove` and `silence.py` move the chapters with the ranges they
@@ -25,6 +31,7 @@
   defect back. `docs/defect-guards.json` lists them, and `revert_proof.py` refuses a fix of a
   class with three ledger entries and no guard, so the next class that keeps coming back gets
   one before its fourth fix.
+- fix: every class of defect fixed three times has a guard that runs every tool (#700)
 
 ## 4.5.2
 
