@@ -8823,6 +8823,29 @@ class HdrRgbSourceTests(unittest.TestCase):
         self.assertTrue(v["bt2020_or_hdr"], "fixture: the source probes BT.2020 or HDR")
         return src
 
+    def test_probe_711_tags(self):
+        """TEMPORARY (#711): print what each way of tagging BT.709 writes on this FFmpeg."""
+        if "libx264" not in __import__("_common").ffmpeg_encoders():
+            self.skipTest("needs libx264")
+        hdr = self._pq_gbr()
+        plain = self.dir / "p711_plain.mkv"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0xC03028:s=64x64:r=25:d=1", "-pix_fmt", "yuv420p", "-c:v", "ffv1", plain)
+        x264 = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
+        lines = []
+        for sname, src, vf in (("hdr_rgb", hdr, "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"), ("sdr_untagged", plain, "null")):
+            for vname, extra_vf, extra in (("A_vui", "", []), ("B_opts", "", ["-color_primaries", "bt709", "-color_trc", "bt709"]),
+                                           ("C_setparams", ",setparams=color_primaries=bt709:color_trc=bt709", []),
+                                           ("D_setparams3", ",setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709", [])):
+                out = self.dir / f"p711_{sname}_{vname}.mp4"
+                proc = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", vf + extra_vf, *x264, *extra, str(out)], capture_output=True, text=True)
+                if proc.returncode:
+                    lines.append(f"{sname} {vname} FAILED {proc.stderr.strip()[-200:]}")
+                    continue
+                w = probe(str(out))["video"]
+                px = frame_rgb(out, 0.4, 10, 10, vf="scale=in_color_matrix=bt709:in_range=tv,format=rgb24")
+                lines.append(f"{sname} {vname} {w.get('color_space')}/{w.get('color_primaries')}/{w.get('color_transfer')} px={bytes(px).hex()}")
+        self.fail("\nPROBE711 " + repr(__import__("_common").runner.ffmpeg_version()) + "\n" + "\n".join("PROBE711 " + l for l in lines))
+
     def test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix(self):
         """#559: the youtube preset tags BT.709 and made an HDR RGB source's YUV with FFmpeg's BT.601
         (the red patch C03028 read CE3E26 by the bt709 tag, 14 off): the matrix tag was a claim the
