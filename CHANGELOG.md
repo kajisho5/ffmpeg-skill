@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.6.1
+
+_Automated release: version and notes generated from pull requests merged since 4.6.0._
+
 ### Changed
 
 - **Tools start faster (#679).** The FCPXML writer imports `xml.sax.saxutils`, which pulls in
@@ -12,6 +18,7 @@
   Importing the transcription and text-layout modules on first use saved 3 to 4 ms more and made
   `mock.patch` of a re-exported name leave the patch in place on exit, so it was left out. No probe
   cache: a run probes each input once.
+- refactor: only the FCPXML writer imports the xml chain (#679) (#703)
 
 ## 4.6.0
 
