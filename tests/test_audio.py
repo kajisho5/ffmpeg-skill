@@ -2108,8 +2108,12 @@ class AudioTracksTests(unittest.TestCase):
                                 "-o", out, "--json").stdout)
         step = next(s for s in doc["verification"] if s["step"] == "track_tags")
         self.assertFalse(step["ok"], step)
-        self.assertEqual(doc["tracks"][1]["language"], None)
+        self.assertEqual(doc["tracks"][1]["language"], "und", "no language tag reads as ISO 639's undetermined")
         self.assertFalse(doc["verified"])
+        # `und` itself is what MOV writes as no tag: asked for, it verifies
+        doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track-lang", "eng", "--track-lang", "und",
+                                "-o", out, "--overwrite", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
 
     def test_an_audio_input_and_a_picture_with_no_sound_take_tracks_too(self):
         out = self.dir / "from_wav.mkv"
