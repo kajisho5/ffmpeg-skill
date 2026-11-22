@@ -122,6 +122,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
 - [After 4.4.1 — an unmeasured substitution is null (#663)](#after-441--an-unmeasured-substitution-is-null-663)
 - [After 4.4.1 — the first line of a result is for a reader](#after-441--the-first-line-of-a-result-is-for-a-reader)
+- [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
 <!-- contents:end -->
 
 ## Time limits
@@ -6514,3 +6515,31 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   stream copy that ends on a packet is a valid file (#620 stays open for whether a miss should
   fail a delivery). Pinned by
   `test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses`.
+
+## After 4.5.2 — J-cut and L-cut in join.py
+
+- **`join.py --audio-lead S` / `--audio-lag S` keep sync and shorten the join; they do not slide
+  one stream against the other.** An editor's J-cut and L-cut cost the material the sound borrows:
+  with lead the next clip's picture starts S into the clip and the previous sound loses its last S,
+  with lag the previous picture loses its last S and the next sound starts S into the clip. Output
+  length is the sum of the clips less S per boundary, at every boundary (a per-boundary list is out
+  of scope), and `expected_duration` is that length. The alternative, a longer file with the
+  picture of one clip over the sound of the other and nothing cut, is what one model built by hand
+  in the benchmark behind #675; it changes where every later clip lands against its own sound.
+- **Only `--transition none`, never `--copy`, never both flags, never S as long as a clip.** A
+  transition already overlaps the two pictures, so a second overlap has no meaning; a stream copy
+  cuts both streams at the same packet; the two flags are two different cuts; and S that is not
+  shorter than the clip it takes from would leave that clip nothing. Each is a refusal with its own
+  `error.reason` (`audio_cut_transition`, `audio_cut_copy`, `audio_cut_both_flags`,
+  `audio_cut_too_long`), also under `--dry-run`. S under one frame is refused as `audio_cut_too_long`
+  rather than rounded to a cut of nothing.
+- **S is whole frames of the output rate, and the sound is cut at the same frame time.** The
+  picture is trimmed at frame `round(S * fps)` and the sound at the sample that frame is
+  (`at(frames)`, as every other boundary in the join), so `audio_lead_seconds` is the frames over the
+  rate, not the number typed. The picture and the sound are concatenated by two concat filters
+  (one `v=1:a=0`, one `v=0:a=1`): one filter for both would start the next clip after the longer of
+  its two streams, which here differ by S. `inputs_duration` / `transition_shortening` are not
+  reported, since the cut and not a transition took the time. Code: `join.main()`. Test:
+  `test_join_j_cut_starts_the_next_sound_before_its_picture`,
+  `test_join_l_cut_keeps_the_last_sound_past_the_picture`,
+  `test_join_j_cut_and_l_cut_refusals` (tests/test_editing.py).

@@ -708,6 +708,12 @@ def main() -> int:
                     help="join by stream copy, no re-encode (needs --transition none): every clip must carry the same "
                          "video and audio parameters (codec, size, rate, pixel format, sample rate, channels); a clip "
                          "that does not is refused, by name, with what differs")
+    ap.add_argument("--audio-lead", type=float, metavar="S",
+                    help="J-cut: at each boundary the next clip's sound starts S seconds (0.001..600, whole frames) before its picture; "
+                         "sync is kept, so each boundary costs S seconds (needs --transition none; not with --copy or --audio-lag)")
+    ap.add_argument("--audio-lag", type=float, metavar="S",
+                    help="L-cut: at each boundary the previous clip's sound runs S seconds (0.001..600, whole frames) past the picture "
+                         "change; sync is kept, so each boundary costs S seconds (needs --transition none; not with --copy or --audio-lead)")
     ap.add_argument("--pad-color", default="black", help="pad colour when a clip's aspect differs, e.g. black, white, 0x101010 (default black)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
@@ -723,6 +729,17 @@ def main() -> int:
         die(f"--fps must be positive, got {args.fps:g}")
     # nan and inf are refused by the parser (finite_float) and a negative length by apply_common: it
     # was taken as the one-frame minimum and the join succeeded with a transition nobody asked for
+
+    cut_flag = "--audio-lead" if args.audio_lead is not None else "--audio-lag" if args.audio_lag is not None else None
+    clash = "both_flags" if args.audio_lead is not None and args.audio_lag is not None else (
+        "transition" if args.transition != "none" else "copy" if args.copy else None)
+    if cut_flag and clash:
+        refuse("input", f"audio_cut_{clash}", {
+            "both_flags": "--audio-lead and --audio-lag are two different cuts: give one",
+            "transition": f"{cut_flag} needs --transition none: a transition already overlaps the picture of the two clips",
+            "copy": f"{cut_flag} cuts picture and sound at different times, which a stream copy cannot do: drop --copy"}[clash],
+            hint="a J-cut or an L-cut is a plain cut: --transition none, no --copy, one of the two flags")
+    cut_s = args.audio_lead if args.audio_lead is not None else args.audio_lag
 
     if args.list:
         if args.inputs:
@@ -821,6 +838,8 @@ def main() -> int:
         for p, m in zip(args.inputs, metas):
             if not m.get("audio"):
                 die(f"{p} has neither a video nor an audio stream")
+        if cut_flag:
+            die(f"{cut_flag} moves the sound against a picture, and these clips have none")
         if args.copy:
             die("--copy joins video clips; an audio-only join resamples every clip to one format, which a copy cannot do")
         return join_audio(args, metas)
@@ -876,6 +895,11 @@ def main() -> int:
     tframes = max(1, round(d * fps)) if args.transition != "none" else 0
     d = tframes / fps
     lens = [f / fps for f in frames]
+    # the J-cut or L-cut offset: whole frames of the output rate, and a clip it takes from must be longer
+    cut_f = round(cut_s * fps) if cut_s else 0
+    if cut_s and (cut_f < 1 or any(0 < nf <= cut_f for nf in frames)):
+        refuse("input", "audio_cut_too_long", f"{cut_flag} {cut_s:g} is not between one frame ({1 / fps:.3f} s) and the length "
+               f"of the shortest clip ({min(frames) / fps:.3f} s): it takes that much of a clip", hint="give a shorter value", frames=frames)
     place_silent(lens, d)
     for p, nf in zip(args.inputs, frames):
         if d and nf <= tframes * 2 and not STATE.dry_run:
@@ -979,9 +1003,19 @@ def main() -> int:
         have = round(vlen * fps)
         # one frame more than the gap is held, and the trim cuts at the clip's last frame
         hold = f"tpad=stop_mode=clone:stop={frames[i] - have + 1}," if frames[i] > have else ""
-        parts.append(f"[v{i}]{hold}trim=end_frame={frames[i]}[vp{i}]")
-        parts.append(f"[a{i}]apad=whole_len={samples[i]},atrim=end_sample={samples[i]}[ap{i}]")
-    if args.transition == "none":
+        # J-cut: picture from frame cut_f of every clip but the first, sound without the last cut_f of
+        # every clip but the last; L-cut: the other way round (sync is kept, so both lose the same)
+        lead, last = args.audio_lead is not None and cut_f, i < n - 1
+        lag = args.audio_lag is not None and cut_f
+        vs, ve = (cut_f if lead and i else 0), frames[i] - (cut_f if lag and last else 0)
+        a0, a1 = (at(cut_f) if lag and i else 0), samples[i] - (at(cut_f) if lead and last else 0)
+        parts.append(f"[v{i}]{hold}trim={f'start_frame={vs}:' if vs else ''}end_frame={ve}{',setpts=PTS-STARTPTS' if vs else ''}[vp{i}]")
+        parts.append(f"[a{i}]apad=whole_len={samples[i]},atrim={f'start_sample={a0}:' if a0 else ''}end_sample={a1}"
+                     f"{',asetpts=PTS-STARTPTS' if a0 else ''}[ap{i}]")
+    if cut_f:  # one concat each, as the two streams are cut at different frames
+        parts.append("".join(f"[vp{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[vout]")
+        parts.append("".join(f"[ap{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[aout]")
+    elif args.transition == "none":
         chain = "".join(f"[vp{i}][ap{i}]" for i in range(n))
         parts.append(f"{chain}concat=n={n}:v=1:a=1[vout][aout]")
     else:
@@ -1022,6 +1056,8 @@ def main() -> int:
     cmd += video_args(hdr_meta or metas[0], args.crf, args.preset, convert_matrix=False) + aac_args() + [output]
     run(cmd)
     expected = unpending_length(lens, d)
+    if expected is not None and cut_f:
+        expected = round(expected - cut_f * (n - 1) / fps, 3)
     r = probe(output, role="output")
     # the picture is what the offsets place: measure the video stream, not the container (whose
     # length also counts the AAC tail), against the length the clips add up to
@@ -1041,9 +1077,11 @@ def main() -> int:
         STATE_NOTES.append(f"{len(substituted)} clip(s) had no audio stream; their span of the join is generated "
                            "silence: " + ", ".join(os.path.basename(p) for p in substituted))
     info(f"wrote {output} ({fmt_secs(measured)}, {expected_text(expected)}, {w}x{h} @ {fps:g}fps, {n} clips, {args.transition})")
-    overlap = overlap_report(lens, expected)
+    overlap = {} if cut_f else overlap_report(lens, expected)
     emit(output, mode="video", **overlap, **reported(), clips=n, transition=args.transition, expected_duration=expected,
          frame_rate=f"{rate_q.numerator}/{rate_q.denominator}", clip_frames=frames, transition_frames=tframes,
+         **({"audio_lead_seconds": cut_f / fps} if cut_f and args.audio_lead is not None else {}),
+         **({"audio_lag_seconds": cut_f / fps} if cut_f and args.audio_lag is not None else {}),
          verification=verification, expect_streams={"video": 1, "audio": 1}, stream_reference=metas,
          audio_substituted=substituted,
          dropped_non_av_streams=any(m.get("subtitle_streams") or m.get("data_streams") for m in metas))
