@@ -3932,7 +3932,7 @@ sys.exit(fit.main())
         JPEG are converted to BT.709 by every tool that re-encodes them; a still composited over the
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
-        beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
+        beside a converted or already BT.709 cell. Two untagged cells need no label."""
         s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
@@ -3965,7 +3965,10 @@ sys.exit(fit.main())
             ("waveform", [self.src, "--image", png], {"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p": 1}),
             ("grid", [self.src, s601, "--cols", "2", "--rows", "1"], {"colorspace=ispace=smpte170m:": 1, label: 1}),
             ("grid", [s601, self.src, png, s709, "--cols", "2", "--rows", "2"], {"colorspace=ispace=smpte170m:": 1, label: 1, rgb: 1}),
-            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [s709, self.src, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [self.src, self.src, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [s709, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
         ]
         for n, (name, args, want) in enumerate(cases):
             with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
