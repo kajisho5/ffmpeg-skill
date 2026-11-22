@@ -46,7 +46,7 @@ variant it does not show.
 | "TikTok-style captions with the words popping" | `caption.py input.mp4 --text cues.txt --animate pop --karaoke` |
 | "our logo top-right", "a watermark" | `overlay.py input.mp4 --image logo.png --position top-right --scale 200` |
 | "a title for the first 4 seconds" | `overlay.py input.mp4 --text "Title" --position top --start 0 --end 4 --fade 0.4` |
-| "webcam clip in the corner", "picture-in-picture" | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
+| "webcam clip in the corner", "picture-in-picture", "insert" (a picture on top) | `overlay.py input.mp4 --video webcam.mp4 --position bottom-right --scale 480` |
 | "remove the green screen" | `overlay.py bg.mp4 --video greenscreen.mp4 --chromakey 0x00ff00` |
 | "a lower third with my name", "countdown intro", "progress bar" | `graphics.py input.mp4 --template lower-third --name "..." --title "..." --start 2 --end 8` |
 | "a sticker", "a hook card for the first 3 s", "meme text" | `graphics.py input.mp4 --template sticker --text "NEW" --platform tiktok` / `--template hook --title "..." --duration 3` / `--template meme --top "..." --bottom "..."` |
@@ -77,11 +77,12 @@ variant it does not show.
 | "turn these numbered frames into a video" | `sequence.py --dir frames --pattern "frame_%04d.png" --fps 24` |
 | "waveform/spectrum video for this track" | `waveform.py podcast.wav -o waveform.mp4` |
 | "add black at the start" | `pad.py clip.mp4 --start 1.5` |
-| "cut to the product shot 0:12-0:16", "B-roll over this bit" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16` (repeat `--insert/--at`; `--audio b\|mix`) |
+| "cut to the product shot 0:12-0:16", "B-roll over this bit", "cutaway", "cut-in", "reaction cut" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16` (repeat `--insert/--at`; `--audio b\|mix`) |
 | "add chapters", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (`TIME TITLE` per line; streams copied; in a project: `"chapters"`). `--auto-chapters` proposes them from measured pauses/scene cuts (`Chapter N`) |
 | "set the title / artist / comment" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
 | "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` (TTS: `--list parts.txt`, `--on-missing skip`, `--on-silent fail`; no re-encode: `--copy --transition none`) |
+| "J-cut", "L-cut" | `join.py a.mp4 b.mp4 --transition none --audio-lead 0.5` (J: the next sound starts 0.5 s before its picture) / `--audio-lag 0.5` (L: the last sound runs 0.5 s past the picture change); sync is kept, so each boundary costs 0.5 s of a clip and the value applies at every boundary; not with a transition, `--copy`, or both flags |
 | "several changes to one edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages reused (`--from STAGE` starts there) |
 | "open it in Premiere / Resolve / Final Cut" | `render.py project.json --export-timeline edit.fcpxml\|.edl\|.otio` — renders nothing; read `not_exported`; no project? `--write-project` |
@@ -93,3 +94,19 @@ variant it does not show.
 | "where does the subject move, so I can crop it myself" | `cropdetect.py input.mp4 --motion-centre` — motion centroid per second, report-only; the calling agent picks the crop |
 | "does it look like Log / S-Log?" | `probe.py clip.mp4 --analyze` (`looks_like_log`) then `color.py --lut` |
 | "test the tool on my real files" | `verify.py ~/Footage --report verify.md` |
+
+## Editors' names for a cut
+
+A request that names a cut is routed by the name:
+
+| name | tool | in SKILL.md's table |
+|---|---|---|
+| jump cut | `silence.py` | yes ("jump cuts") |
+| cutaway, cut-in, reaction cut | `broll.py --insert B --at T --end T` (A's sound continues) | yes |
+| insert (a picture or screen on top) | `overlay.py --image/--video --start --end` | yes ("picture-in-picture") |
+| smash cut | `join.py --transition none` | yes |
+| establishing / empty shot | `cut.py` + `join.py`, or `broll.py --audio b` | no |
+| montage, cross-cutting | `render.py project.json`, or `cut.py --segments` + `join.py` | no |
+| J-cut | `join.py --transition none --audio-lead S` | yes |
+| L-cut | `join.py --transition none --audio-lag S` | yes |
+| match cut | a judgement about the picture (use `look.py`), not a tool | no |

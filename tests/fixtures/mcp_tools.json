@@ -632,6 +632,8 @@
   "properties": [
    "allow_silent",
    "argv",
+   "audio_lag",
+   "audio_lead",
    "channels",
    "codec",
    "copy",
