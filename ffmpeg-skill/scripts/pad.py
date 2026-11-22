@@ -18,7 +18,7 @@ import sys
 
 from _common.emit import note, record_fallback
 from _common.decision import cfr_filter, delivered_rate, silence_filter, tpad_length
-from _common.runner import with_mapped_chapters
+from _common.runner import declare_time_map, with_mapped_chapters
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, drawn_chain, emit, EVEN_SCALE, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, video_args, X264_PRESETS, time_arg, fmt_secs, run
 
 
@@ -107,6 +107,7 @@ def main() -> int:
         run(cmd + [output])
         dropped_streams = bool(meta.get("subtitle_streams") or meta.get("data_streams"))
     else:
+        declare_time_map("clipped")  # only a tail is added: every chapter keeps its time
         dropped_streams = run_keeping_subtitles(cmd, output)
 
     result = probe(output, role="output")

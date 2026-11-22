@@ -370,7 +370,7 @@ class Context:
     __slots__ = ("parser", "dry_run", "json", "json_brief", "progress", "fast", "duration_hint", "commands", "timeout", "overwrite", "written", "preexisting", "checked", "plan", "plan_written", "plan_inputs", "codec", "alpha_line",
                  "hw", "hw_source", "hw_notes", "hw_swaps", "hw_fallback", "hw_env_ignored", "hw_stages", "hw_auto",
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
-                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "watched", "temp_dirs", "side_deliveries",
+                 "source_timecode", "smpte_hint", "delivered", "expected_timecode", "time_mapped", "watched", "temp_dirs", "side_deliveries",
                  "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
                  "sequence_frames_sha256")
 
@@ -384,6 +384,7 @@ class Context:
         self.video_inputs = set()  # real paths of the inputs probed that have a picture: with two or more, which one the output shows is the tool's choice (sync --trim-second, a join)
         self.source_timecode = None  # (start timecode, duration) of the first input probed that carries one (time_arg's SMPTE hint)
         self.expected_timecode = None  # the start timecode a tool that moved the picture's start wrote (timeline.output_timecode_args; "" for none): source_carry compares it
+        self.time_mapped = None  # how a tool that changed the output's length moved its chapters (declare_time_map)
         self.smpte_hint = None    # what die() says when an hh:mm:ss:ff flag read past the end looks like a source timecode (#411)
         self.delivered: List[str] = []  # deliverables written before a later step (export --normalize, render's chapters/check): a stop then keeps them (#415)
         self.watched: Dict[str, Any] = {}  # a path a running child writes (render's export stage): its owned_identity() before the child started (watch_destination)
@@ -3659,6 +3660,22 @@ def _drawtext_tmpdir(create: bool = True) -> str:
     return _DRAWTEXT_TMPDIR
 
 
+def declare_time_map(how: str) -> None:
+    """A tool that changes the output's length says how its time-bearing items follow: "mapped"
+    (with_mapped_chapters did it) or why FFmpeg's own handling is right ("input seek": FFmpeg
+    moves chapters with an input -ss; "clipped": the output keeps the source's clock and only ends
+    earlier or later). Without it, emit's source_carry says chapters_not_retimed whenever the
+    length changed (the guard for the time class, docs/defect-guards.json)."""
+    STATE.time_mapped = how
+
+
+def segments_map(segments: "Sequence[Tuple[float, float]]") -> "Callable[[float], float]":
+    """The time map of a join of `segments` of one source (cut --segments/--remove, silence): a
+    source time inside a kept range lands at that range's place in the output; a removed time
+    collapses onto the join, so a chapter wholly inside a removed range is left with no length."""
+    return lambda t: sum(min(max(t - s, 0.0), e - s) for s, e in segments)
+
+
 def with_mapped_chapters(cmd: "List[str]", meta: "Optional[Dict[str, Any]]", to_output: "Callable[[float], float]",
                          length: "Optional[float]") -> "List[str]":
     """`cmd` (without its output path) with the source's chapters moved onto the output's clock:
@@ -3668,6 +3685,7 @@ def with_mapped_chapters(cmd: "List[str]", meta: "Optional[Dict[str, Any]]", to_
     chapters go in as an ffmetadata input of their own, written into the run's private temp
     directory when the command runs (flush_drawtext_textfiles), so a dry run writes nothing."""
     chapters = (meta or {}).get("chapters") or []
+    declare_time_map("mapped")
     if not chapters or "-map_chapters" in cmd:
         return cmd
     mapped = []

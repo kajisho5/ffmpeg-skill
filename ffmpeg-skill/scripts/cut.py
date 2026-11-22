@@ -62,7 +62,7 @@ from _common.runner import ffmpeg_failure_extra, JsonTooDeep, fail_if_classified
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
-from _common.runner import subtitle_codec_for, subtitle_container_holds
+from _common.runner import subtitle_codec_for, subtitle_container_holds, declare_time_map, segments_map, with_mapped_chapters
 from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
@@ -1265,6 +1265,9 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     rate_out = ["-r", rate_arg] if has_v and rate_arg and rate and "-r" not in codec else []
     # a join's frames after the first range are not the source's next frames: no start timecode
     # labels them, so the output carries none (a single range's cut moves it to its first frame)
+    if not intermediate:
+        # the chapters land where their ranges do (#696): FFmpeg kept the source's times
+        cmd = with_mapped_chapters(cmd, meta, segments_map(segments), None)
     cmd += ["-sn", "-dn"] + codec + rate_out + ([] if intermediate or not has_v else output_timecode_args(meta, None)) + [dst]
     run(cmd)
     return codec
@@ -1324,7 +1327,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
         for c in chunks:
             fh.write(concat_list_line(c) + "\n")
     audio = [] if not meta.get("audio") else (aac_args() if has_v else audio_codec_for(dst))
-    run(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile]
+    run(with_mapped_chapters(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile], meta, segments_map(segments), None)
         + (["-c:v", "copy"] + (tag if ext in (".mp4", ".mov", ".m4v") else []) if has_v else ["-vn"]) + audio
         + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else [])
         + (output_timecode_args(meta, None) if has_v else []) + [dst])
@@ -1693,6 +1696,8 @@ def main() -> int:
     # grid (decision.on_frame; grid_at_or_after itself is unchanged, since a length also goes through it)
     on_frame = lambda t, rate=0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta): decision_on_frame(t, stream_starts(meta)[0], rate)
     segments = [(on_frame(s), min(on_frame(e), total or math.inf)) for s, e in requested]
+    if len(segments) == 1:
+        declare_time_map("input seek")  # one range: FFmpeg moves the chapters with the input -ss
     video = meta.get("video") or {}
     if video.get("fps") and not is_audio_output(args.output or ""):
         # a video segment shorter than one frame has no picture to cut: a copy lands on a whole
@@ -1891,7 +1896,8 @@ def main() -> int:
                     joined = sibling_temp(output, "join") if checked else output
                     if checked:
                         temps.append(joined)
-                    cmd = ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy"]
+                    cmd = with_mapped_chapters(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile], meta,
+                                               segments_map(segments), None) + ["-c", "copy"]
                     if ext in (".mp4", ".mov", ".m4v"):
                         cmd += ["-movflags", "+faststart"]
                     if not is_audio_output(output):
