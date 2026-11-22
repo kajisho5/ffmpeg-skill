@@ -290,6 +290,65 @@ def judged_without_a_file(node, path=""):
     return found
 
 
+class FfmpegVersionGuard(unittest.TestCase):
+    """ffmpeg_version (#659, #671, #556): every tool passes through the shared version gate and
+    warns once per run (stderr + diagnostics.warnings) when the FFmpeg build sits outside
+    TESTED_FFMPEG_MAJORS, rather than failing silently or differing per tool."""
+
+    def test_every_tool_warns_once_on_untested_ffmpeg(self):
+        import platform
+        import shutil
+        real = shutil.which("ffprobe")
+        if not real:
+            self.skipTest("ffprobe not on PATH")
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            src = work / "plain.mkv"
+            chaptered_clip(src)
+            facts = sweep.facts_for(str(src), tmp)
+            shim = work / "shim"
+            shim.mkdir()
+            if platform.system() == "Windows":
+                (shim / "ffprobe.cmd").write_text(
+                    '@echo off\r\nif "%~1"=="-version" (\r\necho ffprobe version 10.0.1 Copyright\r\nexit /b 0\r\n)\r\n'
+                    f'"{real}" %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                (shim / "ffprobe").write_text(
+                    '#!/bin/sh\nif [ "$1" = "-version" ]; then printf "%s\\n" "ffprobe version 10.0.1 Copyright"; exit 0; fi\n'
+                    f'exec "{real}" "$@"\n',
+                    encoding="utf-8",
+                )
+                (shim / "ffprobe").chmod(0o755)
+            env = dict(os.environ, PATH=f"{shim}{os.pathsep}{os.environ['PATH']}")
+            missed = {}
+            for tool, (args, ext) in sweep.TABLE.items():
+                # verify.py ignores --dry-run, captures _probe_capturing() stderr, and delegates to child scripts
+                if tool == "verify":
+                    continue
+                name = tool.split()[0]
+                out = ["-o", str(work / f"fv_{tool.replace(' ', '_').replace('-', '')}{ext}")] if ext else []
+                cmd = [sys.executable, str(ROOT / "scripts" / f"{name}.py"), str(src),
+                       *[a.format(**facts) for a in args], *out, "--dry-run", "--json"]
+                proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=sweep.TIMEOUT_S)
+                start = proc.stdout.find("{")
+                try:
+                    doc = json.loads(proc.stdout[start:]) if start >= 0 else None
+                except ValueError:
+                    doc = None
+                err_hits = proc.stderr.count("warning: FFmpeg 10.0 is outside")
+                if err_hits != 1:
+                    missed[tool] = f"stderr warning count={err_hits}; rc={proc.returncode}; tail={proc.stderr[-160:]}"
+                    continue
+                if isinstance(doc, dict) and "diagnostics" in doc:
+                    codes = [w.get("code") for w in (doc.get("diagnostics") or {}).get("warnings") or []]
+                    if codes.count("ffmpeg_version_untested") != 1:
+                        missed[tool] = f"diagnostics warnings={codes}"
+            self.assertEqual(missed, {})
+
+
 class GuardRegistryTests(unittest.TestCase):
     def test_every_class_with_three_entries_has_a_guard_or_a_pending_issue(self):
         """A class the ledger records three times is registered in docs/defect-guards.json, with

@@ -24,6 +24,11 @@
       "test": "test_guards.SweepGuards.test_every_tool_answers_while_its_stdin_stays_open",
       "also": "test_contract.SharedCodeAudit465Tests.test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open",
       "how": "every tool, started with an open and silent stdin, ends and answers"
+    },
+    "ffmpeg_version": {
+      "test": "test_guards.FfmpegVersionGuard.test_every_tool_warns_once_on_untested_ffmpeg",
+      "also": "test_contract.FfmpegVersionRangeTests.test_tested_ffmpeg_majors_pinned_to_ci_workflow",
+      "how": "every tool in sweep.TABLE runs with a shimmed untested FFmpeg major (10.0.1) and emits the ffmpeg_version_untested warning once, while TESTED_FFMPEG_MAJORS stays pinned to .github/workflows/ci.yml"
     }
   }
 }
