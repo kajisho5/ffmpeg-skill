@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.6.0
+
+_Automated release: version and notes generated from pull requests merged since 4.5.3._
+
 ### Added
 
 - **`join.py --audio-lead S` (J-cut) and `--audio-lag S` (L-cut) (#675).** With `--transition none`,
@@ -15,6 +21,7 @@
   flags together, and S under a frame or not shorter than a clip. SKILL.md routes "J-cut", "L-cut",
   "cutaway", "cut-in", "reaction cut", "insert" and "smash cut" to their tools;
   `references/requests.md` has the full table of editors' names.
+- feat: J-cut and L-cut in join.py (#675) (#701)
 
 ## 4.5.3
 
