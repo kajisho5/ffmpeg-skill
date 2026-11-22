@@ -4,7 +4,17 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **The mixing tools get #711's relabel too.** `grid.py`, `join.py`, `multicam.py`, `broll.py` and
+  `overlay.py` build each source's BT.709 conversion through their own helper, which 4.6.4's fix did not
+  reach. On FFmpeg 9 an HDR source in them could still be written with a bt709 stream under bt2020/PQ
+  container tags. One helper is now the BT.709 line's filter for every tool.
+
+### Added
+
+- **A guard for the colour class** (`test_guards.ColorGuard`, three ledger entries). Every tool that writes
+  video runs on an HDR RGB source, and any output whose tags mix SDR and HDR fails it.
 
 ## 4.6.4
 
