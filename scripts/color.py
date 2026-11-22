@@ -499,9 +499,7 @@ def main() -> int:
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_alpha_args(ap)
     ap.add_argument("--source-alpha-mode", choices=["straight", "premultiplied"], default=None,
-                    help="--keep-alpha: how the source stores its colour beside the alpha. premultiplied: the colour is "
-                         "divided by the alpha before the grade and multiplied again after (the written colour is "
-                         "premultiplied unless --alpha-mode straight); default straight, graded as stored")
+                    help="--keep-alpha: premultiplied grades the straight colour (default straight)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)

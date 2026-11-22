@@ -2384,7 +2384,7 @@ sys.exit(fit.main())
     def test_mcp_advertisement_payload_stays_within_documented_budgets(self):
         profiles = (
             ({}, 12, 73_000),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_000),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_500),  # +500 for color.py --source-alpha-mode (#453)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
         )
         for env, count, limit in profiles:
