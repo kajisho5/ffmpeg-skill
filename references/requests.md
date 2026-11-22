@@ -59,6 +59,7 @@ variant it does not show.
 | "the mix sounds narrow", "wider stereo" | `audio.py band.wav --stereo-widen 0.5` (needs a real stereo source; 5.1 needs `--downmix`) |
 | "convert the 5.1 to stereo" | `audio.py input.mov --downmix` |
 | "swap in the narration track" | `audio.py input.mp4 --replace narration.wav` |
+| "dialogue, music and effects as separate tracks", "stems in one file", "an NLE package" | `audio.py input.mov --track music.wav --track fx.wav --track-name Dialogue --track-name Music --track-name FX --track-lang eng --track-lang eng --track-lang eng -o stems.mov` (the input's own sound is track 0; each track keeps its channels and length; `.mov`/`.mkv` PCM, `.mp4` AAC; refused beside `--voice`, `--gain`, `--music` and the other flags that change the sound: process each stem first; MXF and BWF are not written) |
 | "pull the audio out", "give me the sound as WAV" | `audio.py input.mp4 -o input.wav` (an audio extension drops the picture; `--audio-stream 1` picks a track) |
 | "compress the voice", "limit the peaks", "gate the room noise" | `audio.py input.mp4 --compress --comp-threshold -20 --comp-ratio 4` / `--limit --limit-ceiling -1` / `--gate --gate-threshold -45` |
 | "the audio drifts out of sync over the hour" | `sync.py camera.mp4 recorder.wav --fix-drift --replace-audio` |

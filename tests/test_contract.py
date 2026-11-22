@@ -2382,9 +2382,11 @@ sys.exit(fit.main())
             self.assertNotIn("Traceback", proc.stderr)
 
     def test_mcp_advertisement_payload_stays_within_documented_budgets(self):
+        # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
+        # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 73_000),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_000),
+            ({}, 12, 73_500),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_500),
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
         )
         for env, count, limit in profiles:

@@ -2332,6 +2332,7 @@ audio.py INPUT [--voice [light|medium|strong]] [--denoise [--denoise-strength 25
          [--effects FILE [--effects-volume -14]] [--stereo-widen 0..1]
          [--fade-in S] [--fade-out S] [--stereo | --mono | --downmix] [--replace FILE]
          [--tempo FACTOR] [--length-samples N] [--channel N] [--sample-rate HZ] [-o OUT]
+audio.py INPUT --track FILE [--track FILE ...] [--track-name NAME ...] [--track-lang CODE ...] [--audio-stream N] -o OUT.mov|.mkv|.mp4
 ```
 `--denoise` is `afftdn=nf=-N:tn=1`, where N is `--denoise-strength`, the noise
 floor in dB below full scale (20..60, default 25). It is the starting floor that
@@ -2428,6 +2429,27 @@ after the mix and the fades; `--length-samples` counts in this rate). Each is re
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.
 Run `loudness.py` after this for final levels.
+
+`--track FILE` (repeatable, #420) writes several audio streams into one file, one per source: the
+input's own sound (`--audio-stream N`) first, then the first audio stream of each FILE, after the
+input's picture (stream-copied; an audio input writes no picture). Each track is written as it is
+(no filter runs): its own channel layout, sample rate and length (nothing is padded or trimmed), as
+PCM 24-bit in `.mov` and `.mkv` and AAC (`--bitrate`, default 192k) in `.mp4`. `--track-name NAME`
+(alias `--track-title`, as caption.py's) and `--track-lang CODE` (alias `--track-language`) are repeated in the same
+order, the input's own sound first; an empty value leaves that track as its source has it. A
+language is an ISO 639-2 code of three lowercase letters. `.mov` keeps only the languages QuickTime
+has a code for (`eng`, `jpn`, `fra`, `ger`, `chi` ...; `deu` and `zho` read back as none), `.mp4` and `.mkv` keep
+any; a name is the title tag in `.mkv` and the handler name in `.mov` and `.mp4`. The result's `tracks`
+lists each stream of the written file: `index`, `file` (its source), `title`, `language`,
+`channels` and `duration` (the decoder's count, seconds), read back from the output; a
+`track_tags` step compares the names and languages asked with the file (`verified` is false when
+one was not kept) and the `streams` step counts the audio streams. A track longer than the picture
+is kept whole and warned (`track_longer_than_picture`). Refused, with `error.reason`: an output that is
+not `.mov`, `.mkv` or `.mp4` (`track_container`; a WAV holds one stream, and FFmpeg's MXF muxer
+stores no names or languages and cuts every track to the shortest), a flag that changes the sound
+(`track_rebuilds_sound`: run audio.py on each stem first, then add the results), more titles or
+languages than tracks (`track_labels`), and a language that is not three letters (`track_language`).
+A BWF or multitrack WAV with a start timecode is not written.
 
 ### loudness.py — EBU R128 normalisation
 ```
