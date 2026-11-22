@@ -4,12 +4,20 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **An HDR or BT.2020 RGB source is converted with the matrix its line is tagged with, and a 10-bit master keeps
+  its HDR tags (#559).** `export.py --preset youtube` (and the other 8-bit presets, and `grid.py`) tag BT.709 and
+  made such a source's YUV with FFmpeg's BT.601 default: the red C03028 read CE3E26 by its bt709 tag; it is now
+  converted with the BT.709 matrix and reads C02E27 (the primaries and transfer are still not converted, and the
+  `colour_not_converted` warning still says so). `--preset prores`, `dnxhr-*`, `prores4444`, `prores4444xq`,
+  `vp9-alpha` and `graphics.py` / `overlay.py` `--keep-alpha` wrote no colour tag for it (ffprobe:
+  unknown/unknown/unknown; the 8-bit DNxHR lines said bt709 over BT.601 pixels): they now carry the source's
+  primaries and transfer and bt2020nc, the matrix the picture was converted with, as a YUV source does.
 
 ## 4.6.2
 
 _Automated release: version and notes generated from pull requests merged since 4.6.1._
-
 ### Changed
 
 - **Tools start faster (#679).** The FCPXML writer imports `xml.sax.saxutils`, which pulls in
