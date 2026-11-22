@@ -11,6 +11,18 @@
   colour from the frames. The line now relabels the frames' primaries and transfer (`setparams`, no
   pixel changes), so both say bt709. FFmpeg 6.1 to 8 wrote bt709 already and are unchanged.
 
+## 4.6.4
+
+_Automated release: version and notes generated from pull requests merged since 4.6.3._
+
+### Fixed
+
+- **On FFmpeg 9 a BT.709 preset over an HDR source wrote conflicting tags (#711).** The encoder's VUI
+  said bt709 and the mp4/mov `colr` box said bt2020/smpte2084, because FFmpeg 9 takes the container's
+  colour from the frames. The line now relabels the frames' primaries and transfer (`setparams`, no
+  pixel changes), so both say bt709. FFmpeg 6.1 to 8 wrote bt709 already and are unchanged.
+- fix: a BT.709 line's container tags agree with its stream on FFmpeg 9 (#711) (#712)
+
 ## 4.6.3
 
 _Automated release: version and notes generated from pull requests merged since 4.6.2._
