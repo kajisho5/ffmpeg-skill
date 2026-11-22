@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.6.2
+
+_Automated release: version and notes generated from pull requests merged since 4.6.1._
+
 ### Changed
 
 - **Tools start faster (#679).** The FCPXML writer imports `xml.sax.saxutils`, which pulls in
@@ -12,6 +18,8 @@
   Importing the transcription and text-layout modules on first use saved 3 to 4 ms more and made
   `mock.patch` of a re-exported name leave the patch in place on exit, so it was left out. No probe
   cache: a run probes each input once.
+- fix: audio.py --duck lifted at a random point and differed per run (#671) (#705)
+- test: a killed command reports what its processes were doing (#533) (#704)
 
 ## 4.6.1
 
