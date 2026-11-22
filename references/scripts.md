@@ -2254,8 +2254,15 @@ color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2
          [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
          [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
          [--curves color_negative|cross_process|darker|increase_contrast|lighter|linear_contrast|medium_contrast|negative|strong_contrast|vintage] [-o OUT]
-color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
+color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] [--source-alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+`--source-alpha-mode premultiplied` (with `--keep-alpha`, #453) says the source stores its colour already
+multiplied by the alpha: the colour is divided by the alpha (RGB, alpha 0 left as it is) before the
+grade and multiplied again after, so a lift, a gamma or a LUT grades the straight colour and a partly
+transparent edge is not lifted or darkened. The written colour is premultiplied (`alpha_mode`) unless
+`--alpha-mode straight` is given; the alpha is not touched. The mode is named in the result's
+`source_alpha_mode` and the `alpha` step. `straight` (default) grades the colour as stored, as before;
+without `--keep-alpha` the flag is refused (`error.reason` `source_alpha_mode_needs_keep_alpha`).
 `--keep-alpha` (with `--correct` or `--lut`) grades an alpha clip and keeps its alpha: the alpha is
 split off before the grade, never touched, and merged back in front of the alpha line (ProRes 4444
 by default, `--alpha-codec qtrle|png|vp9`); the grade runs at 4:4:4 and the source's colour tags are

@@ -78,7 +78,8 @@ and draw one element on it
 with `graphics.py`/`overlay.py --keep-alpha`. An alpha line keeps the source's colour tags (as
 `--codec prores` does); an RGB source that is neither HDR nor BT.2020 (qtrle, PNG) written to ProRes 4444 or VP9 becomes BT.709
 YUV, tagged BT.709. `--alpha-mode premultiplied` multiplies the written colour by the alpha;
-sources are taken as straight. A VP9 layer with alpha is decoded with libvpx-vp9; FFmpeg's own VP9
+sources are taken as straight unless `color.py --source-alpha-mode premultiplied` says the colour is
+already multiplied (it is divided by the alpha before the grade and multiplied again after, #453). A VP9 layer with alpha is decoded with libvpx-vp9; FFmpeg's own VP9
 decoder drops the alpha.
 
 ### Log footage
