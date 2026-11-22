@@ -16,7 +16,6 @@ part of the contract.
 from __future__ import annotations
 
 import argparse
-import importlib as _importlib
 import json
 import math
 import os
@@ -88,30 +87,38 @@ from _common.decision import (
     fmt_secs, fmt_smpte_time, fmt_srt_time, frame_size, is_audio_output, load_brand, MissingFpsError, pad_filters, parse_time,
     signed_time_arg, source_codec_video_args, drawn_chain, draws_chroma, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, SVT_PRESET, time_arg, video_args, x264_args, _x264_raw
 )
+from _common.asr import (
+    ASR_ENGINES, ASR_INSTALL_HINT, _asr_run, die_no_engine, parse_srt, transcribe, _transcribe_in,
+    transcribe_words, _words_from_openai_whisper_json, _words_from_whisper_cpp_json,
+    whisper_word_timings, write_srt
+)
 from _common.color import (
     bt709_label_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, color_hex, _COLOR_TOKEN_RE, drawn_stream_format, fold_bt709_matrix,
     as_limited, is_full_range, is_neutral_color, is_rgb, limited_range_filter, NON_BT709_MATRICES, rgb_island, rgb_to_bt709_filter, _sdr_bt709, validate_color
 )
-# These two modules are resolved on first use (PEP 562, __getattr__ below): a tool that never touches
-# transcription or text layout does not pay for importing them. Every name keeps working as
-# `from _common import x` and `_common.x`; the modules themselves too (`_common.fonts`, `_common.asr`).
-_LAZY_NAMES = {
-    "asr": "ASR_ENGINES ASR_INSTALL_HINT _asr_run die_no_engine parse_srt transcribe _transcribe_in transcribe_words _words_from_openai_whisper_json _words_from_whisper_cpp_json whisper_word_timings write_srt",
-    "text": """
-    ADVANCE_EM BIDI_SCRIPTS _char_em char_script default_font_file detect_script drawtext_boxborderw drawtext_center_align drawtext_fontfile drawtext_draws_newline_glyph is_multiline drawtext_clean drawtext_line_metrics
-    NEWLINE_GLYPH_RELEASES drawtext_shaping drawtext_text_opts emoji_asset_for EMOJI_ASSET_HINT emoji_clusters emoji_codepoint_name _EMOJI_COLOR_FAMILIES _emoji_color_font emoji_filter_chain _emoji_name_candidates EMOJI_RANGES
-    _EMOJI_REGIONAL emoji_support _EMOJI_SUPPORT_CACHE _EMOJI_TAIL escape_drawtext _family_rank FC_LANG _fc_list_fonts FC_UNKNOWN font_covers_script font_family_for_script font_family_of_file FONT_FLAG_HINT font_for_script
-    FONT_INSTALL_HINT fonts_dir_covers_script has_emoji _is_emoji_base _is_emoji_char _is_mark _KEYCAP _KEYCAP_BASES LANGUAGE_NAMES LATIN_EM LEADING_VOWELS _libass_color_probe needs_shaping NO_SPACE_SCRIPTS PREFERRED_FAMILIES
-    resolve_emoji_assets _SCRIPT_FONT_CACHE _script_font_entry _atoms best_break _bare_word break_penalty _break_spaced _cut_penalty _fix_orphans _fix_weak_lines _function_words FUNCTION_WORDS _HYPHENS _is_hiragana _is_ideograph
-    _is_kana _is_weak_line JA_NO_LINE_END JA_NO_LINE_START JA_PARTICLE_WORDS JA_PARTICLES JA_SENTENCE_END _join ORPHAN_MIN_EM PENALTY_FORBIDDEN PENALTY_FUNCTION_WORD PENALTY_FUNCTION_WORD_START PENALTY_IDEOGRAPHS PENALTY_NEUTRAL
-    PENALTY_OKURIGANA PENALTY_PARTICLE PENALTY_SENTENCE_END _rebalance _rebalance_phrase SAFE_WIDTH_FRACTION _split_hyphens _slice_atom _particle_ends _particle_starts wrap_text wrap_variants WRAP_MODES fit_size line_em_for_size
-    MIN_CAPTION_FRACTION ass_units_local script_font_for_text script_font_status _script_font_uncached _SCRIPT_RANGES SCRIPTS _SHAPING_BUILD_CACHE SHAPING_SCRIPTS text_width_em _VS15 _VS16 WINDOWS_FONTS _ZWJ
-""",
-}
-_LAZY_MODULES = ("asr", "text", "fonts", "emoji", "drawtext", "wrap")
-_LAZY = {**{_m: _m for _m in _LAZY_MODULES}, **{_n: _m for _m, _ns in _LAZY_NAMES.items() for _n in _ns.split()}}
+from _common.text import (
+    ADVANCE_EM, BIDI_SCRIPTS, _char_em, char_script, default_font_file, detect_script, drawtext_boxborderw, drawtext_center_align, drawtext_fontfile,
+    drawtext_draws_newline_glyph, is_multiline, drawtext_clean, drawtext_line_metrics, NEWLINE_GLYPH_RELEASES,
+    drawtext_shaping, drawtext_text_opts, emoji_asset_for, EMOJI_ASSET_HINT, emoji_clusters, emoji_codepoint_name,
+    _EMOJI_COLOR_FAMILIES, _emoji_color_font, emoji_filter_chain, _emoji_name_candidates, EMOJI_RANGES,
+    _EMOJI_REGIONAL, emoji_support, _EMOJI_SUPPORT_CACHE, _EMOJI_TAIL, escape_drawtext, _family_rank, FC_LANG,
+    _fc_list_fonts, FC_UNKNOWN, font_covers_script, font_family_for_script, font_family_of_file, FONT_FLAG_HINT,
+    font_for_script, FONT_INSTALL_HINT, fonts_dir_covers_script, has_emoji, _is_emoji_base, _is_emoji_char,
+    _is_mark, _KEYCAP, _KEYCAP_BASES, LANGUAGE_NAMES, LATIN_EM, LEADING_VOWELS, _libass_color_probe, needs_shaping,
+    NO_SPACE_SCRIPTS, PREFERRED_FAMILIES, resolve_emoji_assets, _SCRIPT_FONT_CACHE, _script_font_entry,
+    _atoms, best_break, _bare_word, break_penalty, _break_spaced, _cut_penalty, _fix_orphans, _fix_weak_lines,
+    _function_words, FUNCTION_WORDS, _HYPHENS, _is_hiragana, _is_ideograph, _is_kana, _is_weak_line,
+    JA_NO_LINE_END, JA_NO_LINE_START, JA_PARTICLE_WORDS, JA_PARTICLES, JA_SENTENCE_END, _join, ORPHAN_MIN_EM,
+    PENALTY_FORBIDDEN, PENALTY_FUNCTION_WORD, PENALTY_FUNCTION_WORD_START, PENALTY_IDEOGRAPHS,
+    PENALTY_NEUTRAL, PENALTY_OKURIGANA,
+    PENALTY_PARTICLE, PENALTY_SENTENCE_END, _rebalance, _rebalance_phrase, SAFE_WIDTH_FRACTION, _split_hyphens, _slice_atom,
+    _particle_ends, _particle_starts, wrap_text, wrap_variants, WRAP_MODES,
+    fit_size, line_em_for_size, MIN_CAPTION_FRACTION, ass_units_local,
+    script_font_for_text, script_font_status, _script_font_uncached, _SCRIPT_RANGES, SCRIPTS, _SHAPING_BUILD_CACHE,
+    SHAPING_SCRIPTS, text_width_em, _VS15, _VS16, WINDOWS_FONTS, _ZWJ
+)
 
-from _common import color, decision, runner  # noqa: F401,E402
+from _common import asr, color, decision, drawtext, emoji, fonts, runner, text, wrap  # noqa: F401,E402
 
 # `_common.emit` and `_common.probe` are the FUNCTIONS, as they have always been -- the
 # from-imports above rebound the package attribute the submodule import had set. The two modules
@@ -122,19 +129,7 @@ from _common import color, decision, runner  # noqa: F401,E402
 _emit_module = sys.modules["_common.emit"]
 _probe_module = sys.modules["_common.probe"]
 
-_EAGER = (runner, _emit_module, _probe_module, decision, color)
-
-
-# The submodules whose globals mirror this facade: the eager ones and whichever lazy ones are loaded.
-_modules = lambda: _EAGER + tuple(_m for _m in map(sys.modules.get, ["_common." + _n for _n in _LAZY_MODULES]) if _m)  # noqa: E731
-
-
-# PEP 562: import a lazy submodule, or the one that defines a lazy name, on first use.
-def __getattr__(name):
-    if name not in _LAZY:
-        raise AttributeError("module '_common' has no attribute %r" % name)
-    mod = _importlib.import_module("_common." + _LAZY[name])
-    return mod if name in _LAZY_MODULES else getattr(mod, name)
+_MODULES = (runner, _emit_module, _probe_module, decision, color, text, fonts, emoji, drawtext, wrap, asr)
 
 
 class _Facade(_types.ModuleType):
@@ -164,22 +159,18 @@ class _Facade(_types.ModuleType):
         return _types.ModuleType.__getattribute__(self, name)
 
     def __setattr__(self, name, value):
-        if name in _LAZY:
-            getattr(self, name)   # load the defining module first, so the assignment reaches it
         _types.ModuleType.__setattr__(self, name, value)
         if name.startswith("__") and name.endswith("__"):
             return   # importlib.reload() rewrites __file__/__spec__: those stay per module (P1-2)
-        for _m in _modules():
+        for _m in _MODULES:
             if name in _m.__dict__:
                 _types.ModuleType.__setattr__(_m, name, value)
 
     def __delattr__(self, name):
-        if name in _LAZY:
-            getattr(self, name)
         _types.ModuleType.__delattr__(self, name)
         if name.startswith("__") and name.endswith("__"):
             return
-        for _m in _modules():
+        for _m in _MODULES:
             if name in _m.__dict__:
                 _types.ModuleType.__delattr__(_m, name)
 

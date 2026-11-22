@@ -6,13 +6,12 @@
 
 ### Changed
 
-- **Tools start faster (#679).** `scripts/_common` imports its transcription and text-layout modules
-  (`asr`, `text`, with `fonts`, `emoji`, `drawtext`, `wrap`) on first use instead of in every tool,
-  and the FCPXML writer imports `xml.sax.saxutils` (which pulls in `urllib.request`, `http.client`
-  and `ssl`) only when it writes. No tool's imports or output change. Median of 25 runs, 4 s 160x90
-  clip: `cut.py --help` 96 ms -> 73 ms, `cut.py ... --dry-run --json` 297 ms -> 277 ms,
-  `probe.py CLIP --json` 158 ms -> 152 ms (`python3 -c pass` 9 ms, `ffprobe` alone 41 ms). No
-  probe cache: a run probes each input once, and an output is never cached.
+- **Tools start faster (#679).** The FCPXML writer imports `xml.sax.saxutils`, which pulls in
+  `urllib.request`, `http.client` and `ssl`, only when it writes, instead of every tool importing it at
+  start-up. No tool's output changes. `cut.py --help`, median of 31 interleaved runs: 119 ms -> 83 ms.
+  Importing the transcription and text-layout modules on first use saved 3 to 4 ms more and made
+  `mock.patch` of a re-exported name leave the patch in place on exit, so it was left out. No probe
+  cache: a run probes each input once.
 
 ## 4.6.0
 
