@@ -418,6 +418,31 @@ raise SystemExit(export.main())
             rows.append((r / 257, g / 257, b / 257, a / 257))
         return rows
 
+    def test_probe_453(self):
+        """TEMPORARY: what each step does on this FFmpeg (#453)."""
+        lines = [repr(__import__("_common").runner.ffmpeg_version())]
+        for codec, pix, line in (("prores4444", "yuva444p10le", ("-c:v", "prores_ks", "-profile:v", "4", "-alpha_bits", "16")),
+                                 ("qtrle", "argb", ("-c:v", "qtrle"))):
+            src = OUT / f"p453_src_{codec}.mov"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "color=c=0x30C050:s=64x64:r=1:d=1,format=gbrap,geq=a='A':"
+               "r='round(r(X,Y)*A/255)':g='round(g(X,Y)*A/255)':b='round(b(X,Y)*A/255)',".replace("A", "if(lt(X,16),255,if(lt(X,32),128,if(lt(X,48),64,0)))")
+               + f"format={pix}", "-frames:v", "1", *line, "-pix_fmt", pix, src)
+            lines.append(f"{codec} src {[tuple(round(v, 1) for v in b) for b in self._bands(src)]}")
+            for mode in ("straight", "premultiplied"):
+                out = OUT / f"p453_{codec}_{mode}.mov"
+                doc = json.loads(script("color.py", src, "--correct", "--gamma", "1.6", "--keep-alpha", "--alpha-codec", codec,
+                                        "--source-alpha-mode", mode, "--json", "-o", out).stdout)
+                lines.append(f"{codec} {mode} {[tuple(round(v, 1) for v in b) for b in self._bands(out)]}")
+                if mode == "premultiplied":
+                    lines.append(f"{codec} cmd {[c for c in doc['commands'][-1] if 'unpremultiply' in c or 'premultiply' in c][:1]}")
+            for fmt in ("gbrapf32le", "gbrap16le", "gbrap"):
+                raw = OUT / f"p453_{codec}_{fmt}.mov"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf", f"format={fmt},unpremultiply=inplace=1,format={pix}",
+                   *line, "-pix_fmt", pix, raw)
+                lines.append(f"{codec} unpremultiply@{fmt} {[tuple(round(v, 1) for v in b) for b in self._bands(raw)]}")
+        self.fail("\nPROBE453 " + "\nPROBE453 ".join(lines))
+
     def test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453(self):
         """#453: a premultiplied source (30C050 under alpha 255 / 128 / 64 / 0) graded with --keep-alpha
         was graded as stored, so a partial band came out lifted or clipped differently from the opaque
