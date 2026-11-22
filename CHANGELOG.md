@@ -4,7 +4,15 @@
 
 ## Unreleased
 
-(nothing yet)
+### Changed
+
+- **Tools start faster (#679).** `scripts/_common` imports its transcription and text-layout modules
+  (`asr`, `text`, with `fonts`, `emoji`, `drawtext`, `wrap`) on first use instead of in every tool,
+  and the FCPXML writer imports `xml.sax.saxutils` (which pulls in `urllib.request`, `http.client`
+  and `ssl`) only when it writes. No tool's imports or output change. Median of 25 runs, 4 s 160x90
+  clip: `cut.py --help` 96 ms -> 73 ms, `cut.py ... --dry-run --json` 297 ms -> 277 ms,
+  `probe.py CLIP --json` 158 ms -> 152 ms (`python3 -c pass` 9 ms, `ffprobe` alone 41 ms). No
+  probe cache: a run probes each input once, and an output is never cached.
 
 ## 4.6.0
 
@@ -49,15 +57,6 @@ _Automated release: version and notes generated from pull requests merged since 
   class with three ledger entries and no guard, so the next class that keeps coming back gets
   one before its fourth fix.
 - fix: every class of defect fixed three times has a guard that runs every tool (#700)
-### Changed
-
-- **Tools start faster (#679).** `scripts/_common` imports its transcription and text-layout modules
-  (`asr`, `text`, with `fonts`, `emoji`, `drawtext`, `wrap`) on first use instead of in every tool,
-  and the FCPXML writer imports `xml.sax.saxutils` (which pulls in `urllib.request`, `http.client`
-  and `ssl`) only when it writes. No tool's imports or output change. Median of 25 runs, 4 s 160x90
-  clip: `cut.py --help` 96 ms -> 73 ms, `cut.py ... --dry-run --json` 297 ms -> 277 ms,
-  `probe.py CLIP --json` 158 ms -> 152 ms (`python3 -c pass` 9 ms, `ffprobe` alone 41 ms). No
-  probe cache: a run probes each input once, and an output is never cached.
 
 ## 4.5.2
 

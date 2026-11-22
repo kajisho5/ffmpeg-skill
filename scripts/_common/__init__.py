@@ -16,6 +16,7 @@ part of the contract.
 from __future__ import annotations
 
 import argparse
+import importlib as _importlib
 import json
 import math
 import os
@@ -95,9 +96,7 @@ from _common.color import (
 # transcription or text layout does not pay for importing them. Every name keeps working as
 # `from _common import x` and `_common.x`; the modules themselves too (`_common.fonts`, `_common.asr`).
 _LAZY_NAMES = {
-    "asr": """
-    ASR_ENGINES ASR_INSTALL_HINT _asr_run die_no_engine parse_srt transcribe _transcribe_in transcribe_words _words_from_openai_whisper_json _words_from_whisper_cpp_json whisper_word_timings write_srt
-""",
+    "asr": "ASR_ENGINES ASR_INSTALL_HINT _asr_run die_no_engine parse_srt transcribe _transcribe_in transcribe_words _words_from_openai_whisper_json _words_from_whisper_cpp_json whisper_word_timings write_srt",
     "text": """
     ADVANCE_EM BIDI_SCRIPTS _char_em char_script default_font_file detect_script drawtext_boxborderw drawtext_center_align drawtext_fontfile drawtext_draws_newline_glyph is_multiline drawtext_clean drawtext_line_metrics
     NEWLINE_GLYPH_RELEASES drawtext_shaping drawtext_text_opts emoji_asset_for EMOJI_ASSET_HINT emoji_clusters emoji_codepoint_name _EMOJI_COLOR_FAMILIES _emoji_color_font emoji_filter_chain _emoji_name_candidates EMOJI_RANGES
@@ -109,8 +108,8 @@ _LAZY_NAMES = {
     MIN_CAPTION_FRACTION ass_units_local script_font_for_text script_font_status _script_font_uncached _SCRIPT_RANGES SCRIPTS _SHAPING_BUILD_CACHE SHAPING_SCRIPTS text_width_em _VS15 _VS16 WINDOWS_FONTS _ZWJ
 """,
 }
-_LAZY = {_n: _m for _m, _ns in _LAZY_NAMES.items() for _n in _ns.split()}
 _LAZY_MODULES = ("asr", "text", "fonts", "emoji", "drawtext", "wrap")
+_LAZY = {**{_m: _m for _m in _LAZY_MODULES}, **{_n: _m for _m, _ns in _LAZY_NAMES.items() for _n in _ns.split()}}
 
 from _common import color, decision, runner  # noqa: F401,E402
 
@@ -127,17 +126,15 @@ _EAGER = (runner, _emit_module, _probe_module, decision, color)
 
 
 # The submodules whose globals mirror this facade: the eager ones and whichever lazy ones are loaded.
-def _modules():
-    return _EAGER + tuple(_m for _m in map(sys.modules.get, ["_common." + _n for _n in _LAZY_MODULES]) if _m)
+_modules = lambda: _EAGER + tuple(_m for _m in map(sys.modules.get, ["_common." + _n for _n in _LAZY_MODULES]) if _m)  # noqa: E731
 
 
 # PEP 562: import a lazy submodule, or the one that defines a lazy name, on first use.
 def __getattr__(name):
-    import importlib
-    if name in _LAZY_MODULES or name in _LAZY:
-        mod = importlib.import_module("_common." + (name if name in _LAZY_MODULES else _LAZY[name]))
-        return mod if name in _LAZY_MODULES else getattr(mod, name)
-    raise AttributeError("module '_common' has no attribute %r" % name)
+    if name not in _LAZY:
+        raise AttributeError("module '_common' has no attribute %r" % name)
+    mod = _importlib.import_module("_common." + _LAZY[name])
+    return mod if name in _LAZY_MODULES else getattr(mod, name)
 
 
 class _Facade(_types.ModuleType):
