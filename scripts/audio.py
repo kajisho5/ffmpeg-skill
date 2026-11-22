@@ -20,9 +20,12 @@ Examples:
   python3 audio.py talk.wav --compress --comp-threshold -20 --comp-ratio 4 --limit --limit-ceiling -1 -o talk_dyn.wav
   python3 audio.py line.wav --tempo 1.25 --length-samples 96000 -o line_fit.wav   # faster, same pitch, exactly 2 s at 48 kHz
   python3 audio.py room.wav --channel 2 --sample-rate 48000 -o mic3.wav   # the third microphone alone, resampled to 48 kHz
+  python3 audio.py pic.mov --track music.wav --track fx.wav --track-name Dialogue --track-name Music --track-name FX --track-lang eng --track-lang eng --track-lang eng -o stems.mov   # one stream per stem, named and tagged
 """
 import argparse
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -30,7 +33,7 @@ from typing import Any, Dict, List
 from _common.probe import SILENT_PEAK_DBFS
 from _common.runner import path_denied
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
-from _common.emit import file_origin, stream_end, warn
+from _common.emit import file_origin, own_length, refuse, stream_end, warn
 from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, conform_filter, conform_to_length, late_sound_lead
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
@@ -164,7 +167,7 @@ def preflight_beds(args: argparse.Namespace) -> List[Dict[str, Any]]:
     left to the plan, as join.py's preflight does; a real file is checked under --dry-run too."""
     problems: List[Dict[str, Any]] = []
     beds = [(f, v) for f, v in (("--replace", args.replace), ("--music", args.music),
-                                ("--effects", args.effects)) if v]
+                                ("--effects", args.effects)) if v] + [("--track", t) for t in args.track or []]
     if not beds:
         return problems
     ffprobe = require_tool("ffprobe")
@@ -289,10 +292,10 @@ def atempo_steps(factor: float) -> List[float]:
     return steps + [factor]
 
 
-def decoded_samples(path: str) -> "int | None":
-    """Samples per channel of the first audio track, counted by decoding it (astats); None when
-    the count could not be read."""
-    proc = run([require_tool("ffmpeg"), "-hide_banner", "-nostats", "-i", path, "-map", "0:a:0", "-af",
+def decoded_samples(path: str, stream: int = 0) -> "int | None":
+    """Samples per channel of audio track `stream` (the first by default), counted by decoding it
+    (astats); None when the count could not be read."""
+    proc = run([require_tool("ffmpeg"), "-hide_banner", "-nostats", "-i", path, "-map", f"0:a:{stream}", "-af",
                 "astats=measure_perchannel=none:measure_overall=Number_of_samples", "-f", "null", "-"],
                quiet=True, check=False)
     found = [line.rsplit(":", 1)[-1].strip() for line in (proc.stderr or "").splitlines() if "Number of samples:" in line]
@@ -324,6 +327,110 @@ def property_step(name: str, expected: int, measured: Any) -> Dict[str, Any]:
     except (TypeError, ValueError):
         return {"step": name, "expected": expected, "measured": None, "ok": False, "reason": "not_measured"}
     return {"step": name, "expected": expected, "measured": value, "ok": value == expected}
+
+
+# --track (#420): the input's sound and each FILE's, one audio stream apiece, written as they are.
+TRACK_CONTAINERS = (".mov", ".mkv", ".mp4")
+# what rebuilds or re-times the sound: refused beside --track, which keeps every track as it is
+TRACK_REFUSED = ("denoise", "voice", "mute", "gain", "music", "effects", "replace", "fade_in", "fade_out", "stereo", "mono",
+                 "stereo_widen", "channel", "downmix", "tempo", "length_samples", "sample_rate", "compress", "limit", "gate",
+                 "on_silent", "silence_threshold")
+ISO639_2 = re.compile(r"^[a-z]{3}$")
+
+
+def check_track_flags(ap: argparse.ArgumentParser, args: argparse.Namespace, output: str) -> None:
+    """What --track refuses before anything is probed: an output that holds one stream or cannot name
+    them, a flag that rebuilds the sound, a language that is not a three-letter code."""
+    ext = Path(output).suffix.lower()
+    if ext not in TRACK_CONTAINERS:
+        refuse("input", "track_container", f"--track writes one audio stream per track, and {output!r} cannot hold them with a name and a language each",
+               hint="write -o NAME.mov, .mkv or .mp4 (a WAV, FLAC or MP3 holds one stream; FFmpeg's MXF muxer writes no track names or languages "
+                    "and cuts every track to the shortest)", output=output, extension=ext)
+    clash = [f"--{n.replace('_', '-')}" for n in TRACK_REFUSED if getattr(args, n) != ap.get_default(n)]
+    if clash:
+        refuse("input", "track_rebuilds_sound", f"{clash[0]} changes the sound, and --track writes every track as it is",
+               hint="run audio.py on each stem first (-o stem.wav), then add the results with --track", flags=clash)
+    if not args.track and (args.track_name or args.track_lang):
+        die("--track is off but --track-name / --track-lang was given; add --track FILE")
+    for code in args.track_lang or []:
+        if code and not ISO639_2.match(code):
+            refuse("input", "track_language", f"--track-lang {code!r} is not an ISO 639-2 language code (three lowercase letters)",
+                   hint="eng, jpn, fra, deu, spa, or und for undetermined", language=code)
+    if args.bitrate is not None and ext != ".mp4":
+        die(f"--bitrate has no effect on the PCM tracks of a {ext} output; drop it, or write .mp4 (AAC)")
+
+
+def read_tracks(output: str, titles: List[str]) -> List[Dict[str, Any]]:
+    """The audio streams of the written file as ffprobe reads them, in order: channels, language, name
+    (MOV and MP4 keep it as the handler name, read only where a name was asked) and the length the
+    decoder counts for each (None where it could not be counted)."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-select_streams", "a", "-show_entries",
+                "stream=channels,sample_rate:stream_tags=language,title,handler_name", "-of", "json", output], quiet=True, check=False)
+    try:
+        streams = json.loads(proc.stdout or "{}").get("streams") or []
+    except ValueError:
+        streams = []
+    found = []
+    for i, s in enumerate(streams):
+        tags, rate, samples = s.get("tags") or {}, int(s.get("sample_rate") or 0), decoded_samples(output, i)
+        # no language tag is ISO 639 "und": MOV writes an asked-for und as no tag
+        found.append({"title": tags.get("title") or (tags.get("handler_name") if i < len(titles) and titles[i] else None),
+                      "language": tags.get("language") or "und", "channels": s.get("channels"),
+                      "duration": round(samples / rate, 3) if samples is not None and rate else None})
+    return found
+
+
+def write_tracks(args: argparse.Namespace, meta: Dict[str, Any], output: str) -> int:
+    """--track (#420): the input's sound (--audio-stream) and the first audio stream of each --track
+    FILE, one audio stream apiece after the picture (stream-copied), each with its own channels and
+    length and its --track-name / --track-lang, as PCM (AAC in .mp4). No filter runs."""
+    has_video, ext = bool(meta.get("video")), Path(output).suffix.lower()
+    sources = ([args.input] if meta.get("audio") else []) + list(args.track)
+    titles, langs = list(args.track_name or []), list(args.track_lang or [])
+    for flag, given in (("--track-name", titles), ("--track-lang", langs)):
+        if len(given) > len(sources):
+            refuse("input", "track_labels", f"{len(given)} {flag} values for {len(sources)} track(s)",
+                   hint="the input's own sound is track 0, then each --track in order; an empty value leaves a track as it is",
+                   flag=flag, given=len(given), tracks=len(sources))
+    titles, langs = (given + [""] * (len(sources) - len(given)) for given in (titles, langs))
+    cmd = ffmpeg_base() + ["-i", args.input] + [x for t in args.track for x in ("-i", t)]
+    cmd += (["-map", "0:v:0", "-c:v", "copy"] if has_video else []) + (["-map", f"0:a:{args.audio_stream}"] if meta.get("audio") else [])
+    cmd += [x for i in range(len(args.track)) for x in ("-map", f"{i + 1}:a:0")]
+    cmd += audio_codec_for(output, args.bitrate) if ext == ".mp4" else ["-c:a", "pcm_s24le"]
+    for i, (title, lang) in enumerate(zip(titles, langs)):
+        tags = {"title": title, "language": lang}
+        if ext != ".mkv":
+            tags["handler_name"] = title  # FFmpeg's MOV/MP4 muxer writes no title atom: a track's name is its handler name
+        cmd += [x for k, v in tags.items() if v for x in (f"-metadata:s:a:{i}", f"{k}={v}")]
+    dropped = False
+    if has_video:
+        dropped = run_keeping_subtitles(cmd + (["-movflags", "+faststart"] if ext != ".mkv" else []), output)
+    else:
+        run(cmd + [output])
+    r = probe(output, role="output")
+    blank = {"title": None, "language": None, "channels": None, "duration": None}
+    found = [dict(blank, title=t or None, language=g or None) for t, g in zip(titles, langs)] if STATE.dry_run else read_tracks(output, titles)
+    found += [blank] * (len(sources) - len(found))
+    tracks = [{"index": i, "file": src, **found[i]} for i, src in enumerate(sources)]
+    info(f"wrote {output} ({len(sources)} audio track(s)" + (", video stream-copied" if has_video else "") + ")")
+    steps: List[Dict[str, Any]] = []
+    if not STATE.dry_run:
+        want = [{"index": i, **{k: v for k, v in (("title", titles[i]), ("language", langs[i])) if v}}
+                for i in range(len(sources)) if titles[i] or langs[i]]
+        got = [dict(w, **{k: tracks[w["index"]][k] for k in w if k != "index"}) for w in want]
+        if want:
+            steps.append({"step": "track_tags", "expected": want, "measured": got, "ok": got == want})
+        if any(t["duration"] is None for t in tracks):
+            steps.append({"step": "track_duration", "ok": False, "reason": "not_measured",
+                          "tracks": [t["index"] for t in tracks if t["duration"] is None]})
+        picture, fps = own_length(r.get("video")), (r.get("video") or {}).get("fps")
+        over = [t["index"] for t in tracks if picture and t["duration"] is not None and t["duration"] > picture + (1 / fps if fps else 0.04)]
+        if over:
+            warn(f"track(s) {over} are longer than the picture ({picture:.3f} s); they are kept whole, not trimmed to it",
+                 "track_longer_than_picture", tracks=over, picture_seconds=round(picture, 3))
+    emit(output, expect_streams={"video": int(has_video), "audio": len(sources)}, tracks=tracks, verification=steps,
+         video=has_video, audio_stream=args.audio_stream, dropped_non_av_streams=dropped)
+    return 0
 
 
 def main() -> int:
@@ -398,6 +505,13 @@ def main() -> int:
     dyn.add_argument("--gate-range", type=float, help="attenuation when closed, dB -90..0 (default -24.26, ffmpeg's linear 0.06125)")
     dyn.add_argument("--gate-knee", type=float, help="knee width dB 0..18.06 (ffmpeg's linear 1..8; default 9.03, its 2.82843)")
     ap.add_argument("--audio-stream", type=int, default=0, help="which audio stream of the input to process, 0-based in file order (probe lists them under audio_streams)")
+    tracks = ap.add_argument_group("tracks (one audio stream per source in one file; each is written as it is)")
+    tracks.add_argument("--track", action="append", metavar="FILE",
+                        help="add FILE's sound as one more audio track after the input's own (repeatable); -o .mov, .mkv or .mp4")
+    tracks.add_argument("--track-name", "--track-title", action="append", metavar="NAME",
+                        help="a track's name, in track order (the input's own sound first); empty keeps the source's")
+    tracks.add_argument("--track-lang", "--track-language", action="append", metavar="CODE",
+                        help="a track's ISO 639-2 language code (eng, jpn ...), in track order")
     ap.add_argument("--bitrate", default=None,
                     help="audio bitrate: AAC's beside a picture (default 192k), and the codec's of a lossy audio output "
                          "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf/.mka")
@@ -447,6 +561,8 @@ def main() -> int:
         if not (lo <= value <= hi):
             die(f"{flag} {value:g} is outside {lo:g}..{hi:g}")
 
+    if args.track or args.track_name or args.track_lang:
+        check_track_flags(ap, args, args.output or default_output(args.input, "audio"))
     problems = preflight_beds(args)
     silent = find_silent_tracks(args, problems)
     if args.on_silent == "fail":
@@ -469,7 +585,7 @@ def main() -> int:
     meta = probe(args.input)
     dur = meta.get("duration") or 0.0
     has_video = bool(meta.get("video"))
-    if not meta.get("audio") and not args.replace:
+    if not meta.get("audio") and not args.replace and not args.track:
         die("input has no audio stream (use --replace to add one)")
     output = args.output or default_output(args.input, "audio")
     audio_out = is_audio_output(output)
@@ -490,6 +606,8 @@ def main() -> int:
     # the channels of the track the graph processes (main_src below): the --audio-stream track,
     # or --replace's first track. meta["audio"] is the input's first track, so a mono a:0 left a
     # stereo --audio-stream 1 unfolded by --mono, and a stereo a:0 halved a mono one (A128)
+    if args.track:
+        return write_tracks(args, meta, output)
     in_channels = main_track_channels(args, meta)
     keep_video = has_video and not audio_out
     if args.tempo is not None:

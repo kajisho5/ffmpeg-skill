@@ -149,7 +149,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "clean up the audio", "remove the hiss" | `audio.py in.mp4 --voice` (or `--denoise`) |
 | "music under the talking", "duck harder" | `audio.py in.mp4 --music bed.mp3 --duck --fade-out 3` |
 | "convert the 5.1 to stereo", "wider stereo" | `audio.py in.mov --downmix` (`--stereo-widen 0.5`) |
-| "swap in the narration track" | `audio.py in.mp4 --replace narration.wav` |
+| "swap in the narration track", "stems as separate named tracks" | `audio.py in.mp4 --replace narration.wav`; tracks: `audio.py in.mov --track music.wav --track-name Dialogue --track-name Music --track-lang eng --track-lang eng -o stems.mov` (.mov/.mkv/.mp4; no mixing) |
 | "give me the sound as WAV" | `audio.py in.mp4 -o in.wav` |
 | "speed the line up, same pitch", "exactly 96000 samples long", "just the third mic", "resample to 48 kHz" | `audio.py line.wav --tempo 1.2 --length-samples 96000 -o fit.wav` (`--channel 2 --sample-rate 48000`) |
 | "fade in", "fade out to black" | `fit.py in.mp4 --fade-in 1 --fade-out 1` (picture and sound; sound alone: `audio.py --fade-in`) |
