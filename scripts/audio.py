@@ -373,8 +373,8 @@ def read_tracks(output: str, titles: List[str]) -> List[Dict[str, Any]]:
     found = []
     for i, s in enumerate(streams):
         tags, rate, samples = s.get("tags") or {}, int(s.get("sample_rate") or 0), decoded_samples(output, i)
-        found.append({"title": tags.get("title") or (tags.get("handler_name") if i < len(titles) and titles[i] else None),
         # no language tag is ISO 639 "und": MOV writes an asked-for und as no tag
+        found.append({"title": tags.get("title") or (tags.get("handler_name") if i < len(titles) and titles[i] else None),
                       "language": tags.get("language") or "und", "channels": s.get("channels"),
                       "duration": round(samples / rate, 3) if samples is not None and rate else None})
     return found
