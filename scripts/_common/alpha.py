@@ -373,15 +373,27 @@ def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]]
     pix = ALPHA_CODECS[codec]["pix_fmt"]
     # premultiplied colour is colour x alpha in RGB: multiplied there (a YUV premultiply scales the
     # limited-range offsets too), after the tags are back so both conversions use the same matrix
-    pre = "format=gbrap,premultiply=inplace=1," if mode == "premultiplied" else ""
+    pre = "format=gbrapf32le,premultiply=inplace=1," if mode == "premultiplied" else ""
     matrix = _SWS_MATRIX.get(next((val for p, val, _ in tags if p == "colorspace"), None))
     if pre and matrix and pix.startswith("yuv"):
         # ... which 6.1 does not do by itself on a tagged YUV line: the way to RGB is placed in
         # front of color.py's alphamerge (so in front of the label, and reads BT.601) and the way
         # back takes swscale's BT.601 default whatever the frames say, so an opaque 30C050 of a
         # BT.709 line came back 3CD753 (color.py) or 25AC4E (overlay.py). Both legs name the matrix.
-        pre = f"scale=in_color_matrix={matrix},format=gbrap,premultiply=inplace=1,scale=out_color_matrix={matrix},"
+        pre = f"scale=in_color_matrix={matrix},format=gbrapf32le,premultiply=inplace=1,scale=out_color_matrix={matrix},"
     return label + pre + f"format={pix}"
+
+
+def unpremultiply_leg(meta: Optional[Dict[str, Any]]) -> str:
+    """The filters that divide a premultiplied source's colour by its alpha, ahead of a grade
+    (color.py --source-alpha-mode premultiplied, #453): in float RGB, where the division is the
+    colour, then back to the source's own pixel format. A tagged YUV source names its matrix on
+    both legs, as finish_chain's premultiply does (6.1 reads BT.601 on the way in and writes it on
+    the way out otherwise). Alpha 0 is left as it is."""
+    v = (meta or {}).get("video") or {}
+    matrix = None if is_rgb(meta) else _SWS_MATRIX.get(v.get("color_space"))
+    return ((f"scale=in_color_matrix={matrix}," if matrix else "") + "format=gbrapf32le,unpremultiply=inplace=1,"
+            + (f"scale=out_color_matrix={matrix}," if matrix else "") + f"format={v.get('pix_fmt')},")
 
 
 def tag_args(meta: Optional[Dict[str, Any]]) -> List[str]:
@@ -529,9 +541,12 @@ def report(args, codec: Optional[str], src: "Dict[str, object] | None", output: 
     if codec:
         extra["alpha_mode"] = args.alpha_mode or "straight"
         extra["alpha_codec"] = codec
+        source_mode = {"source_alpha_mode": args.source_alpha_mode} if getattr(args, "source_alpha_mode", None) else {}
+        extra.update(source_mode)  # color.py: the mode the grade read the colour in, on a dry run too
         if output and not STATE.dry_run:
-            extra.setdefault("verification", []).append(kept_step(output, probe(output, role="output"), src,
-                                                                  composite=composite, provenance=provenance))
+            step = kept_step(output, probe(output, role="output"), src, composite=composite, provenance=provenance)
+            step.update(source_mode)
+            extra.setdefault("verification", []).append(step)
         return
     if not uses_alpha(src) or not output or STATE.dry_run:
         return

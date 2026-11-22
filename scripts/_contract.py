@@ -448,6 +448,7 @@ ERROR_REASONS = {
     "input_permission_denied": "an input exists or may exist but the user this runs as may not read it, or may not search a directory on the way to it (EACCES, as opposed to a path that is not there, which stays \"input not found\" with no reason); dry runs included; details: {path}",
     "media_path_not_a_file": "an input exists but is not a regular file (a FIFO or a device), which ffmpeg would block on or read as a stream; details: {path}",
     "join_copy_mismatch": "join.py --copy: a clip's streams do not match the first clip's, it hides pre-roll frames with an edit list, or its picture and sound end more than 50 ms apart, or (AAC) a copy join would put the sound more than 50 ms behind or ahead of the picture at some clip (each later clip's priming played at its seam plus the difference between each clip's sound and picture; details also aac_drift_ms, negative when ahead, and tolerance_ms); details: {clips: [{index?, path, differs}]}",
+    "source_alpha_mode_needs_keep_alpha": "kind input: color.py --source-alpha-mode without --keep-alpha: the alpha is not kept, so there is no colour to divide it from",
     "audio_cut_transition": "join.py --audio-lead/--audio-lag with a transition: the J-cut or L-cut is a plain cut (--transition none)",
     "audio_cut_copy": "join.py --audio-lead/--audio-lag with --copy: picture and sound are cut at different times, which a stream copy cannot do",
     "audio_cut_both_flags": "join.py --audio-lead and --audio-lag together: a J-cut and an L-cut are two different cuts",
