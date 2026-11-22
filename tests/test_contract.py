@@ -2230,6 +2230,25 @@ sys.exit(fit.main())
             self.assertEqual(fold(["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", "scale=2:2"] + enc),
                              ["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", f"{conv},scale=2:2", "-c:v", "libx264", "out.mp4"])
 
+    def test_a_bt709_line_relabels_an_hdr_sources_frames_on_ffmpeg_9(self):
+        """#711: FFmpeg 9 writes mp4/mov's colr box from the frames, so a BT.709 line over an HDR source
+        said bt709 in the VUI and bt2020/smpte2084 in the container. From 9.0 the line's -vf relabels
+        the frames' primaries and transfer (setparams converts no pixel); before 9.0 nothing changes."""
+        from unittest import mock
+        from _common import color
+        hdr_yuv = {"video": {"bt2020_or_hdr": True, "pix_fmt": "yuv420p10le", "color_space": "bt2020nc"}}
+        hdr_rgb = {"video": {"bt2020_or_hdr": True, "pix_fmt": "gbrp10le"}}
+        sdr = {"video": {"pix_fmt": "yuv420p", "color_space": "bt709"}}
+        relabel = "setparams=color_primaries=bt709:color_trc=bt709"
+        with mock.patch.object(color, "ffmpeg_version", return_value=(9, 0)):
+            self.assertEqual(color.bt709_matrix_args(hdr_yuv), ["-vf", relabel])
+            self.assertEqual(color.bt709_matrix_args(hdr_rgb), ["-vf", color.rgb_to_bt709_filter() + "," + relabel])
+            self.assertEqual(color.bt709_matrix_args(sdr), [])
+            for meta in (hdr_yuv, hdr_rgb):  # run() still finds it and folds it into the tool's graph
+                self.assertRegex(color.bt709_matrix_args(meta)[1], color._MATRIX_FILTER_RE)
+        with mock.patch.object(color, "ffmpeg_version", return_value=(8, 0)):
+            self.assertEqual(color.bt709_matrix_args(hdr_yuv), [])
+
     def test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source(self):
         """#544: an RGB source that probes BT.2020 / HDR has no matrix (tag `gbr`, or none). The 10-bit
         line that keeps its colour passed `-colorspace gbr` to the encoder (refused inside ffmpeg) or
