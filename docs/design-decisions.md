@@ -3291,7 +3291,7 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   `finish_chain()` does for its premultiply; alpha 0 stays 0) in front of the grade, and writes the
   colour premultiplied again through `finish_chain()`'s existing RGB premultiply, so `alpha_mode`
   is `premultiplied` unless `--alpha-mode straight` asks for a straight master. That premultiply
-  now runs in float instead of 8-bit RGB for every tool that has `--alpha-mode premultiplied`: at
+  now runs in 16-bit instead of 8-bit RGB for every tool that has `--alpha-mode premultiplied`: at
   8 bits a 10-bit ProRes colour under alpha 128 was off by 1.5 codes once divided by its alpha
   again. The result and the `alpha` step carry `source_alpha_mode`, so a caller can see which
   reading the grade took; the alpha plane is not touched in either mode. The flag without

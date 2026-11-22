@@ -373,14 +373,14 @@ def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]]
     pix = ALPHA_CODECS[codec]["pix_fmt"]
     # premultiplied colour is colour x alpha in RGB: multiplied there (a YUV premultiply scales the
     # limited-range offsets too), after the tags are back so both conversions use the same matrix
-    pre = "format=gbrapf32le,premultiply=inplace=1," if mode == "premultiplied" else ""
+    pre = "format=gbrap16le,premultiply=inplace=1," if mode == "premultiplied" else ""
     matrix = _SWS_MATRIX.get(next((val for p, val, _ in tags if p == "colorspace"), None))
     if pre and matrix and pix.startswith("yuv"):
         # ... which 6.1 does not do by itself on a tagged YUV line: the way to RGB is placed in
         # front of color.py's alphamerge (so in front of the label, and reads BT.601) and the way
         # back takes swscale's BT.601 default whatever the frames say, so an opaque 30C050 of a
         # BT.709 line came back 3CD753 (color.py) or 25AC4E (overlay.py). Both legs name the matrix.
-        pre = f"scale=in_color_matrix={matrix},format=gbrapf32le,premultiply=inplace=1,scale=out_color_matrix={matrix},"
+        pre = f"scale=in_color_matrix={matrix},format=gbrap16le,premultiply=inplace=1,scale=out_color_matrix={matrix},"
     return label + pre + f"format={pix}"
 
 

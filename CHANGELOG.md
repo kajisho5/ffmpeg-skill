@@ -11,7 +11,7 @@
   offset or a non-linear grade no longer lifts or darkens partly transparent edges; the alpha is untouched.
   `straight` (default) is today's command. The result and its `alpha` step name the mode (`source_alpha_mode`);
   without `--keep-alpha` the flag is refused (`source_alpha_mode_needs_keep_alpha`). The premultiplied write
-  (`--alpha-mode premultiplied`, every tool that has it) now multiplies in float RGB instead of 8-bit.
+  (`--alpha-mode premultiplied`, every tool that has it) now multiplies in 16-bit RGB instead of 8-bit.
 
 ## 4.7.0
 
