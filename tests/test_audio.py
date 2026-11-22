@@ -406,6 +406,38 @@ class AudioTests(MediaFixtures):
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("--duck-release", doc["error"]["message"])
 
+    def test_a_duck_under_a_key_longer_than_its_bed_lasts_to_the_beds_end_on_every_run(self):
+        """#671: since FFmpeg 7 the CLI reads each input on its own thread, and sidechaingate
+        forwards the EOF of its first input (the bed) without draining the key, so a bed shorter
+        than the speech lost the gate's tail: the duck lifted at a random point (3.5 to 5.0 s for a
+        5 s bed) and the output differed from run to run. The gated copy is padded, so it never ends
+        before the key, and the mix after it ends with the dry bed."""
+        import hashlib
+        key, bed, out = OUT / "duck671_key.wav", OUT / "duck671_bed.wav", OUT / "duck671.wav"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", r"aevalsrc=0.1*sin(2*PI*1000*t)*between(t\,3\,13)"
+           r"|0.1*sin(2*PI*1000*t)*between(t\,3\,13):s=44100:d=16", "-c:a", "pcm_s16le", key)
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=5:sample_rate=44100", "-af", "volume=0.2",
+           "-ac", "1", "-c:a", "pcm_s16le", bed)
+        flags = ("--music", bed, "--music-volume", "0", "--duck", "--duck-amount", "18", "--duck-threshold", "-40",
+                 "--overwrite", "-o", out)
+        graph, _ = self._audio_filters(key, *flags)
+        self.assertIn("apad[mwet]", graph, "the gated copy of the bed is padded, so it cannot end before the key")
+        self.assertIn("amix=inputs=2:duration=first:normalize=0[ducked]", graph, "and the mix ends with the dry bed")
+
+        def bed_db(start, length):  # the bed's own 440 Hz, not the 1 kHz key
+            proc = sh("ffmpeg", "-hide_banner", "-nostdin", "-ss", str(start), "-t", str(length), "-i", str(out), "-af",
+                      "bandpass=f=440:width_type=h:w=30,astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-")
+            return float(re.search(r"RMS level dB: (-?[0-9.]+)", proc.stderr).group(1))
+
+        hashes = set()
+        for run in range(6):
+            script("audio.py", key, *flags)
+            hashes.add(hashlib.md5(out.read_bytes()).hexdigest())
+            with self.subTest(run=run):
+                # still ducked 18 dB down in the last second of the bed, as it was at its start
+                self.assertLess(bed_db(4.0, 0.9) - bed_db(1.0, 1.0), -12.0)
+        self.assertEqual(len(hashes), 1, "the same command writes the same file every run")
+
     def test_audio_stereo_widen_needs_a_real_stereo_source(self):
         """1.13: widening scales the side signal (L-R). Duplicating a mono track to two channels
         leaves L == R, so the side signal is exactly zero and scaling it changes nothing -- the
