@@ -27,7 +27,6 @@ import re
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from xml.sax.saxutils import escape as _xml_escape
 
 from _common.decision import MissingFpsError, aspect_ratio, frame_size, parse_time
 from _common.emit import warn
@@ -500,6 +499,7 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
     of the first clip, chapters as chapter-markers. Speed is a linear timeMap on the clip. The
     sequence has its own format (r1); each video asset has its source's, and a clip of another
     aspect states its spatial conform (adjust-conform) for frame.fit."""
+    from xml.sax.saxutils import escape as _xml_escape  # a heavy import chain: only an FCPXML write pays for it
     rate = tl["rate"]
     q = lambda s: _xml_escape(_xml_text(s), {'"': "&quot;"})  # noqa: E731
     fd = _t(1, rate)
