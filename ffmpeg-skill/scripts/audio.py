@@ -91,15 +91,18 @@ DUCK_GATE_RATIO = 9000.0  # agate's largest: closed below the threshold
 DUCK_KEY_DC = "dcshift=shift=0.000001"
 
 
+# #671: since FFmpeg 7 the CLI reads each input on its own thread, and sidechaingate forwards the EOF of its
+# first input without draining the second, so a bed that ended before the key lost the gate's tail and the duck
+# lifted at a random point. The gated copy is padded (never ends first); the amix after it ends with the dry bed.
 def duck_graph(threshold_db: float, amount_db: float, attack: float, release: float) -> List[str]:
     """The filter-graph lines that turn `[music]` and the speech key `[sc]` into `[ducked]`."""
     cut = 1.0 - 10 ** (-amount_db / 20.0)
-    return ["[music]asplit=2[mdry][mwet]",
+    return ["[music]asplit=2[mdry][mraw];[mraw]apad[mwet]",
             f"[sc]{DUCK_KEY_DC}[key]",
             f"[mwet][key]sidechaingate=threshold={db_to_linear(threshold_db):.6g}:ratio={DUCK_GATE_RATIO:g}:range=0:knee=1"
             f":attack={attack:g}:release={release:g}[mspeech]",
             f"[mspeech]volume={-cut:.6g}[mcut]",
-            "[mdry][mcut]amix=inputs=2:normalize=0[ducked]"]
+            "[mdry][mcut]amix=inputs=2:duration=first:normalize=0[ducked]"]
 
 
 # Typed dynamics: every flag maps to one real option of one ffmpeg filter, validated against the
