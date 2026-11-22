@@ -4,7 +4,23 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **`audio.py --track FILE`: several audio tracks in one file, each with a name and a language (#420).**
+  The input's own sound (`--audio-stream`) and the first audio stream of each `--track` become one audio
+  stream apiece after the picture (stream-copied; an audio input writes none), in `.mov`, `.mkv` or `.mp4`.
+  Each is written as it is: its own channel layout, rate and length (nothing mixed, resampled, padded or
+  trimmed), as 24-bit PCM in `.mov` and `.mkv` and AAC in `.mp4`. `--track-name NAME` (also `--track-title`)
+  and `--track-lang CODE` (also `--track-language`) are repeated in track order, the input's sound first;
+  a language is an ISO 639-2 code of three lowercase letters. The result's `tracks` lists
+  `{index, file, title, language, channels, duration}` read back from the file, a `track_tags` step
+  checks the names and languages against it (`.mov` keeps only the languages QuickTime has a code for,
+  and says so by failing the step), and a track longer than the picture is kept whole with a
+  `track_longer_than_picture` warning. Refused, with `error.reason`: an output that is not
+  `.mov`, `.mkv` or `.mp4` (`track_container`; a WAV holds one stream, and FFmpeg's MXF muxer stores no
+  names or languages and cuts every track to the shortest), a flag that changes the sound
+  (`track_rebuilds_sound`), more titles or languages than tracks (`track_labels`) and a language that is
+  not three letters (`track_language`). A BWF or multitrack WAV with a start timecode is not written.
 
 ## 4.6.5
 
