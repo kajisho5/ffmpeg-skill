@@ -50,7 +50,7 @@ from typing import Dict, List, Optional
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common.color import bt709_matrix_filter, hdr_rgb_matrix_args, hdr_rgb_matrix_filter
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
-from _common.decision import chain_with_rate, enlarge_args, warn_mostly_cropped, hw_preset_video, restate_last_swap
+from _common.decision import chain_with_rate, enlarge_args, relabel_at, warn_mostly_cropped, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
@@ -411,7 +411,10 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
         sub_args += [f"-c:s:{n}", codec]
     if sub_codecs:
         sub_args += carried_stream_maps(src, output, chapters=False)  # the fonts the subtitles are drawn with (A256)
-    data_args = (["-map", "0:d"] + carried_stream_maps(src, output, attachments=False) + ["-c:d", "copy"]) if data else []
+    # a command that writes its own start timecode does not also copy the source's tmcd track: that
+    # label, at the source's rate, would cost a whole re-encode before it lost (run_keeping_subtitles)
+    skip_tmcd = ["-map", "-0:d:m:timecode"] if any(a.startswith("timecode=") for a in cmd) else []
+    data_args = (["-map", "0:d"] + skip_tmcd + carried_stream_maps(src, output, attachments=False) + ["-c:d", "copy"]) if data else []
     rungs = [(sub_args + data_args, [])]
     if sub_codecs and data:
         rungs.append((sub_args, ["data"]))
@@ -789,8 +792,13 @@ def main() -> int:
         # source's average) is reached by the fps filter, the nearest frame for each slot: the
         # encoder line's -r alone let a frame run up to two frames late against the sound before
         # it dropped one (#512)
-        rate_f = (f"fps={video[video.index('-r') + 1]}" if "-r" in video
-                  else f"fps={rate_args[rate_args.index('-r') + 1]}" if "-r" in rate_args else "")
+        rate_f = (video[video.index('-r') + 1] if "-r" in video
+                  else rate_args[rate_args.index('-r') + 1] if "-r" in rate_args else "")
+        if rate_f:
+            # a rate the line delivers that no --fps named still moves the start timecode: a 25 fps
+            # clip exported to reels kept 01:00:00:12, 0.4 s at 30 (#470)
+            cmd += relabel_at(meta, float(Fraction(rate_f)))
+            rate_f = f"fps={rate_f}"
         # it is placed as with_cfr() places it: first in a -vf that is a graph (a blur pad's
         # split/overlay, a drawn pad's maskedmerge), whose last frame an fps filter after it lost
         # on FFmpeg 6.1 (reels --pad-fill blur: 119 frames of a 4 s 30 fps picture)

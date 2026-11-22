@@ -61,10 +61,12 @@ def main() -> int:
     # the conform is the fps filter at the end of the chain, the rate the encoder line delivers:
     # its -fps_mode cfr alone let a frame run up to two frames late (#512)
     if args.mode == "field":
-        v = meta["video"]
-        src_fps = v.get("fps") or 30.0
-        rate_args = ["-fps_mode", "cfr", "-r", f"{src_fps * 2:g}"]
-        vf += f",fps={src_fps * 2:g}"
+        # the doubled rate goes through cfr_args() rather than a hand-built -r, so the start
+        # timecode is counted at the delivered rate like every other forced rate (#470:
+        # 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and the source's tmcd track is not copied)
+        rate = (meta["video"].get("fps") or 30.0) * 2
+        rate_args = cfr_args(meta, rate)
+        vf += f",fps={rate:g}"
     else:
         rate_args = cfr_args(meta)
         vf = with_cfr(vf, meta)

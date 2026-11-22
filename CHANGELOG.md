@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- **The start timecode is counted at the rate a tool actually delivers, in the two places
+  `--fps` does not reach (#470).** `deinterlace.py --mode field` emits one frame per field, so a
+  25 fps source is delivered at 50, and `export.py`'s `reels`, `tiktok`, `shorts`, `linkedin`,
+  `x` and `facebook` presets name their own `-r 30`. Both stamped the source's `01:00:00:12` on
+  the output, which names 0.24 s at 50 and 0.4 s at 30, so an EDL or a conform built from that
+  label landed on the wrong frame. They are now relabelled, as the six `--fps` tools were in
+  4.5.1, through one `decision.relabel_at` that `cfr_args` also calls; a preset that keeps the
+  source's rate (`youtube` at 25) still writes the source's own label.
 
 ## 4.6.2
 

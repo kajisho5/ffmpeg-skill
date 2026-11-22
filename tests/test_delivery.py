@@ -1855,6 +1855,30 @@ class SourceCarryTests(MediaFixtures):
                 self.assertEqual(doc["status"], "completed", (tool, doc.get("error")))
                 self.assertEqual(self._timecode_written(out), [want], (tool, fps))
 
+    def test_every_tool_that_changes_the_delivered_rate_counts_the_timecode_at_it(self):
+        """#470's class, where #695 did not reach: the six tools that take --fps were relabelled in
+        cfr_args(), and the two whose rate is not the caller's still wrote the source's label at
+        the source's rate. deinterlace.py --mode field emits one frame per field and delivers
+        50 fps from a 25 fps source, and export.py's reels/tiktok/shorts/linkedin presets and x
+        name their own -r 30: a clip starting 01:00:00:12 was stamped 01:00:00:12, which names
+        0.24 s at 50 and 0.4 s at 30. Both now count it at the rate they deliver. A preset that
+        keeps the source's rate (youtube at 25) still writes the source's own label."""
+        src = OUT / "tc25_rate.mov"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=1",
+           "-f", "lavfi", "-i", "sine=d=1", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-timecode", "01:00:00:12", src)
+        cases = (("deinterlace.py", ["--mode", "field"], "tc25_deint_field.mov", "01:00:00:24"),
+                 ("deinterlace.py", ["--mode", "frame"], "tc25_deint_frame.mov", "01:00:00:12"),
+                 ("export.py", ["--preset", "reels"], "tc25_reels.mp4", "01:00:00:14"),
+                 ("export.py", ["--preset", "youtube"], "tc25_youtube.mp4", "01:00:00:12"))
+        for tool, extra, name, want in cases:
+            doc = json.loads(script(tool, src, *extra, "-o", OUT / name, "--overwrite", "--json").stdout)
+            self.assertEqual(doc["status"], "completed", (tool, extra, doc.get("error")))
+            # stream and container: the MOV/MP4 muxer rebuilds its tmcd track from the label, so a
+            # stale source track copied beside the new label would show here as the old value
+            self.assertEqual(self._timecode_written(OUT / name), [want], (tool, extra))
+            self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), (tool, extra, doc.get("source_carry")))
+
     def test_the_start_label_rounds_once_and_a_rate_below_one_fps_drops_it(self):
         """00:00:00:02 at 25 fps plus 0.08 s is 4.8 frames at 30 fps: rounded once it is frame 5,
         and the source label and the offset rounded apart made it 2 + 2 = 4. A delivered rate
