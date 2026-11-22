@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.5.3
+
+_Automated release: version and notes generated from pull requests merged since 4.5.2._
+
 ### Fixed
 
 - **`cut.py --segments`, `cut.py --remove` and `silence.py` move the chapters with the ranges they
@@ -36,6 +42,7 @@
   flags together, and S under a frame or not shorter than a clip. SKILL.md routes "J-cut", "L-cut",
   "cutaway", "cut-in", "reaction cut", "insert" and "smash cut" to their tools;
   `references/requests.md` has the full table of editors' names.
+- fix: every class of defect fixed three times has a guard that runs every tool (#700)
 
 ## 4.5.2
 
