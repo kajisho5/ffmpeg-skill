@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.6.5
+
+_Automated release: version and notes generated from pull requests merged since 4.6.4._
+
 ### Fixed
 
 - **The mixing tools get #711's relabel too.** `grid.py`, `join.py`, `multicam.py`, `broll.py` and
@@ -15,6 +21,7 @@
 
 - **A guard for the colour class** (`test_guards.ColorGuard`, three ledger entries). Every tool that writes
   video runs on an HDR RGB source, and any output whose tags mix SDR and HDR fails it.
+- fix: the mixing tools' BT.709 chains get the FFmpeg 9 relabel, and the colour class has a guard (#711) (#713)
 
 ## 4.6.4
 
