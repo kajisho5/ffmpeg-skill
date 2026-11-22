@@ -2188,8 +2188,12 @@ sys.exit(fit.main())
             self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt=pf)), rgb, pf)  # qtrle: no matrix tag at all
         self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="pal8", color_space="gbr")), "format=rgb24," + rgb)
         for m in (meta(pix_fmt="gray"), meta(pix_fmt="ya8"), meta(pix_fmt="yuv420p"), meta(pix_fmt="yuvj420p"),
-                  meta(pix_fmt="rgb48be", bt2020_or_hdr=True), meta(color_space="gbr")):
+                  meta(pix_fmt="yuv420p10le", bt2020_or_hdr=True), meta(color_space="gbr")):
             self.assertIsNone(_common.bt709_matrix_filter(m), m)
+        # #559: an HDR / BT.2020 RGB source on a line tagged BT.709 is converted with the matrix the tag names
+        # (primaries and transfer stay the line's business); an HDR line converts with its own (hdr_rgb_matrix_filter)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="rgb48be", bt2020_or_hdr=True)), rgb)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="gbrp10le", color_space="gbr", bt2020_or_hdr=True)), rgb)
         # a JPEG probes as yuvj420p/bt470bg: a BT.601 source like any other
         self.assertTrue(_common.bt709_matrix_filter(meta(pix_fmt="yuvj420p", color_space="bt470bg", color_range="pc")).startswith("colorspace=ispace=bt470bg:"))
         png = meta(pix_fmt="rgb24", color_space="gbr")
@@ -2277,6 +2281,12 @@ sys.exit(fit.main())
             self.assertNotIn("-vf", _common.video_args(rgb))
             self.assertIsNone(line_matrix_filter(rgb))
             self.assertEqual(_common.matrix_chain(rgb, rgb), "")
+            # #559: the alpha line's own way to YUV names the matrix it tags, and keeps the source's primaries and transfer
+            from _common import alpha
+            self.assertEqual(alpha.source_format(rgb), conv.replace("yuv444", "yuva444"))
+            self.assertEqual(alpha.tag_args(rgb), ["-colorspace", "bt2020nc", "-color_primaries", "bt2020", "-color_trc", "smpte2084"])
+            _common.STATE.alpha_line = "qtrle"  # an RGB line stays RGB
+            self.assertEqual((alpha.source_format(rgb), alpha.tag_args(rgb)), ("format=yuva444p", ["-color_primaries", "bt2020", "-color_trc", "smpte2084"]))
         finally:
             _common.STATE.codec, _common.STATE.hw, _common.STATE.alpha_line = saved
         fold = _common.fold_bt709_matrix
@@ -3227,7 +3237,7 @@ sys.exit(fit.main())
     DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
                       "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
-                      "ffmpeg_version", "new")
+                      "ffmpeg_version", "color", "new")
 
     def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
         """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
