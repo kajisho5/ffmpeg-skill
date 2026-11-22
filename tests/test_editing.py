@@ -385,7 +385,7 @@ class EditingTests(MediaFixtures):
         self.assertEqual(probe(str(cleared))["chapters"], [])
         self.assertEqual(probe(str(cleared))["tags"].get("title"), "Episode 12")
         # refusals
-        script("metadata.py", OUT / "long_ref.wav", "--chapters", chapters, "-o", OUT / "meta_bad.wav", expect_fail=True)
+        script("metadata.py", self.long_ref, "--chapters", chapters, "-o", OUT / "meta_bad.wav", expect_fail=True)
         script("metadata.py", self.src, "-o", OUT / "meta_nothing.mp4", expect_fail=True)
         script("metadata.py", self.src, "--title", "x", "-o", self.src, expect_fail=True)
         bad = OUT / "chapters_bad.txt"

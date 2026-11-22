@@ -28,12 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
+from _fixtures import OUT, SHARED_OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
@@ -3778,7 +3779,7 @@ sys.exit(fit.main())
         BT.601 source each input read from that file is converted once (cut's segment join opens it
         once per segment), a mixed join/multicam/broll/overlay --video converts only the BT.601
         input, and copies, the prores master and an untagged source plan no conversion at all."""
-        s601 = OUT / "c_source601.mp4"
+        s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
@@ -3827,11 +3828,11 @@ sys.exit(fit.main())
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
         beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
-        s601 = OUT / "c_source601.mp4"
+        s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
-        s709 = OUT / "c_source709.mp4"
+        s709 = SHARED_OUT / "c_source709.mp4"
         if not s709.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-c:a", "copy", s709)
@@ -4004,7 +4005,7 @@ sys.exit(fit.main())
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_range="pc")), "setparams=colorspace=bt709," + lim)
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_space="bt709")), "")
 
-        pc = OUT / "c_source_pc.mkv"
+        pc = SHARED_OUT / "c_source_pc.mkv"
         if not pc.exists():
             ffmpeg("-i", self.src, "-t", "2", "-vf", "scale=out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc",
                    "-c:a", "pcm_s16le", pc)
@@ -4274,7 +4275,7 @@ sys.exit(fit.main())
         bad = self.out("latin1.txt")
         bad.write_bytes(b"0:00-0:01 caf\xe9\n")
         adir = self.out("a_directory")
-        adir.mkdir()
+        adir.mkdir(exist_ok=True)
         for args, needle in ((["--text", str(self.out("nope.txt"))], "does not exist"),
                              (["--text", str(adir)], "is a directory"),
                              (["--text", str(bad)], "not UTF-8")):
@@ -5684,7 +5685,7 @@ sys.exit(fit.main())
         then fails reproduces it in seconds: with the limit at 1 s the run must end as kind
         timeout well before the shim's own sleep would have returned."""
         shim = self.out("hang_shim")
-        shim.mkdir()
+        shim.mkdir(exist_ok=True)
         (shim / "ffmpeg").write_text("#!/bin/sh\nsleep 8\nexit 1\n")
         (shim / "ffmpeg").chmod(0o755)
         (shim / "ffprobe").symlink_to(shutil.which("ffprobe"))
@@ -13592,6 +13593,47 @@ class StumbleLedgerTests(unittest.TestCase):
         # a flag the tool has, an abbreviation argparse accepts and a negative number are left alone
         proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "silence.py"), "--thresh", "-30", "--min-silence=0.4"], capture_output=True, text=True)
         self.assertNotIn("is not an option", proc.stderr)
+
+
+class TestOutIsolationTests(unittest.TestCase):
+    """#685: tests that write into OUT/DIR get a per-test directory so filtered -k runs, reverse
+    module order and repeated runs against the same tests/out never collide."""
+
+    def test_each_test_case_gets_an_isolated_out_directory(self):
+        import _fixtures
+        sub = _fixtures.OUT.sub("cut_copy")
+        seen = []
+
+        class _Probe(unittest.TestCase):
+            def test_fixed_name(self):
+                p = _fixtures.out_path("fixed.txt")
+                self.assertFalse(p.exists())
+                p.write_text("x", encoding="utf-8")
+                q = sub / "nested.txt"
+                self.assertFalse(q.exists())
+                q.write_text("y", encoding="utf-8")
+                seen.append((_fixtures.out_dir(), p, q))
+
+        for _ in range(2):
+            res = unittest.TextTestRunner(stream=io.StringIO()).run(_Probe("test_fixed_name"))
+            self.assertTrue(res.wasSuccessful(), res.errors + res.failures)
+        self.assertEqual(len(seen), 2)
+        self.assertNotEqual(seen[0][0], seen[1][0])
+        self.assertNotEqual(seen[0][0], _fixtures.SHARED_OUT)
+        self.assertFalse(seen[0][1].exists())
+        self.assertFalse(seen[1][1].exists())
+
+    def test_cross_module_k_and_reverse_order_do_not_collide_between_runs(self):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, OUT=tmp)
+            k_args = ["-k", "test_look_scenes_overlay_graphics_prefer_fontfile_over_font_when_resolvable",
+                      "-k", "test_font_flag_escapes_filter_graph_injection_when_unresolved"]
+            for target in (["discover", "-s", "tests", *k_args],
+                           ["tests.test_picture", "tests.test_analysis", *k_args]):
+                proc = subprocess.run([sys.executable, "-m", "unittest", *target],
+                                      cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+                self.assertEqual(proc.returncode, 0, f"{target}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
 
 if __name__ == "__main__":

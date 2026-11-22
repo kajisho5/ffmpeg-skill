@@ -1302,7 +1302,7 @@ raise SystemExit(export.main())
         """Eval 7: every platform job ran export -> loudness.py -> export again. --normalize runs
         the levels pass on the written file (audio only) so one export delivers the spec."""
         out = OUT / "export_normalize.mp4"
-        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
+        proc = script("export.py", self.src, "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertEqual(d["status"], "completed")
         self.assertTrue(d["loudness"]["ok"], d["loudness"])
@@ -1316,27 +1316,27 @@ raise SystemExit(export.main())
         precious = OUT / "export_normalize_loudnorm.mp4"
         precious.write_bytes(b"PRECIOUS")
         try:
-            script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
+            script("export.py", self.src, "--preset", "x", "--normalize", "-o", out, "--fast", "--json", "--overwrite")
             self.assertEqual(precious.read_bytes(), b"PRECIOUS")
         finally:
             precious.unlink()
         # --normalize on a preset without a loudness spec is refused; under --dry-run it says what it would do
-        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--normalize", "-o", OUT / "export_norm_h265.mp4", "--json", expect_fail=True).stdout)
+        d = json.loads(script("export.py", self.src, "--preset", "h265", "--normalize", "-o", OUT / "export_norm_h265.mp4", "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
-        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
+        d = json.loads(script("export.py", self.src, "--preset", "x", "--normalize", "-o", out, "--dry-run", "--json").stdout)
         self.assertTrue(any("--normalize" in n for n in d.get("notes", [])), d)
         # 4.0.0 (#579): a platform preset meets its loudness without the flag; --no-normalize
         # (3.x's default) reports the same file and does not fix it
-        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "x", "-o", out, "--fast", "--json", "--overwrite").stdout)
+        d = json.loads(script("export.py", self.src, "--preset", "x", "-o", out, "--fast", "--json", "--overwrite").stdout)
         self.assertTrue(d["loudness"]["ok"], d["loudness"])
         self.assertIs(d["loudness"]["normalized"], True)
-        proc = script("export.py", OUT / "source.mp4", "--preset", "x", "--no-normalize", "-o", out, "--fast", "--json", "--overwrite")
+        proc = script("export.py", self.src, "--preset", "x", "--no-normalize", "-o", out, "--fast", "--json", "--overwrite")
         d = json.loads(proc.stdout)
         self.assertFalse(d["loudness"]["ok"])
         self.assertIs(d["loudness"]["normalized"], False)
         self.assertIn("loudness measured without export correction", proc.stderr)
         self.assertIn("--normalize", " ".join(d["notes"]))
-        d = json.loads(script("export.py", OUT / "source.mp4", "--preset", "h265", "--no-normalize", "-o", OUT / "export_norm_h265.mp4",
+        d = json.loads(script("export.py", self.src, "--preset", "h265", "--no-normalize", "-o", OUT / "export_norm_h265.mp4",
                               "--json", expect_fail=True).stdout)
         self.assertEqual(d["error"]["kind"], "input")
 
