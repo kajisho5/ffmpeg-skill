@@ -21,15 +21,16 @@ import test_audio  # noqa: E402
 import test_cut_copy  # noqa: E402
 import test_delivery  # noqa: E402
 import test_editing  # noqa: E402
+import test_guards  # noqa: E402
 import test_orchestration  # noqa: E402
 import test_picture  # noqa: E402
 
 MODULES = (test_analysis, test_editing, test_cut_copy, test_audio, test_picture, test_delivery, test_orchestration, test_accel,
-           test_asr)
+           test_asr, test_guards)
 
 
 def load_tests(loader, tests, pattern):
-    """unittest calls this instead of scanning this module: the cases are in the nine group
+    """unittest calls this instead of scanning this module: the cases are in the ten group
     modules, and naming them here keeps the set (and the order groups run in) explicit."""
     suite = unittest.TestSuite()
     for module in MODULES:

@@ -4525,6 +4525,10 @@ class EditingTests(MediaFixtures):
         self.assertEqual(chapters("fit.py", "--duration", "2", "--method", "trim", "--from-center"), [(0.0, 1.0, "A"), (1.0, 2.0, "B")])
         # a trim from the start keeps A whole and drops B, which starts where the output ends
         self.assertEqual(chapters("fit.py", "--duration", "2", "--method", "trim"), [(0.0, 2.0, "A")])
+        # a join of ranges of one source (cut --segments / --remove, and silence.py through it):
+        # 1-2.5 s removed, A keeps its first second and B its last 1.5 s (#696, found by its guard)
+        self.assertEqual(chapters("cut.py", "--segments", "0-1,2.5-4"), [(0.0, 1.0, "A"), (1.0, 2.5, "B")])
+        self.assertEqual(chapters("cut.py", "--remove", "1-2.5", "--accurate"), [(0.0, 1.0, "A"), (1.0, 2.5, "B")])
 
 
 class OneClockTests(MediaFixtures):

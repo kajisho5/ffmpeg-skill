@@ -1,0 +1,29 @@
+{
+  "rule": "A class of docs/defect-ledger.jsonl with `threshold` or more entries has a guard: a test that runs every tool and fails wherever the class shows, so a fix of one tool is not the end of a class that keeps coming back. revert_proof.py refuses a fix whose class is due and has no guard (`pending`), and tests/test_guards.py fails when a class becomes due without being listed here.",
+  "threshold": 3,
+  "classes": {
+    "time": {
+      "test": "test_guards.TimeGuard.test_no_tool_leaves_chapters_at_the_source_times",
+      "how": "emit.source_carry says chapters_not_retimed for any output of another length whose chapters were carried by a tool that declared no time map (runner.with_mapped_chapters, runner.declare_time_map)"
+    },
+    "claim": {
+      "test": "test_guards.SweepGuards.test_a_result_never_says_less_than_the_output_lost",
+      "how": "every tool and the multi-input ones run on a 16:9, 5.1, chaptered, subtitled clip; fewer channels, or a frame that keeps or fills less than half of the picture, with no warning or source_carry entry saying it, fails"
+    },
+    "not_measured": {
+      "test": "test_guards.NotMeasuredGuard.test_a_dry_run_reports_nothing_about_an_output_it_did_not_write",
+      "also": "test_guards.SweepGuards.test_no_record_judges_a_file_it_does_not_name",
+      "how": "a dry run of every tool reports no probe, wrote, verified or output measurement; no record with file: null carries a true/false about that file"
+    },
+    "surface": {
+      "test": "test_guards.SweepGuards.test_what_a_caller_sees_first_is_right_on_every_tool",
+      "also": "test_contract.StumbleLedgerTests.test_every_option_has_help_text",
+      "how": "the picture is stream 0 of every output that has one, and a result that wrote media starts with status and wrote"
+    },
+    "automation": {
+      "test": "test_guards.SweepGuards.test_every_tool_answers_while_its_stdin_stays_open",
+      "also": "test_contract.SharedCodeAudit465Tests.test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open",
+      "how": "every tool, started with an open and silent stdin, ends and answers"
+    }
+  }
+}

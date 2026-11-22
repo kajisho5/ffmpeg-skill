@@ -122,6 +122,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.3.4 — a small frame is said, and an enlargement is Lanczos (owner's request)](#after-434--a-small-frame-is-said-and-an-enlargement-is-lanczos-owners-request)
 - [After 4.4.1 — an unmeasured substitution is null (#663)](#after-441--an-unmeasured-substitution-is-null-663)
 - [After 4.4.1 — the first line of a result is for a reader](#after-441--the-first-line-of-a-result-is-for-a-reader)
+- [After 4.5.1 — a class that keeps coming back gets a guard](#after-451--a-class-that-keeps-coming-back-gets-a-guard)
 <!-- contents:end -->
 
 ## Time limits
@@ -6514,3 +6515,23 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   stream copy that ends on a packet is a valid file (#620 stays open for whether a miss should
   fail a delivery). Pinned by
   `test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses`.
+
+## After 4.5.1 — a class that keeps coming back gets a guard
+
+- **Three fixes of one class make a guard due.** The ledger recorded seven `time` defects, each
+  fixed in the tool it was reported in, and the next tool had the same defect (#470, #653, #696).
+  `docs/defect-guards.json` lists every class with three or more entries and the test in
+  `tests/test_guards.py` that runs every tool for it; `revert_proof.py` refuses a fix of a due
+  class whose guard is pending. All five classes due on 2026-11-22 have one (#698).
+- **A guard that skips what failed guards nothing.** The first claim guard passed with broll
+  folding 5.1 to stereo: its fixture was cut short by its subtitle track, broll refused, and the
+  refusal was skipped. Each guard now also fails when a tool it runs did not complete, and each
+  was checked by putting the old defect back (broll's stereo mix, audio.py's stream order, the
+  bars and crop warnings, font_used.substituted) and seeing it fail.
+- **The time guard detects, the tool declares.** `emit.source_carry` cannot know a tool's time
+  map, so it does not judge the chapters; it says `chapters_not_retimed` when the length changed
+  and the tool declared nothing. A tool maps them (`with_mapped_chapters`) or declares why
+  FFmpeg's own handling is right (`declare_time_map("input seek" | "clipped")`). A warning, not a
+  failure: the file is not damaged, and the guard test is what makes a missing declaration fail.
+  The threshold of 0.1 s keeps encoder padding (a few tens of milliseconds) out of it.
+

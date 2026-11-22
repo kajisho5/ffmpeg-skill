@@ -224,6 +224,20 @@ def main() -> int:
     fixes = re.match(r"fix\b", args.title, re.I) or any(
         line.startswith("+- ") for line in git("diff", base, args.head, "--", "CHANGELOG.md").splitlines())
     added_entries = [line for line in git("diff", base, args.head, "--", LEDGER).splitlines() if line.startswith("+{")]
+    # a class the ledger keeps recording needs a guard that covers every tool (docs/defect-guards.json)
+    guards_path = pathlib.Path("docs/defect-guards.json")
+    if fixes and added_entries and guards_path.exists():
+        guards = json.loads(guards_path.read_text(encoding="utf-8"))
+        ledger_rows = [json.loads(line) for line in pathlib.Path(LEDGER).read_text(encoding="utf-8").splitlines() if line.strip()]
+        for entry in added_entries:
+            cls = json.loads(entry[1:]).get("class")
+            count = sum(1 for r in ledger_rows if r.get("class") == cls)
+            guard = guards["classes"].get(cls) or {}
+            if count >= guards["threshold"] and not guard.get("test"):
+                where = f"#{guard['pending']}" if guard.get("pending") else "docs/defect-guards.json"
+                print(f"the ledger has {count} fixes of class {cls!r} and no guard for it ({where}): write the guard in "
+                      "tests/test_guards.py, name it in docs/defect-guards.json, and land it with or before this fix")
+                return 1
     if fixes and not added_entries and not args.no_ledger:
         print(f"a fix adds a line to {LEDGER}: the defect's class, why it got through, and the mechanism "
               "changed so the class cannot recur (#632)")
