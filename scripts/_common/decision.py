@@ -1054,6 +1054,13 @@ def restate_last_swap(before: List[str], after: List[str]) -> None:
         STATE.hw_swaps[-1] = (list(after), strip_movflags(STATE.hw_swaps[-1][1]))
 
 
+def hdr_tag_args(meta: Optional[Dict[str, Any]]) -> List[str]:
+    """The colour tags a 10-bit line that keeps a BT.2020 / HDR source writes as output options: the
+    matrix it converted with (hdr_line_matrix), and the source's primaries and transfer."""
+    v = (meta or {}).get("video") or {}
+    return ["-colorspace", hdr_line_matrix(v), "-color_primaries", v.get("color_primaries") or "bt2020", "-color_trc", source_transfer(v)]
+
+
 def encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str, Any]] = None, keep_bt709: bool = True) -> List[str]:
     """encoder options for `codec` (_cpu_encoder_args), on VideoToolbox when --hw asks and it can."""
     return _maybe_hw(codec, crf, meta, keep_bt709, _cpu_encoder_args(codec, crf, preset, meta, keep_bt709))
@@ -1072,7 +1079,7 @@ def _cpu_encoder_args(codec: str, crf: int, preset: str, meta: Optional[Dict[str
     cs = hdr_line_matrix(v)
     prim = v.get("color_primaries") or "bt2020"
     trc = source_transfer(v)
-    hdr_tags = ["-colorspace", cs, "-color_primaries", prim, "-color_trc", trc]
+    hdr_tags = hdr_tag_args(meta)
     if codec == "h264":
         if hdr:
             die(f"--codec h264 cannot carry HDR ({v.get('hdr_format') or 'BT.2020'}): 8-bit H.264 is SDR only",
@@ -1229,7 +1236,7 @@ def video_args(meta: Optional[Dict[str, Any]], crf: int = 18, preset: str = "med
     fix = bt709_matrix_args(meta if source is None else source) if convert_matrix and not keeps_source_tags() else []
     if convert_matrix and source is None and STATE.alpha_line is None:
         # the BT.2020 / HDR line of an RGB source (--codec prores included: that line tags it too)
-        fix = hdr_rgb_matrix_args(meta) or fix
+        fix = hdr_rgb_matrix_args(meta) or ([] if v.get("bt2020_or_hdr") else fix)
     if STATE.codec:
         return encoder_args(STATE.codec, crf, preset, meta) + fix
     if not v.get("bt2020_or_hdr"):
@@ -1245,7 +1252,8 @@ def line_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
     SDR source on --codec prores."""
     if STATE.alpha_line is not None:
         return None
-    return hdr_rgb_matrix_filter(meta) or (None if keeps_source_tags() else bt709_matrix_filter(meta))
+    hdr = ((meta or {}).get("video") or {}).get("bt2020_or_hdr")
+    return hdr_rgb_matrix_filter(meta) or (None if keeps_source_tags() or hdr else bt709_matrix_filter(meta))
 
 
 def matrix_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]]) -> str:

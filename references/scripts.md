@@ -954,10 +954,19 @@ writes the resulting cut list exactly as it does today.
 join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
 join.py CLIP1 CLIP2 [...] --copy --transition none [-o OUT]
+join.py CLIP1 CLIP2 [...] --transition none --audio-lead S | --audio-lag S [-o OUT]
 join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
 A still picture among the clips is refused (`kind: input`), with any `--transition` and `--copy`:
 it has no length to place, and `insert.py` makes a clip of it.
+`--audio-lead S` (J-cut) and `--audio-lag S` (L-cut) move each clip's sound against its picture at
+every boundary, sync kept: lead = the next clip's sound starts S before its picture (picture from
+S into the next clip, sound without the previous clip's last S); lag = the previous clip's sound runs
+S past the picture change. S is whole frames of the output rate; the joined length is the clips'
+sum less S per boundary (`expected_duration`), and the result carries `audio_lead_seconds` /
+`audio_lag_seconds`. Refused (`error.reason`): with a transition (`audio_cut_transition`), with
+`--copy` (`audio_cut_copy`), both together (`audio_cut_both_flags`), S under one frame or not
+shorter than a clip (`audio_cut_too_long`); an audio-only join has no picture to move against.
 `--copy --transition none` (2.24) joins by stream copy (the concat demuxer, `-c copy`), no
 re-encode, for clips that already match: the first video and first audio stream of every clip must
 have the same codec, profile, size, pixel format, frame rate, time base, sample aspect, colour

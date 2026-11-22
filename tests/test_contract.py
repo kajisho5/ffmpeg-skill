@@ -2040,6 +2040,18 @@ sys.exit(fit.main())
         self.assertFalse([x for x in surface if x[0] == "spelling" and not x[2].startswith("-")],
                          "a positional has no spelling: its schema says \"positional\"")
 
+    # ------------------------------------------------------------------ start-up cost
+    def test_help_does_not_import_the_xml_chain(self):
+        """#679: xml.sax.saxutils pulls in urllib.request, http.client and ssl, about a third of a
+        tool's start-up; only the FCPXML writer needs it, so `--help` must not import it. Checked in
+        a fresh interpreter, because this process has imported everything."""
+        code = ("import runpy, sys\nsys.path.insert(0, %r)\nsys.argv = ['cut.py', '--help']\n"
+                "try:\n    runpy.run_path(%r, run_name='__main__')\nexcept SystemExit:\n    pass\n"
+                "print(sorted(m for m in ('xml.sax.saxutils', 'http.client', 'ssl', '_common.runner') if m in sys.modules))"
+                ) % (str(SCRIPTS), str(SCRIPTS / "cut.py"))
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60).stdout
+        self.assertEqual(out.strip().splitlines()[-1], "['_common.runner']", out)   # the core loaded; the chain did not
+
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
         """FFmpeg 6.1 is the floor since 3.0.0, so drawtext's per-side `boxborderw=v|h` and
@@ -2177,8 +2189,12 @@ sys.exit(fit.main())
             self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt=pf)), rgb, pf)  # qtrle: no matrix tag at all
         self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="pal8", color_space="gbr")), "format=rgb24," + rgb)
         for m in (meta(pix_fmt="gray"), meta(pix_fmt="ya8"), meta(pix_fmt="yuv420p"), meta(pix_fmt="yuvj420p"),
-                  meta(pix_fmt="rgb48be", bt2020_or_hdr=True), meta(color_space="gbr")):
+                  meta(pix_fmt="yuv420p10le", bt2020_or_hdr=True), meta(color_space="gbr")):
             self.assertIsNone(_common.bt709_matrix_filter(m), m)
+        # #559: an HDR / BT.2020 RGB source on a line tagged BT.709 is converted with the matrix the tag names
+        # (primaries and transfer stay the line's business); an HDR line converts with its own (hdr_rgb_matrix_filter)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="rgb48be", bt2020_or_hdr=True)), rgb)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="gbrp10le", color_space="gbr", bt2020_or_hdr=True)), rgb)
         # a JPEG probes as yuvj420p/bt470bg: a BT.601 source like any other
         self.assertTrue(_common.bt709_matrix_filter(meta(pix_fmt="yuvj420p", color_space="bt470bg", color_range="pc")).startswith("colorspace=ispace=bt470bg:"))
         png = meta(pix_fmt="rgb24", color_space="gbr")
@@ -2266,6 +2282,12 @@ sys.exit(fit.main())
             self.assertNotIn("-vf", _common.video_args(rgb))
             self.assertIsNone(line_matrix_filter(rgb))
             self.assertEqual(_common.matrix_chain(rgb, rgb), "")
+            # #559: the alpha line's own way to YUV names the matrix it tags, and keeps the source's primaries and transfer
+            from _common import alpha
+            self.assertEqual(alpha.source_format(rgb), conv.replace("yuv444", "yuva444"))
+            self.assertEqual(alpha.tag_args(rgb), ["-colorspace", "bt2020nc", "-color_primaries", "bt2020", "-color_trc", "smpte2084"])
+            _common.STATE.alpha_line = "qtrle"  # an RGB line stays RGB
+            self.assertEqual((alpha.source_format(rgb), alpha.tag_args(rgb)), ("format=yuva444p", ["-color_primaries", "bt2020", "-color_trc", "smpte2084"]))
         finally:
             _common.STATE.codec, _common.STATE.hw, _common.STATE.alpha_line = saved
         fold = _common.fold_bt709_matrix
@@ -3216,7 +3238,7 @@ sys.exit(fit.main())
     DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
                       "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
-                      "ffmpeg_version", "new")
+                      "ffmpeg_version", "color", "new")
 
     def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
         """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
@@ -13622,6 +13644,25 @@ class TestOutIsolationTests(unittest.TestCase):
         self.assertNotEqual(seen[0][0], _fixtures.SHARED_OUT)
         self.assertFalse(seen[0][1].exists())
         self.assertFalse(seen[1][1].exists())
+
+    def test_failed_test_case_preserves_isolated_out_directory(self):
+        import _fixtures
+        seen = []
+
+        class _FailingProbe(unittest.TestCase):
+            def test_fail_writes_output(self):
+                p = _fixtures.out_path("debug.txt")
+                p.write_text("keep", encoding="utf-8")
+                seen.append(_fixtures.out_dir())
+                self.fail("boom")
+
+        res = unittest.TextTestRunner(stream=io.StringIO()).run(_FailingProbe("test_fail_writes_output"))
+        self.assertFalse(res.wasSuccessful())
+        self.assertEqual(len(seen), 1)
+        try:
+            self.assertTrue((seen[0] / "debug.txt").exists())
+        finally:
+            shutil.rmtree(seen[0], ignore_errors=True)
 
     def test_cross_module_k_and_reverse_order_do_not_collide_between_runs(self):
         require_ffmpeg_or_skip("ffmpeg", "ffprobe")

@@ -50,7 +50,7 @@ from typing import Dict, List, Optional
 from _common.runner import carried_stream_maps, child_exit_code, fail_if_classified, kept_clause, mark_delivered
 from _common.color import bt709_matrix_filter, hdr_rgb_matrix_args, hdr_rgb_matrix_filter
 from _common import STATE, run_analysis, add_common, apply_common, bt709_label_filter, bt709_matrix_args, bt709_tag_args, child_args, emit, cfr_args, cfr_filter, default_output, die, encoder_args, ffmpeg_base, info, probe, require_tool, run, run_tool, validate_color, pad_filters, add_pad_fill_args, fmt_secs
-from _common.decision import chain_with_rate, enlarge_args, warn_mostly_cropped, hw_preset_video, restate_last_swap
+from _common.decision import chain_with_rate, enlarge_args, hdr_tag_args, warn_mostly_cropped, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
 from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
@@ -800,15 +800,22 @@ def main() -> int:
             cmd += ["-vf", rate_f]
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
-        if not p.get("intermediate"):
+        hdr = bool(meta["video"].get("bt2020_or_hdr"))
+        if not p.get("intermediate") and not (p.get("codec") and hdr):
             # every line but an editing master's (prores, dnxhr) says BT.709 (the fixed presets' tags above, an
-            # SDR hevc/av1 line's own): a BT.601 source's pixels are converted to match, in front
-            # of the -vf above (run() folds the two); an untagged, BT.709 or HDR source adds nothing
+            # SDR hevc/av1 line's own): a BT.601 or RGB source's pixels are converted to match (an HDR RGB one
+            # too, #559), in front of the -vf above (run() folds the two); an untagged or BT.709 YUV source adds nothing
             cmd += bt709_matrix_args(meta)
-        if p.get("codec"):
+        yuva = "-pix_fmt" in video and video[video.index("-pix_fmt") + 1].startswith("yuva")
+        master = bool(p.get("intermediate") and hdr and (yuva or not p.get("alpha")))  # qtrle and hap keep their RGB
+        if master:
+            # an editing master of a BT.2020 / HDR source keeps its primaries and transfer and says the matrix
+            # it converted with, as --codec prores does and as a YUV source's frames already did (#559)
+            cmd += hdr_tag_args(meta)
+        if p.get("codec") or master:
             # encoder_args()' line for a BT.2020 / HDR source tags that source's matrix: an RGB
             # one is made YUV with it, not with FFmpeg's BT.601 default (#544)
-            cmd += hdr_rgb_matrix_args(meta)
+            cmd += hdr_rgb_matrix_args(meta, alpha=yuva)
     if out_ext == "mp4":
         cmd += ["-movflags", "+faststart"]
     if args.repair:

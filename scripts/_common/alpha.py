@@ -27,7 +27,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from _common import runner as _runner
-from _common.color import carried_tag, is_rgb, rgb_to_bt709_filter
+from _common.color import carried_tag, hdr_line_matrix, hdr_rgb_matrix_filter, is_rgb, rgb_to_bt709_filter
 from _common.runner import STATE, ffmpeg_encoders, require_tool, run
 
 # A pixel format that carries an alpha plane (yuva*, rgba, argb, gbrap, ya8/ya16, ...).
@@ -307,6 +307,13 @@ def rgb_to_bt709_line(meta: Optional[Dict[str, Any]], codec: Optional[str] = Non
     return bool(codec) and ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv") and is_rgb(meta) and not v.get("bt2020_or_hdr")
 
 
+def hdr_rgb_line(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The conversion of an HDR / BT.2020 RGB source on a YUV alpha line (#559): the matrix the line
+    tags, as the 10-bit line of a source without alpha makes it (hdr_rgb_matrix_filter), or None."""
+    codec = STATE.alpha_line
+    return hdr_rgb_matrix_filter(meta, alpha=True) if codec and ALPHA_CODECS[codec]["pix_fmt"].startswith("yuv") else None
+
+
 def source_format(meta: Optional[Dict[str, Any]]) -> str:
     """The filter that starts a compositing graph on an alpha line: the source at 4:4:4 with its
     alpha plane. An RGB source on a YUV line gets there by an explicit BT.709 conversion
@@ -315,7 +322,7 @@ def source_format(meta: Optional[Dict[str, Any]]) -> str:
     if rgb_to_bt709_line(meta):
         pal = ((meta or {}).get("video") or {}).get("pix_fmt") == "pal8"
         return ("format=rgba," if pal else "") + rgb_to_bt709_filter("yuva444p")
-    return "format=yuva444p"
+    return hdr_rgb_line(meta) or "format=yuva444p"
 
 
 def rgb_line(codec: Optional[str] = None) -> bool:
@@ -347,9 +354,10 @@ def _source_tags(meta: Optional[Dict[str, Any]], dest: str = "option") -> List[t
     v = (meta or {}).get("video") or {}
     to_709 = rgb_to_bt709_line(meta)
     # the matrix is the one the conversion used, whatever the RGB source's own tag says (a qtrle
-    # clip retagged smpte170m would label its BT.709 samples BT.601); primaries and transfer are
-    # not converted, so the source's own are kept when it has them
-    tags = [(param, "bt709" if to_709 and param == "colorspace"
+    # clip retagged smpte170m would label its BT.709 samples BT.601, an HDR one's `gbr` would be
+    # no tag); primaries and transfer are not converted, so the source's own are kept when it has them
+    matrix = "bt709" if to_709 else hdr_rgb_line(meta) and hdr_line_matrix(v)
+    tags = [(param, matrix if matrix and param == "colorspace"
              else carried_tag(param, v.get(key), dest) or ("bt709" if to_709 else None), flag)
             for param, key, flag in _TAG_KEYS]
     return [t for t in tags if t[1]]

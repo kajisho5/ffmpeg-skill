@@ -8816,5 +8816,56 @@ class HdrRgbSourceTests(unittest.TestCase):
                     ran += 1
         self.assertGreater(ran, 0, "no variant of the fixture could be made on this FFmpeg")
 
+    def _pq_gbr(self):
+        src = self._source("pq_gbr", ["-color_trc", "smpte2084", "-colorspace", "rgb"])
+        v = probe(str(src))["video"]
+        self.assertRegex(v["pix_fmt"], r"^gbr", "fixture: the source is RGB")
+        self.assertTrue(v["bt2020_or_hdr"], "fixture: the source probes BT.2020 or HDR")
+        return src
+
+    def test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix(self):
+        """#559: the youtube preset tags BT.709 and made an HDR RGB source's YUV with FFmpeg's BT.601
+        (the red patch C03028 read CE3E26 by the bt709 tag, 14 off): the matrix tag was a claim the
+        pixels did not meet. The primaries and transfer are still not converted (the preset warns)."""
+        if "libx264" not in __import__("_common").ffmpeg_encoders():
+            self.skipTest("needs libx264")
+        src = self._pq_gbr()
+        out = self.dir / "youtube.mp4"
+        doc = json.loads(script("export.py", src, "--preset", "youtube", "-o", out, "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        w = probe(str(out))["video"]
+        # the matrix is what this pins; the primaries and transfer are not converted, and FFmpeg 9's
+        # mp4 colr box carries the source's while the VUI says bt709 (macOS and Windows CI, #711)
+        self.assertEqual(w["color_space"], "bt709")
+        # the 160x120 picture is centred in 1920x1080 by the preset: 9x, 240 columns of bar
+        read = {k: (want, tuple(frame_rgb(out, 0.4, 240 + x * 9, y * 9, vf="scale=in_color_matrix=bt709:in_range=tv,format=rgb24")))
+                for k, (want, (x, y)) in self.PATCHES.items()}
+        err = {k: max(abs(g - c) for g, c in zip(got, want)) if len(got) == 3 else 255 for k, (want, got) in read.items()}
+        self.assertLessEqual(max(err.values()), self.TOLERANCE, f"youtube: {read}")
+
+    def test_an_editing_master_of_an_hdr_rgb_source_keeps_its_tags_and_names_its_matrix(self):
+        """#559: prores (10-bit), dnxhr and the alpha master wrote no colour tag for an HDR RGB source (or
+        bt709 over BT.601 pixels, 8-bit DNxHR): they carry the source's primaries and transfer and the
+        bt2020nc matrix the picture was converted with, as a YUV source's frames always did."""
+        if "prores_ks" not in __import__("_common").ffmpeg_encoders():
+            self.skipTest("needs prores_ks")
+        src = self._pq_gbr()
+        # the 8-bit DNxHR master is 256x120 at least: the same picture at twice the size
+        big = self.dir / "pq_gbr_320.mkv"
+        sh("ffmpeg", "-y", "-v", "error", "-i", src, "-vf", "scale=320:240:flags=neighbor,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=gbr",
+           "-an", "-c:v", "ffv1", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "rgb", big)
+        alpha = self.dir / "pq_gbrap.mkv"  # the picture of the alpha master, half transparent
+        sh("ffmpeg", "-y", "-v", "error", "-i", src, "-vf", "format=rgba,colorchannelmixer=aa=0.5,format=gbrap10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=gbr",
+           "-an", "-c:v", "ffv1", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "rgb", alpha)
+        for preset, source in (("prores", src), ("dnxhr-hq", big), ("prores4444", alpha)):
+            with self.subTest(preset=preset):
+                out = self.dir / f"{preset}.mov"
+                doc = json.loads(script("export.py", source, "--preset", preset, "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed", doc.get("error"))
+                w = probe(str(out))["video"]
+                self.assertEqual((w["color_space"], w["color_primaries"], w["color_transfer"]), ("bt2020nc", "bt2020", "smpte2084"))
+                if source != big:
+                    self._assert_colours(out, "bt2020", preset)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

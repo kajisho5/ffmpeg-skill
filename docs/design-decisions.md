@@ -123,6 +123,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.4.1 — an unmeasured substitution is null (#663)](#after-441--an-unmeasured-substitution-is-null-663)
 - [After 4.4.1 — the first line of a result is for a reader](#after-441--the-first-line-of-a-result-is-for-a-reader)
 - [After 4.5.1 — a class that keeps coming back gets a guard](#after-451--a-class-that-keeps-coming-back-gets-a-guard)
+- [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
+- [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
 <!-- contents:end -->
 
 ## Time limits
@@ -6076,8 +6078,8 @@ before it was changed. Five classes are changed, two are left for a decision.
   measurement take it from `decision.line_matrix_filter()` instead of each asking
   `bt709_matrix_filter()`. `--codec prores` on such a source gets it too: that line writes the
   same three tags. Primaries and transfer are not touched. `bt709_matrix_filter()` still
-  returns nothing for an HDR or BT.2020 source (its test pins that), so no BT.709-tagged line
-  changed.
+  returned nothing for an HDR or BT.2020 source (its test pinned that), so no BT.709-tagged line
+  changed (that sentence no longer holds: #559, "After 4.6.1" below).
 - **Measured after, FFmpeg 6.1.1.** Both variants, read by the output's bt2020nc tag:
   C03028/30C050/2030C0/808080 from `crop`, `fit --fps 30`, `denoise`, `stabilize`,
   `export --preset youtube-hdr`, `join` (two RGB clips; an RGB and a YUV one, with and without a
@@ -6101,12 +6103,12 @@ before it was changed. Five classes are changed, two are left for a decision.
     preset on the YUV PQ copy reads C63828 for the red (BT.2020 samples under the bt709 tag,
     the decided part). Converting it is `bt709_matrix_filter()` returning a filter for an HDR
     RGB source, which
-    `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with` pins as None;
-    proposed, not done.
+    `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with` pinned as None;
+    proposed here, done in #559, "After 4.6.1" below.
   - an SDR RGB clip on an HDR line (`join.py HDR.mkv SDR_RGB.mkv`): still FFmpeg's conversion
     (C53525 by the bt2020nc tag). Its primaries and transfer are not the line's either; a matrix
     alone would not make it right.
-  - an alpha line (`--keep-alpha`, `--transparent`) and `export.py --preset prores` of such a
+  - (done in #559, "After 4.6.1" below) an alpha line (`--keep-alpha`, `--transparent`) and `export.py --preset prores` of such a
     source write no matrix tag at all (and here no primaries or transfer either: ProRes 4444 of
     the PQ fixture probes unknown/unknown/unknown, its YUV BT.601). Nothing disagrees with a tag
     there, so it is not this class; that the HDR tags are lost is. #496's sentence for the alpha
@@ -6535,3 +6537,83 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   failure: the file is not damaged, and the guard test is what makes a missing declaration fail.
   The threshold of 0.1 s keeps encoder padding (a few tens of milliseconds) out of it.
 
+## After 4.5.2 — J-cut and L-cut in join.py
+
+- **`join.py --audio-lead S` / `--audio-lag S` keep sync and shorten the join; they do not slide
+  one stream against the other.** An editor's J-cut and L-cut cost the material the sound borrows:
+  with lead the next clip's picture starts S into the clip and the previous sound loses its last S,
+  with lag the previous picture loses its last S and the next sound starts S into the clip. Output
+  length is the sum of the clips less S per boundary, at every boundary (a per-boundary list is out
+  of scope), and `expected_duration` is that length. The alternative, a longer file with the
+  picture of one clip over the sound of the other and nothing cut, is what one model built by hand
+  in the benchmark behind #675; it changes where every later clip lands against its own sound.
+- **Only `--transition none`, never `--copy`, never both flags, never S as long as a clip.** A
+  transition already overlaps the two pictures, so a second overlap has no meaning; a stream copy
+  cuts both streams at the same packet; the two flags are two different cuts; and S that is not
+  shorter than the clip it takes from would leave that clip nothing. Each is a refusal with its own
+  `error.reason` (`audio_cut_transition`, `audio_cut_copy`, `audio_cut_both_flags`,
+  `audio_cut_too_long`), also under `--dry-run`. S under one frame is refused as `audio_cut_too_long`
+  rather than rounded to a cut of nothing.
+- **S is whole frames of the output rate, and the sound is cut at the same frame time.** The
+  picture is trimmed at frame `round(S * fps)` and the sound at the sample that frame is
+  (`at(frames)`, as every other boundary in the join), so `audio_lead_seconds` is the frames over the
+  rate, not the number typed. The picture and the sound are concatenated by two concat filters
+  (one `v=1:a=0`, one `v=0:a=1`): one filter for both would start the next clip after the longer of
+  its two streams, which here differ by S. `inputs_duration` / `transition_shortening` are not
+  reported, since the cut and not a transition took the time. Code: `join.main()`. Test:
+  `test_join_j_cut_starts_the_next_sound_before_its_picture`,
+  `test_join_l_cut_keeps_the_last_sound_past_the_picture`,
+  `test_join_j_cut_and_l_cut_refusals` (tests/test_editing.py).
+
+## After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)
+
+- **The class: an RGB source reaches an encoder whose output tag claims a matrix the conversion did
+  not use, or whose tags were dropped.** #544 fixed it on the 10-bit line that keeps an HDR / BT.2020
+  RGB source's colour (`video_args`, `--codec`, `youtube-hdr`/`youtube-av1`) and left two lines
+  out; both were measured on FFmpeg 6.1.1 with a 320x240 gbrp10le FFV1 source of C03028, BT.2020
+  primaries, PQ, and the same picture as `yuv444p10le` made with `scale=out_color_matrix=bt2020nc`:
+  - the 8-bit lines tagged bt709 (`export.py`'s fixed presets, `grid.py`) made the RGB source's YUV
+    with FFmpeg's BT.601 default: `--preset youtube` read the red CC3C25 by its tag, where the source's
+    own code values are C03028; and
+  - the editing masters (`export.py --preset prores`, `dnxhr-*`, the alpha presets `prores4444`,
+    `prores4444xq`, `vp9-alpha`, and `graphics.py` / `overlay.py` `--keep-alpha` on a YUV alpha line)
+    wrote no colour tag (ffprobe: unknown/unknown/unknown) or, from the 8-bit DNxHR line, bt709 over the
+    same BT.601 pixels; the YUV copy of the picture came out bt2020nc/smpte2084/bt2020 from its frames.
+- **Decided (the maintainer): an RGB source on a line tagged BT.709 is converted with the BT.709
+  matrix, HDR or not, so the matrix tag is true.** The sentence of #544's "Seen and not changed" that
+  no longer holds is "an 8-bit BT.709 line given an HDR or BT.2020 RGB source ... converts nothing":
+  the tag was a claim the pixels did not meet, and converting costs one filter in the graph.
+  `bt709_matrix_filter()` returns `rgb_to_bt709_filter()` for an HDR RGB source and still nothing
+  for an HDR YUV one; `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with`
+  pinned None for `rgb48be` + HDR and now pins the filter. Primaries and transfer stay as they were:
+  the preset's `colour_not_converted` warning ("source is HDR ... run color.py --to-sdr first")
+  still says so, and a YUV HDR source on the same line still reads BT.2020 samples as BT.709 (the
+  decided part, "After 3.8.23"). The red patch therefore reads C02E27 for the RGB source and C73628
+  for the YUV copy: the RGB one is the source's own colour, the YUV one is the decided shift; they are
+  not equal, and the fix makes the RGB source right, not equal to the YUV copy. The HDR line keeps its
+  own conversion: `video_args()` and `line_matrix_filter()` take `hdr_rgb_matrix_filter()` for an HDR
+  source and add nothing when it has none, never the BT.709 one, and `export.py` skips the BT.709
+  conversion for the `hevc`/`av1` presets of an HDR source.
+- **Decided: a master of an HDR source carries the source's primaries and transfer and the matrix it
+  converted with.** `decision.hdr_tag_args()` is the tag triple `_cpu_encoder_args()` already wrote
+  for `--codec prores`/`hevc`/`av1` (`hdr_line_matrix()`, the source's primaries, `source_transfer()`),
+  now a function; `export.py` appends it to every editing master (`intermediate`) of an HDR source,
+  with `hdr_rgb_matrix_args()` so the YUV is made with the matrix it says (bt2020nc for a BT.2020 source).
+  That includes the 8-bit `dnxhr-lb/sq/hq`: a YUV source's frames already gave them these tags, so the
+  RGB source now matches its YUV copy. An alpha master on a YUV line (`prores4444`, `prores4444xq`,
+  `vp9-alpha`) takes the same conversion with the alpha plane kept (`hdr_rgb_matrix_filter(alpha=True)`,
+  `yuva444p10le`), and the alpha helpers `source_format()` and `_source_tags()` use it for
+  `graphics.py` and `overlay.py` `--keep-alpha`; `qtrle` and `hap-alpha` store RGB and are unchanged.
+- **Seen and not changed.** `color.py --keep-alpha` refuses an HDR source without `--force` (the grade
+  works on SDR pixels), so its grade legs were not touched; an RGB layer (a logo, a box) over an HDR
+  line is still "not converted" ("After 3.6.0"); `join.py SDR.mp4 HDR_RGB.mkv` fails in both
+  versions (not this class). FFmpeg 7, 8 and 9 were not run locally (see #544's note on the
+  conversion's behaviour there).
+- Code: `_common/color.py` (`bt709_matrix_filter`, `hdr_rgb_matrix_filter(alpha=)`,
+  `hdr_rgb_matrix_args(alpha=)`), `_common/decision.py` (`hdr_tag_args`, `video_args`,
+  `line_matrix_filter`), `_common/alpha.py` (`hdr_rgb_line`), `export.py`. Tests:
+  `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with`,
+  `test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source` (tests/test_contract.py),
+  `test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix` and
+  `test_an_editing_master_of_an_hdr_rgb_source_keeps_its_tags_and_names_its_matrix`
+  (tests/test_picture.py).
