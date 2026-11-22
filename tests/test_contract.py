@@ -4659,6 +4659,78 @@ sys.exit(fit.main())
         self.assertEqual(len(doc["commands"]), 1)
         self.assertEqual(doc["commands"][0].count("drawtext="), 1)
 
+    @unittest.skipIf(platform.system() == "Windows", "the fake ffprobe is a #!/bin/sh shim on a POSIX-only PATH")
+    def test_tools_warn_once_on_future_unreadable_and_git_ffmpeg_builds(self):
+        """#556: builds outside TESTED_FFMPEG_MAJORS, unreadable builds, and git/nightly builds warn once
+        per run (stderr + diagnostics.warnings ffmpeg_version_untested, dry runs and probe.py included)
+        and proceed; tested builds warn nothing; < 6.1 stays refused as ffmpeg_unsupported."""
+        with tempfile.TemporaryDirectory(prefix="ffver_") as tmpdir:
+            tmp = Path(tmpdir)
+            out_dry = tmp / "cut_dry.mp4"
+            out_real = tmp / "cut_real.mp4"
+
+            def run_with_banner(banner, *args, tool_name="cut"):
+                shim = tmp / "shim"
+                shim.mkdir(exist_ok=True)
+                real = shutil.which("ffprobe")
+                (shim / "ffprobe").write_text(
+                    '#!/bin/sh\nif [ "$1" = "-version" ]; then printf "%s\\n" "$FFPROBE_FAKE_BANNER"; exit 0; fi\n'
+                    f'exec "{real}" "$@"\n',
+                    encoding="utf-8",
+                )
+                (shim / "ffprobe").chmod(0o755)
+                env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}", FFPROBE_FAKE_BANNER=banner)
+                return tool(tool_name, *args, env=env, check=False)
+
+            # Tested release: no ffmpeg_version_untested warning
+            tested_proc = run_with_banner("ffprobe version 7.1.1 Copyright", self.src, "--start", "0", "--end", "1",
+                                          "-o", out_dry, "--dry-run", "--json")
+            self.assertEqual(tested_proc.returncode, 0, tested_proc.stderr)
+            tested_doc = json.loads(tested_proc.stdout)
+            self.assertNotIn("ffmpeg_version_untested", [w["code"] for w in (tested_doc.get("diagnostics") or {}).get("warnings") or []])
+
+            # Future major (dry-run, real run, and probe.py): warns once, proceeds normally
+            for label, tname, argv, check_diag in (
+                ("cut dry", "cut", [self.src, "--start", "0", "--end", "1", "-o", out_dry, "--dry-run", "--json"], True),
+                ("cut real", "cut", [self.src, "--start", "0", "--end", "1", "-o", out_real, "--overwrite", "--json"], True),
+                ("probe", "probe", [self.src, "--json"], False),
+            ):
+                with self.subTest(case=label):
+                    proc = run_with_banner("ffprobe version 10.0.1 Copyright", *argv, tool_name=tname)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    doc = json.loads(proc.stdout)
+                    if check_diag:
+                        warns = [w for w in (doc.get("diagnostics") or {}).get("warnings") or [] if w["code"] == "ffmpeg_version_untested"]
+                        self.assertEqual(len(warns), 1, doc)
+                        self.assertEqual((warns[0]["version"], warns[0]["tested"], warns[0]["build"]), ("10.0", "6-9", "untested"))
+                    self.assertEqual(proc.stderr.count("warning: FFmpeg 10.0 is outside"), 1, proc.stderr)
+
+            # Unreadable build: warns once, proceeds normally
+            unr = run_with_banner("ffprobe version custom-vendor-build", self.src, "--start", "0", "--end", "1",
+                                  "-o", out_dry, "--dry-run", "--json")
+            self.assertEqual(unr.returncode, 0, unr.stderr)
+            unr_warns = [w for w in json.loads(unr.stdout)["diagnostics"]["warnings"] if w["code"] == "ffmpeg_version_untested"]
+            self.assertEqual(len(unr_warns), 1)
+            self.assertEqual(unr_warns[0]["build"], "unreadable")
+            self.assertIn("could not be read", unr.stderr)
+
+            # Git/nightly builds (with and without libavutil): reported as git/nightly, not tested or untested
+            for banner in (
+                "ffprobe version N-115000-g1234abcd Copyright\nlibavutil      59. 39.100 / 59. 39.100",
+                "ffprobe version N-12345-gabcdef Copyright",
+            ):
+                gp = run_with_banner(banner, self.src, "--start", "0", "--end", "1", "-o", out_dry, "--dry-run", "--json")
+                self.assertEqual(gp.returncode, 0, gp.stderr)
+                g_warns = [w for w in json.loads(gp.stdout)["diagnostics"]["warnings"] if w["code"] == "ffmpeg_version_untested"]
+                self.assertEqual(len(g_warns), 1, banner)
+                self.assertEqual(g_warns[0]["build"], "git")
+                self.assertIn("git/nightly", g_warns[0]["message"])
+
+            # Old build (< 6.1): still refused as ffmpeg_unsupported
+            old = run_with_banner("ffprobe version 5.1.1 Copyright", self.src, "--json", tool_name="probe")
+            self.assertEqual(old.returncode, 127)
+            self.assertEqual(json.loads(old.stdout)["error"]["reason"], "ffmpeg_unsupported")
+
     def test_fourth_review_p3_regressions(self):
         """Fourth review P3 items: render re-encoded a clip at speed 1.0 (#47); a brand's default
         caption.animate made --mode mux fail (#32); shell_quote left a newline bare (#54);
@@ -8528,6 +8600,110 @@ class DoctorLicenseTests(unittest.TestCase):
                 kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
                 with unittest.mock.patch("subprocess.run", **kwargs):
                     self.assertEqual(_contract._ffmpeg_license("ffmpeg"), expected)
+
+
+class FfmpegVersionRangeTests(unittest.TestCase):
+    """#556: tested major range constant pinned to CI, and fake-version classification without running ffmpeg."""
+
+    def test_tested_ffmpeg_majors_pinned_to_ci_workflow(self):
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        majors = {int(m) for m in re.findall(r"(?:apt\s*=\s*|Homebrew\s*=\s*|Windows\s*=\s*|choco install ffmpeg --version\s+|ffmpeg\s+)(\d+)\.(?:\d+|x)", ci)}
+        self.assertEqual(majors, set(range(_common.TESTED_FFMPEG_MAJORS[0], _common.TESTED_FFMPEG_MAJORS[1] + 1)),
+                         f"ci.yml majors {sorted(majors)} drifted from TESTED_FFMPEG_MAJORS {_common.TESTED_FFMPEG_MAJORS}")
+
+    def test_ffmpeg_version_status_classifies_tested_old_future_unreadable_and_git(self):
+        for tok, parsed, want_status in (
+            ("6.1.1-3ubuntu5", (6, 1), "tested"),
+            ("7.1", (7, 1), "tested"),
+            ("8.0.1", (8, 0), "tested"),
+            ("9.0.2", (9, 0), "tested"),
+            ("5.1.1-static", (5, 1), "untested"),
+            ("10.0.1", (10, 0), "untested"),
+            ("custom-build", (0, 0), "unreadable"),
+            (None, (0, 0), "unreadable"),
+            ("N-115000-g1234abcd", (0, 0), "git"),
+            ("2026-10-01-git-0123abcd-full_build", (0, 0), "git"),
+        ):
+            with self.subTest(tok=tok, parsed=parsed):
+                st = _common.ffmpeg_version_status(tok, parsed)
+                self.assertEqual(st["status"], want_status)
+                self.assertEqual(st["tested"], "6-9")
+                if want_status == "tested":
+                    self.assertIsNone(st["message"])
+                elif want_status == "git":
+                    self.assertIn("git/nightly", st["message"])
+                    self.assertNotIn("untested", st["message"])
+                else:
+                    self.assertIn("6-9", st["message"])
+
+        # In-process require_tool() emits ffmpeg_version_untested once per run on future/unreadable/git builds
+        saved = (_common._FFMPEG_VERSION, _common._FFMPEG_VERSION_IS_RELEASE, _common._FFMPEG_VERSION_TOKEN)
+        try:
+            for banner, expect_build in (
+                ("ffprobe version 10.0.1 Copyright", "untested"),
+                ("ffprobe version custom-build", "unreadable"),
+                ("ffprobe version N-115000-g1234abcd Copyright\nlibavutil      59. 39.100 / 59. 39.100", "git"),
+            ):
+                with self.subTest(banner=banner):
+                    _common.STATE.reset()
+                    _common._FFMPEG_VERSION = None
+                    proc = subprocess.CompletedProcess([], 0, banner, "")
+                    with unittest.mock.patch.object(_common.runner, "ffmpeg_exe", return_value=("/fake/ffprobe", "path")), \
+                            unittest.mock.patch.object(_common.runner, "_ffprobe", return_value=proc), \
+                            contextlib.redirect_stderr(io.StringIO()) as err:
+                        _common.require_tool("ffprobe")
+                        _common.require_tool("ffprobe")  # second lookup does not duplicate
+                    warns = [w for w in _common.STATE.warnings if w["code"] == "ffmpeg_version_untested"]
+                    self.assertEqual(len(warns), 1)
+                    self.assertEqual(warns[0]["build"], expect_build)
+                    self.assertIn("warning:", err.getvalue())
+        finally:
+            _common._FFMPEG_VERSION, _common._FFMPEG_VERSION_IS_RELEASE, _common._FFMPEG_VERSION_TOKEN = saved
+            _common.STATE.reset()
+
+    def test_doctor_reports_ffmpeg_version_for_tested_future_unreadable_and_git(self):
+        exes = {"ffmpeg_path": "/fake/ffmpeg", "ffmpeg_source": "path",
+                "ffprobe_path": "/fake/ffprobe", "ffprobe_source": "path"}
+        for version, want_status, want_warn_sub in (
+            ("8.0.1-3ubuntu2", "tested", None),
+            ("10.0.1", "untested", "warning: FFmpeg 10.0 is outside"),
+            ("custom-build", "unreadable", "warning: FFmpeg version could not be read"),
+            ("N-115000-g1234abcd", "git", "warning: FFmpeg N-115000-g1234abcd is a git/nightly build"),
+        ):
+            with self.subTest(version=version):
+                versions = {"ffmpeg": version, "ffprobe": version}
+                fv = _contract._ffmpeg_version_report(versions, exes)
+                self.assertEqual(fv["status"], want_status)
+                self.assertEqual(fv["tested"], "6-9")
+                if want_warn_sub is None:
+                    self.assertEqual(fv["warnings"], [])
+                else:
+                    self.assertEqual(len(fv["warnings"]), 1)
+                    self.assertIn(want_warn_sub, fv["warnings"][0])
+                fake = {
+                    "version": "4.6.0", "python": "3.12.0", "ffmpeg": version, "ffprobe": version,
+                    **exes, "ffmpeg_license": "GPL-2.0-or-later",
+                    "ffmpeg_security": {"warnings": []}, "ffmpeg_version": fv,
+                    "available": [], "missing": [], "missing_optional": [], "unknown": [],
+                    "errors": [], "unsupported": [], "ok": True, "tools": {},
+                    "covered_by": {}, "gpu_encoders": {"status": "missing", "present": []},
+                    "speech_engines": {},
+                    "fonts": {"default_font": "DejaVu Sans", "status": "available", "detail": "", "scripts": {}, "emoji": {}},
+                }
+                for flag in (["doctor", "--json"], ["doctor"]):
+                    out, err = io.StringIO(), io.StringIO()
+                    with unittest.mock.patch.object(_contract, "doctor", return_value=fake), \
+                            unittest.mock.patch.object(sys, "argv", ["_contract.py", *flag]), \
+                            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = _contract.main()
+                    self.assertEqual(code, 0)
+                    if want_warn_sub is None:
+                        self.assertNotIn("outside", err.getvalue())
+                        self.assertNotIn("git/nightly", err.getvalue())
+                    else:
+                        self.assertIn(want_warn_sub, err.getvalue())
+                        if "--json" not in flag:
+                            self.assertIn(want_status, out.getvalue())
 
 
 @unittest.skipIf(platform.system() == "Windows", "every test here drives a fake ffmpeg via a #!/bin/sh POSIX shell shim on PATH to force specific fixture layouts; not portable to Windows. doctor's own detection logic still runs against the REAL ffmpeg on Windows CI through ContractTests' setUpClass and test_doctor_reports_this_installed_copys_own_version -- what's untested on Windows specifically is the fixture-driven FFmpeg 6/7/8/9 layout-parsing behaviour this class exists to pin. See README, 'Development'.")

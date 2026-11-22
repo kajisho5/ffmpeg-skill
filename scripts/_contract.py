@@ -504,6 +504,7 @@ DIAGNOSTIC_CODES = {
     "measurement_input_pending": ("skipped", "--dry-run: a measurement skipped because its input is an earlier stage's output that does not exist yet; {path}"),
     "non_av_streams_dropped": ("fallbacks", "a subtitle or data stream could not be written into the output's container, so the command ran again without it; one record per retry: {output, returncode, error: the failed attempt's last stderr lines, dropped: the stream types that retry leaves out (data alone first, then subtitle too)}. dropped_non_av_streams says whether a stream is missing from the written file. metadata.py records it when a copied timecode track is refused by the MP4 muxer and the copy runs again without that track (the muxer writes it from the picture's timecode tag)"),
     "ffmpeg_list_unreadable": ("warnings", "`ffmpeg -encoders` / `-bsfs` could not be read; what needs the list says so instead of 'the build lacks it'; {list, tool, error}"),
+    "ffmpeg_version_untested": ("warnings", "the FFmpeg build on PATH is outside the tested major range (6-9), its version could not be read, or it is a git/nightly build; {version, tested, build}"),
     "timeout_env_invalid": ("warnings", "FFMPEG_SKILL_TIMEOUT was not a number (the default was used), or was negative or above 500000 s (read as 0, no limit); {value, timeout}"),
     # encoder decisions
     "av1_encoder_libaom": ("fallbacks", "--codec av1 on a build without libsvtav1: libaom-av1 encoded instead; {wanted, used}"),
@@ -1307,6 +1308,35 @@ def ffmpeg_unsupported(version: Optional[str]) -> Optional[str]:
     return FFMPEG_UNSUPPORTED.format(v=f"{v[0]}.{v[1]}") if v and tuple(v[:2]) < MIN_FFMPEG else None
 
 
+def _ffmpeg_version_report(versions: Dict[str, Optional[str]], exes: Dict[str, Any]) -> Dict[str, Any]:
+    """doctor's `ffmpeg_version`: tested / untested / unreadable / git / unsupported / missing."""
+    from _common.runner import TESTED_FFMPEG_MAJORS, ffmpeg_version_status
+
+    tested = f"{TESTED_FFMPEG_MAJORS[0]}-{TESTED_FFMPEG_MAJORS[1]}"
+    per: Dict[str, Dict[str, Any]] = {}
+    warnings: List[str] = []
+    warned: set = set()
+    for b in ("ffmpeg", "ffprobe"):
+        ver = versions.get(b)
+        if ver is None and exes.get(f"{b}_path") is None:
+            per[b] = {"version": None, "status": "missing"}
+        elif ffmpeg_unsupported(ver):
+            per[b] = {"version": ver, "status": "unsupported"}
+        else:
+            p = _parse_ffmpeg_version(ver)
+            st = ffmpeg_version_status(ver, (p[0], p[1]) if p else (0, 0), "FFmpeg" if b == "ffmpeg" else "ffprobe")
+            per[b] = {"version": ver, "status": st["status"]}
+            if st["message"]:
+                line = f"warning: {st['message']}"
+                per[b]["warning"] = line
+                if (st["status"], st["version"]) not in warned:
+                    warned.add((st["status"], st["version"]))
+                    warnings.append(line)
+    statuses = [per[b]["status"] for b in ("ffmpeg", "ffprobe")]
+    overall = next((s for s in statuses if s != "tested"), "tested")
+    return {"tested": tested, "status": overall, "ffmpeg": per["ffmpeg"], "ffprobe": per["ffprobe"], "warnings": warnings}
+
+
 def _exe_report() -> Dict[str, Any]:
     """`ffmpeg_path` / `ffmpeg_source` / `ffprobe_path` / `ffprobe_source`: which binary the tools run
     and why ("path": what PATH resolves; "homebrew-ffmpeg-full": macOS, a lean Homebrew ffmpeg on
@@ -1640,6 +1670,7 @@ def doctor() -> Dict[str, Any]:
         "ffmpeg_license": _ffmpeg_license(exes.get("ffmpeg_path")),
         # non-fatal: never part of `ok`, `usable` or the exit code
         "ffmpeg_security": ffmpeg_security(versions, {b: exes.get(f"{b}_source") for b in versions}),
+        "ffmpeg_version": _ffmpeg_version_report(versions, exes),
         "available": available,
         "missing": missing_required,
         "missing_optional": missing_optional,
@@ -2352,14 +2383,16 @@ def main() -> int:
         # On stderr in both modes, so `doctor --json`'s stdout stays one JSON document: an
         # unsupported Python or FFmpeg (also in the document as `unsupported`, and part of `ok`)
         # and the FFmpeg security advisories (`ffmpeg_security.warnings`, never part of `ok`).
-        for line in d["unsupported"] + d["ffmpeg_security"]["warnings"]:
+        fv = d.get("ffmpeg_version") or {}
+        for line in d["unsupported"] + d["ffmpeg_security"]["warnings"] + (fv.get("warnings") or []):
             if line:
                 print(line, file=sys.stderr)
         if args.json:
             print(json.dumps(d, indent=2, sort_keys=True))
         else:
             print(f"ffmpeg-skill {d['version']} (this installed copy; re-run `npx ffmpeg-skill` to refresh it -- copies are not updated automatically)")
-            print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}")
+            fv_tag = f" ({fv['status']}; tested majors {fv.get('tested', '')})" if fv.get("status") in ("git", "untested", "unreadable") else ""
+            print(f"python {d['python']}; ffmpeg {d['ffmpeg'] or 'MISSING'}; ffprobe {d['ffprobe'] or 'MISSING'}{fv_tag}")
             print(f"FFmpeg build license {d['ffmpeg_license'] or 'unknown'}")
             for name in ("ffmpeg", "ffprobe"):
                 if d[f"{name}_source"] == "homebrew-ffmpeg-full":

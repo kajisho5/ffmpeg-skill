@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-(nothing yet)
+### Added
+
+- **Warn when the FFmpeg build on PATH is outside the tested major range (`6–9`), unreadable, or a git/nightly build (#556).** `runner.TESTED_FFMPEG_MAJORS` (`(6, 9)`) stays pinned to the CI workflow; every tool records `ffmpeg_version_untested` once per run under `diagnostics.warnings` (and prints the warning to stderr, dry runs included) while proceeding normally, and `doctor` reports `ffmpeg_version` (`tested`, `untested`, `unreadable`, `git`, `unsupported`, `missing`) with the same warning line.
 
 ## 4.6.0
 

@@ -137,8 +137,11 @@ def _read_env_timeout() -> "Tuple[float, Optional[str]]":
 ERROR_RETRYABLE = False
 
 
+TESTED_FFMPEG_MAJORS = (6, 9)  # inclusive major range CI tests (.github/workflows/ci.yml)
 _FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
 _FFMPEG_VERSION_IS_RELEASE = False   # ffmpeg_version() read a release number, not the libavutil major
+_FFMPEG_VERSION_TOKEN: "Optional[str]" = None
+_GIT_VERSION_TOKEN = re.compile(r"(?:^N-\d+(?:-g[0-9a-f]+)?\b|(?:^|[-_])(?:git|nightly)(?:[-_]|$))", re.I)
 
 
 def _probe_limit() -> float:
@@ -161,11 +164,13 @@ def ffmpeg_version() -> "Tuple[int, int]":
     ship from the same build. Used only to pick between two spellings of an option where FFmpeg
     changed behaviour between releases (the tools otherwise never branch on the version: doctor's
     capability listing is the source of truth for what a build can do)."""
-    global _FFMPEG_VERSION, _FFMPEG_VERSION_IS_RELEASE
+    global _FFMPEG_VERSION, _FFMPEG_VERSION_IS_RELEASE, _FFMPEG_VERSION_TOKEN
     if _FFMPEG_VERSION is None:
-        _FFMPEG_VERSION = (0, 0)
+        _FFMPEG_VERSION, _FFMPEG_VERSION_IS_RELEASE, _FFMPEG_VERSION_TOKEN = (0, 0), False, None
         try:
             out = _ffprobe("-version").stdout
+            tok = re.search(r"ffprobe version\s+(\S+)", out)
+            _FFMPEG_VERSION_TOKEN = tok.group(1) if tok else None
             m = re.search(r"ffprobe version\s+n?(\d+)\.(\d+)", out)
             if m:
                 _FFMPEG_VERSION = (int(m.group(1)), int(m.group(2)))
@@ -186,6 +191,33 @@ def ffmpeg_version() -> "Tuple[int, int]":
             # spelling, the same "unknown is not missing" stance doctor takes.
             pass
     return _FFMPEG_VERSION
+
+
+def ffmpeg_version_status(version_token: Optional[str] = None, parsed: "Optional[Tuple[int, int]]" = None,
+                          binary: str = "FFmpeg") -> Dict[str, Any]:
+    """Classify the FFmpeg build against TESTED_FFMPEG_MAJORS: tested, untested, unreadable, or git."""
+    lo, hi = TESTED_FFMPEG_MAJORS
+    tested = f"{lo}-{hi}"
+    if parsed is None:
+        parsed = ffmpeg_version()
+        if parsed == _FFMPEG_VERSION:
+            version_token = _FFMPEG_VERSION_TOKEN
+            is_git = bool(version_token and not _FFMPEG_VERSION_IS_RELEASE and _GIT_VERSION_TOKEN.search(version_token))
+        else:
+            is_git = False
+    else:
+        is_git = bool(version_token and parsed == (0, 0) and _GIT_VERSION_TOKEN.search(version_token))
+    if is_git:
+        return {"status": "git", "version": version_token, "tested": tested,
+                "message": f"{binary} {version_token} is a git/nightly build (no release number; CI tests release majors {tested})"}
+    if parsed == (0, 0):
+        return {"status": "unreadable", "version": version_token, "tested": tested,
+                "message": f"{binary} version could not be read; CI tests release majors {tested}"}
+    ver = f"{parsed[0]}.{parsed[1]}"
+    if not (lo <= parsed[0] <= hi):
+        return {"status": "untested", "version": ver, "tested": tested,
+                "message": f"{binary} {ver} is outside the versions the test suite runs on (majors {tested}); results proceed as usual"}
+    return {"status": "tested", "version": ver, "tested": tested, "message": None}
 
 
 _FFMPEG_RELEASE: "Optional[Tuple[int, int, int]]" = None
@@ -333,6 +365,10 @@ def require_tool(name: str) -> str:
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
                    f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
                    code=127, version=f"{found[0]}.{found[1]}", required=floor)
+        if not any(w.get("code") == "ffmpeg_version_untested" for w in STATE.warnings):
+            st = ffmpeg_version_status()
+            if st["message"]:
+                warn(st["message"], "ffmpeg_version_untested", version=st["version"], tested=st["tested"], build=st["status"])
     if path:
         return path
     system = platform.system()

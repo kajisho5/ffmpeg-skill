@@ -691,6 +691,14 @@ the upstream fix and that a distribution package may have backported it without 
 not say the build is vulnerable, and it names an update command (apt for an Ubuntu/Debian version, else by
 platform). Like `gpu_encoders` and `fonts`, it never affects `ok`, any tool's `usable` or the exit code.
 
+`doctor`'s `ffmpeg_version` field reports whether the selected `ffmpeg` and `ffprobe` releases sit inside
+the major versions CI tests (`TESTED_FFMPEG_MAJORS`, `6-9`): `{"tested": "6-9", "status":
+"tested"|"untested"|"unreadable"|"git"|"unsupported"|"missing", "ffmpeg": {...}, "ffprobe": {...},
+"warnings": [...]}`. A release outside `6-9`, an unreadable build `(0, 0)`, or a git/nightly snapshot
+(reported as `"git"`, never `"tested"` or `"untested"`) emits its warning line to stderr (in plain and
+`--json` mode) without affecting `ok` or the exit code; every tool records the same warning once per run
+under `diagnostics.warnings` (`ffmpeg_version_untested`, dry runs included) and proceeds normally.
+
 `doctor`'s `gpu_encoders` field reports GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`,
 `vaapi`, `amf`) present in this ffmpeg *build*, read from `-encoders` alone — `{"status":
 "parsed"|"unparsed"|"failed"|"missing", "present": [...]}`. It proves the build shipped the
@@ -1194,7 +1202,8 @@ re-run with an even scale, or broll.py's odd-sized A-roll scaled even up front; 
 row or column), `non_av_streams_dropped` (with the
 failed attempt's error and `dropped`, the stream types the retry leaves out, beside `dropped_non_av_streams`), `measurement_input_pending` (skipped: a
 dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ffmpeg -encoders` or
-`-bsfs` could not be read; what needed it names the read failure, not a missing encoder) and
+`-bsfs` could not be read; what needed it names the read failure, not a missing encoder), `ffmpeg_version_untested`
+(FFmpeg is outside the tested major range `6-9`, unreadable, or a git/nightly build; `{version, tested, build}`) and
 `timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, read as the 1800 s default, or is
 negative or above 500000 s, read as 0, no limit; a negative or too-long `--timeout` is refused instead, `kind: input`);
 `av1_encoder_libaom` and `crf_clamped`; `font_substituted` (with `font_used`); `drift_correction_skipped`
