@@ -6,6 +6,7 @@ verification policy) holds when the tool actually runs.
     python3 tests/test_contract.py
 """
 import contextlib
+import importlib
 import importlib.metadata
 import io
 import json
@@ -2038,6 +2039,36 @@ sys.exit(fit.main())
         self.assertIn(("spelling", "fit", "--duration"), surface)
         self.assertFalse([x for x in surface if x[0] == "spelling" and not x[2].startswith("-")],
                          "a positional has no spelling: its schema says \"positional\"")
+
+    # ------------------------------------------------------------------ start-up cost
+    def test_help_does_not_import_the_lazy_common_modules(self):
+        """#679: `_common` resolves its transcription and text-layout modules on first use (PEP 562),
+        so a tool whose `--help` needs neither does not import them. Checked in a fresh interpreter,
+        because this process has imported everything; the names still resolve on demand."""
+        lazy = ("asr", "text", "fonts", "emoji", "drawtext", "wrap")
+        code = textwrap.dedent("""
+            import json, runpy, sys
+            sys.path.insert(0, %r)
+            sys.argv = ["cut.py", "--help"]
+            try:
+                runpy.run_path(%r, run_name="__main__")
+            except SystemExit:
+                pass
+            loaded = sorted(m for m in sys.modules if m.startswith("_common."))
+            import _common
+            before = "_common.wrap" in sys.modules
+            _common.wrap_text, _common.transcribe
+            after = [m for m in ("_common.wrap", "_common.fonts", "_common.asr") if m in sys.modules]
+            sys.stderr.write(json.dumps({"loaded": loaded, "before": before, "after": after}))
+        """) % (str(SCRIPTS), str(SCRIPTS / "cut.py"))
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+        seen = json.loads(proc.stderr.strip().splitlines()[-1])
+        self.assertTrue(seen["loaded"], proc.stderr)   # the eager core did load: the probe measured something
+        self.assertEqual([m for m in seen["loaded"] if m.split(".", 1)[1] in lazy], [], seen["loaded"])
+        self.assertFalse(seen["before"])
+        self.assertEqual(sorted(seen["after"]), ["_common.asr", "_common.fonts", "_common.wrap"])
+        for name in ("wrap_text", "transcribe", "FONT_INSTALL_HINT"):
+            self.assertIs(getattr(_common, name), getattr(importlib.import_module("_common." + _common._LAZY[name]), name), name)
 
     # ------------------------------------------------------------------ FFmpeg-version-dependent spellings
     def test_drawtext_uses_the_6_1_spellings(self):
