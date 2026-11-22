@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.7.0
+
+_Automated release: version and notes generated from pull requests merged since 4.6.5._
+
 ### Added
 
 - **`audio.py --track FILE`: several audio tracks in one file, each with a name and a language (#420).**
@@ -21,6 +27,7 @@
   names or languages and cuts every track to the shortest), a flag that changes the sound
   (`track_rebuilds_sound`), more titles or languages than tracks (`track_labels`) and a language that is
   not three letters (`track_language`). A BWF or multitrack WAV with a start timecode is not written.
+- feat: audio.py --track adds named, language-tagged audio tracks (#420) (#714)
 
 ## 4.6.5
 
