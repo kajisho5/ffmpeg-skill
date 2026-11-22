@@ -337,12 +337,17 @@ def bt709_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     re-encodes through that line converts without building it into its own graph. That -vf is
     valid as it stands for a command with no other filter; run() folds it into the tool's own
     -vf or -filter_complex (fold_bt709_matrix()) before the command is recorded or run."""
+    f = bt709_line_filter(meta)
+    return ["-vf", f] if f else []
+
+
+# bt709_matrix_filter(), and on FFmpeg 9+ for an HDR source a relabel: FFmpeg 9 writes mp4/mov's colr box
+# from the frames, which keep its primaries and transfer under a bt709 VUI (#711). It converts nothing.
+def bt709_line_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
     f = bt709_matrix_filter(meta)
-    # FFmpeg 9 writes mp4/mov's colr box from the frames, which keep an HDR source's primaries and
-    # transfer: the VUI said bt709 and the container bt2020/PQ (#711). setparams relabels, converts nothing.
     if ((meta or {}).get("video") or {}).get("bt2020_or_hdr") and ffmpeg_version() >= (9, 0):
         f = ",".join(x for x in (f, _BT709_RELABEL) if x)
-    return ["-vf", f] if f else []
+    return f
 
 
 def hdr_rgb_matrix_args(meta: Optional[Dict[str, Any]], alpha: bool = False) -> List[str]:

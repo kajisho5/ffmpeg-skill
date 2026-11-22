@@ -39,7 +39,7 @@ import test_all  # noqa: E402
 # to start them in, and the weights --part balances.
 ROUGH_SECONDS = {"test_picture": 1480, "test_orchestration": 960, "test_delivery": 660, "test_editing": 600,
                  "test_analysis": 570, "test_cut_copy": 330, "test_audio": 300, "test_contract": 230,
-                 "test_asr": 70, "test_accel": 10, "test_guards": 140}
+                 "test_asr": 70, "test_accel": 10, "test_guards": 190}
 SHARDS = {"test_picture": 4, "test_orchestration": 3, "test_delivery": 2, "test_analysis": 2, "test_editing": 2,
           "test_cut_copy": 2}
 

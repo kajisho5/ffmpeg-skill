@@ -2246,6 +2246,9 @@ sys.exit(fit.main())
             self.assertEqual(color.bt709_matrix_args(sdr), [])
             for meta in (hdr_yuv, hdr_rgb):  # run() still finds it and folds it into the tool's graph
                 self.assertRegex(color.bt709_matrix_args(meta)[1], color._MATRIX_FILTER_RE)
+            # a mixing tool's per-source chain on a BT.709 line (grid, join, multicam, broll, overlay)
+            from _common import decision
+            self.assertEqual(decision.matrix_chain(hdr_yuv, sdr), relabel + ",")
         with mock.patch.object(color, "ffmpeg_version", return_value=(8, 0)):
             self.assertEqual(color.bt709_matrix_args(hdr_yuv), [])
 
