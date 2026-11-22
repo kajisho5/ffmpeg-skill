@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.5.3`) | any release |
+| `skill.version` | the npm / package.json version (`4.6.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.5.3", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.6.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -927,6 +927,7 @@ silence a tool reported as fine while another measurement disagreed):
 | `verification[]` step `duration` (`property: audio_duration`) | `loudness.py` | the output's sound against the input's, to one AAC frame (at least 0.03 s): a levels pass changes no timing. A length that cannot be read fails the step with `reason: not_measured` |
 | `inputs_duration`, `transition_shortening`; step `duration`'s `inputs_total` | `join.py` | the clips' own total and how much the transitions took out of it. `expected_duration` is derived from the transition the join applied, so it cannot show that on its own |
 | `frame_rate`, `clip_frames`, `transition_frames` | `join.py` (video join; added after 3.6.2) | the join's rate as an exact fraction (`"30000/1001"`), the whole frames of it each clip holds (its sound is cut to the samples those frames last), and the frames each transition overlaps (`--duration` rounded to whole frames, at least 1; `0` for `--transition none`). Lengths and xfade offsets are counted in these frames, never in rounded seconds (#455, #468); `inputs_duration` and `expected_duration` are derived from them. A pending `--dry-run` input counts 0 frames |
+| `audio_lead_seconds`, `audio_lag_seconds` | `join.py --audio-lead` / `--audio-lag` (video join, #675) | the J-cut or L-cut applied at every boundary, `--audio-lead`/`--audio-lag` rounded to whole frames of the join's rate (only the key of the flag given is present). `expected_duration` is the clips' sum less this per boundary, and `inputs_duration` / `transition_shortening` are left out because the cut, not a transition, took the time. Refused with `error.reason` `audio_cut_transition`, `audio_cut_copy`, `audio_cut_both_flags` or `audio_cut_too_long` (under one frame, or not shorter than a clip) |
 | `margins` | `silence.py` | `{lead, tail}`: the seconds of each silence kept before speech starts (`--margin-lead`) and after it ends (`--margin-tail`); both equal `--margin` unless one is named. Absent under `--filler` with neither `--speech-aware` nor a sentence flag, which removes no silences |
 | `silence_positions`, `sentence` | `silence.py --sentence-min-silence` / `--sentence-margin-tail` | per entry of `silences`, `sentence_end` when the transcript word before it ends in sentence-final punctuation, else `inside`; and `{min_silence, margin_tail, source, word_timings, sentence_end_words, silences}`. `sentence_end_words: 0` means the transcript had no such punctuation, so every silence used `--min-silence` and `--margin-tail` (warning `sentence_ends_not_found`) |
 | `silence_kinds`, `silence_breakdown` | `silence.py` | per detected silence, `digital` (at or below -90 dBFS) or `below_threshold` (quiet sound under `--threshold`), and the count and seconds of each with the level that defines it |
