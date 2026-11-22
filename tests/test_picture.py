@@ -8834,9 +8834,9 @@ class HdrRgbSourceTests(unittest.TestCase):
         doc = json.loads(script("export.py", src, "--preset", "youtube", "-o", out, "--json").stdout)
         self.assertEqual(doc["status"], "completed", doc.get("error"))
         w = probe(str(out))["video"]
-        # the matrix is what this pins; the primaries and transfer are not converted, and FFmpeg 9's
-        # mp4 colr box carries the source's while the VUI says bt709 (macOS and Windows CI, #711)
-        self.assertEqual(w["color_space"], "bt709")
+        # the stream and the container say the same: on FFmpeg 9 the colr box came from the frames and
+        # kept the source's bt2020/smpte2084 under a bt709 VUI until the frames were relabelled (#711)
+        self.assertEqual((w["color_space"], w["color_primaries"], w["color_transfer"]), ("bt709",) * 3)
         # the 160x120 picture is centred in 1920x1080 by the preset: 9x, 240 columns of bar
         read = {k: (want, tuple(frame_rgb(out, 0.4, 240 + x * 9, y * 9, vf="scale=in_color_matrix=bt709:in_range=tv,format=rgb24")))
                 for k, (want, (x, y)) in self.PATCHES.items()}

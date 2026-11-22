@@ -2035,5 +2035,142 @@ class SilentOutputLoudnessTests(unittest.TestCase):
                 self.assertFalse(doc["verified"], doc)
 
 
+class AudioTracksTests(unittest.TestCase):
+    """audio.py --track: several audio streams in one file, each with a name and a language (#420)."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "audio_tracks"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+
+        def make(name, tone, seconds, layout, rate=48000):
+            path = cls.dir / name
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+               f"sine=f={tone}:d={seconds}:sample_rate={rate},aformat=channel_layouts={layout}", "-c:a", "pcm_s16le", path)
+            return path
+        # a 3 s picture with a stereo sound, a mono stem of 2 s at 44.1 kHz and a 5.1 stem of 4 s
+        cls.pic = cls.dir / "pic.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=3", "-f", "lavfi", "-i",
+           "sine=f=440:d=3:sample_rate=48000,aformat=channel_layouts=stereo", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", cls.pic)
+        cls.mono = make("mono.wav", 660, 2, "mono", 44100)
+        cls.six = make("six.wav", 880, 4, "5.1")
+        cls.labels = ("--track-name", "Dialogue", "--track-name", "Music", "--track-name", "FX",
+                      "--track-lang", "eng", "--track-lang", "jpn", "--track-lang", "fra")
+
+    def streams(self, path):
+        doc = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+                            "stream=index,codec_name,channels,sample_rate:stream_tags=language,title,handler_name",
+                            "-of", "json", path).stdout)["streams"]
+        return [(s["codec_name"], s["channels"], s["sample_rate"], s["tags"].get("language"),
+                 s["tags"].get("title") or s["tags"].get("handler_name")) for s in doc]
+
+    def test_three_tracks_keep_their_channels_lengths_names_and_languages_in_mov_and_mkv(self):
+        """A stereo sound, a mono stem and a 5.1 stem become three audio streams in the order given, each
+        with its own layout and rate, name and language; the tracks are not padded or trimmed to each other."""
+        for ext in (".mov", ".mkv"):
+            with self.subTest(ext):
+                out = self.dir / f"stems{ext}"
+                doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track", self.six, *self.labels,
+                                        "-o", out, "--json").stdout)
+                self.assertEqual(self.streams(out), [("pcm_s24le", 2, "48000", "eng", "Dialogue"),
+                                                     ("pcm_s24le", 1, "44100", "jpn", "Music"),
+                                                     ("pcm_s24le", 6, "48000", "fra", "FX")])
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual([(t["index"], t["file"], t["title"], t["language"], t["channels"]) for t in doc["tracks"]],
+                                 [(0, str(self.pic), "Dialogue", "eng", 2), (1, str(self.mono), "Music", "jpn", 1),
+                                  (2, str(self.six), "FX", "fra", 6)])
+                self.assertEqual([round(t["duration"]) for t in doc["tracks"]], [3, 2, 4], "each track keeps its own length")
+                steps = {s["step"]: s for s in doc["verification"]}
+                self.assertTrue(steps["track_tags"]["ok"] and steps["streams"]["ok"], steps)
+                self.assertEqual(steps["streams"]["expected_count"], {"video": 1, "audio": 3})
+                self.assertEqual(probe(str(out))["video"]["codec"], "h264", "the picture is copied")
+                longer = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "track_longer_than_picture"]
+                self.assertEqual([w["tracks"] for w in longer], [[2]], "the 4 s stem runs past the 3 s picture; the 2 s one does not")
+
+    def test_an_mp4_holds_the_tracks_as_aac_and_a_track_may_stay_unnamed(self):
+        """Also the second spellings, --track-title and --track-language."""
+        out = self.dir / "stems.mp4"
+        doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track-title", "", "--track-title", "Music",
+                                "--track-language", "eng", "--bitrate", "128k", "-o", out, "--json").stdout)
+        got = self.streams(out)
+        self.assertEqual([g[0] for g in got], ["aac", "aac"])
+        self.assertEqual((got[0][3], got[1][3:]), ("eng", ("und", "Music")), got)
+        self.assertEqual(doc["tracks"][0]["title"], None, "a name that was not asked for is not reported from the handler's default")
+        self.assertTrue(doc["verified"], doc["verification"])
+
+    def test_a_track_that_a_container_did_not_keep_fails_the_tags_step(self):
+        """QuickTime has no code for `zxx`: the .mov reads back with no language, and the result says so."""
+        out = self.dir / "zxx.mov"
+        doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track-lang", "eng", "--track-lang", "zxx",
+                                "-o", out, "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "track_tags")
+        self.assertFalse(step["ok"], step)
+        self.assertEqual(doc["tracks"][1]["language"], "und", "no language tag reads as ISO 639's undetermined")
+        self.assertFalse(doc["verified"])
+        # `und` itself is what MOV writes as no tag: asked for, it verifies
+        doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track-lang", "eng", "--track-lang", "und",
+                                "-o", out, "--overwrite", "--json").stdout)
+        self.assertTrue(doc["verified"], doc["verification"])
+
+    def test_an_audio_input_and_a_picture_with_no_sound_take_tracks_too(self):
+        out = self.dir / "from_wav.mkv"
+        doc = json.loads(script("audio.py", self.mono, "--track", self.six, "--track-name", "A", "--track-name", "B", "-o", out,
+                                "--json").stdout)
+        self.assertEqual([g[1] for g in self.streams(out)], [1, 6])
+        self.assertFalse(doc["video"])
+        silent = self.dir / "silent.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.pic, "-an", "-c:v", "copy", silent)
+        doc = json.loads(script("audio.py", silent, "--track", self.six, "--track-name", "Only", "-o", self.dir / "silent.mov",
+                                "--json").stdout)
+        self.assertEqual([(t["index"], t["file"], t["title"]) for t in doc["tracks"]], [(0, str(self.six), "Only")])
+
+    def test_track_refusals_name_their_reason_and_run_under_a_dry_run(self):
+        base = ("audio.py", self.pic, "--track", self.mono, "--dry-run", "--json")
+        mov = self.dir / "x.mov"
+        for flags, reason in ((("-o", self.dir / "x.wav"), "track_container"),
+                              (("-o", self.dir / "x.mxf"), "track_container"),
+                              (("-o", mov, "--voice"), "track_rebuilds_sound"),
+                              (("-o", mov, "--sample-rate", "48000"), "track_rebuilds_sound"),
+                              (("-o", mov, "--music", self.mono), "track_rebuilds_sound"),
+                              (("-o", mov, "--track-name", "a", "--track-name", "b", "--track-name", "c"), "track_labels"),
+                              (("-o", mov, "--track-lang", "eng", "--track-lang", "eng", "--track-lang", "eng"), "track_labels"),
+                              (("-o", mov, "--track-lang", "en"), "track_language"),
+                              (("-o", mov, "--track-lang", "ENG"), "track_language")):
+            with self.subTest(flags):
+                proc = script(*base, *flags, expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["reason"], reason, proc.stdout)
+        self.assertIn("--bitrate", script(*base, "-o", mov, "--bitrate", "128k", expect_fail=True).stderr)
+        proc = script("audio.py", self.pic, "--track-name", "a", "-o", mov, "--dry-run", expect_fail=True)
+        self.assertIn("--track is off", proc.stderr)
+
+    def test_a_track_file_is_checked_and_the_output_may_not_be_one(self):
+        taken = self.dir / "taken.mov"
+        shutil.copyfile(self.six, taken)  # the guard compares the files, not what they hold
+        proc = script("audio.py", self.pic, "--track", taken, "-o", taken, "--dry-run", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_is_input")
+        proc = script("audio.py", self.pic, "--track", self.dir, "-o", self.dir / "d.mov", "--dry-run", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        picture_only = self.dir / "picture_only.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-i", self.pic, "-an", "-c:v", "copy", picture_only)
+        proc = script("audio.py", self.pic, "--track", picture_only, "-o", self.dir / "d.mov", "--json", expect_fail=True)
+        self.assertIn("no audio stream", proc.stdout)
+
+    def test_a_dry_run_lists_the_tracks_and_writes_nothing(self):
+        out = self.dir / "planned.mov"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("audio.py", self.pic, "--track", self.mono, "--track", self.six, *self.labels, "-o", out,
+                                "--dry-run", "--json").stdout)
+        self.assertFalse(out.exists())
+        self.assertEqual([(t["index"], t["title"], t["language"], t["channels"], t["duration"]) for t in doc["tracks"]],
+                         [(0, "Dialogue", "eng", None, None), (1, "Music", "jpn", None, None), (2, "FX", "fra", None, None)])
+        command = doc["commands"][-1]
+        for needle in ("-map 0:v:0", "-map 0:a:0", "-map 1:a:0", "-map 2:a:0", "-c:a pcm_s24le", "-metadata:s:a:2 language=fra"):
+            self.assertIn(needle, command)
+        self.assertNotIn("-filter_complex", command)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
