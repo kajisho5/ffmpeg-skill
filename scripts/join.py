@@ -731,14 +731,13 @@ def main() -> int:
     # was taken as the one-frame minimum and the join succeeded with a transition nobody asked for
 
     cut_flag = "--audio-lead" if args.audio_lead is not None else "--audio-lag" if args.audio_lag is not None else None
-    clash = "both_flags" if args.audio_lead is not None and args.audio_lag is not None else (
-        "transition" if args.transition != "none" else "copy" if args.copy else None)
-    if cut_flag and clash:
-        refuse("input", f"audio_cut_{clash}", {
-            "both_flags": "--audio-lead and --audio-lag are two different cuts: give one",
-            "transition": f"{cut_flag} needs --transition none: a transition already overlaps the picture of the two clips",
-            "copy": f"{cut_flag} cuts picture and sound at different times, which a stream copy cannot do: drop --copy"}[clash],
-            hint="a J-cut or an L-cut is a plain cut: --transition none, no --copy, one of the two flags")
+    hint = "a J-cut or an L-cut is a plain cut: --transition none, no --copy, one of the two flags"
+    if args.audio_lead is not None and args.audio_lag is not None:
+        refuse("input", "audio_cut_both_flags", "--audio-lead and --audio-lag are two different cuts: give one", hint=hint)
+    if cut_flag and args.transition != "none":
+        refuse("input", "audio_cut_transition", f"{cut_flag} needs --transition none: a transition already overlaps the picture of the two clips", hint=hint)
+    if cut_flag and args.copy:
+        refuse("input", "audio_cut_copy", f"{cut_flag} cuts picture and sound at different times, which a stream copy cannot do: drop --copy", hint=hint)
     cut_s = args.audio_lead if args.audio_lead is not None else args.audio_lag
 
     if args.list:
