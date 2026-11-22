@@ -49,6 +49,27 @@ TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(
 SH_LIMIT = float(os.environ.get("FFSKILL_TEST_SH_LIMIT", "900"))
 
 
+def _hung_state(pgid):
+    """What a killed command's processes were doing (#533, #702): a CPU time close to the elapsed
+    time is a loop inside FFmpeg, a small one a process that waited (a starved runner, a pipe).
+    The load average says whether the runner was busy; on macOS `sample` adds the stack."""
+    lines = []
+    try:
+        lines.append("load average: %.1f %.1f %.1f" % os.getloadavg())
+        rows = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat=,time=,etime=,command="], capture_output=True,
+                              text=True, timeout=20).stdout.splitlines()
+        mine = [r for r in rows if r.split()[1:2] == [str(pgid)]]
+        lines += ["pid pgid stat cpu-time elapsed command"] + [r[:300] for r in mine]
+        if shutil.which("sample"):
+            for r in mine:
+                if "ffmpeg" in r.split(None, 5)[-1].split(" ", 1)[0]:
+                    stack = subprocess.run(["sample", r.split()[0], "2"], capture_output=True, text=True, timeout=60).stdout
+                    lines.append("sample of ffmpeg:\n" + "\n".join(stack.splitlines()[:80]))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        lines.append(f"(could not read the processes: {exc})")
+    return "PROCESSES AT THE KILL:\n" + "\n".join(lines) + "\n"
+
+
 def sh(*cmd, expect_fail=False, env=None, cwd=None):
     argv = [str(c) for c in cmd]
     posix = os.name == "posix"
@@ -57,6 +78,7 @@ def sh(*cmd, expect_fail=False, env=None, cwd=None):
     try:
         out, err = child.communicate(timeout=SH_LIMIT)
     except subprocess.TimeoutExpired:
+        seen = _hung_state(child.pid) if posix else ""
         if posix:  # the script's ffmpeg too: it is in the child's process group
             import signal
             try:
@@ -65,7 +87,7 @@ def sh(*cmd, expect_fail=False, env=None, cwd=None):
                 pass
         child.kill()
         out, err = child.communicate()
-        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\nSTDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
+        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\n{seen}STDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
     proc = subprocess.CompletedProcess(argv, child.returncode, out, err)
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"
