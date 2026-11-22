@@ -3654,6 +3654,8 @@ class RgbAndStillConversionTests(unittest.TestCase):
         d = self.dir
         clips = {}
         for name, vf, tag in (("un", "out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=colorspace=unknown", ()),
+                              ("709", "out_color_matrix=bt709:out_range=tv,format=yuv420p",
+                               ("-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709")),
                               ("601", "out_color_matrix=bt601:out_range=tv,format=yuv420p",
                                ("-x264-params", "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m"))):
             clips[name] = d / f"mix_{name}.mp4"
@@ -3667,7 +3669,16 @@ class RgbAndStillConversionTests(unittest.TestCase):
             self.assertIn(probe(str(clip))["video"].get("color_space"), (None, "unknown", "unspecified"), clip.name)
         pip = [(384 + 12 + k * 128, 128 + 12, 384 + (k + 1) * 128 - 12, 256 - 12) for k in range(3)]
         main = [(k * 256 + 20, 20, k * 256 + 236, 100) for k in range(3)]
-        for a, b in (("un", "601"), ("601", "un")):
+        self.assertEqual(probe(str(clips["709"]))["video"].get("color_space"), "bt709")
+        # #696: an already tagged 709 input needs no conversion, but its untagged neighbour
+        # still needs a label. With the clips reversed, the tagged picture shifted instead.
+        for a, b in (("un", "601"), ("601", "un"), ("un", "709"), ("709", "un")):
+            out = d / f"mix_grid_{a}_{b}.mp4"
+            script("grid.py", clips[a], clips[b], "--cols", "2", "--rows", "1", "--label", "none",
+                   "--cell-width", "384", "--cell-height", "128", "--fast", "-o", out)
+            for offset, name in ((0, a), (384, b)):
+                with self.subTest(tool="grid.py", order=(a, b), clip=name):
+                    self._assert_colours(out, self._bars(offset, 0, 2), self.COLOURS)
             out = d / f"mix_join_{a}_{b}.mp4"
             script("join.py", clips[a], clips[b], "--transition", "none", "--fast", "-o", out)
             for t, name in ((0.5, a), (2.5, b)):
