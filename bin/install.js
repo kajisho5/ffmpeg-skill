@@ -351,7 +351,9 @@ function staleScratchDirs(dir) {
 // is still running is that install's work in progress, not a leftover: removing it lets the
 // install recreate the directory with only the files it had not copied yet and then rename that
 // into place as a finished install. Signal 0 asks without signalling: ESRCH is "no such
-// process"; EPERM is a live process this user may not signal, so it counts as running.
+// process"; EPERM is a live process this user may not signal, so it counts as running. A dead
+// install's pid that an unrelated process has since reused keeps its folder until that process
+// ends: the guard errs toward keeping a leftover, never toward removing a live install's work.
 function processIsRunning(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
 }
