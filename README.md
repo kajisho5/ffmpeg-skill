@@ -811,14 +811,23 @@ FFmpeg itself:
 
 ### Updating
 
-Releases are frequent (often several a week), and nothing updates by itself: the tools never go online, so a copy stays at the version you installed until you replace it.
+Releases are frequent (often several a week). Use the update method that matches how you installed the skill.
 
 ```bash
 grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
 npm view ffmpeg-skill version                                  # the latest release
-npx ffmpeg-skill@latest setup                                  # replace every installed copy with the latest
-claude plugin update                                           # when installed as a Claude Code plugin
+npx ffmpeg-skill@latest setup                                  # refresh skill copies for detected agents
 ```
+
+For plugin and extension installs:
+
+| Host | Update | Uninstall |
+|---|---|---|
+| Claude Code | Run `claude plugin marketplace update ffmpeg-skill`, then `claude plugin update ffmpeg-skill@ffmpeg-skill`. Restart Claude Code to apply the update. | Run `claude plugin uninstall ffmpeg-skill@ffmpeg-skill`. |
+| Codex CLI | On 0.167.0, run `codex plugin marketplace upgrade ffmpeg-skill`. When the configured marketplace yields an upgraded root, Codex attempts to refresh the cache for the existing configured plugin installation. | Run `codex plugin remove ffmpeg-skill@ffmpeg-skill`. |
+| Gemini CLI | Run `gemini extensions update ffmpeg-skill` to pull changes from the source. | Run `gemini extensions uninstall ffmpeg-skill`. Restart the Gemini CLI session after either change. |
+
+For a Claude Code project or local install, add the matching `--scope project` or `--scope local` to both `claude plugin update` and `claude plugin uninstall`. Before Claude Code 2.1.281, `plugin update` defaults to user scope when the flag is omitted.
 
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
 
