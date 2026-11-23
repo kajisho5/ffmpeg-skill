@@ -3691,7 +3691,11 @@ sys.exit(fit.main())
             # previous install at <name>.bak-<pid>: a whole skill whose SKILL.md says
             # name: ffmpeg-skill, so an agent scanning the folder saw the skill twice, and neither
             # a re-install nor --uninstall removed it
-            kept = sorted([running.name, "ffmpeg-skill.tmp-notes", "ffmpeg-skill.bak-notes"])
+            # and a live pid's <name>.bak-<pid> is that install's previous copy mid-swap: it stays too
+            running_bak = skills / f"ffmpeg-skill.bak-{os.getpid()}"
+            running_bak.mkdir()
+            (running_bak / "SKILL.md").write_text("---\nname: ffmpeg-skill\n---\n", encoding="utf-8")
+            kept = sorted([running.name, running_bak.name, "ffmpeg-skill.tmp-notes", "ffmpeg-skill.bak-notes"])
             (skills / "ffmpeg-skill.bak-notes").mkdir()
 
             def leave_scratch():
