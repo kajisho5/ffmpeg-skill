@@ -362,10 +362,18 @@ class ContractTests(unittest.TestCase):
         self.assertTrue((ROOT / (logo[2:] if logo.startswith("./") else logo)).is_file(),
                         "the Codex logo is a committed, relative path inside the plugin")
         agents_market = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        claude_market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        plugin_source = {
+            "source": "git-subdir",
+            "url": "https://github.com/kajisho5/ffmpeg-skill.git",
+            "path": "ffmpeg-skill",
+            "ref": "plugin",
+        }
         self.assertEqual(agents_market["name"], "ffmpeg-skill")
         self.assertEqual([p["name"] for p in agents_market["plugins"]], ["ffmpeg-skill"])
-        self.assertEqual(agents_market["plugins"][0]["source"],
-                         {"source": "local", "path": "./"})
+        self.assertEqual(agents_market["plugins"][0]["source"], plugin_source)
+        self.assertEqual(agents_market["plugins"][0]["source"], claude_market["plugins"][0]["source"],
+                         ".agents marketplace must point at the same plugin-branch tree as .claude-plugin")
         self.assertEqual(codex["skills"], "./skills/")
         self.assertNotIn("mcpServers", codex)
         # the npm installer copies one skill directory: the plugin copy must not ride along, or an
@@ -516,9 +524,25 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
             for needed in (".claude-plugin/plugin.json", ".claude-plugin/icon.png",
+                           ".codex-plugin/plugin.json", ".codex-plugin/icon.png",
                            "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
                            "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
                 self.assertIn(needed, names)
+            # Codex skills/ and logo paths resolve inside the shipped plugin-branch layout
+            codex_shipped = json.loads((tree / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            skills_rel = codex_shipped["skills"]
+            if skills_rel.startswith("./"):
+                skills_rel = skills_rel[2:]
+            self.assertTrue((tree / skills_rel).is_dir(),
+                            f"Codex skills path {codex_shipped['skills']!r} missing in plugin tree")
+            logo_rel = codex_shipped["interface"]["logo"]
+            if logo_rel.startswith("./"):
+                logo_rel = logo_rel[2:]
+            self.assertTrue((tree / logo_rel).is_file(),
+                            f"Codex logo path {codex_shipped['interface']['logo']!r} missing in plugin tree")
+            self.assertTrue((tree / skills_rel / "ffmpeg-skill" / "SKILL.md").is_file())
+            self.assertTrue((tree / "scripts").is_dir())
+            self.assertTrue((tree / "docs" / "contract.md").is_file())
             # bin/ is the npx installer: a plugin host installs, and the plugin directory flags it
             self.assertFalse([n for n in names if n.split("/")[0] in
                               ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
@@ -602,6 +626,8 @@ class ContractTests(unittest.TestCase):
             # under one directory, which is what a git-subdir marketplace source names
             self.assertTrue(all(n.startswith("ffmpeg-skill/") for n in listed if n), listed[:3])
             self.assertIn("ffmpeg-skill/.claude-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/icon.png", listed)
             self.assertIn("ffmpeg-skill/skills/ffmpeg-skill/SKILL.md", listed)
             again = publish(bare)                       # the branch holds this tree: nothing is pushed
             self.assertEqual(again.returncode, 0, again.stderr)
@@ -998,12 +1024,17 @@ class ContractTests(unittest.TestCase):
             "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
         self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
         # Claude still sparse-checks out .claude-plugin; every Claude `marketplace add` keeps the flag.
-        # Codex uses the agent-agnostic .agents/plugins/marketplace.json and does not need --sparse.
+        # The documented Codex route keeps --sparse .claude-plugin (checked against Codex 0.167);
+        # the agent-agnostic .agents/plugins/marketplace.json route does not need it.
         self.assertEqual(readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
                          readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill"))
         self.assertIn("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("checked against Codex CLI 0.167", readme_text)
+        self.assertIn("2.2 MB instead of 66 MB in Codex 0.167", readme_text)
         self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill\n", readme_text)
         self.assertIn("codex plugin add ffmpeg-skill@ffmpeg-skill", readme_text)
+        self.assertIn(".agents/plugins/marketplace.json", readme_text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)
