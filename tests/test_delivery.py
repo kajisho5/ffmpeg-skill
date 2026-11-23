@@ -436,11 +436,16 @@ raise SystemExit(export.main())
                 lines.append(f"{codec} {mode} {[tuple(round(v, 1) for v in b) for b in self._bands(out)]}")
                 if mode == "premultiplied":
                     lines.append(f"{codec} cmd {[c for c in doc['commands'][-1] if 'unpremultiply' in c or 'premultiply' in c][:1]}")
-            for fmt in ("gbrapf32le", "gbrap16le", "gbrap"):
-                raw = OUT / f"p453_{codec}_{fmt}.mov"
-                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-vf", f"format={fmt},unpremultiply=inplace=1,format={pix}",
-                   *line, "-pix_fmt", pix, raw)
-                lines.append(f"{codec} unpremultiply@{fmt} {[tuple(round(v, 1) for v in b) for b in self._bands(raw)]}")
+            for name, vf in (("plain16", "format=gbrap16le,unpremultiply=inplace=1"),
+                             ("setparams16", "format=gbrap16le,setparams=alpha_mode=premultiplied,unpremultiply=inplace=1"),
+                             ("geq16", "format=gbrap16le,geq=r='if(alpha(X,Y),min(65535,r(X,Y)*65535/alpha(X,Y)),0)':g='if(alpha(X,Y),min(65535,g(X,Y)*65535/alpha(X,Y)),0)':b='if(alpha(X,Y),min(65535,b(X,Y)*65535/alpha(X,Y)),0)':a='alpha(X,Y)'")):
+                raw = OUT / f"p453_{codec}_{name}.mov"
+                proc = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-vf", f"{vf},format={pix}",
+                                       *line, "-pix_fmt", pix, str(raw)], capture_output=True, text=True)
+                lines.append(f"{codec} {name} " + (proc.stderr.strip()[-150:] if proc.returncode else str([tuple(round(v, 1) for v in b) for b in self._bands(raw)])))
+        for f in ("unpremultiply", "premultiply", "setparams"):
+            h = subprocess.run(["ffmpeg", "-hide_banner", "-h", f"filter={f}"], capture_output=True, text=True).stdout
+            lines.append(f"help {f}: " + " | ".join(l.strip() for l in h.splitlines() if l.strip().startswith(("inplace", "alpha", "planes")))[:300])
         self.fail("\nPROBE453 " + "\nPROBE453 ".join(lines))
 
     def test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453(self):
