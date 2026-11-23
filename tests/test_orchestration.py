@@ -360,8 +360,8 @@ class OrchestrationTests(MediaFixtures):
         proj = OUT / "project_stems.json"
         proj.write_text(json.dumps({
             "output": "render_stems.mp4",
-            "clips": [{"src": "source.mp4"}],
-            "audio": {"music": "lavmic.wav", "effects": "lavmic.wav", "duck": True, "voice": "light",
+            "clips": [{"src": str(self.src)}],
+            "audio": {"music": str(self.mic), "effects": str(self.mic), "duck": True, "voice": "light",
                       "stems": {"dialogue": -2, "music": -18, "effects": -24}},
             "export": {"preset": "youtube", "normalize": False},
             "chapters": [{"at": "0:00", "title": "Intro"}, {"at": 3, "title": "Body"}],
@@ -391,24 +391,24 @@ class OrchestrationTests(MediaFixtures):
         proj2 = OUT / "project_chapters_file.json"
         (OUT / "render_chapters.txt").write_text("0:00 One\n0:05 Two\n", encoding="utf-8")
         proj2.write_text(json.dumps({
-            "output": "render_chapters.mp4", "clips": [{"src": "source.mp4"}],
+            "output": "render_chapters.mp4", "clips": [{"src": str(self.src)}],
             "export": {"preset": "youtube", "normalize": False}, "chapters": "render_chapters.txt",
         }), encoding="utf-8")
         script("render.py", proj2, "--fast", "--json")
         self.assertEqual(len(probe(str(OUT / "render_chapters.mp4")).get("chapters") or []), 2)
         # a stems level with no effects file, and a misspelled stem, are refusals by name
         proj3 = OUT / "project_stems_bad.json"
-        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": str(self.src)}],
                                      "audio": {"stems": {"effects": -20}}}), encoding="utf-8")
         doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertIn("effects", doc["error"]["message"])
-        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": str(self.src)}],
                                      "audio": {"stems": {"voice": -20}}}), encoding="utf-8")
         doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
         self.assertIn("dialogue", doc["error"]["message"], "the nearest valid stem is named")
         # a music level with no music file is refused the same way an effects level is
-        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": "source.mp4"}],
+        proj3.write_text(json.dumps({"output": "render_stems_bad.mp4", "clips": [{"src": str(self.src)}],
                                      "audio": {"stems": {"music": -18}}}), encoding="utf-8")
         doc = json.loads(script("render.py", proj3, "--dry-run", "--json", expect_fail=True).stdout)
         self.assertEqual(doc["error"]["kind"], "input")
@@ -424,7 +424,7 @@ class OrchestrationTests(MediaFixtures):
                                  ("no_such_chapters.txt", "not found")):
             if out.exists():
                 out.unlink()
-            proj.write_text(json.dumps({"output": "render_bad_chapters.mp4", "clips": [{"src": "source.mp4"}],
+            proj.write_text(json.dumps({"output": "render_bad_chapters.mp4", "clips": [{"src": str(self.src)}],
                                         "export": {"preset": "youtube", "normalize": False},
                                         "chapters": chapters}), encoding="utf-8")
             doc = json.loads(script("render.py", proj, "--fast", "--json", expect_fail=True).stdout)
@@ -893,7 +893,7 @@ class OrchestrationTests(MediaFixtures):
         proj = OUT / "project_normalize.json"
         proj.write_text(json.dumps({
             "output": "render_normalize.mp4",
-            "clips": [{"src": "source.mp4"}],
+            "clips": [{"src": str(self.src)}],
             "export": {"preset": "x", "normalize": True},
             "check": {"platform": "x"},
         }), encoding="utf-8")
@@ -904,7 +904,7 @@ class OrchestrationTests(MediaFixtures):
         # 1.9: a platform preset with no loudness stage normalises by default; false opts out
         proj.write_text(json.dumps({
             "output": "render_normalize_default.mp4",
-            "clips": [{"src": "source.mp4"}],
+            "clips": [{"src": str(self.src)}],
             "export": {"preset": "x"},
             "check": {"platform": "x"},
         }), encoding="utf-8")
@@ -912,7 +912,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual({r["check"]: r["status"] for r in data["check"]["checks"]}["loudness"], "PASS")
         proj.write_text(json.dumps({
             "output": "render_normalize_off.mp4",
-            "clips": [{"src": "source.mp4"}],
+            "clips": [{"src": str(self.src)}],
             "export": {"preset": "x", "normalize": False},
             "check": {"platform": "x"},
         }), encoding="utf-8")
@@ -922,7 +922,7 @@ class OrchestrationTests(MediaFixtures):
         # stage keeps its level, so render passes --no-normalize (the -24 LUFS fails x's -14)
         proj.write_text(json.dumps({
             "output": "render_normalize_own_stage.mp4",
-            "clips": [{"src": "source.mp4"}],
+            "clips": [{"src": str(self.src)}],
             "loudness": {"lufs": -24},
             "export": {"preset": "x"},
             "check": {"platform": "x"},
@@ -935,11 +935,11 @@ class OrchestrationTests(MediaFixtures):
         proj.write_text(json.dumps({
             "output": "render_final.mp4",
             "frame": {"aspect": "9:16", "width": 720, "fps": 30},
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:05"}, {"src": "source.mp4", "in": 6, "out": 10, "speed": 1.25}],
+            "clips": [{"src": str(self.src), "in": "0:01", "out": "0:05"}, {"src": str(self.src), "in": 6, "out": 10, "speed": 1.25}],
             "transition": {"type": "fade", "duration": 0.5},
             "captions": {"text": "cues.txt", "animate": "pop", "karaoke": True, "size": 26},
             "overlays": [{"text": "render test", "position": "top-left", "start": 0.5, "end": 3, "fade": 0.3, "box": True}],
-            "audio": {"music": "long_ref.wav", "music_volume": -20, "duck": True, "fade_out": 1},
+            "audio": {"music": str(self.long_ref), "music_volume": -20, "duck": True, "fade_out": 1},
             "loudness": {"lufs": -14, "tp": -1},
             "export": {"preset": "reels"},
             "check": {"platform": "reels"},
@@ -988,7 +988,7 @@ class OrchestrationTests(MediaFixtures):
         full = {
             "output": "render_full.mp4",
             "brand": brand.name,
-            "clips": [{"src": "source.mp4", "in": 0, "out": 2}, {"src": "source.mp4", "in": 2, "out": 4}],
+            "clips": [{"src": str(self.src), "in": 0, "out": 2}, {"src": str(self.src), "in": 2, "out": 4}],
             "frame": {"width": 640, "height": 360, "fps": 25},
             "fit": {"duration": 3.5, "method": "trim"},
             "captions": {"srt": srt.name, "font": "DejaVu Sans", "position": "top", "bold": True, "box": True},
@@ -998,7 +998,7 @@ class OrchestrationTests(MediaFixtures):
                          {"logo": True, "start": 0, "end": 1},
                          {"text": "txt", "font_size": 24, "margin": 12, "box": True}],
             # "music" is here since audit A141: its volume and loop without a bed are refused, not ignored
-            "audio": {"replace": "long_ref.wav", "music": "long_ref.wav", "music_volume": -12, "gain": 1, "music_loop": True,
+            "audio": {"replace": str(self.long_ref), "music": str(self.long_ref), "music_volume": -12, "gain": 1, "music_loop": True,
                       "stereo": True, "denoise": True},
             "loudness": {"lufs": -16},
             "export": {"preset": "youtube", "fit": "pad", "crf": 20},
@@ -1016,8 +1016,8 @@ class OrchestrationTests(MediaFixtures):
             self.assertEqual(out["stages"][-1], stage)
         # single uncut clip (so silence.py can analyse a real file under --dry-run), silence stage,
         # captions from .ass, mono/downmix/duck audio, voice flag: the other branches of the same tables
-        alt = dict(full, clips=[{"src": "source.mp4"}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1, "margin_lead": 0.05, "margin_tail": 0.3},
-                   captions={"ass": ass.name}, audio={"music": "long_ref.wav", "mono": True, "downmix": True, "duck": True, "voice": True, "duck_amount": 8}, graphics=[], overlays=[])
+        alt = dict(full, clips=[{"src": str(self.src)}], silence={"threshold": -40, "min_silence": 0.4, "margin": 0.1, "margin_lead": 0.05, "margin_tail": 0.3},
+                   captions={"ass": ass.name}, audio={"music": str(self.long_ref), "mono": True, "downmix": True, "duck": True, "voice": True, "duck_amount": 8}, graphics=[], overlays=[])
         ass.write_text("[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,hi\n", encoding="utf-8")
         (OUT / "render_full_alt.json").write_text(json.dumps(alt), encoding="utf-8")
         proc = script("render.py", OUT / "render_full_alt.json", "--dry-run", "--json")
@@ -1029,7 +1029,7 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(out["stages"], ["clips", "silence"])
         # no export block: the last stage is copied to the output, for real
         copy_proj = OUT / "render_copy.json"
-        copy_proj.write_text(json.dumps({"output": "render_copy.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        copy_proj.write_text(json.dumps({"output": "render_copy.mp4", "clips": [{"src": str(self.src), "in": 0, "out": 2}]}), encoding="utf-8")
         data = json.loads(script("render.py", copy_proj, "--fast", "--json").stdout)
         self.assertEqual(data["stages"], ["clips"])
         self.assertClose(probe(str(OUT / "render_copy.mp4"))["duration"], 2.0, 0.3)
@@ -1041,7 +1041,7 @@ class OrchestrationTests(MediaFixtures):
             "captions_key": ([self._proj("render_e2.json", {"clips": full["clips"], "captions": {"size": 20}}), "--dry-run"], "captions needs text, srt or ass"),
             "graphics_key": ([self._proj("render_e3.json", {"clips": full["clips"], "graphics": [{"name": "x"}]}), "--dry-run"], "needs a template"),
             "overlay_key": ([self._proj("render_e4.json", {"clips": full["clips"], "overlays": [{"opacity": 1}]}), "--dry-run"], "needs logo, image, text or video"),
-            "child_failed": ([self._proj("render_e5.json", {"clips": [{"src": "source.mp4", "in": "not-a-time", "out": 2}]}), "--dry-run"], "cut.py failed"),
+            "child_failed": ([self._proj("render_e5.json", {"clips": [{"src": str(self.src), "in": "not-a-time", "out": 2}]}), "--dry-run"], "cut.py failed"),
         }
         for name, (argv, message) in cases.items():
             proc = script("render.py", *argv, expect_fail=True)
@@ -1054,11 +1054,11 @@ class OrchestrationTests(MediaFixtures):
         reported as a successful render. Every key of the project and of each stage/clip object
         is now checked, and the template still validates."""
         cases = {
-            "clip_key": ({"clips": [{"src": "source.mp4", "start": 0, "end": 2}], "export": {"preset": "reels"}},
+            "clip_key": ({"clips": [{"src": str(self.src), "start": 0, "end": 2}], "export": {"preset": "reels"}},
                          "clips[0]: unknown key 'start' (did you mean 'in'?)"),
-            "stage_key": ({"clips": [{"src": "source.mp4", "in": 0, "out": 2}], "exports": {"preset": "reels"}},
+            "stage_key": ({"clips": [{"src": str(self.src), "in": 0, "out": 2}], "exports": {"preset": "reels"}},
                           "project: unknown key 'exports' (did you mean 'export'?)"),
-            "nested_key": ({"clips": [{"src": "source.mp4"}], "export": {"preset": "reels", "quality": 20}},
+            "nested_key": ({"clips": [{"src": str(self.src)}], "export": {"preset": "reels", "quality": 20}},
                            "export: unknown key 'quality'"),
         }
         for name, (body, message) in cases.items():
@@ -1136,7 +1136,7 @@ class OrchestrationTests(MediaFixtures):
         blue = self._pip_plate("pip326_blue.mp4", "blue")
         frame = {"aspect": "9:16", "width": 360, "fit": "pad"}
         proj = self._proj("render_pip326.json", {
-            "clips": [{"src": "source.mp4", "in": 0, "out": 2}], "frame": frame,
+            "clips": [{"src": str(self.src), "in": 0, "out": 2}], "frame": frame,
             "overlays": [{"video": blue.name, "position": "bottom-right", "scale": 120, "margin": 0}]})
         data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
         self.assertEqual(data["stages"], ["clips", "fit", "overlays"])
@@ -1150,7 +1150,7 @@ class OrchestrationTests(MediaFixtures):
         # chroma key: the green plate's green goes, its white inset stays
         green = self._pip_plate("pip326_green.mp4", "0x00ff00", inset=True)
         keyed = self._proj("render_pip326_key.json", {
-            "clips": [{"src": "source.mp4", "in": 0, "out": 2}], "frame": frame,
+            "clips": [{"src": str(self.src), "in": 0, "out": 2}], "frame": frame,
             "overlays": [{"video": green.name, "chromakey": "0x00ff00", "chromakey_similarity": 0.2,
                           "chromakey_blend": 0.05, "position": "bottom-right", "scale": 120, "margin": 0}]})
         proc = script("render.py", keyed, "--fast", "--json")
@@ -1165,11 +1165,11 @@ class OrchestrationTests(MediaFixtures):
         the first stage -- under --dry-run too, since no earlier stage writes it. The plan carries
         the overlay.py command with the layer as an input."""
         pip = self._pip_plate("pip326_plan.mp4", "blue")
-        clips = [{"src": "source.mp4", "in": 0, "out": 2}]
+        clips = [{"src": str(self.src), "in": 0, "out": 2}]
         cases = {
-            "video_and_image": ({"video": pip.name, "image": "logo.png"}, "not video and image"),
+            "video_and_image": ({"video": pip.name, "image": str(self.logo)}, "not video and image"),
             "video_and_logo": ({"video": pip.name, "logo": True}, "not video and logo"),
-            "key_without_video": ({"image": "logo.png", "chromakey": "green"}, 'chromakey keys a colour out of a video layer and needs "video"'),
+            "key_without_video": ({"image": str(self.logo), "chromakey": "green"}, 'chromakey keys a colour out of a video layer and needs "video"'),
             "tune_without_key": ({"video": pip.name, "chromakey_blend": 0.1}, 'chromakey_blend tunes "chromakey"'),
             "missing_layer": ({"video": "pip326_gone.mp4"}, "overlays[0].video: file not found"),
             "text_scale": ({"text": "Hello", "scale": 200}, "scale sizes an image, logo or video layer"),
@@ -1185,7 +1185,7 @@ class OrchestrationTests(MediaFixtures):
         gone = self._proj("render_pip326_stop.json", {"clips": clips, "overlays": [{"video": "pip326_gone.mp4"}]})
         script("render.py", gone, "--dry-run", "--stop-after", "clips")
         # an entry with a logo, an image or text draws the first of them, as in 2.8.6
-        script("render.py", self._proj("render_pip326_old.json", {"clips": clips, "overlays": [{"image": "logo.png", "text": "x"}]}), "--dry-run")
+        script("render.py", self._proj("render_pip326_old.json", {"clips": clips, "overlays": [{"image": str(self.logo), "text": "x"}]}), "--dry-run")
         # the plan: overlay.py with --video, and the layer is an input of its planned command
         proj = self._proj("render_pip326_plan.json", {"clips": clips, "overlays": [{"video": pip.name, "position": "top-left"}]})
         proc = script("render.py", proj, "--dry-run", "--json")
@@ -1205,7 +1205,7 @@ class OrchestrationTests(MediaFixtures):
         shutil.rmtree(cdir, ignore_errors=True)
         self._pip_plate("pip326_cache.mp4", "blue")
         proj = self._proj("render_pip326_cache.json", {
-            "clips": [{"src": "source.mp4", "in": 0, "out": 2}],
+            "clips": [{"src": str(self.src), "in": 0, "out": 2}],
             "overlays": [{"video": "pip326_cache.mp4", "scale": 100}]})
         first = json.loads(script("render.py", proj, "--cache", cdir, "--fast", "--json").stdout)
         self.assertEqual(first["cache"]["hits"], [])
@@ -1223,7 +1223,7 @@ class OrchestrationTests(MediaFixtures):
         missing clip only on the next run. Now every missing/empty source is named in one refusal."""
         empty = OUT / "render_empty_src.mp4"
         empty.write_bytes(b"")
-        body = {"clips": [{"src": "source.mp4", "in": 0, "out": 1},
+        body = {"clips": [{"src": str(self.src), "in": 0, "out": 1},
                           {"src": "gone_a.mp4"},
                           {"src": str(empty)},
                           {"src": "gone_b.mp4"}]}
@@ -1242,7 +1242,7 @@ class OrchestrationTests(MediaFixtures):
             p = OUT / f"render_unreadable_{n}.mp4"
             p.write_bytes(b"not a video at all")
             bad.append(p)
-        body = {"clips": [{"src": "source.mp4"}, {"src": str(bad[0])}, {"src": str(bad[1])}]}
+        body = {"clips": [{"src": str(self.src)}, {"src": str(bad[0])}, {"src": str(bad[1])}]}
         proc = script("render.py", self._proj("render_unreadable.json", body), "--json", expect_fail=True)
         doc = json.loads(proc.stdout)
         self.assertEqual(doc["error"]["kind"], "input")
@@ -1277,7 +1277,7 @@ class OrchestrationTests(MediaFixtures):
             "else:\n"
             "    c.die('boom', ctx=ctx)\n"
         )
-        src = str(OUT / "source.mp4")
+        src = str(self.src)
         plan = OUT / "ctx_plan.json"
         sh(sys.executable, "-c", code, "emit", src, plan)
         doc = json.loads(plan.read_text(encoding="utf-8"))
@@ -1297,7 +1297,7 @@ class OrchestrationTests(MediaFixtures):
         directory and clobbered each other's same-named intermediates (clip00.mp4, fit.mp4, ...)
         mid-run. Verify the auto-derived work dir name includes this process's own PID."""
         proj = OUT / "project_workdir.json"
-        proj.write_text(json.dumps({"output": "render_workdir_check.mp4", "clips": [{"src": "source.mp4", "in": 0, "out": 2}]}), encoding="utf-8")
+        proj.write_text(json.dumps({"output": "render_workdir_check.mp4", "clips": [{"src": str(self.src), "in": 0, "out": 2}]}), encoding="utf-8")
         # --keep leaves the PID-suffixed dir behind, so a second run of this suite in the same
         # OUT (a local re-run, or a coverage pass) would count the previous run's dir too.
         for stale in OUT.glob("render_workdir_check_work*"):
@@ -1322,7 +1322,7 @@ class OrchestrationTests(MediaFixtures):
         proj = OUT / "project_height.json"
         proj.write_text(json.dumps({
             "output": "render_height.mp4",
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "clips": [{"src": str(self.src), "in": "0:01", "out": "0:04"}],
             "fit": {"height": 480},
         }), encoding="utf-8")
         script("render.py", proj, "--fast", "--json")
@@ -1338,7 +1338,7 @@ class OrchestrationTests(MediaFixtures):
         work = OUT / "render_aspect_work"
         proj.write_text(json.dumps({
             "output": "render_aspect.mp4",
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "clips": [{"src": str(self.src), "in": "0:01", "out": "0:03"}],
             "frame": {"aspect": "9:16"},
             "export": {"preset": "reels"},
         }), encoding="utf-8")
@@ -1367,7 +1367,7 @@ class OrchestrationTests(MediaFixtures):
         proj = OUT / "project_aspect_slash.json"
         proj.write_text(json.dumps({
             "output": "render_aspect_slash.mp4",
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:03"}],
+            "clips": [{"src": str(self.src), "in": "0:01", "out": "0:03"}],
             "frame": {"aspect": "16/9"}, "fit": {"aspect": "16:9"},
             "export": {"preset": "youtube"},
         }), encoding="utf-8")
@@ -1385,7 +1385,7 @@ class OrchestrationTests(MediaFixtures):
             if flag:
                 chk["content"] = True
             proj.write_text(json.dumps({"output": "render_check_content.mp4",
-                                        "clips": [{"src": "source.mp4", "in": 0, "out": 2}], "check": chk}), encoding="utf-8")
+                                        "clips": [{"src": str(self.src), "in": 0, "out": 2}], "check": chk}), encoding="utf-8")
             data = json.loads(script("render.py", proj, "--fast", "--json").stdout)
             rows[flag] = {r["check"] for r in data["check"]["checks"]}
         self.assertTrue({"black", "frozen", "silence"} <= rows[True], rows)
@@ -1434,7 +1434,7 @@ class OrchestrationTests(MediaFixtures):
         proj = OUT / "project_bad_check.json"
         proj.write_text(json.dumps({
             "output": "render_bad.mp4",
-            "clips": [{"src": "source.mp4", "in": "0:01", "out": "0:04"}],
+            "clips": [{"src": str(self.src), "in": "0:01", "out": "0:04"}],
             "export": {"preset": "reels"},  # portrait 9:16 output
             "check": {"platform": "broadcast"},  # broadcast requires 16:9 -- guaranteed aspect FAIL
         }), encoding="utf-8")
@@ -1705,7 +1705,7 @@ class OrchestrationTests(MediaFixtures):
         brand = OUT / "brand.json"
         if not brand.exists():
             brand.write_text(json.dumps({"font": "DejaVu Sans", "colors": {"primary": "FF6A00", "text": "FFFFFF", "background": "0B1D2A"},
-                                         "logo": "logo.png", "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
+                                         "logo": str(self.logo), "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
                                          "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": True, "bold": True}}), encoding="utf-8")
         ass = OUT / "brand.ass"
         script("caption.py", self.src, "--text", self.cues, "--brand", brand, "--write-ass", ass, "--fast", "-o", OUT / "brand_cap.mp4")
