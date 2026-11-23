@@ -2464,6 +2464,20 @@ the result's `versions` lists each target, file and measurement, its
 verification steps carry a `version` key, and `verified` holds only when every
 version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
 that is one of the version files.
+
+For a Japanese broadcast delivery, check the actual written file independently using the path
+from `versions[].output`:
+
+    python3 scripts/loudness.py master.wav --versions broadcast-jp --json
+    python3 scripts/check.py master_loudnorm_broadcast-jp.wav --platform broadcast --lufs -24 --tp -1 --json
+
+Without `--lufs -24`, `--platform broadcast` uses the EBU target of −23 LUFS. Keep the broadcast
+platform rather than `custom`, which uses a ±2 LU integrated-loudness tolerance. The Japanese
+target takes −24 LKFS ±1 LU and a ceiling of −1 dBTP with a +0.1 dB measurement tolerance.
+Inspect the separate `loudness` and `true peak` rows: a clip below one 400 ms block can have a
+measurable peak but no integrated loudness. Passing these audio rows is not a full audiovisual
+delivery check.
+
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the

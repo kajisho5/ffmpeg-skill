@@ -548,6 +548,56 @@ class AudioTests(MediaFixtures):
         self.assertEqual(json.loads(proc.stdout)["error"]["reason"], "output_path_taken")
         self.assertFalse(taken.exists())
 
+    def test_broadcast_jp_delivery_audio_agrees_with_independent_check(self):
+        import struct
+        import wave
+
+        rate = 48000
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+
+            def tone(name, amplitude, frames=rate * 3, *, impulse=False):
+                path = root / f"{name}.wav"
+                samples = [round(amplitude * math.sin(math.tau * 440 * i / rate)) for i in range(frames)]
+                if impulse:
+                    # One hot sample raises true peak without making the whole track loud.
+                    samples[frames // 2] = 32400
+                with wave.open(str(path), "wb") as audio:
+                    audio.setparams((1, 2, rate, frames, "NONE", "not compressed"))
+                    audio.writeframes(struct.pack(f"<{frames}h", *samples))
+                return path
+
+            source = tone("master", 5000)
+            delivery = json.loads(script("loudness.py", source, "--versions", "broadcast-jp", "--json").stdout)
+            self.assertTrue(delivery["verified"], delivery["verification"])
+            version, = delivery["versions"]
+            self.assertEqual(version["target"], "broadcast-jp")
+            written = Path(version["output"])
+            self.assertTrue(written.is_file())
+            verdict = next(row for row in delivery["verification"]
+                           if row["step"] == "loudness" and row["version"] == "broadcast-jp")
+
+            fixtures = (
+                ("compliant", written, "PASS", "PASS"),
+                ("loudness only", tone("too_loud", 11000), "FAIL", "PASS"),
+                ("true peak only", tone("peak", 3150, impulse=True), "PASS", "FAIL"),
+                ("too short", tone("short", 3500, rate // 5), "WARN", "PASS"),
+            )
+            for name, path, loudness_status, peak_status in fixtures:
+                with self.subTest(name=name):
+                    # A WAV does not meet the video requirements of this platform; verify audio rows only.
+                    check = json.loads(script("check.py", path, "--platform", "broadcast", "--lufs", "-24",
+                                              "--tp", "-1", "--json", expect_fail=True).stdout)
+                    rows = {row["check"]: row for row in check["checks"]}
+                    loudness, peak = rows["loudness"], rows["true peak"]
+                    self.assertEqual((loudness["status"], peak["status"]), (loudness_status, peak_status), rows)
+                    if name == "compliant":
+                        self.assertEqual(loudness["status"] == peak["status"] == "PASS", verdict["ok"])
+                        self.assertAlmostEqual(float(loudness["value"].split()[0]), verdict["lufs"], delta=0.1)
+                        self.assertAlmostEqual(float(peak["value"].split()[0]), verdict["tp"], delta=0.1)
+                    if name == "too short":
+                        self.assertIn("shorter than one 400 ms loudness block", loudness["value"])
+
     def test_loudness_json_reports_the_measurement_and_the_targets(self):
         """1.13: --json carries the input's own loudnorm measurement (including its loudness
         range) and the targets that were asked for, next to the result measured off the written
