@@ -9332,6 +9332,26 @@ class EvalRunnerTests(unittest.TestCase):
         task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
         self.assertTrue(run.score("called render.py --template reel", task)[0])
 
+    def test_score_slot_matches_a_whole_name_not_a_word_that_contains_it(self):
+        run = self.evals_run
+        # agent_prompts_24.json's slots are bare stems, and a substring test let any word holding
+        # one fill the slot: "execute" ran cut, "benefit" fit, "looks" look, so a transcript that
+        # never called the script passed its routing check
+        for slot, text in (("cut", "I will execute the plan"), ("fit", "a clear benefit"),
+                           ("look", "The output looks fine"), ("cut", "ran shortcut.py a.mp4"),
+                           ("cut.py", "ran shortcut.py a.mp4"), ("render", "the renderer is ready"),
+                           ("cut.py", "I will cut the clip")):  # a slot written with .py needs the script
+            task = {"id": 7, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # the script on a command line or by path, and the tool name an MCP harness logs, still fill it
+        for slot, text in (("cut", "python3 scripts/cut.py a.mp4"), ("cut.py", "$ cut.py a.mp4"),
+                           ("look", "python3 ~/.claude/skills/ffmpeg-skill/scripts/look.py out.mp4"),
+                           ("look", "tools/call look {\"input\": \"out.mp4\"}"),
+                           ("look", "mcp__ffmpeg-skill__look"), ("fit|render", "ran render.py project.json"),
+                           ("--dry-run", "cut.py a.mp4 --dry-run"), ("--on-missing skip", "join.py --on-missing skip")):
+            task = {"id": 8, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertTrue(run.score(text, task)[0], f"{slot!r} in {text!r}")
+
     def test_score_grader_expect_regex_must_match(self):
         run = self.evals_run
         task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}

@@ -62,15 +62,20 @@ def load_tasks(prompts_path: Path) -> list:
 
 def _slot_hit(slot: str, text: str) -> bool:
     """One `expect` entry, e.g. "fit.py|render.py" or "fit|render": true if any alternative
-    (with or without a trailing ".py") appears in the transcript text."""
+    appears in the transcript text as a whole name, not inside another word: "execute" does not
+    fill `cut`, "looks" does not fill `look`, `shortcut.py` is not `cut.py`. A slot written with
+    ".py" needs the script (`cut.py`, `scripts/cut.py`); a bare one also takes the tool name an
+    MCP harness logs (`cut`). A flag slot ("--dry-run") is a plain substring."""
     for alt in slot.split("|"):
         alt = alt.strip()
         if not alt:
             continue
-        if alt in text:
-            return True
-        stem = alt[:-3] if alt.endswith(".py") else alt
-        if f"{stem}.py" in text:
+        if alt.startswith("-"):
+            if alt in text:
+                return True
+            continue
+        stem, ext = (alt[:-3], r"\.py") if alt.endswith(".py") else (alt, r"(?:\.py)?")
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(stem)}{ext}(?![A-Za-z0-9_])", text):
             return True
     return False
 
