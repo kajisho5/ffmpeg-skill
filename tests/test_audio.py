@@ -518,6 +518,38 @@ class AudioTests(MediaFixtures):
         script("audio.py", self.src, "--effects", self.mic, "--effects-volume", "-20", "-o", out)
         self.assertClose(probe(str(out))["duration"], 12.0, 0.2)
 
+    def test_broadcast_jp_delivery_checked_independently(self):
+        def checks(path):
+            # The WAV has no broadcast picture. Inspect the two audio verdicts independently.
+            result = script("check.py", path, "--platform", "broadcast", "--lufs", "-24",
+                            "--tp", "-1", "--json", expect_fail=True)
+            return {row["check"]: row for row in json.loads(result.stdout)["checks"]}
+
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            src = Path(tmp) / "tone.wav"
+            sh("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:r=48000:d=4", src)
+            writer = json.loads(script("loudness.py", src, "--versions", "broadcast-jp", "--json").stdout)
+            self.assertTrue(writer["verified"])
+            version = writer["versions"][0]
+            master = version["output"]
+            rows = checks(master)
+            for name, measurement in (("loudness", "input_i"), ("true peak", "input_tp")):
+                self.assertEqual(rows[name]["status"], "PASS")
+                self.assertAlmostEqual(float(rows[name]["value"].split()[0]),
+                                       float(version["result"][measurement]), delta=0.11)
+            for name, filters, expected in (
+                ("too_loud", "volume=4dB", ("FAIL", "PASS")),
+                ("peak", r"aeval=if(eq(n\,48000)\,0.99\,val(0))", ("PASS", "FAIL")),
+                ("short", "atrim=duration=0.1", ("WARN", "PASS")),
+            ):
+                with self.subTest(case=name):
+                    changed = Path(tmp) / f"{name}.wav"
+                    sh("ffmpeg", "-v", "error", "-i", master, "-af", filters, changed)
+                    measured = checks(changed)
+                    self.assertEqual((measured["loudness"]["status"], measured["true peak"]["status"]), expected)
+                    if name == "short":
+                        self.assertIn("could not measure", measured["loudness"]["value"])
+
     def test_loudness_versions_writes_one_measured_file_per_target(self):
         """#421: one master, several deliveries; each is normalised from the master and measured
         after, and `verified` covers every version."""

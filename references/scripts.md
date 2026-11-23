@@ -2464,6 +2464,14 @@ the result's `versions` lists each target, file and measurement, its
 verification steps carry a `version` key, and `verified` holds only when every
 version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
 that is one of the version files.
+
+For Japanese broadcast audio, take the output path from the `broadcast-jp` entry in
+`versions` and run `check.py FILE --platform broadcast --lufs -24 --tp -1 --json`.
+The explicit target matters: the broadcast platform defaults to EBU −23 LUFS.
+Read the loudness and true-peak rows separately. The tool accepts −24 LKFS ±1 LU
+and a −1 dBTP ceiling with +0.1 dB measurement tolerance. A clip shorter than one
+400 ms gating block may have a measurable peak and no integrated measurement.
+An audio-only master can meet both audio requirements while failing video requirements.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the
