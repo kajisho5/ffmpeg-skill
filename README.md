@@ -851,6 +851,19 @@ This refreshes the cache without a separate uninstall and sets the plugin to ena
 
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
 
+### Troubleshooting an installed copy
+
+Run these checks in the environment that runs the skill, not just in a separate shell. If you installed the skill through a host plugin or copied it by hand, use that installed skill's directory in the first command:
+
+```bash
+python3 scripts/_contract.py doctor --json  # from the installed skill directory
+npx ffmpeg-skill doctor --json              # checks the invoked npm package, not a plugin copy
+```
+
+- **It works in my terminal but not in my agent.** Compare `ffmpeg_path` and `ffprobe_path` against the binaries seen by the agent. Use both binaries from the same build, and restart the host after changing the PATH it inherits. If the direct Python command fails, check `python3 --version` (3.10 or newer); on Windows, use `python` or `py -3` if `python3` is unavailable.
+- **A specific tool won't run.** In the installed copy's report, look under `tools` (for example, `tools.stabilize`) for that tool's `usable` status and any `fix` message. See [Quick start](#quick-start) for how to interpret the overall status.
+- **The agent still uses an older version.** Use the installed copy's `version` in the report, then follow [Updating](#updating) for that installation route. A newer version reported by the npm command doesn't establish that the agent's own copy was updated.
+
 ## Requirements
 
 - FFmpeg 6.1+ (3.0.0 removed 5.x; an older build is refused). Required by at least one tool (so `doctor`'s `ok` needs them all): `libx264`, `aac`, and the `drawtext`, `subtitles` (libass), `loudnorm`, `xfade`, `acrossfade`, `amix`, `overlay`, `scdet`, `silencedetect`, `cropdetect`, `tile`, `tpad`, `boxblur`, `hqdn3d`, `yadif`, `reverse`, `rotate`, `showwaves`, `v360`, `xstack` and `vidstabdetect`/`vidstabtransform` (libvidstab, `stabilize.py` only) filters; `doctor --json` lists them as `capabilities.required`. Needed only by the flags that use them: `libx265`, `prores_ks`, `libzimg` / `zscale`, `libmp3lame`, `libopus`, `libvorbis`, the `ass` filter. `doctor` tells you which are present. The apt and gyan.dev builds carry all of them; some Homebrew bottles lack `libass` / `libfreetype` / `libzimg`, which `doctor` reports as missing.
