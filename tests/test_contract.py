@@ -3262,7 +3262,7 @@ sys.exit(fit.main())
     DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
                       "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
-                      "ffmpeg_version", "color", "new")
+                      "ffmpeg_version", "color", "text_presentation", "new")
 
     def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
         """A fonts folder that exists but cannot be listed is coverage unknown (None), as an

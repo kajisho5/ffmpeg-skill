@@ -6694,7 +6694,8 @@ class CaptionTextFidelityTests(unittest.TestCase):
 
         # never emoji: not in emoji-data at all, or text-default with nothing asking for the picture
         for text in ("♪", "♫", "✓", "★", "☆", "→", "♥", "✔",
-                     "☺", "❤", "☀", "⬆", "\U0001F0A1", "♥︎"):
+                     "☺", "❤", "☀", "⬆", "\U0001F0A1", "♥︎",
+                     "🌡", "🍽", "🏳", "🖥", "🛳", "🌡\ufe0e"):
             with self.subTest(text=text):
                 self.assertEqual(names(text), [])
                 self.assertEqual(names("a %s b" % text), [])
@@ -6704,7 +6705,9 @@ class CaptionTextFidelityTests(unittest.TestCase):
         for text, want in (("✅", ["2705"]), ("✨", ["2728"]), ("⭐", ["2b50"]),
                            ("⚡", ["26a1"]), ("\U0001F004", ["1f004"]),
                            ("❤️", ["2764-fe0f"]), ("♥️", ["2665-fe0f"]),
-                           ("✔️", ["2714-fe0f"]), ("☝\U0001F3FD", ["261d-1f3fd"]),
+                           ("✔️", ["2714-fe0f"]), ("🌡️", ["1f321-fe0f"]),
+                           ("🍽️", ["1f37d-fe0f"]), ("🖥️", ["1f5a5-fe0f"]),
+                           ("🛳️", ["1f6f3-fe0f"]), ("☝\U0001F3FD", ["261d-1f3fd"]),
                            ("\U0001F3C3‍♀️", ["1f3c3-200d-2640-fe0f"]),
                            ("\U0001F469‍❤️‍\U0001F468", ["1f469-200d-2764-fe0f-200d-1f468"]),
                            ("⛹️‍♂️", ["26f9-fe0f-200d-2642-fe0f"])):
@@ -6725,8 +6728,8 @@ class CaptionTextFidelityTests(unittest.TestCase):
             self.assertEqual(caption.plan_emoji([(0.0, 2.0, "♪ La la la ♪"),
                                                  (2.0, 4.0, "Done ✓")], args, 640, 360),
                              ([(0.0, 2.0, "♪ La la la ♪"), (2.0, 4.0, "Done ✓")], None))
-            cues, plan = caption.plan_emoji([(0.0, 2.0, "♪ Party \U0001F389 ★")], args, 640, 360)
-        self.assertEqual(cues[0][2], "♪ Party ★")
+            cues, plan = caption.plan_emoji([(0.0, 2.0, "♪ Party \U0001F389 ★ 🌡")], args, 640, 360)
+        self.assertEqual(cues[0][2], "♪ Party ★ 🌡")
         self.assertEqual((plan["count"], plan["clusters"]), (1, ["1f389"]))
 
     # ------------------------------------------------------------ a moved break keeps its space

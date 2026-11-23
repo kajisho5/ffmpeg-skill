@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
+  Adding the emoji presentation selector (U+FE0F) still sends them through emoji handling (#696).
 
 ## 4.7.0
 
