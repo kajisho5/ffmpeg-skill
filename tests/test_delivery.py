@@ -418,35 +418,10 @@ raise SystemExit(export.main())
             rows.append((r / 257, g / 257, b / 257, a / 257))
         return rows
 
-    def test_probe_453(self):
-        """TEMPORARY: what each step does on this FFmpeg (#453)."""
-        lines = [repr(__import__("_common").runner.ffmpeg_version())]
-        for codec, pix, line in (("prores4444", "yuva444p10le", ("-c:v", "prores_ks", "-profile:v", "4", "-alpha_bits", "16")),
-                                 ("qtrle", "argb", ("-c:v", "qtrle"))):
-            src = OUT / f"p453_src_{codec}.mov"
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
-               "color=c=0x30C050:s=64x64:r=1:d=1,format=gbrap,geq=a='A':"
-               "r='round(r(X,Y)*A/255)':g='round(g(X,Y)*A/255)':b='round(b(X,Y)*A/255)',".replace("A", "if(lt(X,16),255,if(lt(X,32),128,if(lt(X,48),64,0)))")
-               + f"format={pix}", "-frames:v", "1", *line, "-pix_fmt", pix, src)
-            lines.append(f"{codec} src {[tuple(round(v, 1) for v in b) for b in self._bands(src)]}")
-            for mode in ("straight", "premultiplied"):
-                out = OUT / f"p453_{codec}_{mode}.mov"
-                doc = json.loads(script("color.py", src, "--correct", "--gamma", "1.6", "--keep-alpha", "--alpha-codec", codec,
-                                        "--source-alpha-mode", mode, "--json", "-o", out).stdout)
-                lines.append(f"{codec} {mode} {[tuple(round(v, 1) for v in b) for b in self._bands(out)]}")
-                if mode == "premultiplied":
-                    lines.append(f"{codec} cmd {[c for c in doc['commands'][-1] if 'unpremultiply' in c or 'premultiply' in c][:1]}")
-            for name, vf in (("plain16", "format=gbrap16le,unpremultiply=inplace=1"),
-                             ("setparams16", "format=gbrap16le,setparams=alpha_mode=premultiplied,unpremultiply=inplace=1"),
-                             ("geq16", "format=gbrap16le,geq=r='if(alpha(X,Y),min(65535,r(X,Y)*65535/alpha(X,Y)),0)':g='if(alpha(X,Y),min(65535,g(X,Y)*65535/alpha(X,Y)),0)':b='if(alpha(X,Y),min(65535,b(X,Y)*65535/alpha(X,Y)),0)':a='alpha(X,Y)'")):
-                raw = OUT / f"p453_{codec}_{name}.mov"
-                proc = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-vf", f"{vf},format={pix}",
-                                       *line, "-pix_fmt", pix, str(raw)], capture_output=True, text=True)
-                lines.append(f"{codec} {name} " + (proc.stderr.strip()[-150:] if proc.returncode else str([tuple(round(v, 1) for v in b) for b in self._bands(raw)])))
-        for f in ("unpremultiply", "premultiply", "setparams"):
-            h = subprocess.run(["ffmpeg", "-hide_banner", "-h", f"filter={f}"], capture_output=True, text=True).stdout
-            lines.append(f"help {f}: " + " | ".join(l.strip() for l in h.splitlines() if l.strip().startswith(("inplace", "alpha", "planes")))[:300])
-        self.fail("\nPROBE453 " + "\nPROBE453 ".join(lines))
+    def test_shared_alpha_writer_keeps_the_existing_overlay_precision(self):
+        from _common.alpha import finish_chain
+        self.assertIn("format=gbrap,premultiply=", finish_chain("prores4444", "premultiplied"))
+        self.assertIn("format=gbrap16le,premultiply=", finish_chain("prores4444", "premultiplied", wide=True))
 
     def test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453(self):
         """#453: a premultiplied source (30C050 under alpha 255 / 128 / 64 / 0) graded with --keep-alpha
@@ -478,6 +453,15 @@ raise SystemExit(export.main())
                     a_src, a_out = ([b[3] for b in self._bands(p)] for p in (src, outs["premultiplied"]))
                     for a, b in zip(a_src, a_out):
                         self.assertLessEqual(abs(a - b), 0 if codec == "qtrle" else 1.0, (a_src, a_out))
+                    # Test the complete decoded mask, including block boundaries between bands.
+                    def mask(path):
+                        raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1",
+                                                       "-vf", "alphaextract,format=gray16le", "-f", "rawvideo", "-"])
+                        return [value for (value,) in struct.iter_unpack("<H", raw)]
+                    source_mask, output_mask = mask(src), mask(outs["premultiplied"])
+                    self.assertEqual(len(source_mask), len(output_mask))
+                    worst = max(abs(a - b) for a, b in zip(source_mask, output_mask))
+                    self.assertLessEqual(worst, 0 if codec == "qtrle" else 257)
                     # the opaque band's graded colour, and every partial band straightened again
                     graded = self._bands(outs["premultiplied"])
                     opaque = graded[0][:3]

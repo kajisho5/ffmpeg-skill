@@ -654,8 +654,14 @@ def main() -> int:
         # RGB source has none: its YUV line is BT.709 and tagged so (working_matrix). An RGB line
         # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
         un = unpremultiply_leg(meta) if args.source_alpha_mode == "premultiplied" else ""
-        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{un}{vf}{matrix_label(meta)}[ka_g];[ka_a]alphaextract[ka_m];"
-              f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode, meta)}[ka_v]")
+        # alphamerge negotiates an 8-bit mask. Keep the source mask at 16 bits
+        # through the RGB multiply on a premultiplied ProRes master.
+        merge = "[ka_a]alphaextract[ka_m];[ka_g][ka_m]alphamerge"
+        if un and alpha_codec == "prores4444":
+            merge = ("[ka_g]format=gbrp16le[ka_rgb];[ka_a]alphaextract,format=gray16le[ka_m];"
+                     "[ka_rgb][ka_m]mergeplanes=map1p=1:map2p=2:map3s=1:format=gbrap16le")
+        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{un}{vf}{matrix_label(meta)}[ka_g];"
+              f"{merge},{finish_chain(alpha_codec, args.alpha_mode, meta, wide=bool(un))}[ka_v]")
         fc = cfr_at_input(fc, meta)  # the conform of a VFR source: the fps filter (#512)
         cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
                                                                      "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]
