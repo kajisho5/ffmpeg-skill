@@ -8,7 +8,8 @@ Usage:
   python3 evals/run.py results/ --prompts evals/agent_prompts_24.json   # 99 of the 110-prompt set (agent_prompts_exec.json holds the other 11)
 
 A transcript "passes" when:
-  - every expected script name (or `a|b` alternation slot) appears in it, and
+  - every expected script (or `a|b` alternation slot) is called in it -- `<name>.py`, or the MCP
+    tool name `mcp__<server>__<name>` for a slot written without ".py" (see _slot_hit) -- and
   - if the prompt carries `grader_expect`, that regex also matches the transcript, and
   - if the prompt carries `grader_not`, that regex does NOT match the transcript.
 
@@ -61,21 +62,26 @@ def load_tasks(prompts_path: Path) -> list:
 
 
 def _slot_hit(slot: str, text: str) -> bool:
-    """One `expect` entry, e.g. "fit.py|render.py" or "fit|render": true if any alternative
-    appears in the transcript text as a whole name, not inside another word: "execute" does not
-    fill `cut`, "looks" does not fill `look`, `shortcut.py` is not `cut.py`. A slot written with
-    ".py" needs the script (`cut.py`, `scripts/cut.py`); a bare one also takes the tool name an
-    MCP harness logs (`cut`). A flag slot ("--dry-run") is a plain substring."""
+    """One `expect` entry, e.g. "fit.py|render.py" or "fit|render": true if the transcript shows
+    any alternative called, not just written. A script alternative is filled by its file name as
+    a whole name (`cut.py`, `scripts/cut.py`, not `shortcut.py`, `auto_cut.py`, `pre-cut.py` or
+    `cut.pyc`); a bare one (`cut`) also by the MCP tool name a harness logs (`mcp__<server>__cut`),
+    but never by the word itself: the request is part of the transcript, and "I will cut the clip"
+    is not a call. A flag alternative ("--dry-run") is the whole flag, not the start of a longer
+    one. Matching is case-sensitive: `Cut.py` does not fill `cut`."""
     for alt in slot.split("|"):
         alt = alt.strip()
         if not alt:
             continue
         if alt.startswith("-"):
-            if alt in text:
-                return True
-            continue
-        stem, ext = (alt[:-3], r"\.py") if alt.endswith(".py") else (alt, r"(?:\.py)?")
-        if re.search(rf"(?<![A-Za-z0-9]){re.escape(stem)}{ext}(?![A-Za-z0-9_])", text):
+            pattern = rf"(?<![\w-]){re.escape(alt)}(?![\w-])"
+        else:
+            stem = re.escape(alt[:-3] if alt.endswith(".py") else alt)
+            pattern = rf"(?<![\w.-]){stem}\.py(?![\w-]|\.\w)"
+            if not alt.endswith(".py"):
+                pattern += rf"|(?<![\w-])mcp__[\w-]+?__{stem}(?![\w-])"
+        # ASCII: a script name next to non-Latin text ("cut.pyで") is still a whole name
+        if re.search(pattern, text, re.ASCII):
             return True
     return False
 
