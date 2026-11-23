@@ -2189,6 +2189,17 @@ sys.exit(fit.main())
         finally:
             _common.STATE.codec, _common.STATE.hw = saved
 
+    def test_mix_color_chains_accepts_missing_metadata(self):
+        """An input that was not probed is accepted just as by matrix_chain."""
+        tagged = {"video": {"color_space": "bt709"}}
+        self.assertEqual(_common.mix_color_chains([None, {}], None), ["", ""])
+        self.assertEqual(_common.mix_color_chains([None, {}], None, draws_colour=True),
+                         [_common.label_chain(None, None), _common.label_chain({}, None)])
+        self.assertEqual(_common.mix_color_chains([tagged, None], None),
+                         [_common.matrix_chain(tagged, None), _common.label_chain(None, None)])
+        self.assertEqual(_common.mix_color_chains([None, tagged], None),
+                         [_common.label_chain(None, None), _common.matrix_chain(tagged, None)])
+
     def test_fold_bt709_matrix_into_the_tools_graph(self):
         """run() moves the encoder line's conversion -vf into the tool's own graph, first: with no
         other filter it is the graph; a -vf gets it prepended; a -filter_complex reads every input

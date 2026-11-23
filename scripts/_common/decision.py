@@ -1295,12 +1295,12 @@ def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
     return f + "," if f else ""
 
 
-def mix_color_chains(metas: Sequence[Dict[str, Any]], line_meta: Optional[Dict[str, Any]],
+def mix_color_chains(metas: Sequence[Optional[Dict[str, Any]]], line_meta: Optional[Dict[str, Any]],
                      *, draws_colour: bool = False) -> List[str]:
     """Per-input matrix and range before mixing. A BT.709 input, whether converted or
     already tagged, makes FFmpeg negotiate a matrix for its untagged neighbours (#696)."""
     matrices = [matrix_chain(m, line_meta) for m in metas]
-    if draws_colour or any(matrices) or any((m.get("video") or {}).get("color_space") == "bt709" for m in metas):
+    if draws_colour or any(matrices) or any(((m or {}).get("video") or {}).get("color_space") == "bt709" for m in metas):
         matrices = [c or label_chain(m, line_meta) for c, m in zip(matrices, metas)]
     return [c + range_chain(m, line_meta) for c, m in zip(matrices, metas)]
 

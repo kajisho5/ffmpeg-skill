@@ -3670,39 +3670,60 @@ class RgbAndStillConversionTests(unittest.TestCase):
         pip = [(384 + 12 + k * 128, 128 + 12, 384 + (k + 1) * 128 - 12, 256 - 12) for k in range(3)]
         main = [(k * 256 + 20, 20, k * 256 + 236, 100) for k in range(3)]
         self.assertEqual(probe(str(clips["709"]))["video"].get("color_space"), "bt709")
+
+        def assert_tags(out):
+            # ffprobe reads the written stream, not the command's planned encoder options.
+            doc = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=color_space,color_primaries,color_transfer", "-of", "json", out).stdout)
+            stream = doc["streams"][0]
+            self.assertEqual(tuple(stream.get(k) for k in ("color_space", "color_primaries", "color_transfer")),
+                             ("bt709", "bt709", "bt709"), out.name)
         # #696: an already tagged 709 input needs no conversion, but its untagged neighbour
         # still needs a label. With the clips reversed, the tagged picture shifted instead.
         for a, b in (("un", "601"), ("601", "un"), ("un", "709"), ("709", "un")):
             out = d / f"mix_grid_{a}_{b}.mp4"
             script("grid.py", clips[a], clips[b], "--cols", "2", "--rows", "1", "--label", "none",
                    "--cell-width", "384", "--cell-height", "128", "--fast", "-o", out)
+            if "709" in (a, b):
+                assert_tags(out)
             for offset, name in ((0, a), (384, b)):
                 with self.subTest(tool="grid.py", order=(a, b), clip=name):
                     self._assert_colours(out, self._bars(offset, 0, 2), self.COLOURS)
             out = d / f"mix_join_{a}_{b}.mp4"
             script("join.py", clips[a], clips[b], "--transition", "none", "--fast", "-o", out)
+            if "709" in (a, b):
+                assert_tags(out)
             for t, name in ((0.5, a), (2.5, b)):
                 with self.subTest(tool="join.py", order=(a, b), clip=name):
                     self._assert_colours(out, self._bars(0, 0, 2), self.COLOURS, t)
             out = d / f"mix_broll_{a}_{b}.mp4"
             script("broll.py", clips[a], "--insert", clips[b], "--at", "0.5", "--duration", "1", "--fast", "-o", out)
+            if "709" in (a, b):
+                assert_tags(out)
             for t, name in ((0.2, a), (1.0, b)):
                 with self.subTest(tool="broll.py", order=(a, b), clip=name):
                     self._assert_colours(out, self._bars(0, 0, 2), self.COLOURS, t)
             out = d / f"mix_multicam_{a}_{b}.mp4"
             script("multicam.py", clips[a], clips[b], "--switch", "0-1:0,1-2:1", "--fast", "-o", out)
+            if "709" in (a, b):
+                assert_tags(out)
             for t, name in ((0.5, a), (1.5, b)):
                 with self.subTest(tool="multicam.py", order=(a, b), clip=name):
                     self._assert_colours(out, self._bars(0, 0, 2), self.COLOURS, t)
-        for main_clip, pip_clip in ((big, clips["601"]), (d / "base601big.mp4", clips["un"])):
+        # overlay already labels an untagged source beside a tagged peer independently of
+        # mix_color_chains, and needs its own alpha-preserving conversion path.
+        for main_clip, pip_clip in ((big, clips["601"]), (d / "base601big.mp4", clips["un"]),
+                                    (big, clips["709"]), (d / "base709.mp4", clips["un"])):
             if not main_clip.exists():
                 sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", d / "bars.png",
                    "-f", "lavfi", "-i", "sine=d=1", "-t", "1", "-vf",
                    "scale=768:256:flags=neighbor:out_color_matrix=bt601:out_range=tv,format=yuv420p", "-c:v", "libx264",
                    "-preset", "ultrafast", "-crf", "1", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "aac", "-shortest", main_clip)
-            out = d / f"mix_overlay_{main_clip.stem}.mp4"
+            out = d / f"mix_overlay_{main_clip.stem}_{pip_clip.stem}.mp4"
             script("overlay.py", main_clip, "--video", pip_clip, "--position", "bottom-right", "--margin", "0", "--fast", "-o", out)
+            if main_clip.name == "base709.mp4" or pip_clip == clips["709"]:
+                assert_tags(out)
             for part, rects in (("main", main), ("pip", pip)):
                 with self.subTest(tool="overlay.py --video", main=main_clip.name, part=part):
                     self._assert_colours(out, rects, self.COLOURS)
