@@ -2423,8 +2423,14 @@ or for `--tempo` a `--replace` track beside the picture: the input's own sound b
 stream-copied picture would drift from it (`fit.py --method speed` retimes both). `timing` reports
 `{tempo, atempo, length_samples, sample_rate}`.
 `--channel N` keeps channel N of the track (0-based, `pan=mono|c0=cN`, first in the chain) as a
-1-channel output, or both sides of a stereo one with `--stereo`; an index past the track's channels
-and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the output (`aresample`,
+1-channel output, or both sides of a stereo one with `--stereo`. FFmpeg's default equal-power
+upmix puts the same selected signal on both output sides at about −3.01 dB each (1/√2 of the
+selected channel's amplitude), not unity gain. For example, keep only the right channel (index 1)
+of a stereo field recording and write a stereo WAV:
+
+    python3 scripts/audio.py field.wav --channel 1 --stereo -o right_dual_mono.wav
+
+An index past the track's channels and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the output (`aresample`,
 after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.

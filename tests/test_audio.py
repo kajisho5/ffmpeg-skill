@@ -10,10 +10,12 @@ import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import wave
 
 from pathlib import Path
 
@@ -905,6 +907,36 @@ class AudioTests(MediaFixtures):
                 err = json.loads(proc.stdout)["error"]
                 self.assertEqual(err["kind"], "input")
                 self.assertIn(needle, err["message"])
+
+    def test_audio_selected_channel_stereo_applies_equal_power_gain(self):
+        rate = 48000
+        tone = [round(12000 * math.sin(math.tau * 440 * i / rate)) for i in range(4096)]
+        gain = 1 / math.sqrt(2)
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            root = Path(tmp)
+            for selected in (0, 1):
+                with self.subTest(channel=selected):
+                    src = root / f"channel_{selected}.wav"
+                    out = root / f"dual_mono_{selected}.wav"
+                    pack = struct.Struct("<hh").pack
+                    with wave.open(str(src), "wb") as audio:
+                        audio.setparams((2, 2, rate, len(tone), "NONE", "not compressed"))
+                        audio.writeframes(b"".join(
+                            pack(sample, 0) if selected == 0 else pack(0, sample) for sample in tone
+                        ))
+                    doc = json.loads(script("audio.py", src, "--channel", str(selected),
+                                            "--stereo", "-o", out, "--json").stdout)
+                    self.assertTrue(doc["verified"], doc["verification"])
+                    with wave.open(str(out), "rb") as audio:
+                        self.assertEqual((audio.getnchannels(), audio.getsampwidth(),
+                                          audio.getframerate(), audio.getnframes()),
+                                         (2, 2, rate, len(tone)))
+                        raw = audio.readframes(len(tone))
+                    self.assertEqual(len(raw), len(tone) * 4)
+                    left, right = zip(*struct.iter_unpack("<hh", raw))
+                    self.assertEqual(left, right)
+                    error = max(abs(got - sample * gain) for got, sample in zip(left, tone))
+                    self.assertLessEqual(error, 1.0, "each copy should have equal-power gain")
 
     def test_audio_denoise_strength_range_matches_what_afftdn_accepts(self):
         """--denoise-strength is afftdn's nf, which ffmpeg accepts only in -80..-20: both ends of the
