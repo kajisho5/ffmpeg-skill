@@ -13,6 +13,12 @@
   without `--keep-alpha` the flag is refused (`source_alpha_mode_needs_keep_alpha`). The premultiplied write
   (`--alpha-mode premultiplied`, every tool that has it) now multiplies in 16-bit RGB instead of 8-bit.
 
+## 4.7.1
+
+_Automated release: version and notes generated from pull requests merged since 4.7.0._
+
+- fix: isolate per-test output directories under tests/out (#685) (#707)
+
 ## 4.7.0
 
 _Automated release: version and notes generated from pull requests merged since 4.6.5._

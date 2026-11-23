@@ -2338,7 +2338,7 @@ class PictureTests(MediaFixtures):
     def test_graphics_templates(self):
         brand = OUT / "brand.json"
         brand.write_text(json.dumps({"font": "DejaVu Sans", "colors": {"primary": "FF6A00", "text": "FFFFFF", "background": "0B1D2A"},
-                                     "logo": "logo.png", "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
+                                     "logo": str(self.logo), "logo_position": "top-right", "logo_scale": 140, "safe_margin": 40,
                                      "caption": {"size": 28, "position": "bottom", "animate": "pop", "karaoke": True, "bold": True}}), encoding="utf-8")
         cases = {
             "lower-third": ["--name", "Ada Lovelace", "--title", "Analyst", "--start", "1", "--end", "6"],

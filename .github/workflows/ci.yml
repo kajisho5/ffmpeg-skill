@@ -124,6 +124,11 @@ jobs:
       - run: python tests/run_parallel.py --part ${{ matrix.part }}/3
       - run: node bin/install.js
         if: matrix.part == 1
+      - name: Cross-module -k and reverse-order test isolation (Linux)
+        if: runner.os == 'Linux' && matrix.part == 1 && matrix.python == '3.10'
+        run: |
+          python3 -m unittest discover -s tests -k font -k fonts_dir -k frozen_1x
+          python3 -m unittest tests.test_picture tests.test_analysis -k fontfile -k font_flag_escapes
 
   # The docs promise FFmpeg 6.1+ (3.0.0 removed 5.x); the matrix above runs 6.1 (apt on Ubuntu
   # 24.04), 8.x (Homebrew) and 9.x (gyan.dev). This Linux-only (1x cost) job pins 7.1, which
