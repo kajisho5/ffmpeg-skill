@@ -2903,6 +2903,20 @@ sys.exit(fit.main())
         proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--call", "not_a_tool")
         self.assertTrue(json.loads(proc.stdout)["isError"])
 
+    def test_pacing_profile_surface_and_mcp_repeated_references(self):
+        tool = self.tools["silence"]
+        schema = tool["output_schema"]["properties"]["profile"]
+        self.assertEqual(schema["properties"]["contract"]["const"], "pacing-profile@1")
+        self.assertIn("noise_floor_db", schema["properties"]["silence_detection"]["required"])
+        self.assertIn("source", self.tools["verify"]["input_schema"]["properties"])
+        args = {"input": str(self.wav), "extract_profile": True,
+                "references": [str(self.wav), str(self.wav)], "dry_run": True}
+        response = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "silence", "arguments": args}}])[0]["result"]
+        self.assertFalse(response.get("isError"), response)
+        profile = response["structuredContent"]["profile"]
+        self.assertEqual(profile["probe_meta"]["analysis_count"], 3)
+
     def test_mcp_round_trips_built_from_the_derived_schema(self):
         listed = {t["name"]: t["inputSchema"] for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]}
         project = self.out("mcp_project.json")

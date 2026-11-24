@@ -658,9 +658,16 @@ def main() -> int:
                           "--filler-list report them without the limit")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
+    ap.add_argument("--profile", help="pacing-profile@1 JSON path or sns-short, youtube-talk, podcast-natural")
+    ap.add_argument("--protect-ranges", help="JSON intervals in source milliseconds to preserve")
+    ap.add_argument("--extract-profile", action="store_true", help="measure a reusable pacing profile, optionally written with -o")
+    ap.add_argument("--references", action="extend", nargs="+", help="additional completed videos for --extract-profile")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.extract_profile or args.references or args.profile or args.protect_ranges:
+        from _common.pacing_edit import cli
+        return cli(args, checking=False)
     if args.timemap:
         if os.path.splitext(args.timemap)[1].lower() not in (".json", ".csv"):
             die(f"--timemap must end in .json or .csv: {args.timemap}", kind="input")
