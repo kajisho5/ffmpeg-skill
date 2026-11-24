@@ -2730,6 +2730,8 @@ class PacingTests(unittest.TestCase):
         if kind == "ramp":
             gap += "+0.3*(t-1.5)"
         expr = f"if(between(t,0.8,2.2),{gap},0.16*sin(2*PI*440*t))"
+        if kind == "edges":
+            expr = f"if(between(t,0.3,2.7),{expr},0)"
         if kind == "bed":
             expr = "0.15*sin(2*PI*440*t)"
         args = ["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i",
@@ -2822,6 +2824,17 @@ class PacingTests(unittest.TestCase):
         saved.write_text(json.dumps(plan))
         self.call("render", saved, "--overwrite", ok=False)
         self.assertEqual(output.read_bytes(), before)
+
+    def test_head_and_tail_are_measured_below_interior_detection_floor(self):
+        from _common.pacing import pauses, preset
+        detection = preset("youtube-talk")["silence_detection"]
+        self.assertEqual(pauses([-100, -12, -100, -100], 40, detection), [(0, 10), (20, 40)])
+        source = self.media("head-tail", kind="edges")
+        output = self.root/"trimmed-edges.mkv"
+        self.call("silence", source, "--profile", "sns-short", "-o", output)
+        gate = self.call("verify", output, "--source", source, "--profile", "sns-short")
+        self.assertTrue(gate["checks"]["leading"] and gate["checks"]["trailing"])
+        self.assertEqual(gate["cut_plan"]["cut_count"], 3)
 
     def test_zero_cross_shift_finds_smallest_multichannel_discontinuity(self):
         from _common.pacing_edit import splice_shift

@@ -185,6 +185,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
     "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)", "pacing-profile@1 (--extract-profile)", "pacing-cut-plan@1 and lossless MKV (--profile)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": "encoder:ffv1", "when": "--profile renders a master"},
+                                                                    {"capability": "bsf:setts", "when": "--profile preserves the kept final frame duration"},
                                                                     {"capability": "filter:scdet", "when": "--extract-profile on video"},
                                                                     {"capability": "filter:loudnorm", "when": "--extract-profile"},
                                                                     {"capability": X264, "when": "removing silences from a video without --profile"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},

@@ -18,8 +18,9 @@ from _common.emit import write_plan
 
 def frames(path):
     args = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames", "-show_entries",
-            "frame=best_effort_timestamp_time,duration_time,pkt_duration_time", "-of", "json", path]
-    data = json.loads(run_analysis(args).stdout)["frames"]
+            "frame=best_effort_timestamp_time,duration_time,pkt_duration_time:stream_tags=DURATION", "-of", "json", path]
+    document = json.loads(run_analysis(args).stdout)
+    data = document["frames"]
     if not data:
         raise ValueError("pacing edits require a video stream")
     pts = [float(f["best_effort_timestamp_time"])*1000 for f in data]
@@ -28,7 +29,17 @@ def frames(path):
     last = data[-1]
     length = last.get("duration_time") or last.get("pkt_duration_time")
     if not length or float(length) <= 0:
-        raise ValueError("final frame duration unavailable")
+        # Matroska can omit packet durations but record the independently muxed
+        # end of this particular track (the container duration may be the audio).
+        streams = document.get("streams") or []
+        end = streams[0].get("tags", {}).get("DURATION") if streams else None
+        if not end:
+            raise ValueError("final frame duration unavailable")
+        h, m, sec = end.split(":")
+        track_end = (int(h)*3600 + int(m)*60 + float(sec))*1000
+        if track_end <= pts[-1]:
+            raise ValueError("final video frame has no positive duration")
+        return pts+[track_end]
     return pts + [pts[-1] + float(length)*1000]
 
 
@@ -146,6 +157,7 @@ def make_plan(path, profile, protect, stack):
     cuts = []
     for i, j in spans:
         cuts.append(dict(first_frame=i, end_frame=j, start_ms=pts[i], end_ms=pts[j],
+                         last_frame_ms=pts[j]-pts[j-1],
                          first_sample=sample(pts[i]), end_sample=min(sample(pts[j]), len(pcm)//channels)))
     if seam["seam_mode"] == "zero_cross_shift":
         for left, right in zip(cuts, cuts[1:]):
@@ -197,11 +209,14 @@ def render(path, dest, plan, rate, channels, pcm, profile, tmp):
     for a,b in zip(keep, keep[1:]):
         count += a["end_frame"]-a["first_frame"]
         offset += f"-gte(N,{count})*{round(1000*(b['start_ms']-a['end_ms']))}"
+    final_index = sum(r["end_frame"]-r["first_frame"] for r in keep)-1
+    last_duration = round(keep[-1]["last_frame_ms"]*1000)
+    packet_clock = f"setts=duration='if(eq(N,{final_index}),{last_duration},NEXT_PTS-PTS)'"
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-f", "s32le", "-ar", str(rate),
            "-ac", str(channels), "-i", str(raw), "-map", "0:v:0", "-map", "1:a:0",
            "-vf", f"settb=expr=1/1000000,select='{select}',setpts='{offset}'",
            "-fps_mode", "passthrough", "-enc_time_base", "1:1000000", "-c:v", "ffv1",
-           "-c:a", "pcm_s32le", "-map_chapters", "-1", "-f", "matroska", dest]
+           "-bsf:v", packet_clock, "-c:a", "pcm_s32le", "-map_chapters", "-1", "-f", "matroska", dest]
     run(cmd, quiet=True)
 
 
