@@ -816,7 +816,9 @@ Releases are frequent (often several a week). Use the update method that matches
 ```bash
 grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
 npm view ffmpeg-skill version                                  # the latest release
-npx ffmpeg-skill@latest setup                                   # refresh home-directory skill copies for detected agents (Claude Code if none are found)
+npx ffmpeg-skill@latest setup                                   # refresh detected home copies; if FFmpeg is missing, may run the system package manager
+npx ffmpeg-skill@latest setup --no-ffmpeg                       # refresh those skill copies only (never runs a package manager)
+npx ffmpeg-skill@latest --cursor                                # one home agent without setup (also --claude, --codex)
 npx ffmpeg-skill@latest --project                               # run from the same project directory
 npx ffmpeg-skill@latest --dir ./my-skills                        # use the same parent directory as before
 ```
