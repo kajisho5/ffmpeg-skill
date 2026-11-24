@@ -297,6 +297,22 @@ class EditingTests(MediaFixtures):
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
 
+    def test_fit_notes_interlaced_input_without_deinterlacing(self):
+        for field_order, flags in (("tt", ("-vf", "tinterlace=interleave_top", "-flags", "+ilme+ildct")),
+                                   ("progressive", ("-vf", "fps=25",))):
+            with self.subTest(field_order=field_order):
+                src = OUT / f"fit_scan_{field_order}.mpg"
+                out = OUT / f"fit_scan_{field_order}.mp4"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   "testsrc2=s=160x120:r=50:d=1", *flags, "-c:v", "mpeg2video", src)
+                fields = sh("ffprobe", "-v", "error", "-select_streams", "V:0", "-show_entries",
+                            "stream=field_order", "-of", "default=nw=1:nk=1", src).stdout.strip()
+                self.assertEqual(fields, field_order)
+                result = json.loads(script("fit.py", src, "--width", "80", "-o", out, "--json").stdout)
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(probe(str(out))["video"]["width"], 80)
+                self.assertEqual(any("deinterlace.py" in note for note in result.get("notes", [])), field_order == "tt")
+
     def test_broll_cutaway_shows_b_in_the_window_and_keeps_a_elsewhere(self):
         """#141: broll.py shows B's picture over A for a window and returns to A at A's own time;
         the output is exactly A's length. Checked frame by frame: inside the window a frame

@@ -431,7 +431,7 @@ def main() -> int:
         except OSError as exc:
             die(f"cannot fingerprint the source for the duration plan: {exc}", kind="input")
         STATE.measured_plan_inputs[source["path"]] = source
-    meta = probe(args.input)
+    meta = probe(args.input, advise_deinterlace=True)
     if not meta.get("video"):
         die("input has no video stream")
     audio_streams = meta.get("audio_streams") or []
