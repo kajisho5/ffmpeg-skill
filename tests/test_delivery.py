@@ -490,7 +490,7 @@ raise SystemExit(export.main())
         self.assertEqual((plan["source_alpha_mode"], plan["alpha_mode"]), ("premultiplied", "premultiplied"))
         self.assertEqual(cmds["default"], cmds["straight"])
         self.assertNotIn("unpremultiply", cmds["straight"])
-        self.assertIn("format=gbrapf32le,unpremultiply=inplace=1", cmds["premultiplied"])
+        self.assertRegex(cmds["premultiplied"], r"format=gbrapf32le,(?:setparams=alpha_mode=premultiplied,)?unpremultiply=inplace=1")
         proc = script("color.py", src, "--correct", "--exposure", "0.3", "--source-alpha-mode", "premultiplied", "--json",
                       "-o", OUT / "alpha_pm_x.mp4", expect_fail=True)
         err = json.loads(proc.stdout)["error"]

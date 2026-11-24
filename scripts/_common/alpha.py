@@ -386,11 +386,12 @@ def finish_chain(codec: str, mode: Optional[str], meta: Optional[Dict[str, Any]]
 
 
 def unpremultiply_leg(meta: Optional[Dict[str, Any]]) -> str:
-    """Recover straight RGB before a grade, then restore the source format and matrix."""
+    # FFmpeg 9 skips division when the negotiated source mode is already straight.
+    mode = "setparams=alpha_mode=premultiplied," if _runner.ffmpeg_version() >= (9, 0) else ""
     # Float RGB avoids rounding before the division. Use the same matrix on both conversions.
     v = (meta or {}).get("video") or {}
     matrix = None if is_rgb(meta) else _SWS_MATRIX.get(v.get("color_space"))
-    return ((f"scale=in_color_matrix={matrix}," if matrix else "") + "format=gbrapf32le,unpremultiply=inplace=1,"
+    return ((f"scale=in_color_matrix={matrix}," if matrix else "") + f"format=gbrapf32le,{mode}unpremultiply=inplace=1,"
             + (f"scale=out_color_matrix={matrix}," if matrix else "") + f"format={v.get('pix_fmt')},")
 
 
