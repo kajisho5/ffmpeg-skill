@@ -1950,8 +1950,8 @@ class SourceCarryTests(MediaFixtures):
         """#470's class, where #695 did not reach: the six tools that take --fps were relabelled in
         cfr_args(), and the two whose rate is not the caller's still wrote the source's label at
         the source's rate. deinterlace.py --mode field emits one frame per field and delivers
-        50 fps from a 25 fps source, and export.py's reels/tiktok/shorts/linkedin presets and x
-        name their own -r 30: a clip starting 01:00:00:12 was stamped 01:00:00:12, which names
+        50 fps from a 25 fps source, and export.py's reels preset names its own -r 30:
+        a clip starting 01:00:00:12 was stamped 01:00:00:12, which names
         0.24 s at 50 and 0.4 s at 30. Both now count it at the rate they deliver. A preset that
         keeps the source's rate (youtube at 25) still writes the source's own label."""
         src = OUT / "tc25_rate.mov"
@@ -1969,6 +1969,17 @@ class SourceCarryTests(MediaFixtures):
             # stale source track copied beside the new label would show here as the old value
             self.assertEqual(self._timecode_written(OUT / name), [want], (tool, extra))
             self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), (tool, extra, doc.get("source_carry")))
+
+    def test_export_reels_relabels_ntsc_drop_frame_timecode(self):
+        src, out = OUT / "tc2997_drop.mov", OUT / "tc2997_reels.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=160x90:r=30000/1001:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-timecode", "01:00:00;12", src)
+        self.assertEqual(self._timecode_written(src), ["01:00:00;12"])
+        doc = json.loads(script("export.py", src, "--preset", "reels", "-o", out,
+                                "--overwrite", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        self.assertEqual(self._timecode_written(out), ["01:00:00:12"])
 
     def test_deinterlace_field_filter_uses_the_delivered_rate(self):
         src = OUT / "deinterlace_near25.mov"
