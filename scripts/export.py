@@ -419,10 +419,7 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
     if sub_codecs and data:
         rungs.append((sub_args, ["data"]))
     rungs.append(([], (["subtitle"] if sub_codecs else []) + (["data"] if data else [])))
-    for n, (extra, dropped) in enumerate(rungs):
-        if n == len(rungs) - 1:
-            run(cmd + extra + [output])
-            return dropped
+    for n, (extra, dropped) in enumerate(rungs[:-1]):
         attempt = run(cmd + extra + [output], check=False)
         if attempt.returncode == 0:
             return dropped
@@ -434,7 +431,8 @@ def _run_keeping_non_av(cmd: List[str], output: str, sub_codecs: List[str], data
         record_fallback(f"{os.path.basename(output)} could not hold the source's {' and '.join(t for t in ('subtitle', 'data') if t in going)} "
                         f"stream(s) ({error or 'ffmpeg exit ' + str(attempt.returncode)}); encoding again without them",
                         "non_av_streams_dropped", output=output, returncode=attempt.returncode, error=error, dropped=going)
-    return []  # not reached: the last rung either returns or exits
+    run(cmd + [output])
+    return rungs[-1][1]
 
 
 def _written_data_codec(n: int, sources: List[Dict], written: List[Dict]) -> bool:
@@ -780,32 +778,28 @@ def main() -> int:
         video = hw_preset_video(video, meta, bt709=tag_bt709)
     if args.max_mb is not None:
         video = size_video_args(args, video, p, meta, has_audio)
+    if args.preset != "copy" and "-r" not in video:
+        video += _platform_rate_args(args.preset, meta) or cfr_args(meta)
     cmd += video + enlarge_args(meta, *((None, None) if args.no_scale else (p["w"], p["h"])))
     if args.preset != "copy":
         # a stream copy can't be frame-rate-conformed or retagged without decoding it — that would
         # no longer be a copy, and would silently mislabel colour the agent never actually looked at
-        rate_args: List[str] = []
-        if "-r" not in video:
-            rate_args = _platform_rate_args(args.preset, meta) or cfr_args(meta)
-            cmd += rate_args
         # the rate the line delivers (a preset's own -r, a platform's divided rate, or a VFR
         # source's average) is reached by the fps filter, the nearest frame for each slot: the
         # encoder line's -r alone let a frame run up to two frames late against the sound before
         # it dropped one (#512)
-        rate_f = (video[video.index('-r') + 1] if "-r" in video
-                  else rate_args[rate_args.index('-r') + 1] if "-r" in rate_args else "")
-        if rate_f:
-            # a rate the line delivers that no --fps named still moves the start timecode: a 25 fps
-            # clip exported to reels kept 01:00:00:12, 0.4 s at 30 (#470)
-            cmd += relabel_at(meta, float(Fraction(rate_f)))
-            rate_f = f"fps={rate_f}"
-        # it is placed as with_cfr() places it: first in a -vf that is a graph (a blur pad's
-        # split/overlay, a drawn pad's maskedmerge), whose last frame an fps filter after it lost
-        # on FFmpeg 6.1 (reels --pad-fill blur: 119 frames of a 4 s 30 fps picture)
-        if rate_f and "-vf" in cmd:
-            cmd[cmd.index("-vf") + 1] = chain_with_rate(cmd[cmd.index("-vf") + 1], rate_f)
-        elif rate_f:
-            cmd += ["-vf", rate_f]
+        if "-r" in video:
+            rate = video[video.index("-r") + 1]
+            # Preset and VFR rates relabel timecode here. The cfr_args() call above
+            # supplies no explicit fps argument, so it cannot emit a second label.
+            cmd += relabel_at(meta, float(Fraction(rate)))
+            rate_filter = f"fps={rate}"
+            if "-vf" in cmd:
+                # In a filter graph conform before split/overlay or maskedmerge, whose
+                # last frame the filter would lose on FFmpeg 6.1 if placed afterward.
+                cmd[cmd.index("-vf") + 1] = chain_with_rate(cmd[cmd.index("-vf") + 1], rate_filter)
+            else:
+                cmd += ["-vf", rate_filter]
         if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
         hdr = bool(meta["video"].get("bt2020_or_hdr"))

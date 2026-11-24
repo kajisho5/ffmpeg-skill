@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 
 MODES = {"frame": 0, "field": 1}
 PARITIES = {"auto": -1, "tff": 0, "bff": 1}
@@ -60,16 +60,12 @@ def main() -> int:
     vf = f"yadif=mode={MODES[args.mode]}:parity={PARITIES[args.parity]}:deint={1 if args.only_interlaced else 0}"
     # the conform is the fps filter at the end of the chain, the rate the encoder line delivers:
     # its -fps_mode cfr alone let a frame run up to two frames late (#512)
-    if args.mode == "field":
-        # the doubled rate goes through cfr_args() rather than a hand-built -r, so the start
-        # timecode is counted at the delivered rate like every other forced rate (#470:
-        # 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and the source's tmcd track is not copied)
-        rate = (meta["video"].get("fps") or 30.0) * 2
-        rate_args = cfr_args(meta, rate)
+    # Field mode counts the start timecode at the doubled rate (#470). Both modes build
+    # the filter from the same snapped rate the encoder receives.
+    field_rate = (meta["video"].get("fps") or 30.0) * 2 if args.mode == "field" else None
+    rate_args = cfr_args(meta, field_rate)
+    if rate_args:
         vf += f",fps={rate_args[rate_args.index('-r') + 1]}"
-    else:
-        rate_args = cfr_args(meta)
-        vf = with_cfr(vf, meta)
     cmd = ffmpeg_base() + ["-i", args.input, "-vf", vf, "-map", "0:v:0"]
     if has_audio:
         cmd += ["-map", f"0:a:{args.audio_stream}?"]

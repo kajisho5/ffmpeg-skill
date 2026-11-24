@@ -3435,7 +3435,9 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   conformed): 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and a fit that changes the rate writes
   it even without a trim, leaving the source's tmcd track behind. A rate no `--fps` asks for is
   one too: `deinterlace --mode field` doubles it and `export`'s `reels`-family presets name their
-  own `-r 30`, so both count the label at the rate they deliver. A start before a picture that
+  own `-r 30`, so both count the label at the rate they deliver. Compare the source and delivered
+  rates as timeline rationals after snapping the delivered rate. Equivalent NTSC rates keep their
+  label, while a 25.005 fps source conformed to 25 fps gets a new one. A start before a picture that
   starts after the file's origin is that picture's first frame; only a padded head counts back.
   Code: `_common.timeline.output_timecode_args()`, `_common.decision.relabel_at()`,
   `cut.first_frame_from()`. Tests:
