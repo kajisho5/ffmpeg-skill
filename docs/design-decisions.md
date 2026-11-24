@@ -3280,6 +3280,33 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   alpha 513 of 1023, decoded `yuva444p12le`, was written as 514 to 519 of 1023, two 8-bit steps
   dithered). The written alpha is compared with the source's frame by frame (tolerance 2 of 255),
   exactly as export's alpha presets are. Code: `color.main()`. Test: as above.
+- **`color.py --source-alpha-mode premultiplied` grades the straight colour of a premultiplied
+  source (#453, the owner's request, added during the feature freeze).** `--keep-alpha` grades the
+  colour planes as stored, so on a source whose colour is already multiplied by its alpha a lift or
+  a gamma moved a partly transparent edge differently from the opaque pixel next to it (a LUT or
+  `--correct --gamma` came out up to 146 codes apart under alpha 128 and 64; a pure gain, which
+  scales both, hid it). Alpha is not guessed from the file: the caller says it, and the default,
+  `straight`, is the command it always was. `premultiplied` puts `format=gbrapf32le,
+  unpremultiply=inplace=1` (in float RGB, with the source's matrix named on both legs as
+  `finish_chain()` does for its premultiply; alpha 0 stays 0) in front of the grade, and writes the
+  colour premultiplied again through `finish_chain()`'s existing RGB premultiply, so `alpha_mode`
+  is `premultiplied` unless `--alpha-mode straight` asks for a straight master. That premultiply
+  now runs in 16-bit instead of 8-bit RGB for every tool that has `--alpha-mode premultiplied`: at
+  8 bits a 10-bit ProRes colour under alpha 128 was off by 1.5 codes once divided by its alpha
+  again. The result and the `alpha` step carry `source_alpha_mode`, so a caller can see which
+  reading the grade took; the alpha plane is not touched in either mode. The flag without
+  `--keep-alpha` is refused (`source_alpha_mode_needs_keep_alpha`): without the flag the alpha is
+  dropped or lost, and there is no colour to divide. Not done: dropping the alpha ahead of
+  `--to-sdr`'s zscale chain. FFmpeg 6.1's zscale passes a `yuva444p12le` HDR source through
+  unchanged and the written H.264 is opaque anyway (`alpha_dropped`); a plane-dropping `format=`
+  needs a map from every alpha pixel format to its opaque one, and no build that treats the plane
+  differently was at hand to show it is needed. Bounds measured on 6.1.1 (a 30C050 fill under alpha
+  255/128/64/0, premultiplied, graded with `--correct --gamma 1.6` and a LUT): ProRes 4444's
+  re-straightened colour is within 0.9 codes of the opaque band's at alpha 128 and 1.7 at 64; qtrle,
+  whose grade goes through an 8-bit 4:4:4 working picture, within 1.7 and 2.9, so the test holds
+  it to 3.5. Code:
+  `alpha.unpremultiply_leg()`, `color.main()`. Test:
+  `test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453`.
 - **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
   coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
   stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn

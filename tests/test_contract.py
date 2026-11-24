@@ -2387,7 +2387,7 @@ sys.exit(fit.main())
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
             ({}, 12, 73_500),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_500),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_000),  # +500 more for color.py --source-alpha-mode (#453)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
         )
         for env, count, limit in profiles:

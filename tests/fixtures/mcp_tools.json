@@ -279,6 +279,7 @@
    "quality",
    "retag",
    "saturation",
+   "source_alpha_mode",
    "strip_dovi",
    "temperature",
    "timeout",
