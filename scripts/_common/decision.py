@@ -731,8 +731,8 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
 
 
 def relabel_at(meta: Optional[Dict[str, Any]], rate: float) -> List[str]:
-    """The start timecode counted at `rate` instead of the source's; [] when they are the same.
-    export.py's presets name their own -r, so they ask for this beside the -r they already have."""
+    """Relabel when the canonical timeline rationals differ after output-rate snapping.
+    Equivalent NTSC rates compare equal; a near-integer source can still require relabelling."""
     from _common.timeline import exact_rate, output_timecode_args
     src = ((meta or {}).get("video") or {}).get("fps")
     return output_timecode_args(meta, 0.0, rate) if src and exact_rate(float(rate)) != exact_rate(float(src)) else []

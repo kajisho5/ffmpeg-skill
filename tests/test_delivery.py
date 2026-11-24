@@ -1946,6 +1946,13 @@ class SourceCarryTests(MediaFixtures):
                 self.assertEqual(doc["status"], "completed", (tool, doc.get("error")))
                 self.assertEqual(self._timecode_written(out), [want], (tool, fps))
 
+        from _common.decision import cfr_args
+        near = {"video": {"fps": 25.005}, "timecode": {"value": "01:00:00:12"}}
+        rate_args = cfr_args(near, 25)
+        self.assertEqual(rate_args[:4], ["-fps_mode", "cfr", "-r", "25"])
+        self.assertEqual(rate_args[4:], ["-metadata:s:v:0", "timecode=00:59:59:19",
+                                         "-metadata", "timecode=00:59:59:19"])
+
     def test_every_tool_that_changes_the_delivered_rate_counts_the_timecode_at_it(self):
         """#470's class, where #695 did not reach: the six tools that take --fps were relabelled in
         cfr_args(), and the two whose rate is not the caller's still wrote the source's label at
@@ -1980,6 +1987,22 @@ class SourceCarryTests(MediaFixtures):
                                 "--overwrite", "--json").stdout)
         self.assertEqual(doc["status"], "completed", doc.get("error"))
         self.assertEqual(self._timecode_written(out), ["01:00:00:12"])
+
+    def test_export_vfr_conform_writes_one_timecode_to_each_metadata_scope(self):
+        src = OUT / "tc_vfr_near25.mov"
+        # Drop one interior frame out of 1600: r=25 and avg=24.984375. The gap is large
+        # enough to detect VFR and small enough for CFR conform to snap the output to 25.
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "testsrc2=s=32x32:r=25:d=64", "-vf", r"select=not(eq(n\,5))", "-fps_mode", "vfr",
+           "-c:v", "libx264", "-preset", "ultrafast", "-timecode", "01:00:00:12", src)
+        doc = json.loads(script("export.py", src, "--preset", "youtube", "--dry-run", "--json",
+                                "-o", OUT / "tc_vfr_conform.mp4").stdout)
+        command, = doc["commands"]
+        self.assertRegex(command, r"\s-r 25(?:\s|$)")
+        # The probe reports 24.984 fps, so frame 90012 maps to frame 90070 at 25 fps.
+        self.assertEqual(re.findall(r"\btimecode=([0-9:;]+)", command), ["01:00:02:20"] * 2)
+        self.assertRegex(command, r"-metadata:s:v:0\s+['\"]?timecode=01:00:02:20")
+        self.assertRegex(command, r"-metadata\s+['\"]?timecode=01:00:02:20")
 
     def test_deinterlace_field_filter_uses_the_delivered_rate(self):
         src = OUT / "deinterlace_near25.mov"
