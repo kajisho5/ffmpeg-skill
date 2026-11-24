@@ -59,6 +59,9 @@
    "stereo_widen",
    "tempo",
    "timeout",
+   "track",
+   "track_lang",
+   "track_name",
    "voice"
   ],
   "required": []
@@ -276,6 +279,7 @@
    "quality",
    "retag",
    "saturation",
+   "source_alpha_mode",
    "strip_dovi",
    "temperature",
    "timeout",

@@ -123,10 +123,10 @@ def hdr_line_matrix(v: Optional[Dict[str, Any]]) -> str:
     return cs or "bt2020nc"
 
 
-def hdr_rgb_matrix_filter(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def hdr_rgb_matrix_filter(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, Any]] = None, alpha: bool = False) -> Optional[str]:
     """For an RGB source that probes BT.2020 or HDR, written on a line that keeps that colour
     (video_args' Main10 / 10-bit lines; `line_meta`: the probe the line was chosen for when it is
-    another picture's, as in a join): the filter that makes its YUV with the matrix the line tags
+    another picture's, as in a join; `alpha`: an alpha line, which keeps the plane): the filter that makes its YUV with the matrix the line tags
     (hdr_line_matrix), limited range, 4:4:4 at the line's 10 bits, so no later conversion (an
     auto-inserted one, with FFmpeg's BT.601 default) decides the matrix. None for every other
     source, and when the line's matrix is one swscale cannot be told to make (bt2020c, ICtCp).
@@ -144,25 +144,26 @@ def hdr_rgb_matrix_filter(meta: Optional[Dict[str, Any]], line_meta: Optional[Di
     if matrix is None:
         return None
     # a palette is turned into YUV with fixed BT.601 coefficients whatever out_color_matrix says
-    return ("format=rgb24," if v.get("pix_fmt") == "pal8" else "") + f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv444p10le"
+    return ("format=rgb24," if v.get("pix_fmt") == "pal8" else "") + f"scale=out_color_matrix={matrix}:out_range=tv,format=yuv{'a' * alpha}444p10le"
 
 
 # An odd-sized BT.601 source is padded to even for the colorspace filter and cropped back to its
 # own size after it (bt709_matrix_filter): both wrap the conversion in the one -vf the merge finds.
 _EVEN_PAD = "pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0,"
-_MATRIX_FILTER_RE = re.compile(r"^(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s"
-                               r"|(?:format=rgb24,)?scale=out_color_matrix=(?:%s):out_range=tv,format=yuv444p10le)$"
+_BT709_RELABEL = "setparams=color_primaries=bt709:color_trc=bt709"
+_MATRIX_FILTER_RE = re.compile(r"^(?:(?:(?:%s)?colorspace=ispace=(?:%s):iprimaries=bt709:itrc=bt709:space=bt709:primaries=bt709:trc=bt709(?:,crop=iw-[01]:ih-[01]:0:0:exact=1)?|(?:format=rgb24,)?%s"
+                               r"|(?:format=rgb24,)?scale=out_color_matrix=(?:%s):out_range=tv,format=yuva?444p10le)(?:,%s)?|%s)$"
                                % (re.escape(_EVEN_PAD), "|".join(NON_BT709_MATRICES), re.escape(rgb_to_bt709_filter()),
-                                  "|".join(sorted(set(_SWS_OUT_MATRIX.values())))))
+                                  "|".join(sorted(set(_SWS_OUT_MATRIX.values()))), re.escape(_BT709_RELABEL), re.escape(_BT709_RELABEL)))
 # [N:v], [N:v:0] and [N:V:0] (PROBED_VIDEO: the motion picture, not an attached cover)
 _INPUT_VIDEO_REF = re.compile(r"\[(\d+):[vV](?::0)?\]")
 
 
 def bt709_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
     """The filter that turns the probed source's pixels into BT.709 ones before an output is
-    tagged BT.709, or None when nothing needs converting: an SDR source tagged with a non-BT.709
-    matrix (NON_BT709_MATRICES) only. An untagged or BT.709 source, an HDR/BT.2020 one (it keeps
-    its own tags, or color.py --to-sdr converts it) and a missing probe get None, so their
+    tagged BT.709, or None when nothing needs converting: a source tagged with a non-BT.709 matrix
+    (NON_BT709_MATRICES) or an RGB one. An untagged or BT.709 source, an HDR/BT.2020 YUV one (it
+    keeps its own tags, or color.py --to-sdr converts it) and a missing probe get None, so their
     commands are what they were.
 
     The matrix is converted and nothing else: primaries and transfer are passed through
@@ -175,10 +176,12 @@ def bt709_matrix_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
     but gets one where the graph first needs YUV, and FFmpeg's default there is BT.601: through
     2.10.1 such a source came out labelled BT.709 over BT.601-encoded pixels (pure red decoded as
     (255,24,0), pure green as (0,216,0), on 5.1.1 to 8.1). It is converted to BT.709 YUV here
-    (rgb_to_bt709_filter). A JPEG (yuvj, tagged bt470bg) is a BT.601 source like any other."""
+    (rgb_to_bt709_filter), an HDR or BT.2020 RGB one too (#559): the tag names the matrix whatever
+    the primaries and transfer are (the HDR line's own conversion is hdr_rgb_matrix_filter). A JPEG
+    (yuvj, tagged bt470bg) is a BT.601 source like any other."""
     v = (meta or {}).get("video") or {}
     matrix = v.get("color_space")
-    if v.get("bt2020_or_hdr"):
+    if v.get("bt2020_or_hdr") and not is_rgb(meta):
         return None
     if is_rgb(meta):
         # a palette is turned into YUV with fixed BT.601 coefficients whatever out_color_matrix
@@ -334,14 +337,23 @@ def bt709_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     re-encodes through that line converts without building it into its own graph. That -vf is
     valid as it stands for a command with no other filter; run() folds it into the tool's own
     -vf or -filter_complex (fold_bt709_matrix()) before the command is recorded or run."""
-    f = bt709_matrix_filter(meta)
+    f = bt709_line_filter(meta)
     return ["-vf", f] if f else []
 
 
-def hdr_rgb_matrix_args(meta: Optional[Dict[str, Any]]) -> List[str]:
+# bt709_matrix_filter(), and on FFmpeg 9+ for an HDR source a relabel: FFmpeg 9 writes mp4/mov's colr box
+# from the frames, which keep its primaries and transfer under a bt709 VUI (#711). It converts nothing.
+def bt709_line_filter(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    f = bt709_matrix_filter(meta)
+    if ((meta or {}).get("video") or {}).get("bt2020_or_hdr") and ffmpeg_version() >= (9, 0):
+        f = ",".join(x for x in (f, _BT709_RELABEL) if x)
+    return f
+
+
+def hdr_rgb_matrix_args(meta: Optional[Dict[str, Any]], alpha: bool = False) -> List[str]:
     """["-vf", hdr_rgb_matrix_filter(meta)] for an encoder line that keeps a BT.2020 / HDR source's
     colour, or []: bt709_matrix_args()'s counterpart for that line, folded by run() the same way."""
-    f = hdr_rgb_matrix_filter(meta)
+    f = hdr_rgb_matrix_filter(meta, alpha=alpha)
     return ["-vf", f] if f else []
 
 

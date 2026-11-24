@@ -28,12 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
 CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
+from _fixtures import OUT, SHARED_OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
@@ -2188,8 +2189,12 @@ sys.exit(fit.main())
             self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt=pf)), rgb, pf)  # qtrle: no matrix tag at all
         self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="pal8", color_space="gbr")), "format=rgb24," + rgb)
         for m in (meta(pix_fmt="gray"), meta(pix_fmt="ya8"), meta(pix_fmt="yuv420p"), meta(pix_fmt="yuvj420p"),
-                  meta(pix_fmt="rgb48be", bt2020_or_hdr=True), meta(color_space="gbr")):
+                  meta(pix_fmt="yuv420p10le", bt2020_or_hdr=True), meta(color_space="gbr")):
             self.assertIsNone(_common.bt709_matrix_filter(m), m)
+        # #559: an HDR / BT.2020 RGB source on a line tagged BT.709 is converted with the matrix the tag names
+        # (primaries and transfer stay the line's business); an HDR line converts with its own (hdr_rgb_matrix_filter)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="rgb48be", bt2020_or_hdr=True)), rgb)
+        self.assertEqual(_common.bt709_matrix_filter(meta(pix_fmt="gbrp10le", color_space="gbr", bt2020_or_hdr=True)), rgb)
         # a JPEG probes as yuvj420p/bt470bg: a BT.601 source like any other
         self.assertTrue(_common.bt709_matrix_filter(meta(pix_fmt="yuvj420p", color_space="bt470bg", color_range="pc")).startswith("colorspace=ispace=bt470bg:"))
         png = meta(pix_fmt="rgb24", color_space="gbr")
@@ -2225,6 +2230,28 @@ sys.exit(fit.main())
             enc = ["-c:v", "libx264", "-vf", conv, "out.mp4"]
             self.assertEqual(fold(["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", "scale=2:2"] + enc),
                              ["ffmpeg", "-loop", "1", "-i", "a.png", "-vf", f"{conv},scale=2:2", "-c:v", "libx264", "out.mp4"])
+
+    def test_a_bt709_line_relabels_an_hdr_sources_frames_on_ffmpeg_9(self):
+        """#711: FFmpeg 9 writes mp4/mov's colr box from the frames, so a BT.709 line over an HDR source
+        said bt709 in the VUI and bt2020/smpte2084 in the container. From 9.0 the line's -vf relabels
+        the frames' primaries and transfer (setparams converts no pixel); before 9.0 nothing changes."""
+        from unittest import mock
+        from _common import color
+        hdr_yuv = {"video": {"bt2020_or_hdr": True, "pix_fmt": "yuv420p10le", "color_space": "bt2020nc"}}
+        hdr_rgb = {"video": {"bt2020_or_hdr": True, "pix_fmt": "gbrp10le"}}
+        sdr = {"video": {"pix_fmt": "yuv420p", "color_space": "bt709"}}
+        relabel = "setparams=color_primaries=bt709:color_trc=bt709"
+        with mock.patch.object(color, "ffmpeg_version", return_value=(9, 0)):
+            self.assertEqual(color.bt709_matrix_args(hdr_yuv), ["-vf", relabel])
+            self.assertEqual(color.bt709_matrix_args(hdr_rgb), ["-vf", color.rgb_to_bt709_filter() + "," + relabel])
+            self.assertEqual(color.bt709_matrix_args(sdr), [])
+            for meta in (hdr_yuv, hdr_rgb):  # run() still finds it and folds it into the tool's graph
+                self.assertRegex(color.bt709_matrix_args(meta)[1], color._MATRIX_FILTER_RE)
+            # a mixing tool's per-source chain on a BT.709 line (grid, join, multicam, broll, overlay)
+            from _common import decision
+            self.assertEqual(decision.matrix_chain(hdr_yuv, sdr), relabel + ",")
+        with mock.patch.object(color, "ffmpeg_version", return_value=(8, 0)):
+            self.assertEqual(color.bt709_matrix_args(hdr_yuv), [])
 
     def test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source(self):
         """#544: an RGB source that probes BT.2020 / HDR has no matrix (tag `gbr`, or none). The 10-bit
@@ -2277,6 +2304,12 @@ sys.exit(fit.main())
             self.assertNotIn("-vf", _common.video_args(rgb))
             self.assertIsNone(line_matrix_filter(rgb))
             self.assertEqual(_common.matrix_chain(rgb, rgb), "")
+            # #559: the alpha line's own way to YUV names the matrix it tags, and keeps the source's primaries and transfer
+            from _common import alpha
+            self.assertEqual(alpha.source_format(rgb), conv.replace("yuv444", "yuva444"))
+            self.assertEqual(alpha.tag_args(rgb), ["-colorspace", "bt2020nc", "-color_primaries", "bt2020", "-color_trc", "smpte2084"])
+            _common.STATE.alpha_line = "qtrle"  # an RGB line stays RGB
+            self.assertEqual((alpha.source_format(rgb), alpha.tag_args(rgb)), ("format=yuva444p", ["-color_primaries", "bt2020", "-color_trc", "smpte2084"]))
         finally:
             _common.STATE.codec, _common.STATE.hw, _common.STATE.alpha_line = saved
         fold = _common.fold_bt709_matrix
@@ -2350,9 +2383,11 @@ sys.exit(fit.main())
             self.assertNotIn("Traceback", proc.stderr)
 
     def test_mcp_advertisement_payload_stays_within_documented_budgets(self):
+        # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
+        # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 73_000),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 195_000),
+            ({}, 12, 73_500),
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_000),  # +500 more for color.py --source-alpha-mode (#453)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
         )
         for env, count, limit in profiles:
@@ -3227,7 +3262,7 @@ sys.exit(fit.main())
     DEFECT_CLASSES = ("paths", "not_measured", "claim", "stream", "planned_not_done", "numeric", "ignored_flag",
                       "dry_run", "unbounded", "time", "surface", "test", "several_inputs", "capability",
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
-                      "ffmpeg_version", "new")
+                      "ffmpeg_version", "color", "new")
 
     def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
         """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
@@ -3790,7 +3825,7 @@ sys.exit(fit.main())
         BT.601 source each input read from that file is converted once (cut's segment join opens it
         once per segment), a mixed join/multicam/broll/overlay --video converts only the BT.601
         input, and copies, the prores master and an untagged source plan no conversion at all."""
-        s601 = OUT / "c_source601.mp4"
+        s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
@@ -3839,11 +3874,11 @@ sys.exit(fit.main())
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
         beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
-        s601 = OUT / "c_source601.mp4"
+        s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
-        s709 = OUT / "c_source709.mp4"
+        s709 = SHARED_OUT / "c_source709.mp4"
         if not s709.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-c:a", "copy", s709)
@@ -4016,7 +4051,7 @@ sys.exit(fit.main())
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_range="pc")), "setparams=colorspace=bt709," + lim)
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_space="bt709")), "")
 
-        pc = OUT / "c_source_pc.mkv"
+        pc = SHARED_OUT / "c_source_pc.mkv"
         if not pc.exists():
             ffmpeg("-i", self.src, "-t", "2", "-vf", "scale=out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc",
                    "-c:a", "pcm_s16le", pc)
@@ -4286,7 +4321,7 @@ sys.exit(fit.main())
         bad = self.out("latin1.txt")
         bad.write_bytes(b"0:00-0:01 caf\xe9\n")
         adir = self.out("a_directory")
-        adir.mkdir()
+        adir.mkdir(exist_ok=True)
         for args, needle in ((["--text", str(self.out("nope.txt"))], "does not exist"),
                              (["--text", str(adir)], "is a directory"),
                              (["--text", str(bad)], "not UTF-8")):
@@ -5696,7 +5731,7 @@ sys.exit(fit.main())
         then fails reproduces it in seconds: with the limit at 1 s the run must end as kind
         timeout well before the shim's own sleep would have returned."""
         shim = self.out("hang_shim")
-        shim.mkdir()
+        shim.mkdir(exist_ok=True)
         (shim / "ffmpeg").write_text("#!/bin/sh\nsleep 8\nexit 1\n")
         (shim / "ffmpeg").chmod(0o755)
         (shim / "ffprobe").symlink_to(shutil.which("ffprobe"))
@@ -13604,6 +13639,66 @@ class StumbleLedgerTests(unittest.TestCase):
         # a flag the tool has, an abbreviation argparse accepts and a negative number are left alone
         proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "silence.py"), "--thresh", "-30", "--min-silence=0.4"], capture_output=True, text=True)
         self.assertNotIn("is not an option", proc.stderr)
+
+
+class TestOutIsolationTests(unittest.TestCase):
+    """#685: tests that write into OUT/DIR get a per-test directory so filtered -k runs, reverse
+    module order and repeated runs against the same tests/out never collide."""
+
+    def test_each_test_case_gets_an_isolated_out_directory(self):
+        import _fixtures
+        sub = _fixtures.OUT.sub("cut_copy")
+        seen = []
+
+        class _Probe(unittest.TestCase):
+            def test_fixed_name(self):
+                p = _fixtures.out_path("fixed.txt")
+                self.assertFalse(p.exists())
+                p.write_text("x", encoding="utf-8")
+                q = sub / "nested.txt"
+                self.assertFalse(q.exists())
+                q.write_text("y", encoding="utf-8")
+                seen.append((_fixtures.out_dir(), p, q))
+
+        for _ in range(2):
+            res = unittest.TextTestRunner(stream=io.StringIO()).run(_Probe("test_fixed_name"))
+            self.assertTrue(res.wasSuccessful(), res.errors + res.failures)
+        self.assertEqual(len(seen), 2)
+        self.assertNotEqual(seen[0][0], seen[1][0])
+        self.assertNotEqual(seen[0][0], _fixtures.SHARED_OUT)
+        self.assertFalse(seen[0][1].exists())
+        self.assertFalse(seen[1][1].exists())
+
+    def test_failed_test_case_preserves_isolated_out_directory(self):
+        import _fixtures
+        seen = []
+
+        class _FailingProbe(unittest.TestCase):
+            def test_fail_writes_output(self):
+                p = _fixtures.out_path("debug.txt")
+                p.write_text("keep", encoding="utf-8")
+                seen.append(_fixtures.out_dir())
+                self.fail("boom")
+
+        res = unittest.TextTestRunner(stream=io.StringIO()).run(_FailingProbe("test_fail_writes_output"))
+        self.assertFalse(res.wasSuccessful())
+        self.assertEqual(len(seen), 1)
+        try:
+            self.assertTrue((seen[0] / "debug.txt").exists())
+        finally:
+            shutil.rmtree(seen[0], ignore_errors=True)
+
+    def test_cross_module_k_and_reverse_order_do_not_collide_between_runs(self):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, OUT=tmp)
+            k_args = ["-k", "test_look_scenes_overlay_graphics_prefer_fontfile_over_font_when_resolvable",
+                      "-k", "test_font_flag_escapes_filter_graph_injection_when_unresolved"]
+            for target in (["discover", "-s", "tests", *k_args],
+                           ["tests.test_picture", "tests.test_analysis", *k_args]):
+                proc = subprocess.run([sys.executable, "-m", "unittest", *target],
+                                      cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+                self.assertEqual(proc.returncode, 0, f"{target}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
 
 if __name__ == "__main__":

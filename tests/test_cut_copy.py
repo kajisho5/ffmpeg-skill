@@ -33,7 +33,7 @@ probe_mod = sys.modules["_common.probe"]  # the module (the package re-exports p
 sys.path.insert(0, str(SCRIPTS))
 import cut  # noqa: E402
 
-DIR = OUT / "cut_copy"
+DIR = OUT.sub("cut_copy")
 FPS = 30
 W, H = 64, 36
 

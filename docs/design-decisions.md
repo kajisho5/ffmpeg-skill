@@ -124,6 +124,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.4.1 — the first line of a result is for a reader](#after-441--the-first-line-of-a-result-is-for-a-reader)
 - [After 4.5.1 — a class that keeps coming back gets a guard](#after-451--a-class-that-keeps-coming-back-gets-a-guard)
 - [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
+- [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
+- [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
 <!-- contents:end -->
 
 ## Time limits
@@ -3278,6 +3280,33 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   alpha 513 of 1023, decoded `yuva444p12le`, was written as 514 to 519 of 1023, two 8-bit steps
   dithered). The written alpha is compared with the source's frame by frame (tolerance 2 of 255),
   exactly as export's alpha presets are. Code: `color.main()`. Test: as above.
+- **`color.py --source-alpha-mode premultiplied` grades the straight colour of a premultiplied
+  source (#453, the owner's request, added during the feature freeze).** `--keep-alpha` grades the
+  colour planes as stored, so on a source whose colour is already multiplied by its alpha a lift or
+  a gamma moved a partly transparent edge differently from the opaque pixel next to it (a LUT or
+  `--correct --gamma` came out up to 146 codes apart under alpha 128 and 64; a pure gain, which
+  scales both, hid it). Alpha is not guessed from the file: the caller says it, and the default,
+  `straight`, is the command it always was. `premultiplied` puts `format=gbrapf32le,
+  unpremultiply=inplace=1` (in float RGB, with the source's matrix named on both legs as
+  `finish_chain()` does for its premultiply; alpha 0 stays 0) in front of the grade, and writes the
+  colour premultiplied again through `finish_chain()`'s existing RGB premultiply, so `alpha_mode`
+  is `premultiplied` unless `--alpha-mode straight` asks for a straight master. That premultiply
+  now runs in 16-bit instead of 8-bit RGB for every tool that has `--alpha-mode premultiplied`: at
+  8 bits a 10-bit ProRes colour under alpha 128 was off by 1.5 codes once divided by its alpha
+  again. The result and the `alpha` step carry `source_alpha_mode`, so a caller can see which
+  reading the grade took; the alpha plane is not touched in either mode. The flag without
+  `--keep-alpha` is refused (`source_alpha_mode_needs_keep_alpha`): without the flag the alpha is
+  dropped or lost, and there is no colour to divide. Not done: dropping the alpha ahead of
+  `--to-sdr`'s zscale chain. FFmpeg 6.1's zscale passes a `yuva444p12le` HDR source through
+  unchanged and the written H.264 is opaque anyway (`alpha_dropped`); a plane-dropping `format=`
+  needs a map from every alpha pixel format to its opaque one, and no build that treats the plane
+  differently was at hand to show it is needed. Bounds measured on 6.1.1 (a 30C050 fill under alpha
+  255/128/64/0, premultiplied, graded with `--correct --gamma 1.6` and a LUT): ProRes 4444's
+  re-straightened colour is within 0.9 codes of the opaque band's at alpha 128 and 1.7 at 64; qtrle,
+  whose grade goes through an 8-bit 4:4:4 working picture, within 1.7 and 2.9, so the test holds
+  it to 3.5. Code:
+  `alpha.unpremultiply_leg()`, `color.main()`. Test:
+  `test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453`.
 - **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
   coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
   stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn
@@ -6081,8 +6110,8 @@ before it was changed. Five classes are changed, two are left for a decision.
   measurement take it from `decision.line_matrix_filter()` instead of each asking
   `bt709_matrix_filter()`. `--codec prores` on such a source gets it too: that line writes the
   same three tags. Primaries and transfer are not touched. `bt709_matrix_filter()` still
-  returns nothing for an HDR or BT.2020 source (its test pins that), so no BT.709-tagged line
-  changed.
+  returned nothing for an HDR or BT.2020 source (its test pinned that), so no BT.709-tagged line
+  changed (that sentence no longer holds: #559, "After 4.6.1" below).
 - **Measured after, FFmpeg 6.1.1.** Both variants, read by the output's bt2020nc tag:
   C03028/30C050/2030C0/808080 from `crop`, `fit --fps 30`, `denoise`, `stabilize`,
   `export --preset youtube-hdr`, `join` (two RGB clips; an RGB and a YUV one, with and without a
@@ -6106,12 +6135,12 @@ before it was changed. Five classes are changed, two are left for a decision.
     preset on the YUV PQ copy reads C63828 for the red (BT.2020 samples under the bt709 tag,
     the decided part). Converting it is `bt709_matrix_filter()` returning a filter for an HDR
     RGB source, which
-    `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with` pins as None;
-    proposed, not done.
+    `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with` pinned as None;
+    proposed here, done in #559, "After 4.6.1" below.
   - an SDR RGB clip on an HDR line (`join.py HDR.mkv SDR_RGB.mkv`): still FFmpeg's conversion
     (C53525 by the bt2020nc tag). Its primaries and transfer are not the line's either; a matrix
     alone would not make it right.
-  - an alpha line (`--keep-alpha`, `--transparent`) and `export.py --preset prores` of such a
+  - (done in #559, "After 4.6.1" below) an alpha line (`--keep-alpha`, `--transparent`) and `export.py --preset prores` of such a
     source write no matrix tag at all (and here no primaries or transfer either: ProRes 4444 of
     the PQ fixture probes unknown/unknown/unknown, its YUV BT.601). Nothing disagrees with a tag
     there, so it is not this class; that the HDR tags are lost is. #496's sentence for the alpha
@@ -6567,3 +6596,133 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_join_j_cut_starts_the_next_sound_before_its_picture`,
   `test_join_l_cut_keeps_the_last_sound_past_the_picture`,
   `test_join_j_cut_and_l_cut_refusals` (tests/test_editing.py).
+
+## After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)
+
+- **The class: an RGB source reaches an encoder whose output tag claims a matrix the conversion did
+  not use, or whose tags were dropped.** #544 fixed it on the 10-bit line that keeps an HDR / BT.2020
+  RGB source's colour (`video_args`, `--codec`, `youtube-hdr`/`youtube-av1`) and left two lines
+  out; both were measured on FFmpeg 6.1.1 with a 320x240 gbrp10le FFV1 source of C03028, BT.2020
+  primaries, PQ, and the same picture as `yuv444p10le` made with `scale=out_color_matrix=bt2020nc`:
+  - the 8-bit lines tagged bt709 (`export.py`'s fixed presets, `grid.py`) made the RGB source's YUV
+    with FFmpeg's BT.601 default: `--preset youtube` read the red CC3C25 by its tag, where the source's
+    own code values are C03028; and
+  - the editing masters (`export.py --preset prores`, `dnxhr-*`, the alpha presets `prores4444`,
+    `prores4444xq`, `vp9-alpha`, and `graphics.py` / `overlay.py` `--keep-alpha` on a YUV alpha line)
+    wrote no colour tag (ffprobe: unknown/unknown/unknown) or, from the 8-bit DNxHR line, bt709 over the
+    same BT.601 pixels; the YUV copy of the picture came out bt2020nc/smpte2084/bt2020 from its frames.
+- **Decided (the maintainer): an RGB source on a line tagged BT.709 is converted with the BT.709
+  matrix, HDR or not, so the matrix tag is true.** The sentence of #544's "Seen and not changed" that
+  no longer holds is "an 8-bit BT.709 line given an HDR or BT.2020 RGB source ... converts nothing":
+  the tag was a claim the pixels did not meet, and converting costs one filter in the graph.
+  `bt709_matrix_filter()` returns `rgb_to_bt709_filter()` for an HDR RGB source and still nothing
+  for an HDR YUV one; `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with`
+  pinned None for `rgb48be` + HDR and now pins the filter. Primaries and transfer stay as they were:
+  the preset's `colour_not_converted` warning ("source is HDR ... run color.py --to-sdr first")
+  still says so, and a YUV HDR source on the same line still reads BT.2020 samples as BT.709 (the
+  decided part, "After 3.8.23"). The red patch therefore reads C02E27 for the RGB source and C73628
+  for the YUV copy: the RGB one is the source's own colour, the YUV one is the decided shift; they are
+  not equal, and the fix makes the RGB source right, not equal to the YUV copy. The HDR line keeps its
+  own conversion: `video_args()` and `line_matrix_filter()` take `hdr_rgb_matrix_filter()` for an HDR
+  source and add nothing when it has none, never the BT.709 one, and `export.py` skips the BT.709
+  conversion for the `hevc`/`av1` presets of an HDR source.
+- **Decided: a master of an HDR source carries the source's primaries and transfer and the matrix it
+  converted with.** `decision.hdr_tag_args()` is the tag triple `_cpu_encoder_args()` already wrote
+  for `--codec prores`/`hevc`/`av1` (`hdr_line_matrix()`, the source's primaries, `source_transfer()`),
+  now a function; `export.py` appends it to every editing master (`intermediate`) of an HDR source,
+  with `hdr_rgb_matrix_args()` so the YUV is made with the matrix it says (bt2020nc for a BT.2020 source).
+  That includes the 8-bit `dnxhr-lb/sq/hq`: a YUV source's frames already gave them these tags, so the
+  RGB source now matches its YUV copy. An alpha master on a YUV line (`prores4444`, `prores4444xq`,
+  `vp9-alpha`) takes the same conversion with the alpha plane kept (`hdr_rgb_matrix_filter(alpha=True)`,
+  `yuva444p10le`), and the alpha helpers `source_format()` and `_source_tags()` use it for
+  `graphics.py` and `overlay.py` `--keep-alpha`; `qtrle` and `hap-alpha` store RGB and are unchanged.
+- **Seen and not changed.** `color.py --keep-alpha` refuses an HDR source without `--force` (the grade
+  works on SDR pixels), so its grade legs were not touched; an RGB layer (a logo, a box) over an HDR
+  line is still "not converted" ("After 3.6.0"); `join.py SDR.mp4 HDR_RGB.mkv` fails in both
+  versions (not this class). FFmpeg 7, 8 and 9 were not run locally (see #544's note on the
+  conversion's behaviour there).
+- Code: `_common/color.py` (`bt709_matrix_filter`, `hdr_rgb_matrix_filter(alpha=)`,
+  `hdr_rgb_matrix_args(alpha=)`), `_common/decision.py` (`hdr_tag_args`, `video_args`,
+  `line_matrix_filter`), `_common/alpha.py` (`hdr_rgb_line`), `export.py`. Tests:
+  `test_an_rgb_source_or_a_still_is_converted_to_the_bt709_it_is_tagged_with`,
+  `test_an_hdr_line_names_the_matrix_it_tags_for_an_rgb_source` (tests/test_contract.py),
+  `test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix` and
+  `test_an_editing_master_of_an_hdr_rgb_source_keeps_its_tags_and_names_its_matrix`
+  (tests/test_picture.py).
+
+## After 4.6.5 — several audio tracks in one file (#420)
+
+- **`audio.py --track FILE` writes each source as its own audio stream and changes none of them.**
+  The owner's request during the freeze (#420, named in `.github/code-budget.json`): dialogue, music
+  and effects stems in one MOV, MKV or MP4 for a stems step or an NLE package. The input's own sound
+  (`--audio-stream`) is track 0, then the first audio stream of each `--track` in order; no filter
+  graph runs, so every track keeps its channel layout, rate and length, and nothing is mixed,
+  resampled, padded or trimmed to the picture or to another track. Codecs: 24-bit PCM in `.mov` and
+  `.mkv`, `audio_codec_for()`'s AAC (`--bitrate`, 192k) in `.mp4`. `--bitrate` beside PCM is refused as
+  a flag that does nothing. The picture is stream-copied and subtitle and data tracks go through
+  `run_keeping_subtitles()` as in the rest of audio.py; an audio input writes no picture, and a
+  picture with no sound takes only the `--track` files (track 0 is then the first of them).
+- **The names are the issue's and the decided ones.** "one name per meaning" fixes a language as
+  `--lang`, so the option is `--track-lang`; the issue's `--track-language` is a second spelling (it
+  adds no code). The name of a track is `--track-name`, as the issue asks, with caption.py's
+  `--track-title` as its second spelling: the two tools' `track_title` could not share one contract
+  property, since caption.py's takes a string through `AppendPath` (an MCP caller sends one) and a
+  track list here is an array (`test_option_names_do_not_grow_apart`), so the property is
+  `track_name`. `--track-name` and `--track-lang` are repeated in track order and matched by
+  position; an empty value leaves that track as its source has it, which is the only way to name the third track
+  alone. A language is an ISO 639-2 code, three lowercase letters (caption.py's `--language` also
+  takes two-letter and regional tags for a subtitle track; an audio track in an MP4 or MOV stores
+  nothing for `en`, so it is refused here instead of converted); two tracks may share a language
+  (stems usually do).
+- **Refusals, not interactions.** `track_container` (an output that is not `.mov`, `.mkv` or `.mp4`),
+  `track_rebuilds_sound` (`--voice`, `--denoise`, `--gain`, `--music`, `--effects`, `--replace`, a
+  fade, a channel layout, `--tempo`, `--length-samples`, `--sample-rate`, the dynamics, `--mute`, and the
+  silence flags, which would be ignored: the hint is to run audio.py on each stem first and add the
+  results), `track_labels` (more titles or languages than tracks, counting the input's own sound),
+  `track_language`. All run under `--dry-run` too, before anything is probed except `track_labels`,
+  which needs to know whether the input has sound. `--track-name` or `--track-lang` without `--track`
+  is refused as a switch that is off.
+- **MXF is refused, measured on FFmpeg 6.1.1.** The request named it, and its muxer does not hold what
+  the other containers do: it takes 48 kHz only (a 44.1 kHz stem fails with "only 48khz is
+  implemented"); it takes the picture codecs of its own (a copied H.264 fails with "h264 profile not
+  supported", and a file with no picture with "there must be exactly one video stream"); a title and a
+  language given to it are not written (ffprobe reads neither back); and a 3 s picture with a 2 s and a
+  4 s track came out 2.0 s in every stream, which is the opposite of "kept as they are". The refusal
+  names that; it is revisited when a build is shown to write MXF names and unequal lengths. A resample
+  to 48 kHz was not added for it: nothing else in the mode resamples.
+- **A name is the title tag in Matroska and the handler name in MOV and MP4.** FFmpeg's MOV/MP4 muxer
+  writes no title atom (ffprobe 6.1.1 reads no `title` from either), and a track's name in QuickTime
+  and in NLEs is its handler name, so a name is written to both tags there and read back from
+  whichever the container holds, only where a name was asked (an unnamed track's `SoundHandler` is
+  the muxer's default, not a name). **A language is checked against the file, not against a list.**
+  MP4 and MKV keep any three-letter code; MOV keeps only the codes of QuickTime's table, which spells
+  German `ger` and Chinese `chi`: of `eng`, `jpn`, `fra`, `ger`, `chi` kept, `deu`, `zho`, `fre`, `zxx`,
+  `mul`, `qaa` and `und` read back as no language. The `track_tags` step compares what was asked with
+  what the file holds, so a MOV that dropped a language is `verified: false` with both lists in the
+  step; a table of the codes would be a claim about every FFmpeg build.
+- **The result reports the file.** `tracks` is `{index, file, title, language, channels, duration}` per
+  audio stream of the written file, from ffprobe's tags and channels and from the decoder's count of
+  samples (`decoded_samples()`, now per stream) over the rate, in seconds; a length that could not be
+  counted is `null` with a `track_duration` step, `reason: not_measured`. A dry run lists the names
+  and languages asked, with channels and duration null. The stream count is the `streams` step
+  (`expect_streams`). A track longer than the picture, by more than a frame of it, is kept whole and
+  raises `track_longer_than_picture`: the caller may have meant it to be cut, and audio.py has no
+  trim for a track (the warning is not a refusal: a stem longer than the picture is also ordinary).
+- **Not done.** A BWF or multitrack WAV with a start timecode (out of scope for #420). A track file
+  that starts after its own origin: FFmpeg rebases each input to 0 (measured: a stem whose start time
+  is 1.0 s is written from 0), as everywhere a file's own start is not carried. A mix of several
+  `--audio-stream`s of the input (one is taken; `audio_tracks_dropped` says so when the output ends with fewer audio streams than the input had).
+  A demo in `docs/demos.md` (the recent options of the freeze, `--mute` and `--audio-lead`, have none).
+- **The MCP listing grew by about 505 bytes**, which the two budgets of
+  `test_mcp_advertisement_payload_stays_within_documented_budgets` could not take (the full profile had
+  50 bytes of room, the default 250): both were raised by 500 (73,500 and 195,500), the descriptions of
+  the three options kept to a line each, the detail being here and in `references/scripts.md`.
+- Code: `audio.check_track_flags()`, `write_tracks()`, `read_tracks()`; `_contract.py` (the four reasons,
+  `track_longer_than_picture`, the `tracks` field). Tests: `AudioTracksTests` (tests/test_audio.py):
+  `test_three_tracks_keep_their_channels_lengths_names_and_languages_in_mov_and_mkv`,
+  `test_an_mp4_holds_the_tracks_as_aac_and_a_track_may_stay_unnamed`,
+  `test_a_track_that_a_container_did_not_keep_fails_the_tags_step`,
+  `test_an_audio_input_and_a_picture_with_no_sound_take_tracks_too`,
+  `test_track_refusals_name_their_reason_and_run_under_a_dry_run`,
+  `test_a_track_file_is_checked_and_the_output_may_not_be_one`,
+  `test_a_dry_run_lists_the_tracks_and_writes_nothing`.

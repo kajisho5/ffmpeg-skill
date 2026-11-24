@@ -66,7 +66,7 @@ def main() -> int:
         # 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and the source's tmcd track is not copied)
         rate = (meta["video"].get("fps") or 30.0) * 2
         rate_args = cfr_args(meta, rate)
-        vf += f",fps={rate:g}"
+        vf += f",fps={rate_args[rate_args.index('-r') + 1]}"
     else:
         rate_args = cfr_args(meta)
         vf = with_cfr(vf, meta)

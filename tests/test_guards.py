@@ -230,6 +230,61 @@ class SweepGuards(unittest.TestCase):
         self.assertEqual(unsaid, {})
 
 
+def hdr_rgb_clip(path: Path) -> None:
+    """2 s of flat red as an HDR RGB picture (gbrp10le FFV1, BT.2020 primaries, PQ), with sound: the
+    source that reached the two colour defects (#559 made its YUV with BT.601 under a bt709 tag, #711
+    left its primaries and transfer in the container under a bt709 stream)."""
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "color=c=0xC03028:s=320x180:r=25:d=2,format=gbrp10le", "-f", "lavfi", "-i", "sine=f=440:d=2:r=48000",
+                    "-c:v", "ffv1", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "rgb",
+                    "-c:a", "flac", "-ac", "2", str(path)], check=True)
+
+
+_SDR = {"bt709", "smpte170m", "bt470bg"}
+_HDR = {"bt2020", "bt2020nc", "bt2020c", "smpte2084", "arib-std-b67"}
+
+
+def mixed_tags(v: dict):
+    """The colour tags of a video stream that say two things at once (a BT.709 matrix over BT.2020/PQ
+    primaries or transfer, or the reverse), or None. A player picks one of them."""
+    tags = {k: v.get(k) for k in ("color_space", "color_primaries", "color_transfer") if v.get(k) not in (None, "unknown")}
+    return tags if set(tags.values()) & _SDR and set(tags.values()) & _HDR else None
+
+
+class ColorGuard(unittest.TestCase):
+    """The color class (#559, #711): an output's tags claim a colour its pixels or its other tags do not
+    have. Every tool that writes video, and the BT.709 presets and the mixing tools by hand, run on an
+    HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. On
+    FFmpeg before 9 the #711 form cannot show (the container's tags came from the encoder), so CI's
+    FFmpeg 9 jobs are where this bites hardest."""
+
+    def test_no_output_mixes_sdr_and_hdr_colour_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "hdr_rgb.mkv"
+            hdr_rgb_clip(src)
+            facts = sweep.facts_for(str(src), tmp)
+            outs = {}
+            for tool, (_, ext) in sweep.TABLE.items():
+                if ext in (".mp4", ".mov", ".mkv", ".webm"):
+                    row = sweep.row_for(tool, str(src), facts, tmp)
+                    if row.get("status") == "completed":
+                        outs[tool] = os.path.join(tmp, f"sweep_{tool.replace(' ', '_').replace('-', '')}{ext}")
+            for name, argv in {"export youtube": ["export", str(src), "--preset", "youtube"],
+                               "export prores": ["export", str(src), "--preset", "prores"],
+                               "grid": ["grid", str(src), str(src)], "join": ["join", str(src), str(src), "--transition", "none"]}.items():
+                out = os.path.join(tmp, name.replace(" ", "_") + (".mov" if "prores" in name else ".mp4"))
+                doc, _ = sweep.run_json([sys.executable, str(ROOT / "scripts" / f"{argv[0]}.py"), *argv[1:], "-o", out, "--overwrite", "--json"])
+                if (doc or {}).get("status") == "completed":
+                    outs[name] = out
+            self.assertIn("export youtube", outs, "the BT.709 preset ran, so the guard saw the line #711 was found on")
+            mixed = {}
+            for name, out in outs.items():
+                v = next((st for st in ffprobe(out).get("streams", []) if st.get("codec_type") == "video"), {})
+                if mixed_tags(v):
+                    mixed[name] = mixed_tags(v)
+            self.assertEqual(mixed, {}, "these outputs say SDR in one colour tag and HDR in another")
+
+
 def _wait_with_open_stdin(proc):
     """communicate() closes stdin; the guard keeps it open, so read the pipes until the tool exits."""
     import threading

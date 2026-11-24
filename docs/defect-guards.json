@@ -24,6 +24,11 @@
       "test": "test_guards.SweepGuards.test_every_tool_answers_while_its_stdin_stays_open",
       "also": "test_contract.SharedCodeAudit465Tests.test_mcp_answers_a_tool_call_while_the_client_keeps_its_pipe_open",
       "how": "every tool, started with an open and silent stdin, ends and answers"
+    },
+    "color": {
+      "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
+      "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
+      "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
     }
   }
 }
