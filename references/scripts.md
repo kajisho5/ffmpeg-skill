@@ -2435,7 +2435,10 @@ and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the out
 after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.
-Run `loudness.py` after this for final levels.
+For a stereo recording with only the right microphone usable, run
+`audio.py in.wav --channel 1 --stereo -o recovered.wav`. FFmpeg's equal-power mono-to-stereo
+upmix sends the same signal to L and R at 1/√2 of the selected channel's amplitude (about
+−3.01 dB per side). Run `loudness.py` after this for final levels.
 
 `--track FILE` (repeatable, #420) writes several audio streams into one file, one per source: the
 input's own sound (`--audio-stream N`) first, then the first audio stream of each FILE, after the
@@ -2471,6 +2474,14 @@ the result's `versions` lists each target, file and measurement, its
 verification steps carry a `version` key, and `verified` holds only when every
 version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
 that is one of the version files.
+
+For Japanese broadcast audio, take the output path from the `broadcast-jp` entry in
+`versions` and run `check.py FILE --platform broadcast --lufs -24 --tp -1 --json`.
+The explicit target matters: the broadcast platform defaults to EBU −23 LUFS.
+Read the loudness and true-peak rows separately. The tool accepts −24 LKFS ±1 LU
+and a −1 dBTP ceiling with +0.1 dB measurement tolerance. A clip shorter than one
+400 ms gating block may have a measurable peak and no integrated measurement.
+An audio-only master can meet both audio requirements while failing video requirements.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the

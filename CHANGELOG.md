@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
+  Adding the emoji presentation selector (U+FE0F) still sends them through emoji handling (#696).
+
 ### Added
 
 - **`color.py --source-alpha-mode straight|premultiplied`, for a premultiplied source graded with `--keep-alpha`** (#453).
