@@ -165,6 +165,9 @@ def extract(paths):
         levels, duration = envelope(path, detection["analysis_bandpass_hz"])
         floor = quantile(levels, .1)
         detection["noise_floor_db"] = floor
+        # Estimate the threshold from speech-to-floor separation. Bound the offset
+        # because a digital zero floor and a continuous bed both skew that separation.
+        detection["noise_floor_offset_db"] = min(18, max(6, (quantile(levels, .75)-floor)/3))
         spans = pauses(levels, duration, detection)
         interior = [b-a for a, b in spans if a > 0 and b < duration]
         low = sum(b-a for a, b in spans) / duration
@@ -181,7 +184,8 @@ def extract(paths):
             length = meta["duration"]
             cuts = detect_scenes(path, 10, 0, length) + [length]
             shots = [(b-a)*1000 for a, b in zip(cuts, cuts[1:]) if b > a]
-        row = dict(noise_floor_db=floor, target_keep_silence_ms=median(interior) if interior else None,
+        row = dict(noise_floor_db=floor, noise_floor_offset_db=detection["noise_floor_offset_db"],
+                   target_keep_silence_ms=median(interior) if interior else None,
                    max_keep_silence_ms=quantile(interior, .95) if interior else None,
                    trim_leading_max_ms=spans[0][1] if spans and spans[0][0] == 0 else 0,
                    trim_trailing_max_ms=duration-spans[-1][0] if spans and spans[-1][1] == duration else 0,
@@ -206,7 +210,7 @@ def extract(paths):
                                 sample_names=[s["name"] for s in samples], samples=samples,
                                 between_files={k: stats(v) for k, v in rows.items()}, reasons=reasons,
                                 bgm_suspected=bool(reasons), confidence="low" if reasons or "target_keep_silence_ms" not in rows else "measured",
-                                policy_fields=["noise_floor_offset_db", "analysis_bandpass_hz", "min_silence_detect_ms",
+                                policy_fields=["analysis_bandpass_hz", "min_silence_detect_ms",
                                                "pad_before_speech_ms", "pad_after_speech_ms", "flag_long_pause_above_ms",
                                                "cut_rules", "audio_seam"],
                                 fallback_fields=[k for k in ("target_keep_silence_ms", "max_keep_silence_ms") if k not in rows])

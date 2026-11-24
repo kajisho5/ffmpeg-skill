@@ -1403,7 +1403,7 @@ source rather than trusting the apply report. Apply runs this independent gate o
 
 Analysis uses per-channel RMS in 10 ms windows after a speech-band filter, using the loudest
 channel. The floor is the 10th percentile, bounded at −120 dBFS. The threshold is the floor
-plus a policy offset, capped at −20 dBFS. Interior pauses supply the target median and maximum
+plus an offset estimated as one third of the gap from the floor to the 75th-percentile RMS, bounded to 6–18 dB (12 dB in the presets). The threshold is capped at −20 dBFS. Interior pauses supply the target median and maximum
 p95. Each reference has equal weight: the final value is the median of the per-reference
 estimates. The profile retains their medians, p95s, and ranges. Missing pauses fall back to
 the talk policy and are labelled in `probe_meta.fallback_fields`. Continuous sound/high room
