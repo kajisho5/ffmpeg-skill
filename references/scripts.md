@@ -798,6 +798,10 @@ each shorter clip's last frame (with silence) out to the longest. A still
 picture fills its cell for the grid's length; a grid of stills only is refused.
 
 ### silence.py — remove dead air / jump cuts
+
+To match the pauses in a finished reference, run `silence.py REFERENCE --extract-profile -o editor.json`.
+Preview with `silence.py INPUT --profile editor.json --dry-run`, then supply `-o master.mkv` to render
+and verify. [Presets, protected ranges and saved plans](../docs/contract.md#pacing-profiles-and-the-independent-master-gate).
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list]
            [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
@@ -1808,6 +1812,9 @@ so a switch list can be re-rendered with different `--min-shot` values by
 editing `project.json`'s `clips`, not by inventing a second timeline schema.
 
 ### verify.py — real-footage verification kit
+
+For a pacing master, run `verify.py master.mkv --source ORIGINAL --profile editor.json --json`.
+Include the same `--protect-ranges` file used at edit time. A failing measurement exits nonzero.
 ```
 verify.py FILES_OR_FOLDERS [--quick] [--report verify.md] [--out DIR --keep] [--seconds 6] [--json]
 ```
