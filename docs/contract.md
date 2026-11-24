@@ -1394,6 +1394,9 @@ Their target/maximum interior pauses are 90/180, 240/400 and 500/950 ms respecti
 `keep.json` is an array such as `[{"start_ms":1240,"end_ms":1510,"reason":"breath before answer"}]`.
 Times always refer to the original input. Use the same ranges to allow intentional long pauses
 during verification. A dry run decodes media, returns the full cut plan and leaves the destination untouched.
+To save the reviewed cuts for execution, use
+`silence.py interview.mp4 --profile editor.json -o tight.mkv --plan edit.json`, then
+`render.py edit.json`. Replay checks the input fingerprints and the regenerated frame/sample map.
 The apply report includes exclusive frame/sample ranges, durations before and after editing, time
 saved, removal count and candidates for human review. Verification recomputes the plan from the
 source rather than trusting the apply report. Apply runs this independent gate on a staged master before publishing it. A failed gate exits nonzero and leaves the destination untouched.

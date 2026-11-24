@@ -12,7 +12,8 @@ from pathlib import Path
 
 from _common import STATE, die, guard_sidecar, print_json
 from _common.pacing import decoded_pcm, envelope, extract, number, pauses, read_profile
-from _common.runner import run, run_analysis
+from _common.runner import register_plan_input, run, run_analysis
+from _common.emit import write_plan
 
 
 def frames(path):
@@ -270,6 +271,10 @@ def verify(source, output, profile, protect, stack):
                 boundary_sample_deltas=deltas, output_pauses_ms=remaining, cut_plan=plan)
 
 
+def plan_digest(plan):
+    return hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
 def cli(args, checking=False):
     with ExitStack() as stack:
         return _cli(args, checking, stack)
@@ -288,6 +293,8 @@ def _cli(args, checking, stack):
             raise ValueError("--references requires --extract-profile")
         allowed = {"--profile", "--protect-ranges", "--json", "--json-brief", "--dry-run", "--timeout"}
         allowed.update({"--source"} if checking else {"-o", "--output", "--overwrite", "--extract-profile", "--references", "--max-cuts"})
+        if profile and not checking:
+            allowed.add("--plan")
         for token in sys.argv[1:]:
             if token == "--":
                 break
@@ -304,6 +311,8 @@ def _cli(args, checking, stack):
             print_json(dict(status="completed", dry_run=STATE.dry_run, output=None, commands=list(STATE.commands), **result))
             return 0 if result["verified"] else 1
         dest = args.output
+        if STATE.plan and not dest:
+            raise ValueError("saving a replayable pacing plan requires -o OUTPUT.mkv")
         if not dest and not (args.extract_profile or STATE.dry_run):
             raise ValueError("supply -o OUTPUT.mkv for the lossless pacing master")
         if dest:
@@ -317,7 +326,15 @@ def _cli(args, checking, stack):
             plan, _, rate, channels, pcm = make_plan(args.input, profile, args.protect_ranges, stack)
             if not STATE.dry_run and plan["cut_count"] > args.max_cuts:
                 raise ValueError("pacing edit exceeds --max-cuts")
+            expected = os.environ.get("FFMPEG_SKILL_PACING_PLAN_SHA256")
+            if expected and expected != plan_digest(plan):
+                raise ValueError("measured pacing plan differs from the reviewed frame/sample ranges")
             report = dict(cut_plan=plan)
+            if STATE.plan:
+                for item in [*inputs, args.protect_ranges, args.profile]:
+                    if item and Path(item).is_file():
+                        register_plan_input(item)
+                report["plan"] = write_plan(STATE.plan, dest, report)
         if dest and not STATE.dry_run:
             with tempfile.TemporaryDirectory(dir=Path(dest).resolve().parent) as tmp:
                 staged = str(Path(tmp)/("master" + extension))

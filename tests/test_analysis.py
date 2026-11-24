@@ -2807,6 +2807,22 @@ class PacingTests(unittest.TestCase):
                 self.assertEqual(gate["checks"]["clicks"], mode=="micro_fade")
                 self.assertEqual(len(gate["boundary_sample_deltas"]), 1)
 
+    def test_saved_plan_replay_rejects_a_changed_review_map_before_publication(self):
+        source = self.media("replay")
+        output = self.root/"replayed.mkv"
+        saved = self.root/"reviewed.json"
+        report = self.call("silence", source, "--profile", "youtube-talk", "-o", output, "--plan", saved)
+        plan = json.loads(saved.read_text())
+        self.assertEqual(plan["cut_plan"], report["cut_plan"])
+        self.assertFalse(output.exists())
+        result = self.call("render", saved)
+        self.assertTrue(result["tool_result"]["verified"])
+        before = output.read_bytes()
+        plan["cut_plan"]["keep"][0]["end_frame"] -= 1
+        saved.write_text(json.dumps(plan))
+        self.call("render", saved, "--overwrite", ok=False)
+        self.assertEqual(output.read_bytes(), before)
+
     def test_zero_cross_shift_finds_smallest_multichannel_discontinuity(self):
         from _common.pacing_edit import splice_shift
         pcm = [0]*60
