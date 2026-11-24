@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -404,6 +405,96 @@ raise SystemExit(export.main())
         script("color.py", src, "--correct", "--exposure", "0.5", "--keep-alpha", "--alpha-codec", "qtrle", "-o", straight)
         for sc, pc in zip(self._rgba_at(straight, 120, 48)[:3], self._rgba_at(pm, 120, 48)[:3]):
             self.assertAlmostEqual(pc, sc * 64 / 255, delta=2)
+
+    @staticmethod
+    def _bands(path, xs=(8, 24, 40, 56)):
+        """(r, g, b, a) on a 0-255 scale, from 16-bit RGB, at one pixel of each alpha band of a 64x64 file."""
+        rows = []
+        for x in xs:
+            raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-frames:v", "1",
+                                  "-vf", f"format=gbrap16le,crop=1:1:{x}:32", "-f", "rawvideo", "-"],
+                                 stdout=subprocess.PIPE, check=True).stdout
+            g, b, r, a = struct.unpack("<4H", raw)
+            rows.append((r / 257, g / 257, b / 257, a / 257))
+        return rows
+
+    def test_shared_alpha_writer_keeps_the_existing_overlay_precision(self):
+        from _common.alpha import finish_chain
+        self.assertIn("format=gbrap,premultiply=", finish_chain("prores4444", "premultiplied"))
+        self.assertIn("format=gbrap16le,premultiply=", finish_chain("prores4444", "premultiplied", wide=True))
+
+    def test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453(self):
+        """#453: a premultiplied source (30C050 under alpha 255 / 128 / 64 / 0) graded with --keep-alpha
+        was graded as stored, so a partial band came out lifted or clipped differently from the opaque
+        band. --source-alpha-mode premultiplied divides the colour by the alpha first and multiplies it
+        again after: the alpha is untouched (bit-identical in qtrle, 1 code at 8 bits in ProRes 4444)
+        and the colour of every partial band, divided by its alpha again, is the opaque band's graded
+        colour to 1.5 codes. `straight`, the default, is the command it always was."""
+        lut = OUT / "alpha_pm_grade.cube"
+        lut.write_text("LUT_3D_SIZE 2\n" + "".join(f"{0.9 * r + 0.1} {0.9 * g + 0.05} {0.9 * b}\n"
+                                                  for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        for codec, pix, line in (("prores4444", "yuva444p10le", ("-c:v", "prores_ks", "-profile:v", "4", "-alpha_bits", "16")),
+                                 ("qtrle", "argb", ("-c:v", "qtrle"))):
+            src = OUT / f"alpha_pm_src_{codec}.mov"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+               "color=c=0x30C050:s=64x64:r=1:d=1,format=gbrap,geq=a='A':"
+               "r='round(r(X,Y)*A/255)':g='round(g(X,Y)*A/255)':b='round(b(X,Y)*A/255)',".replace("A", "if(lt(X,16),255,if(lt(X,32),128,if(lt(X,48),64,0)))")
+               + f"format={pix}","-frames:v", "1", *line, "-pix_fmt", pix, src)
+            for grade in (("--correct", "--gamma", "1.6"), ("--lut", lut)):
+                with self.subTest(codec=codec, grade=grade[0]):
+                    outs = {}
+                    for mode in ("straight", "premultiplied"):
+                        outs[mode] = OUT / f"alpha_pm_{codec}_{grade[0][2:]}_{mode}.mov"
+                        doc = json.loads(script("color.py", src, *grade, "--keep-alpha", "--alpha-codec", codec,
+                                                "--source-alpha-mode", mode, "--json", "-o", outs[mode]).stdout)
+                        self.assertTrue(doc["verified"], doc["verification"])
+                        self.assertEqual((doc["source_alpha_mode"], self._alpha_step(doc)["source_alpha_mode"]), (mode, mode))
+                    # the alpha plane as it was
+                    a_src, a_out = ([b[3] for b in self._bands(p)] for p in (src, outs["premultiplied"]))
+                    for a, b in zip(a_src, a_out):
+                        self.assertLessEqual(abs(a - b), 0 if codec == "qtrle" else 1.0, (a_src, a_out))
+                    # Test the complete decoded mask, including block boundaries between bands.
+                    def mask(path):
+                        raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1",
+                                                       "-vf", "alphaextract,format=gray16le", "-f", "rawvideo", "-"])
+                        return [value for (value,) in struct.iter_unpack("<H", raw)]
+                    source_mask, output_mask = mask(src), mask(outs["premultiplied"])
+                    self.assertEqual(len(source_mask), len(output_mask))
+                    worst = max(abs(a - b) for a, b in zip(source_mask, output_mask))
+                    self.assertLessEqual(worst, 0 if codec == "qtrle" else 257)
+                    # the opaque band's graded colour, and every partial band straightened again
+                    graded = self._bands(outs["premultiplied"])
+                    opaque = graded[0][:3]
+                    # ProRes holds the colour at 10 bits and meets 1.5 codes. qtrle stores 8: its working format
+                    # (yuva444p's 8-bit planes, which every qtrle grade goes through) and the written premultiplied
+                    # code, half a code wide, are doubled when divided by an alpha of 128, so it is held to 3.5;
+                    # at alpha 64 every error is doubled again (ProRes: 3)
+                    tols = (3.5, 3.5) if codec == "qtrle" else (1.5, 3.0)
+                    for band, alpha, tol in zip(graded[1:3], (128, 64), tols):
+                        self.assertAlmostEqual(band[3], alpha, delta=1.0)
+                        for got, want in zip(band[:3], opaque):
+                            self.assertAlmostEqual(got * 255 / band[3], want, delta=tol, msg=(graded,))
+                    self.assertEqual(graded[3][:4], (0, 0, 0, 0))
+                    self.assertNotEqual(opaque, self._bands(src)[0][:3], "the grade did something")
+                    # graded as stored (straight), a partial band is not the opaque band's colour
+                    wrong = self._bands(outs["straight"])
+                    self.assertGreater(max(abs(c * 255 / wrong[1][3] - o) for c, o in zip(wrong[1][:3], wrong[0][:3])), tols[0])
+        # the default is the command it was; premultiplied adds the division and nothing else
+        src = OUT / "alpha_pm_src_qtrle.mov"
+        cmds = {m: json.loads(script("color.py", src, "--correct", "--exposure", "0.3", "--keep-alpha", *m_args, "--dry-run",
+                                      "--json", "-o", OUT / "alpha_pm_dry.mov").stdout)["commands"][0]
+                for m, m_args in (("default", ()), ("straight", ("--source-alpha-mode", "straight")),
+                                  ("premultiplied", ("--source-alpha-mode", "premultiplied")))}
+        plan = json.loads(script("color.py", src, "--correct", "--gamma", "1.6", "--keep-alpha", "--source-alpha-mode",
+                                 "premultiplied", "--dry-run", "--json", "-o", OUT / "alpha_pm_dry.mov").stdout)
+        self.assertEqual((plan["source_alpha_mode"], plan["alpha_mode"]), ("premultiplied", "premultiplied"))
+        self.assertEqual(cmds["default"], cmds["straight"])
+        self.assertNotIn("unpremultiply", cmds["straight"])
+        self.assertRegex(cmds["premultiplied"], r"format=gbrapf32le,(?:setparams=alpha_mode=premultiplied,)?unpremultiply=inplace=1")
+        proc = script("color.py", src, "--correct", "--exposure", "0.3", "--source-alpha-mode", "premultiplied", "--json",
+                      "-o", OUT / "alpha_pm_x.mp4", expect_fail=True)
+        err = json.loads(proc.stdout)["error"]
+        self.assertEqual((err["kind"], err["reason"]), ("input", "source_alpha_mode_needs_keep_alpha"))
 
     def test_color_keep_alpha_grades_an_rgb_source_tagged_gbr(self):
         """#454: FFmpeg's PNG encoder tags its stream colorspace `gbr` in .mov/.mkv, and the alpha

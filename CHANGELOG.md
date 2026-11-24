@@ -9,6 +9,21 @@
 - Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
   Adding the emoji presentation selector (U+FE0F) still sends them through emoji handling (#696).
 
+### Added
+
+- **`color.py --source-alpha-mode straight|premultiplied`, for a premultiplied source graded with `--keep-alpha`** (#453).
+  `premultiplied` divides the colour by the alpha in RGB before the grade and multiplies it again after, so an
+  offset or a non-linear grade no longer lifts or darkens partly transparent edges; the alpha is untouched.
+  `straight` (default) is today's command. The result and its `alpha` step name the mode (`source_alpha_mode`);
+  without `--keep-alpha` the flag is refused (`source_alpha_mode_needs_keep_alpha`). The premultiplied write
+  (`--alpha-mode premultiplied`, every tool that has it) now multiplies in 16-bit RGB instead of 8-bit.
+
+## 4.7.1
+
+_Automated release: version and notes generated from pull requests merged since 4.7.0._
+
+- fix: isolate per-test output directories under tests/out (#685) (#707)
+
 ## 4.7.0
 
 _Automated release: version and notes generated from pull requests merged since 4.6.5._
