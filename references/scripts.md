@@ -2435,7 +2435,10 @@ and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the out
 after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.
-Run `loudness.py` after this for final levels.
+For a stereo recording with only the right microphone usable, run
+`audio.py in.wav --channel 1 --stereo -o recovered.wav`. FFmpeg's equal-power mono-to-stereo
+upmix sends the same signal to L and R at 1/√2 of the selected channel's amplitude (about
+−3.01 dB per side). Run `loudness.py` after this for final levels.
 
 `--track FILE` (repeatable, #420) writes several audio streams into one file, one per source: the
 input's own sound (`--audio-stream N`) first, then the first audio stream of each FILE, after the

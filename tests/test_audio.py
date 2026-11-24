@@ -47,6 +47,33 @@ class AudioTests(MediaFixtures):
         self.assertNotIn("afftdn", chain("--voice", "light"))
         self.assertEqual(chain("--voice", "medium", "--denoise"), chain("--voice", "medium"))
 
+    def test_selected_channel_stereo_keeps_equal_power_on_both_sides(self):
+        import struct
+        import wave
+
+        rate = 48000
+        tone = [round(8000 * math.sin(2 * math.pi * 440 * n / rate)) for n in range(rate)]
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            for channel in (0, 1):
+                with self.subTest(channel=channel):
+                    src = Path(tmp) / f"good_{channel}.wav"
+                    out = Path(tmp) / f"dual_{channel}.wav"
+                    with wave.open(str(src), "wb") as wav:
+                        wav.setparams((2, 2, rate, 0, "NONE", "not compressed"))
+                        pairs = ((value, 0) if channel == 0 else (0, value) for value in tone)
+                        wav.writeframes(b"".join(struct.pack("<hh", *pair) for pair in pairs))
+                    doc = json.loads(script("audio.py", src, "--channel", str(channel), "--stereo",
+                                            "-o", out, "--json").stdout)
+                    self.assertTrue(doc["verified"])
+                    stream = probe(str(out))["audio"]
+                    self.assertEqual((stream["channels"], int(stream["sample_rate"])), (2, rate))
+                    raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(out),
+                                                   "-c:a", "pcm_s16le", "-f", "s16le", "-"])
+                    self.assertEqual(len(raw), 4 * len(tone))
+                    for sample, (left, right) in zip(tone, struct.iter_unpack("<hh", raw)):
+                        self.assertEqual(left, right)
+                        self.assertAlmostEqual(left, sample / math.sqrt(2), delta=1)
+
     def test_waveform_style_default(self):
         out = OUT / "waveform1.mp4"
         script("waveform.py", self.src, "--width", "640", "--height", "360", "-o", out)
