@@ -188,7 +188,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
                                                                     {"capability": "bsf:setts", "when": "--profile preserves the kept final frame duration"},
                                                                     {"capability": "filter:scdet", "when": "--extract-profile on video"},
                                                                     {"capability": "filter:loudnorm", "when": "--extract-profile"},
-                                                                    {"capability": X264, "when": "removing silences from a video without --profile"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
+                                                                    {"capability": X264, "when": "editing an ordinary video or encoding a pacing MP4 delivery"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
                                                                     {"capability": "external:whisper", "when": "--transcribe (with --filler or a sentence flag)"},
                                                                     {"capability": "external:parakeet", "when": "--transcribe (with --filler or a sentence flag; English; either engine family satisfies it)"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
