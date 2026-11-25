@@ -1,0 +1,47 @@
+{
+  "name": "ffmpeg-skill",
+  "version": "4.7.1",
+  "description": "Local FFmpeg video/audio editing for coding agents: 42 tools with a machine-readable contract and MCP server, capability detection, probe-first / verify-last workflow. Cut, captions, reframe, loudness, platform exports. No cloud, no API keys.",
+  "author": {
+    "name": "kajisho5",
+    "url": "https://github.com/kajisho5"
+  },
+  "homepage": "https://github.com/kajisho5/ffmpeg-skill",
+  "repository": "https://github.com/kajisho5/ffmpeg-skill",
+  "license": "MIT",
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "video-editing",
+    "video-processing",
+    "audio",
+    "audio-processing",
+    "subtitles",
+    "captions",
+    "transcoding",
+    "loudness",
+    "agent-skill",
+    "agent-skills",
+    "codex",
+    "mcp",
+    "mcp-server",
+    "skill"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "FFmpeg Skill",
+    "shortDescription": "Local FFmpeg video and audio editing for coding agents.",
+    "longDescription": "ffmpeg-skill gives coding agents a local video editor: 42 typed FFmpeg tools with a machine-readable contract, probe-first / verify-last workflow, capability detection, captions and karaoke, reframe, silence removal, loudness, HDR to SDR, and platform delivery checks. No cloud and no API keys \u2014 footage stays on the machine. The agent skill lives under skills/; the MCP server (mcp/server.py) is for clients without a shell and is not started by this plugin.",
+    "category": "Coding",
+    "developerName": "kajisho5",
+    "websiteUrl": "https://kajisho5.github.io/ffmpeg-skill/",
+    "privacyPolicyUrl": "https://github.com/kajisho5/ffmpeg-skill/blob/main/PRIVACY.md",
+    "termsOfServiceUrl": "https://github.com/kajisho5/ffmpeg-skill/blob/main/LICENSE",
+    "logo": "./.codex-plugin/icon.png",
+    "defaultPrompt": [
+      "Probe this clip, then reframe it to 9:16 with a centre crop and check the result.",
+      "Remove silence quieter than -35 dB from this recording and verify the new duration.",
+      "Normalise loudness to -14 LUFS / -1 dB TP and export for YouTube."
+    ]
+  }
+}

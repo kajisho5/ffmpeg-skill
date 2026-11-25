@@ -1,0 +1,20 @@
+{
+  "name": "ffmpeg-skill",
+  "plugins": [
+    {
+      "name": "ffmpeg-skill",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/kajisho5/ffmpeg-skill.git",
+        "path": "ffmpeg-skill",
+        "ref": "plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding",
+      "description": "Local FFmpeg video/audio editing for coding agents: a machine-readable contract, an MCP server and a probe-first / verify-last workflow."
+    }
+  ]
+}

@@ -59,8 +59,11 @@ tar -xzf "$TARBALL" -C "$TREE" --strip-components=1
 # The npm package deliberately leaves these two out: `npx ffmpeg-skill` copies the package into
 # an agent's skills folder, where a second SKILL.md under skills/ would be the same skill twice.
 # A plugin host needs both: the manifest, and the skill where Codex and Gemini look for it.
-mkdir -p "$TREE/.claude-plugin" "$TREE/skills/ffmpeg-skill"
+# Codex reads .codex-plugin/ at the plugin root (same tree the marketplace git-subdir names).
+mkdir -p "$TREE/.claude-plugin" "$TREE/.codex-plugin" "$TREE/skills/ffmpeg-skill"
 cp "$ROOT/.claude-plugin/plugin.json" "$TREE/.claude-plugin/plugin.json"
+cp "$ROOT/.codex-plugin/plugin.json" "$TREE/.codex-plugin/plugin.json"
+cp "$ROOT/.codex-plugin/icon.png" "$TREE/.codex-plugin/icon.png"
 cp "$ROOT/skills/ffmpeg-skill/SKILL.md" "$TREE/skills/ffmpeg-skill/SKILL.md"
 # The listing icon: the plugin directory reads .claude-plugin/icon.png (a square PNG, 512 to 2048 px,
 # under 2 MB) and takes it once, at the first submission.
@@ -130,7 +133,9 @@ find "$TREE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # The gate is on the tree that ships, not on the source tree: what a host needs to find the
 # skill, and what the skill needs to run.
-for needed in .claude-plugin/plugin.json .claude-plugin/icon.png skills/ffmpeg-skill/SKILL.md SKILL.md \
+for needed in .claude-plugin/plugin.json .claude-plugin/icon.png \
+              .codex-plugin/plugin.json .codex-plugin/icon.png \
+              skills/ffmpeg-skill/SKILL.md SKILL.md \
               scripts/_contract.py scripts/probe.py docs/contract.md references/workflow.md LICENSE; do
   [ -s "$TREE/$needed" ] || { echo "plugin tree is missing $needed" >&2; exit 1; }
 done
@@ -141,6 +146,9 @@ VERSION="$(node -p "require('$TREE/package.json').version")"
 PLUGIN_VERSION="$(node -p "require('$TREE/.claude-plugin/plugin.json').version")"
 [ "$VERSION" = "$PLUGIN_VERSION" ] || {
   echo "package.json is $VERSION but .claude-plugin/plugin.json is $PLUGIN_VERSION" >&2; exit 1; }
+CODEX_VERSION="$(node -p "require('$TREE/.codex-plugin/plugin.json').version")"
+[ "$VERSION" = "$CODEX_VERSION" ] || {
+  echo "package.json is $VERSION but .codex-plugin/plugin.json is $CODEX_VERSION" >&2; exit 1; }
 
 if [ "$MODE" = "tree" ]; then
   echo "plugin tree for $VERSION built in $TREE"
