@@ -798,6 +798,10 @@ each shorter clip's last frame (with silence) out to the longest. A still
 picture fills its cell for the grid's length; a grid of stills only is refused.
 
 ### silence.py — remove dead air / jump cuts
+
+To match the pauses in a finished reference, run `silence.py REFERENCE --extract-profile -o editor.json`.
+Preview with `silence.py INPUT --profile editor.json --dry-run`, then supply `-o master.mkv` to render
+and verify. [Presets, protected ranges and saved plans](../docs/contract.md#pacing-profiles-and-the-independent-master-gate).
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list]
            [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
@@ -1808,6 +1812,9 @@ so a switch list can be re-rendered with different `--min-shot` values by
 editing `project.json`'s `clips`, not by inventing a second timeline schema.
 
 ### verify.py — real-footage verification kit
+
+For a pacing master, run `verify.py master.mkv --source ORIGINAL --profile editor.json --json`.
+Include the same `--protect-ranges` file used at edit time. A failing measurement exits nonzero.
 ```
 verify.py FILES_OR_FOLDERS [--quick] [--report verify.md] [--out DIR --keep] [--seconds 6] [--json]
 ```
@@ -2254,8 +2261,15 @@ color.py INPUT --correct [--exposure -3..3] [--contrast 0..2] [--saturation 0..2
          [--temperature 2000..12000] [--tint -1..1] [--lift -1..1] [--gain -1..1]
          [--levels-in-black 0..255] [--levels-in-white 0..255] [--levels-out-black 0..255] [--levels-out-white 0..255]
          [--curves color_negative|cross_process|darker|increase_contrast|lighter|linear_contrast|medium_contrast|negative|strong_contrast|vintage] [-o OUT]
-color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
+color.py INPUT --correct ... | --lut grade.cube ... -o OUT.mov [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] [--source-alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+`--source-alpha-mode premultiplied` (with `--keep-alpha`, #453) says the source stores its colour already
+multiplied by the alpha: the colour is divided by the alpha (RGB, alpha 0 left as it is) before the
+grade and multiplied again after, so a lift, a gamma or a LUT grades the straight colour and a partly
+transparent edge is not lifted or darkened. The written colour is premultiplied (`alpha_mode`) unless
+`--alpha-mode straight` is given; the alpha is not touched. The mode is named in the result's
+`source_alpha_mode` and the `alpha` step. `straight` (default) grades the colour as stored, as before;
+without `--keep-alpha` the flag is refused (`error.reason` `source_alpha_mode_needs_keep_alpha`).
 `--keep-alpha` (with `--correct` or `--lut`) grades an alpha clip and keeps its alpha: the alpha is
 split off before the grade, never touched, and merged back in front of the alpha line (ProRes 4444
 by default, `--alpha-codec qtrle|png|vp9`); the grade runs at 4:4:4 and the source's colour tags are
@@ -2428,7 +2442,10 @@ and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the out
 after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.
-Run `loudness.py` after this for final levels.
+For a stereo recording with only the right microphone usable, run
+`audio.py in.wav --channel 1 --stereo -o recovered.wav`. FFmpeg's equal-power mono-to-stereo
+upmix sends the same signal to L and R at 1/√2 of the selected channel's amplitude (about
+−3.01 dB per side). Run `loudness.py` after this for final levels.
 
 `--track FILE` (repeatable, #420) writes several audio streams into one file, one per source: the
 input's own sound (`--audio-stream N`) first, then the first audio stream of each FILE, after the
@@ -2464,6 +2481,14 @@ the result's `versions` lists each target, file and measurement, its
 verification steps carry a `version` key, and `verified` holds only when every
 version met its own target. An empty list (`--versions=`) is refused, and so is a `--plan` path
 that is one of the version files.
+
+For Japanese broadcast audio, take the output path from the `broadcast-jp` entry in
+`versions` and run `check.py FILE --platform broadcast --lufs -24 --tp -1 --json`.
+The explicit target matters: the broadcast platform defaults to EBU −23 LUFS.
+Read the loudness and true-peak rows separately. The tool accepts −24 LKFS ±1 LU
+and a −1 dBTP ceiling with +0.1 dB measurement tolerance. A clip shorter than one
+400 ms gating block may have a measurable peak and no integrated measurement.
+An audio-only master can meet both audio requirements while failing video requirements.
 `--lra N` is the loudness-range target in LU (default 11): lower it to squeeze a
 wide-dynamic mix into a phone speaker, raise it to leave a film mix alone.
 `--json` reports the measured range on both sides — `measured.input_lra` for the

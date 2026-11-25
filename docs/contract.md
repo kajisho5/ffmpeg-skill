@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.7.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.7.1`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.7.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.7.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -691,14 +691,6 @@ the upstream fix and that a distribution package may have backported it without 
 not say the build is vulnerable, and it names an update command (apt for an Ubuntu/Debian version, else by
 platform). Like `gpu_encoders` and `fonts`, it never affects `ok`, any tool's `usable` or the exit code.
 
-`doctor`'s `ffmpeg_version` field reports whether the selected `ffmpeg` and `ffprobe` releases sit inside
-the major versions CI tests (`TESTED_FFMPEG_MAJORS`, `6-9`): `{"tested": "6-9", "status":
-"tested"|"untested"|"unreadable"|"git"|"unsupported"|"missing", "ffmpeg": {...}, "ffprobe": {...},
-"warnings": [...]}`. A release outside `6-9`, an unreadable build `(0, 0)`, or a git/nightly snapshot
-(reported as `"git"`, never `"tested"` or `"untested"`) emits its warning line to stderr (in plain and
-`--json` mode) without affecting `ok` or the exit code; every tool records the same warning once per run
-under `diagnostics.warnings` (`ffmpeg_version_untested`, dry runs included) and proceeds normally.
-
 `doctor`'s `gpu_encoders` field reports GPU-backed encoders (`nvenc`, `videotoolbox`, `qsv`,
 `vaapi`, `amf`) present in this ffmpeg *build*, read from `-encoders` alone — `{"status":
 "parsed"|"unparsed"|"failed"|"missing", "present": [...]}`. It proves the build shipped the
@@ -1017,7 +1009,7 @@ Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on 
 
 | key | tool | what it holds |
 |---|---|---|
-| `alpha_codec`, `alpha_mode`; step `alpha` | `color.py --correct/--lut --keep-alpha`, `graphics.py --keep-alpha`, `overlay.py --keep-alpha`, `background.py --transparent` | `alpha_codec`: the alpha line written (`--alpha-codec prores4444` (default), `qtrle`, `png`, `vp9`; the output must be a container that holds it, `.mov`/`.mkv`, `.mov` for qtrle, `.webm`/`.mkv` for vp9). `alpha_mode`: `straight` or `premultiplied` (`--alpha-mode`). The line keeps the source's colour tags and converts no matrix, as `--codec prores` does (an RGB source that is neither HDR nor BT.2020, on a `prores4444`/`vp9` line has no matrix to keep: it is converted to BT.709 and tagged so; an HDR or BT.2020 one is not: FFmpeg's own conversion makes its YUV, as before); `--codec` and `--keep-alpha` together are refused, and `--hw` leaves the line on the CPU. `alpha` step: `written {codec, pix_fmt, alpha_plane}` read back, `frames {expected, measured}`. `color.py`: the alpha is split off before the grade and merged back, so the written alpha must equal the source's frame by frame within 2 of 255 (`comparison {ok, paired, worst_delta, worst_frame}`). `graphics.py`/`overlay.py` (`property: alpha_at_least_source`): drawn layers add coverage, so every written frame's alpha must be at or above the source's within 2 of 255, the stream must store an alpha plane, and the output must not have turned opaque in every frame the source was transparent in (`reason`: `alpha_below_source`, `no_alpha_plane`, `opaque_everywhere`). `background.py --transparent`: every frame's alpha read back as 0 (`provenance: specification`). `--keep-alpha` on a source with no alpha plane is refused (`kind: input`) |
+| `alpha_codec`, `alpha_mode`; step `alpha` (and, for `color.py --source-alpha-mode`, `source_alpha_mode` on the result and on the step: `straight` or `premultiplied`, #453) | `color.py --correct/--lut --keep-alpha`, `graphics.py --keep-alpha`, `overlay.py --keep-alpha`, `background.py --transparent` | `alpha_codec`: the alpha line written (`--alpha-codec prores4444` (default), `qtrle`, `png`, `vp9`; the output must be a container that holds it, `.mov`/`.mkv`, `.mov` for qtrle, `.webm`/`.mkv` for vp9). `alpha_mode`: `straight` or `premultiplied` (`--alpha-mode`). The line keeps the source's colour tags and converts no matrix, as `--codec prores` does (an RGB source that is neither HDR nor BT.2020, on a `prores4444`/`vp9` line has no matrix to keep: it is converted to BT.709 and tagged so; an HDR or BT.2020 one is not: FFmpeg's own conversion makes its YUV, as before); `--codec` and `--keep-alpha` together are refused, and `--hw` leaves the line on the CPU. `alpha` step: `written {codec, pix_fmt, alpha_plane}` read back, `frames {expected, measured}`. `color.py`: the alpha is split off before the grade and merged back, so the written alpha must equal the source's frame by frame within 2 of 255 (`comparison {ok, paired, worst_delta, worst_frame}`). `graphics.py`/`overlay.py` (`property: alpha_at_least_source`): drawn layers add coverage, so every written frame's alpha must be at or above the source's within 2 of 255, the stream must store an alpha plane, and the output must not have turned opaque in every frame the source was transparent in (`reason`: `alpha_below_source`, `no_alpha_plane`, `opaque_everywhere`). `background.py --transparent`: every frame's alpha read back as 0 (`provenance: specification`). `--keep-alpha` on a source with no alpha plane is refused (`kind: input`) |
 | `alpha_dropped`; step `alpha` with `reason: alpha_dropped` | `color.py --correct/--lut/--to-sdr` (and `--retag` when its copy falls back to a re-encode), `graphics.py`, `overlay.py` without `--keep-alpha` | on a source whose alpha is used (a frame below opaque; measured, streamed frame by frame, only when the source stores an alpha plane or a palette, so an opaque source runs and reports exactly as before; a stored plane whose alpha cannot be read counts as used and a kept step on it fails with `reason: source_alpha_unmeasured`; a VP9 source or layer with alpha needs the libvpx-vp9 decoder, `error.reason: decoder_missing` without it): the output's opaque line drops it, so the `alpha` step fails (`attribution: artifact`, a `hint`, an `alpha_dropped` warning) and `verified` is false. `--drop-alpha` says an opaque output is wanted: no step, `alpha_dropped: true` and a note. An `overlay.py --video` layer with alpha keeps it: a VP9 one is decoded with libvpx-vp9, an RGB one (qtrle, PNG) is converted to BT.709 with its alpha plane |
 
 Per-tool keys added after 2.10.11 ("nothing happens silently"), all additive:
@@ -1203,8 +1195,7 @@ re-run with an even scale, or broll.py's odd-sized A-roll scaled even up front; 
 row or column), `non_av_streams_dropped` (with the
 failed attempt's error and `dropped`, the stream types the retry leaves out, beside `dropped_non_av_streams`), `measurement_input_pending` (skipped: a
 dry-run measurement of an earlier stage's output), `ffmpeg_list_unreadable` (`ffmpeg -encoders` or
-`-bsfs` could not be read; what needed it names the read failure, not a missing encoder), `ffmpeg_version_untested`
-(FFmpeg is outside the tested major range `6-9`, unreadable, or a git/nightly build; `{version, tested, build}`) and
+`-bsfs` could not be read; what needed it names the read failure, not a missing encoder) and
 `timeout_env_invalid` (an `FFMPEG_SKILL_TIMEOUT` that is not a number, read as the 1800 s default, or is
 negative or above 500000 s, read as 0, no limit; a negative or too-long `--timeout` is refused instead, `kind: input`);
 `av1_encoder_libaom` and `crf_clamped`; `font_substituted` (with `font_used`); `drift_correction_skipped`
@@ -1387,3 +1378,58 @@ ffmpeg-skill contains no agent-specific code.
 - `tests/test_contract.py`: schema, consistency (scripts = MCP = installer), MCP inputSchema derived from the contract (equality, determinism, drift, round trips), dry-run, JSON shapes, verification policy, real-media run
 - `evals/contract/`: questions an agent must answer from the contract alone, with the expected answers checked against the live contract
 - `tests/release_check.sh`: runs the contract from the packed and installed copies before a release
+
+### Pacing profiles and the independent master gate
+
+```sh
+python3 scripts/silence.py reference-a.mp4 --extract-profile --references reference-b.mov -o editor.json
+python3 scripts/silence.py interview.mp4 --profile editor.json --protect-ranges keep.json --dry-run
+python3 scripts/silence.py interview.mp4 --profile editor.json --protect-ranges keep.json -o tight.mkv
+python3 scripts/verify.py tight.mkv --source interview.mp4 --profile editor.json --protect-ranges keep.json --json
+```
+
+The profile file is a standalone `pacing-profile@1` object. Standard output includes it under
+`profile`. For a preset, replace the path with `sns-short`, `youtube-talk` or `podcast-natural`.
+Their target/maximum interior pauses are 90/180, 240/400 and 500/950 ms respectively.
+`keep.json` is an array such as `[{"start_ms":1240,"end_ms":1510,"reason":"breath before answer"}]`.
+Times always refer to the original input. Use the same ranges to allow intentional long pauses
+during verification. A dry run decodes media, returns the full cut plan and leaves the destination untouched.
+To save the reviewed cuts for execution, use
+`silence.py interview.mp4 --profile editor.json -o tight.mkv --plan edit.json`, then
+`render.py edit.json`. Replay checks the input fingerprints and the regenerated frame/sample map.
+The apply report includes exclusive frame/sample ranges, durations before and after editing, time
+saved, removal count and candidates for human review. Verification recomputes the plan from the
+source rather than trusting the apply report. Apply runs this independent gate on a staged master before publishing it. A failed gate exits nonzero and leaves the destination untouched.
+
+Analysis uses per-channel RMS in 10 ms windows after a speech-band filter, using the loudest
+channel. The floor is the 10th percentile, bounded at −120 dBFS. The threshold is the floor
+plus an offset estimated as one third of the gap from the floor to the 75th-percentile RMS, bounded to 6–18 dB (12 dB in the presets). The threshold is capped at −20 dBFS. Interior pauses supply the target median and maximum
+p95. Each reference has equal weight: the final value is the median of the per-reference
+estimates. The profile retains their medians, p95s, and ranges. Missing pauses fall back to
+the talk policy and are labelled in `probe_meta.fallback_fields`. Continuous sound/high room
+tone can resemble a music bed. The reasons and low confidence flag qualify the estimates.
+`scdet` and integrated loudness are descriptive measurements. Unmeasurable loudness is null.
+Removed source material, original join processing and asymmetric speech margins cannot be
+observed in a finished reference. The profile identifies its policy fields, including the
+one-third/two-thirds padding split. Editing does not normalize gain or introduce scene cuts.
+
+The edit accepts one video and one audio stream. Times are relative to the first picture.
+Common nonzero timestamps are rebased; earlier audio is trimmed and later audio padded on
+that clock. Verification stages FFV1 + 32-bit PCM in Matroska. Request `.mkv` to keep that
+master or `.mp4` for H.264/AAC delivery. Before publication the MP4 is checked for codecs,
+dimensions, frame count and presentation times, channel count, sample rate and A/V duration.
+Standalone MP4 verification reconstructs the master and compares decoded content with a
+fresh delivery encode; use the same FFmpeg build and encoder for this check.
+Measurements use temporary disk for decoded PCM.
+Picture cuts snap inside detected silence on actual presentation timestamps, including VFR.
+Short speech islands are kept. `merge_gap_below_ms` suppresses a neighboring removal when a
+merge would swallow speech. The target padding is distributed according to the before/after
+ratio. Frame granularity can prevent a requested silence limit; the gate reports the failure.
+
+A zero-cross shift moves both audio boundaries by the same number of samples, minimizing the
+worst channel jump within the search radius and preferring zero crossings on ties.
+Micro-fades act on each side of internal joins only. The gate compares decoded frames and
+PCM, measures silence and the loudest adjacent-sample change within ±2 ms of every join,
+checks individual frame timestamps and the audio sample clock (1.01 ms container tolerance).
+`max_boundary_sample_delta` uses full-scale units (opposite rails differ by approximately 2).
+The click check is conservative and may flag a real transient. Review it before delivery.

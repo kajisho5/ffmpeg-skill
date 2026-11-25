@@ -455,7 +455,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Frame-exact without re-encoding the whole cut (H.264).** `cut.py --smart` re-encodes only from each cut point to the next keyframe and copies the GOPs between, matched to the source's profile, level, pixel format, B-frame depth and colour tags. It checks the result against the source (frame grid, copied packets, decoded frames). A source it cannot match (HEVC, 10-bit, interlaced, VFR, open GOPs) is re-encoded in full, and `smart.reason` says why. `probe.py --keyframes-near T` shows where the keyframes are.
 - **HDR stays HDR.** When the probe reports HDR (HDR10, HLG, Dolby Vision, BT.2020), the tools keep it rather than flatten it. Convert deliberately with `color.py --to-sdr` before H.264 deliverables or LUT work. `export.py` platform presets are SDR and warn on HDR input.
 - **Loudness targets.** −14 LUFS / −1 dBTP for YouTube and social platforms (the `loudness.py` default), `-I -16 --tp -1.5` for podcasts, `-I -23` for broadcast. A clip measured at −40 LUFS or below is room tone, not content; raising it raises the noise. Check true peak as well as LUFS: `check.py file --platform podcast` measures both.
-- **Alpha is kept only when asked, and a lost alpha is not verified.** The re-encoding tools write opaque H.264 by default. On a source whose alpha is used (ProRes 4444, QuickTime Animation, PNG, VP9 with alpha), `color.py`, `graphics.py` and `overlay.py` take `--keep-alpha` (ProRes 4444 by default, `--alpha-codec qtrle|png|vp9`, `--alpha-mode straight|premultiplied`) and read the alpha back; without it the result says `verified: false` with a failing `alpha` step, and `--drop-alpha` records that an opaque output is wanted. `background.py --transparent` makes the canvas to draw graphics on.
+- **Alpha is kept only when asked, and a lost alpha is not verified.** The re-encoding tools write opaque H.264 by default. On a source whose alpha is used (ProRes 4444, QuickTime Animation, PNG, VP9 with alpha), `color.py`, `graphics.py` and `overlay.py` take `--keep-alpha` (ProRes 4444 by default, `--alpha-codec qtrle|png|vp9`, `--alpha-mode straight|premultiplied`; `color.py --source-alpha-mode premultiplied` grades a premultiplied source's straight colour) and read the alpha back; without it the result says `verified: false` with a failing `alpha` step, and `--drop-alpha` records that an opaque output is wanted. `background.py --transparent` makes the canvas to draw graphics on.
 - **Broadcast legal levels are measured, not assumed.** `check.py final.mxf --levels ebu-r103` (or `bt709`) counts every luma and chroma sample outside the legal range and FAILs when one frame has more than 1 % out (`--levels-tolerance`); the JSON `levels` adds min/max Y/U/V per `--levels-window`. `color.py --correct --legalize ebu-r103` clamps after the 4:2:0 conversion and measures what the encode left: a lossy encoder can push a few samples around a clamped edge back out, so the result says how many.
 - **Frame changes first, text second.** Captions and overlays burned before a crop or resize end up off-frame. Reframe, then caption.
 - **Cropping 16:9 to 9:16 discards 70 % of the width.** `fit.py --fit crop` centres by default; pass `--crop-x`/`--crop-y` toward the subject, or pad with `--fit pad --pad-fill blur`. Look at the contact sheet before deciding.
@@ -629,7 +629,7 @@ The encode path a tool will actually take is Apple VideoToolbox, for h264, hevc 
 
 ## FFmpeg compatibility
 
-The tools need FFmpeg 6.1 or later and Python 3.10 or later (standard library only). 3.0.0 removed FFmpeg 5.x and Python 3.9: every tool refuses an `ffmpeg`/`ffprobe` whose version reads as older than 6.1 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git build whose version is not a release number is not refused), and `doctor` lists an unsupported FFmpeg or Python under `unsupported` with `ok: false`. Builds outside the tested majors (`6–9`), unreadable versions, or git/nightly snapshots proceed with a `ffmpeg_version_untested` warning (and are reported in `doctor` under `ffmpeg_version`). What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu 24.04 apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew), 9.x (Windows gyan.dev) and 8.0.1 (Ubuntu 26.04 apt), on Python 3.10 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
+The tools need FFmpeg 6.1 or later and Python 3.10 or later (standard library only). 3.0.0 removed FFmpeg 5.x and Python 3.9: every tool refuses an `ffmpeg`/`ffprobe` whose version reads as older than 6.1 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git build whose version is not a release number is not refused), and `doctor` lists an unsupported FFmpeg or Python under `unsupported` with `ok: false`. What CI actually exercises on every pull request is FFmpeg 6.1 (Ubuntu 24.04 apt), 7.1 (Debian trixie apt), 8.x (macOS Homebrew), 9.x (Windows gyan.dev) and 8.0.1 (Ubuntu 26.04 apt), on Python 3.10 and 3.13 (the two ends of the supported range). The capability parser has been run against the listings of these builds:
 
 | FFmpeg | `-filters` row layout | Source |
 |---|---|---|
@@ -811,14 +811,31 @@ FFmpeg itself:
 
 ### Updating
 
-Releases are frequent (often several a week), and nothing updates by itself: the tools never go online, so a copy stays at the version you installed until you replace it.
+Releases are frequent (often several a week). Use the update method that matches how you installed the skill.
 
 ```bash
 grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
 npm view ffmpeg-skill version                                  # the latest release
-npx ffmpeg-skill@latest setup                                  # replace every installed copy with the latest
-claude plugin update                                           # when installed as a Claude Code plugin
+npx ffmpeg-skill@latest setup                                   # install or refresh for each detected agent home; if FFmpeg is missing, may run the system package manager
+npx ffmpeg-skill@latest setup --no-ffmpeg                       # same without a package manager; still runs doctor (nonzero if FFmpeg is missing)
+npx ffmpeg-skill@latest --cursor                                # one home agent without setup (also --claude, --codex); skips doctor
+npx ffmpeg-skill@latest --project                               # run from the same project directory
+npx ffmpeg-skill@latest --dir ./my-skills                        # use the same parent directory as before
 ```
+
+For plugin and extension installs:
+
+| Host | Update | Uninstall |
+|---|---|---|
+| Claude Code | Run `claude plugin marketplace update ffmpeg-skill`, then `claude plugin update ffmpeg-skill@ffmpeg-skill`. Restart Claude Code to apply the update. | Run `claude plugin uninstall ffmpeg-skill@ffmpeg-skill`. |
+| Codex CLI | On 0.167.0, run `codex plugin marketplace upgrade ffmpeg-skill`. When the configured marketplace yields an upgraded root, Codex attempts to refresh the cache for the existing configured plugin installation. | Run `codex plugin remove ffmpeg-skill@ffmpeg-skill`. |
+| Gemini CLI | Run `gemini extensions update ffmpeg-skill` to pull changes from the source. | Run `gemini extensions uninstall ffmpeg-skill`. Restart the Gemini CLI session after either change. |
+
+For a Claude Code project or local install, add the matching `--scope project` or `--scope local` to both `claude plugin update` and `claude plugin uninstall`. Before Claude Code 2.1.281, `plugin update` defaults to user scope when the flag is omitted.
+
+On Codex CLI 0.167.0, if the marketplace is already current but the cached plugin is still old,
+rerun `codex plugin add ffmpeg-skill@ffmpeg-skill` after the release reaches the `plugin` branch.
+This refreshes the cache without a separate uninstall and sets the plugin to enabled in your Codex user config.
 
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
 

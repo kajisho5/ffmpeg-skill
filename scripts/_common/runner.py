@@ -19,19 +19,9 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tu
 
 
 INSTALL_HINTS = {
-    "Darwin": ("  brew install ffmpeg-full; export PATH=\"$(brew --prefix ffmpeg-full)/bin:$PATH\""
-               "   # keg-only, so installing it does not put it on PATH: keep the export in your shell profile;"
-               " the plain ffmpeg formula lacks subtitles/drawtext/zscale"),
-    "Linux": (
-        "  Debian/Ubuntu: sudo apt install ffmpeg\n"
-        "  Fedora:        sudo dnf install ffmpeg\n"
-        "  Arch:          sudo pacman -S ffmpeg"
-    ),
-    "Windows": (
-        "  winget install Gyan.FFmpeg\n"
-        "  or: choco install ffmpeg\n"
-        "  or download a build from https://ffmpeg.org/download.html and add it to PATH"
-    ),
+    "Darwin": "  brew install ffmpeg-full; export PATH=\"$(brew --prefix ffmpeg-full)/bin:$PATH\"   # keg-only, so installing it does not put it on PATH: keep the export in your shell profile; the plain ffmpeg formula lacks subtitles/drawtext/zscale",
+    "Linux": "  Debian/Ubuntu: sudo apt install ffmpeg\n  Fedora:        sudo dnf install ffmpeg\n  Arch:          sudo pacman -S ffmpeg",
+    "Windows": "  winget install Gyan.FFmpeg\n  or: choco install ffmpeg\n  or download a build from https://ffmpeg.org/download.html and add it to PATH",
 }
 
 MCP_PROGRESS_ENV = "FFMPEG_SKILL_MCP_PROGRESS"
@@ -42,15 +32,8 @@ _PROGRESS_PREFIX = "[ffmpeg-skill progress] "
 # so the hint names a newer build instead.
 UPGRADE_HINTS = {
     "Darwin": "  brew upgrade ffmpeg-full   # or ffmpeg, whichever formula is installed",
-    "Linux": (
-        "  Your distribution's own package may be older than that (Ubuntu 22.04 ships 4.4, Debian 12 ships 5.1).\n"
-        "  Use a release whose package is new enough (Ubuntu 24.04, Debian 13), or a static build\n"
-        "  from https://ffmpeg.org/download.html put ahead of the old one on PATH"
-    ),
-    "Windows": (
-        "  winget upgrade Gyan.FFmpeg\n"
-        "  or download a newer build from https://ffmpeg.org/download.html and put it ahead of the old one on PATH"
-    ),
+    "Linux": "  Your distribution's own package may be older than that (Ubuntu 22.04 ships 4.4, Debian 12 ships 5.1).\n  Use a release whose package is new enough (Ubuntu 24.04, Debian 13), or a static build\n  from https://ffmpeg.org/download.html put ahead of the old one on PATH",
+    "Windows": "  winget upgrade Gyan.FFmpeg\n  or download a newer build from https://ffmpeg.org/download.html and put it ahead of the old one on PATH",
 }
 
 
@@ -137,10 +120,11 @@ def _read_env_timeout() -> "Tuple[float, Optional[str]]":
 ERROR_RETRYABLE = False
 
 
-TESTED_FFMPEG_MAJORS = (6, 9)  # inclusive major range CI tests (.github/workflows/ci.yml)
+TESTED_FFMPEG_RANGE = ((6, 1), (9, 0))  # range spanned by the sampled CI releases (.github/workflows/ci.yml)
 _FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
 _FFMPEG_VERSION_IS_RELEASE = False   # ffmpeg_version() read a release number, not the libavutil major
 _FFMPEG_VERSION_TOKEN: "Optional[str]" = None
+_VERSION_WARNED = False
 _GIT_VERSION_TOKEN = re.compile(r"(?:^N-\d+(?:-g[0-9a-f]+)?\b|(?:^|[-_])(?:git|nightly)(?:[-_]|$))", re.I)
 
 
@@ -158,12 +142,7 @@ def _ffprobe(*args: str) -> "subprocess.CompletedProcess[str]":
 
 
 def ffmpeg_version() -> "Tuple[int, int]":
-    """(major, minor) of the FFmpeg build on PATH, parsed once from `ffprobe -version`; (0, 0)
-    when it cannot be read. ffprobe rather than ffmpeg because --dry-run promises never to run
-    ffmpeg (docs/contract.md: ffmpeg_execution "none") while ffprobe always may, and the two
-    ship from the same build. Used only to pick between two spellings of an option where FFmpeg
-    changed behaviour between releases (the tools otherwise never branch on the version: doctor's
-    capability listing is the source of truth for what a build can do)."""
+    """(major, minor) of the FFmpeg build on PATH, parsed once from `ffprobe -version`; (0, 0) when unreadable (ffprobe rather than ffmpeg so --dry-run never runs ffmpeg; used only for option spellings, while doctor's capability listing is the source of truth)."""
     global _FFMPEG_VERSION, _FFMPEG_VERSION_IS_RELEASE, _FFMPEG_VERSION_TOKEN
     if _FFMPEG_VERSION is None:
         _FFMPEG_VERSION, _FFMPEG_VERSION_IS_RELEASE, _FFMPEG_VERSION_TOKEN = (0, 0), False, None
@@ -193,31 +172,37 @@ def ffmpeg_version() -> "Tuple[int, int]":
     return _FFMPEG_VERSION
 
 
-def ffmpeg_version_status(version_token: Optional[str] = None, parsed: "Optional[Tuple[int, int]]" = None,
-                          binary: str = "FFmpeg") -> Dict[str, Any]:
-    """Classify the FFmpeg build against TESTED_FFMPEG_MAJORS: tested, untested, unreadable, or git."""
-    lo, hi = TESTED_FFMPEG_MAJORS
-    tested = f"{lo}-{hi}"
+def ffmpeg_version_status(version_token: Optional[str] = None, parsed: "Optional[Tuple[int, int]]" = None, binary: str = "FFmpeg") -> Dict[str, Any]:
+    """Classify the FFmpeg build against TESTED_FFMPEG_RANGE: tested, untested, unreadable, or git."""
+    lo, hi = TESTED_FFMPEG_RANGE
+    tested = f"{lo[0]}.{lo[1]}-{hi[0]}.{hi[1]}"
     if parsed is None:
-        parsed = ffmpeg_version()
-        if parsed == _FFMPEG_VERSION:
-            version_token = _FFMPEG_VERSION_TOKEN
-            is_git = bool(version_token and not _FFMPEG_VERSION_IS_RELEASE and _GIT_VERSION_TOKEN.search(version_token))
-        else:
-            is_git = False
+        parsed, version_token, is_rel = ffmpeg_version(), _FFMPEG_VERSION_TOKEN, _FFMPEG_VERSION_IS_RELEASE
     else:
-        is_git = bool(version_token and parsed == (0, 0) and _GIT_VERSION_TOKEN.search(version_token))
-    if is_git:
-        return {"status": "git", "version": version_token, "tested": tested,
-                "message": f"{binary} {version_token} is a git/nightly build (no release number; CI tests release majors {tested})"}
-    if parsed == (0, 0):
-        return {"status": "unreadable", "version": version_token, "tested": tested,
-                "message": f"{binary} version could not be read; CI tests release majors {tested}"}
+        is_rel = parsed != (0, 0)
+    is_git = bool(version_token and _GIT_VERSION_TOKEN.search(version_token))
+    if is_git or not is_rel:
+        st, msg = (("git", f"{binary} {version_token} is a git/nightly build (no release number; CI tests {tested})") if is_git
+                   else ("unreadable", f"{binary} version could not be read; CI tests {tested}"))
+        return {"status": st, "version": version_token, "tested": tested, "message": msg}
     ver = f"{parsed[0]}.{parsed[1]}"
-    if not (lo <= parsed[0] <= hi):
-        return {"status": "untested", "version": ver, "tested": tested,
-                "message": f"{binary} {ver} is outside the versions the test suite runs on (majors {tested}); results proceed as usual"}
-    return {"status": "tested", "version": ver, "tested": tested, "message": None}
+    msg = None if lo <= parsed <= hi else f"{binary} {ver} is outside the range spanned by tested CI builds ({tested}); results proceed as usual"
+    return {"status": "tested" if msg is None else "untested", "version": ver, "tested": tested, "message": msg}
+
+
+def warn_untested_ffmpeg() -> None:
+    """Emit one internal stderr warning per process tree when ffprobe sits outside TESTED_FFMPEG_RANGE."""
+    global _VERSION_WARNED
+    if _VERSION_WARNED or os.environ.get("FFMPEG_SKILL_VERSION_WARNED") or not ffmpeg_exe("ffprobe")[0]:
+        return
+    found = ffmpeg_version()
+    if found != (0, 0) and (found[0] < MIN_FFMPEG[0] or (_FFMPEG_VERSION_IS_RELEASE and found < MIN_FFMPEG)):
+        return
+    _VERSION_WARNED = True
+    st = ffmpeg_version_status()
+    if st["message"]:
+        os.environ["FFMPEG_SKILL_VERSION_WARNED"] = "1"
+        print(f"warning: {st['message']}", file=sys.stderr)
 
 
 _FFMPEG_RELEASE: "Optional[Tuple[int, int, int]]" = None
@@ -225,11 +210,7 @@ _FFMPEG_RELEASE_READ = False
 
 
 def ffmpeg_release() -> "Optional[Tuple[int, int, int]]":
-    """(major, minor, patch) of a tagged FFmpeg release on PATH ("8.0.1-3ubuntu2", "n8.1" ->
-    (8, 1, 0)), or None for a git/vendor build or an unreadable one. ffmpeg_version()'s
-    major.minor is the right test for an option spelling; this is for a bug that one point
-    release introduced and the next one fixed, which major.minor cannot tell apart. Read from
-    ffprobe for the same dry-run reason; cached per process."""
+    """(major, minor, patch) of a tagged FFmpeg release on PATH, or None for git/unreadable; cached per process."""
     global _FFMPEG_RELEASE, _FFMPEG_RELEASE_READ
     if not _FFMPEG_RELEASE_READ:
         _FFMPEG_RELEASE_READ = True
@@ -244,14 +225,7 @@ def ffmpeg_release() -> "Optional[Tuple[int, int, int]]":
 
 
 def _homebrew_full_build(path: str, name: str) -> str:
-    """On macOS, the keg-only `ffmpeg-full` binary that should replace `path`, or "".
-
-    Homebrew splits FFmpeg in two: the `ffmpeg` formula is lean (no freetype, libass, fontconfig,
-    harfbuzz, so no drawtext/subtitles/ass) and the keg-only `ffmpeg-full` is not linked onto
-    PATH. `brew install ffmpeg-full` therefore changes nothing for a user whose PATH still reaches
-    the lean one (#317). The swap happens only when `path` resolves into THIS Homebrew prefix's
-    Cellar as `ffmpeg` / `ffmpeg@N` and the same prefix has `opt/ffmpeg-full/bin/<name>`; a tap
-    build, MacPorts, a static download or a custom prefix is left exactly as the user put it."""
+    """On macOS, swap lean Homebrew Cellar `ffmpeg`/`ffmpeg@N` for keg-only `opt/ffmpeg-full/bin/<name>` in the same prefix (#317), leaving taps/MacPorts/custom builds untouched."""
     if platform.system() != "Darwin":
         return ""
     real = os.path.realpath(path)
@@ -293,13 +267,7 @@ def _which_on_path(name: str, entries: List[str]) -> Optional[str]:
 
 
 def safe_which(name: str, which: Optional[Any] = None) -> Optional[str]:
-    """shutil.which() without the working directory. On Windows it looks in the current directory
-    before PATH (and so does a bare name handed to subprocess), and a `.` or relative PATH entry
-    does the same elsewhere: an `ffmpeg.exe` in a folder the skill is run from would run instead
-    of the real one. A hit there (or in a directory that links to it) is dropped and PATH searched
-    again, unless the working directory is on PATH as an absolute entry, which is the caller's own
-    choice. `which` lets a test pass
-    its own lookup."""
+    """shutil.which() without the working directory (drops cwd hits unless cwd is an absolute PATH entry)."""
     found = (which or shutil.which)(name)
     if not found:
         return found
@@ -365,19 +333,12 @@ def require_tool(name: str) -> str:
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
                    f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
                    code=127, version=f"{found[0]}.{found[1]}", required=floor)
-        if not any(w.get("code") == "ffmpeg_version_untested" for w in STATE.warnings):
-            st = ffmpeg_version_status()
-            if st["message"]:
-                warn(st["message"], "ffmpeg_version_untested", version=st["version"], tested=st["tested"], build=st["status"])
+        warn_untested_ffmpeg()
     if path:
         return path
     system = platform.system()
     hint = INSTALL_HINTS.get(system, "  See https://ffmpeg.org/download.html")
-    die(
-        f"'{name}' was not found on PATH.\n"
-        f"Install FFmpeg (which includes ffprobe) for {system}:\n{hint}",
-        code=127, kind="missing_tool",
-    )
+    die(f"'{name}' was not found on PATH.\nInstall FFmpeg (which includes ffprobe) for {system}:\n{hint}", code=127, kind="missing_tool")
     return ""  # unreachable
 
 

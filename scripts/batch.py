@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
 from _common.runner import (with_flags, HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
-                            owned_identity, stop_children)
+                            owned_identity, stop_children, warn_untested_ffmpeg)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, brand_asset_files, rebase_project_paths
 from _common.runner import parse_json
@@ -835,6 +835,7 @@ def main() -> int:
             # cache entries claim no file, so they are served rather than missed as output_missing (#415)
             note("no recipe step names {out}: the steps only read each file, so no output is written "
                  "(each row says written: false; its output path is not created)")
+    warn_untested_ffmpeg()
     outdir = Path(recipe.get("output_dir") or (folder / "out"))
     if not outdir.is_absolute():
         outdir = folder / outdir

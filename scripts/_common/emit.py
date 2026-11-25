@@ -1257,6 +1257,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     }
     if ctx.sequence_frames_sha256 is not None:
         doc["sequence_frames_sha256"] = ctx.sequence_frames_sha256
+    if tool == "silence" and "cut_plan" in extra:
+        doc["cut_plan"] = extra["cut_plan"]
     if tool == "fit" and "timing" in extra:
         doc["timing"] = extra["timing"]
     try:

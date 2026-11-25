@@ -67,8 +67,8 @@ def _cps(*spans) -> "frozenset":
 # SDH music notes and check marks "emoji", and `--emoji none` (what macOS and a Linux box
 # without a colour face get under auto) cut them out of the burned text. In those blocks only
 # Emoji_Presentation=Yes characters start a cluster on their own; an Emoji=Yes one does when
-# VS16 or a skin-tone modifier follows it. Pinned from emoji-data.txt (Unicode 15.1); the
-# pictograph planes keep their block rule.
+# VS16 or a skin-tone modifier follows it. The pictograph blocks also contain
+# text-default emoji. Both sets are pinned from emoji-data.txt (Unicode 15.1).
 _EMOJI_PRESENTATION_SYMBOLS = _cps(
     (0x2614, 0x2615), (0x2648, 0x2653), 0x267F, 0x2693, 0x26A1, (0x26AA, 0x26AB),
     (0x26BD, 0x26BE), (0x26C4, 0x26C5), 0x26CE, 0x26D4, 0x26EA, (0x26F2, 0x26F3), 0x26F5,
@@ -81,7 +81,14 @@ _EMOJI_TEXT_DEFAULT_SYMBOLS = _cps(
     0x26A0, 0x26A7, (0x26B0, 0x26B1), 0x26C8, 0x26CF, 0x26D1, 0x26D3, 0x26E9, (0x26F0, 0x26F1),
     0x26F4, (0x26F7, 0x26F9), 0x2702, (0x2708, 0x2709), (0x270C, 0x270D), 0x270F, 0x2712, 0x2714,
     0x2716, 0x271D, 0x2721, (0x2733, 0x2734), 0x2744, 0x2747, (0x2763, 0x2764), 0x27A1,
-    (0x2B05, 0x2B07))
+    (0x2B05, 0x2B07),
+    0x1F321, (0x1F324, 0x1F32C), 0x1F336, 0x1F37D, (0x1F396, 0x1F397), (0x1F399, 0x1F39B),
+    (0x1F39E, 0x1F39F), (0x1F3CB, 0x1F3CE), (0x1F3D4, 0x1F3DF), 0x1F3F3, 0x1F3F5, 0x1F3F7,
+    0x1F43F, 0x1F441, 0x1F4FD, (0x1F549, 0x1F54A), (0x1F56F, 0x1F570), (0x1F573, 0x1F579),
+    0x1F587, (0x1F58A, 0x1F58D), 0x1F590, 0x1F5A5, 0x1F5A8, (0x1F5B1, 0x1F5B2), 0x1F5BC,
+    (0x1F5C2, 0x1F5C4), (0x1F5D1, 0x1F5D3), (0x1F5DC, 0x1F5DE), 0x1F5E1, 0x1F5E3, 0x1F5E8,
+    0x1F5EF, 0x1F5F3, 0x1F5FA, 0x1F6CB, (0x1F6CD, 0x1F6CF), (0x1F6E0, 0x1F6E5), 0x1F6E9,
+    0x1F6F0, 0x1F6F3)
 _SYMBOL_BLOCKS = ((0x2600, 0x27BF), (0x2B00, 0x2BFF), (0x1F000, 0x1F0FF))
 
 
@@ -90,12 +97,11 @@ def _in_symbol_block(cp: int) -> bool:
 
 
 def _is_emoji_char(ch: str) -> bool:
-    """Is this character drawn as an emoji with nothing after it? In the text-symbol blocks only
-    the Emoji_Presentation characters are; ♪ ✓ ★ ♥ are text (see _EMOJI_PRESENTATION_SYMBOLS)."""
+    """Does this character use emoji presentation by default?"""
     cp = ord(ch)
     if _in_symbol_block(cp):
         return cp in _EMOJI_PRESENTATION_SYMBOLS
-    return any(lo <= cp <= hi for lo, hi in EMOJI_RANGES)
+    return cp not in _EMOJI_TEXT_DEFAULT_SYMBOLS and any(lo <= cp <= hi for lo, hi in EMOJI_RANGES)
 
 
 def _can_be_emoji(ch: str) -> bool:

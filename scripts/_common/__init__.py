@@ -56,7 +56,7 @@ from _common.runner import (
     child_limit, _CHILDREN, _cleanup_partial_output, _cmdline, CODECS, Context, DEFAULT_TIMEOUT,
     _DRAWTEXT_PENDING, _DRAWTEXT_TMPDIR, _drawtext_tmpdir, dry_run_input_pending, _ENCODERS, _env_timeout,
     ERROR_CODE, ERROR_RETRYABLE, EVEN_SCALE, _execute, _fail, ffmpeg_base, ffmpeg_encoders, ffmpeg_exe, _FFMPEG_RELEASE, _FFMPEG_VERSION,
-    ffmpeg_bsfs, ffmpeg_filters, ffmpeg_list_error, require_filter, filter_missing_hint, ffmpeg_release, ffmpeg_version, ffmpeg_version_status, TESTED_FFMPEG_MAJORS, flush_drawtext_textfiles, INSTALL_HINTS, install_signal_handlers, _is_ffmpeg, _limit_for,
+    ffmpeg_bsfs, ffmpeg_filters, ffmpeg_list_error, require_filter, filter_missing_hint, ffmpeg_release, ffmpeg_version, ffmpeg_version_status, warn_untested_ffmpeg, TESTED_FFMPEG_RANGE, flush_drawtext_textfiles, INSTALL_HINTS, install_signal_handlers, _is_ffmpeg, _limit_for,
     _odd_dimension_retry, _on_signal, _OutputLock, _pid_dead, place_output, PROBE_TIMEOUT, _progress_line,
     read_text_or_die, refuse_output_is_input, refuse_unwritten_output, _remember_output, require_tool, run, run_analysis, _run_captured,
     run_keeping_subtitles, run_tool, _run_with_progress, shell_quote, sibling_temp, still_input_args, _SIGNALS_INSTALLED, _stage_existing_output,
@@ -148,7 +148,7 @@ class _Facade(_types.ModuleType):
     # own copy is the import-time binding and would read stale. Reads of these names go to the
     # defining module (audit 14, P1-1); every other name is a plain re-export of the same object.
     _LIVE = {
-        "_FFMPEG_VERSION": "runner", "_FFMPEG_VERSION_IS_RELEASE": "runner", "_FFMPEG_VERSION_TOKEN": "runner",
+        "_FFMPEG_VERSION": "runner", "_FFMPEG_VERSION_IS_RELEASE": "runner", "_FFMPEG_VERSION_TOKEN": "runner", "_VERSION_WARNED": "runner",
         "_FFMPEG_RELEASE": "runner", "_FFMPEG_RELEASE_READ": "runner", "_SIGNALS_INSTALLED": "runner",
         "_DRAWTEXT_TMPDIR": "runner", "_ENCODERS": "runner", "_BSFS": "runner", "_CURRENT_CTX": "emit",
     }
@@ -200,7 +200,7 @@ __all__ = [
     "_emoji_name_candidates", "EMOJI_RANGES", "_EMOJI_REGIONAL", "emoji_support", "_EMOJI_SUPPORT_CACHE",
     "_EMOJI_TAIL", "encoder_args", "_ENCODERS", "_env_timeout", "ERROR_CODE", "ERROR_RETRYABLE", "escape_drawtext",
     "escape_filter_path", "EVEN_SCALE", "_execute", "_fail", "_family_rank", "FC_LANG", "_fc_list_fonts",
-    "FC_UNKNOWN", "ffmpeg_base", "ffmpeg_bsfs", "ffmpeg_filters", "require_filter", "filter_missing_hint", "ffmpeg_encoders", "ffmpeg_list_error", "ffmpeg_exe", "_FFMPEG_RELEASE", "_FFMPEG_VERSION", "ffmpeg_release", "ffmpeg_version", "ffmpeg_version_status", "TESTED_FFMPEG_MAJORS", "fingerprint",
+    "FC_UNKNOWN", "ffmpeg_base", "ffmpeg_bsfs", "ffmpeg_filters", "require_filter", "filter_missing_hint", "ffmpeg_encoders", "ffmpeg_list_error", "ffmpeg_exe", "_FFMPEG_RELEASE", "_FFMPEG_VERSION", "ffmpeg_release", "ffmpeg_version", "ffmpeg_version_status", "warn_untested_ffmpeg", "TESTED_FFMPEG_RANGE", "fingerprint",
     "flush_drawtext_textfiles", "fold_bt709_matrix", "fmt_secs", "fmt_smpte_time", "fmt_srt_time", "font_covers_script",
     "font_family_for_script", "font_family_of_file", "FONT_FLAG_HINT", "font_for_script", "FONT_INSTALL_HINT",
     "fonts_dir_covers_script", "_fraction", "has_emoji", "info", "INSTALL_HINTS", "install_signal_handlers",

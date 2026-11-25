@@ -13,13 +13,104 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+from contextvars import ContextVar
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 HERE = Path(__file__).resolve().parent
-OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
+SHARED_OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out"))
+_CASE_OUT: "ContextVar[Path | None]" = ContextVar("_CASE_OUT", default=None)
+
+
+def out_dir() -> Path:
+    """Return the active test's isolated output directory, or SHARED_OUT outside a test method."""
+    return _CASE_OUT.get() or SHARED_OUT
+
+
+def out_path(name: str) -> Path:
+    """Return a path inside the active test's isolated output directory."""
+    return out_dir() / name
+
+
+class _OutPath(os.PathLike):
+    """Path proxy resolving to the active test's directory inside a test method, and to
+    SHARED_OUT outside one (module import, setUpClass, shared fixture builders)."""
+
+    def __init__(self, subdir: str = ""):
+        self._subdir = subdir
+
+    def _path(self) -> Path:
+        case = _CASE_OUT.get()
+        base = case or SHARED_OUT
+        p = base / self._subdir if self._subdir else base
+        if case is not None and self._subdir:
+            p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def sub(self, name: str) -> "_OutPath":
+        return _OutPath(f"{self._subdir}/{name}" if self._subdir else name)
+
+    def __fspath__(self) -> str:
+        return str(self._path())
+
+    def __str__(self) -> str:
+        return str(self._path())
+
+    def __repr__(self) -> str:
+        return repr(self._path())
+
+    def __truediv__(self, other) -> Path:
+        return self._path() / other
+
+    def __rtruediv__(self, other) -> Path:
+        return Path(other) / self._path()
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, _OutPath):
+            return self._path() == other._path()
+        return self._path() == other
+
+    def __hash__(self) -> int:
+        return hash(self._path())
+
+    def __getattr__(self, name: str):
+        return getattr(self._path(), name)
+
+
+OUT = _OutPath()
+
+
+def _install_test_isolation():
+    if getattr(unittest.TestCase.run, "_ffskill_isolated", False):
+        return
+    orig_run = unittest.TestCase.run
+
+    def isolated_run(self, result=None):
+        cases_root = SHARED_OUT / "_cases"
+        cases_root.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix="t_", dir=cases_root))
+        prev_f = len(result.failures) if result is not None else 0
+        prev_e = len(result.errors) if result is not None else 0
+        token = _CASE_OUT.set(tmp)
+        keep = True
+        try:
+            res = orig_run(self, result)
+            out_res = res if res is not None else result
+            keep = out_res is not None and (len(out_res.failures) > prev_f or len(out_res.errors) > prev_e)
+            return res
+        finally:
+            _CASE_OUT.reset(token)
+            if not keep:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    isolated_run._ffskill_isolated = True
+    unittest.TestCase.run = isolated_run
+
+
+_install_test_isolation()
 
 # The host's own defaults must not reach the suite (every tool subprocess inherits os.environ):
 # FFMPEG_SKILL_ASR_ENGINE, FFMPEG_SKILL_ASR_MODEL or a PARAKEET_* setting would change which speech
@@ -447,7 +538,7 @@ def _emoji_assets(names=("1f389", "1f44d", "1f1ef-1f1f5", "1f469-200d-1f4bb")):
     NAMING (lowercase hex code points joined by '-'), which a coloured square proves exactly as
     well as a real glyph.
     """
-    d = OUT / "emoji_assets"
+    d = SHARED_OUT / "emoji_assets"
     d.mkdir(parents=True, exist_ok=True)
     for i, name in enumerate(names):
         path = d / (name + ".png")
@@ -572,47 +663,47 @@ class MediaFixtures(unittest.TestCase):
             if os.environ.get("CI"):
                 raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step, not a reason to skip")
             raise unittest.SkipTest("ffmpeg not on PATH")
-        OUT.mkdir(parents=True, exist_ok=True)
+        SHARED_OUT.mkdir(parents=True, exist_ok=True)
         if _BUILT:
             for _name, _value in _BUILT.items():
                 setattr(cls, _name, _value)
             return
         _before = set(vars(cls))
-        cls.src = OUT / "source.mp4"
+        cls.src = SHARED_OUT / "source.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
            "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
            "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "128k", cls.src)
-        cls.mic = OUT / "lavmic.wav"
+        cls.mic = SHARED_OUT / "lavmic.wav"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "2.5", "-i", cls.src, "-vn", "-c:a", "pcm_s16le", cls.mic)
-        cls.logo = OUT / "logo.png"
+        cls.logo = SHARED_OUT / "logo.png"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red@0.8:s=240x90,format=rgba", "-frames:v", "1", cls.logo)
-        cls.cues = OUT / "cues.txt"
+        cls.cues = SHARED_OUT / "cues.txt"
         cls.cues.write_text("0:00-0:03 Hello world\n0:03-0:06 Second | line\nAuto timed cue\n", encoding="utf-8")
 
         # --- "real world" material: VFR, rotated phone clip, 5.1 audio, 10-bit HDR10 HEVC, long drifting pair
-        cls.vfr = OUT / "vfr.mp4"
+        cls.vfr = SHARED_OUT / "vfr.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", cls.vfr)
-        cls.rot = OUT / "rot.mp4"
+        cls.rot = SHARED_OUT / "rot.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-display_rotation", "90", "-i", cls.src, "-t", "6", "-c", "copy", cls.rot)
-        cls.surround = OUT / "surround.mov"
+        cls.surround = SHARED_OUT / "surround.mov"
         six = "|".join([TONES, TONES, "0.5*" + TONES, "0.2*sin(2*PI*60*t)", "0.3*" + TONES, "0.3*" + TONES])
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{six}':s=48000:c=5.1",
            "-t", "6", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ac", "6", cls.surround)
-        cls.hdr = OUT / "hdr10.mp4"
+        cls.hdr = SHARED_OUT / "hdr10.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
            "-t", "4", "-vf", "format=yuv420p10le", "-c:v", "libx265", "-preset", "ultrafast",
            "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:log-level=error",
            "-tag:v", "hvc1", "-c:a", "aac", cls.hdr)
-        cls.long_ref = OUT / "long_ref.wav"
+        cls.long_ref = SHARED_OUT / "long_ref.wav"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000", "-t", "200", "-c:a", "pcm_s16le", cls.long_ref)
-        cls.long_drift = OUT / "long_drift.wav"
+        cls.long_drift = SHARED_OUT / "long_drift.wav"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "1.2", "-i", cls.long_ref,
            "-af", "asetrate=48000*0.9995,aresample=48000", "-c:a", "pcm_s16le", cls.long_drift)
         _BUILT.update({_name: getattr(cls, _name) for _name in set(vars(cls)) - _before})
@@ -624,7 +715,7 @@ class MediaFixtures(unittest.TestCase):
     def _small(self):
         """A 640x360 clip: the wrap is computed from the real frame geometry, and a small frame
         makes the safe-area limit bite at an ordinary caption size."""
-        small = OUT / "cap_small.mp4"
+        small = SHARED_OUT / "cap_small.mp4"
         if not small.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi", "-i", "sine=f=440",
@@ -634,7 +725,7 @@ class MediaFixtures(unittest.TestCase):
     def _vertical(self):
         """A 1080x1920 clip: the real TikTok/Reels geometry, where the default caption size is
         wide enough that an ordinary sentence needs four lines (eval 17)."""
-        vert = OUT / "cap_vertical.mp4"
+        vert = SHARED_OUT / "cap_vertical.mp4"
         if not vert.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                "-i", "testsrc2=size=1080x1920:rate=30", "-f", "lavfi", "-i", "sine=f=440",
@@ -646,7 +737,7 @@ class MediaFixtures(unittest.TestCase):
         """A 12 s clip with a synthetic 120 BPM click over moving pictures: a 440 Hz tone gated
         to a short pulse every 0.5 s. Built from ffmpeg's own sources, so it is the same click on
         every machine and the measured tempo is a fact of the fixture, not of the CI runner."""
-        clip = OUT / "beats.mp4"
+        clip = SHARED_OUT / "beats.mp4"
         if not clip.exists():
             # a 40 ms pulse at the top of every half second
             click = "0.8*sin(2*PI*880*t)*lt(mod(t\\,0.5)\\,0.04)"
@@ -659,7 +750,7 @@ class MediaFixtures(unittest.TestCase):
 
     def _silent_clip(self):
         """12 s of near-silence over moving pictures: an audio stream with no pulse to measure."""
-        clip = OUT / "no_beats.mp4"
+        clip = SHARED_OUT / "no_beats.mp4"
         if not clip.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "lavfi", "-i", "anoisesrc=amplitude=0.002:r=48000",
@@ -672,7 +763,7 @@ class MediaFixtures(unittest.TestCase):
         """A 12 s clip whose audio is speech-and-pause: tone for 2 s, silence for 2 s, six times
         over. The structure detectors (silence.py, metadata.py --auto-chapters) have something
         real to find, and the pauses sit at known seconds so an assertion can name them."""
-        gappy = OUT / "gappy.mp4"
+        gappy = SHARED_OUT / "gappy.mp4"
         if not gappy.exists():
             gate = "gt(mod(t\\,4)\\,2)"
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
