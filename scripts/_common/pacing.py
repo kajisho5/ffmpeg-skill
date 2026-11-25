@@ -185,7 +185,7 @@ def extract(paths):
         meta = probe(path)
         shots = []
         if meta.get("video"):
-            length = meta["duration"]
+            length = meta["video"].get("duration") or meta["duration"]
             cuts = detect_scenes(path, 10, 0, length) + [length]
             shots = [(b-a)*1000 for a, b in zip(cuts, cuts[1:]) if b > a]
         row = dict(noise_floor_db=floor, noise_floor_offset_db=detection["noise_floor_offset_db"],
