@@ -4829,7 +4829,9 @@ sys.exit(fit.main())
             rp = run_with_banner("ffprobe version 9.1.0 Copyright", str(r_proj),
                                  "--dry-run", "--stop-after", "clips", "--json", tool_name="render")
             self.assertEqual(rp.returncode, 0, rp.stderr)
-            self.assertEqual(json.loads(rp.stdout)["status"], "planned")
+            r_doc = json.loads(rp.stdout)
+            self.assertEqual(r_doc["status"], "completed")
+            self.assertTrue(r_doc.get("dry_run"), r_doc)
             self.assertEqual(rp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, rp.stderr)
 
             pack_dir = tmp / "pack_out"
@@ -4838,7 +4840,9 @@ sys.exit(fit.main())
                                  "--template", "tiktok,x", "-o", str(pack_dir),
                                  "--dry-run", "--json", tool_name="render")
             self.assertEqual(pp.returncode, 0, pp.stderr)
-            self.assertEqual(json.loads(pp.stdout)["status"], "planned")
+            p_doc = json.loads(pp.stdout)
+            self.assertEqual(p_doc["status"], "completed")
+            self.assertTrue(p_doc.get("dry_run"), p_doc)
             self.assertEqual(pp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, pp.stderr)
 
     def test_fourth_review_p3_regressions(self):
