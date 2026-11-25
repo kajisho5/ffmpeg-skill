@@ -4843,7 +4843,24 @@ sys.exit(fit.main())
             p_doc = json.loads(pp.stdout)
             self.assertEqual(p_doc["status"], "completed")
             self.assertTrue(p_doc.get("dry_run"), p_doc)
+            self.assertEqual({r["platform"]: r["ok"] for r in p_doc.get("pack") or []}, {"tiktok": True, "x": True}, p_doc)
             self.assertEqual(pp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, pp.stderr)
+
+            # No-render paths (--write-project and saved-plan --dry-run) must not emit version warnings
+            wp_out = tmp / "written_proj.json"
+            wp = run_with_banner("ffprobe version 9.1.0 Copyright", str(self.src),
+                                 "--template", "tiktok", "--write-project", str(wp_out), "--json", tool_name="render")
+            self.assertEqual(wp.returncode, 0, wp.stderr)
+            self.assertNotIn("warning: FFmpeg", wp.stderr)
+
+            plan_file = tmp / "saved_plan.json"
+            plan_cut = tool("cut", self.src, "--start", "0", "--end", "1", "-o", str(tmp / "plan_out.mp4"),
+                            "--plan", str(plan_file), "--json")
+            self.assertEqual(plan_cut.returncode, 0, plan_cut.stderr)
+            sp = run_with_banner("ffprobe version 9.1.0 Copyright", str(plan_file),
+                                 "--dry-run", "--json", tool_name="render")
+            self.assertEqual(sp.returncode, 0, sp.stderr)
+            self.assertNotIn("warning: FFmpeg", sp.stderr)
 
     def test_fourth_review_p3_regressions(self):
         """Fourth review P3 items: render re-encoded a clip at speed 1.0 (#47); a brand's default

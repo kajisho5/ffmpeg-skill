@@ -1317,8 +1317,7 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         from _common.pacing_edit import plan_digest
         replay_env = dict(os.environ, FFMPEG_SKILL_PACING_PLAN_SHA256=plan_digest(plan["cut_plan"]))
     if tool == "sequence" and expected_frames is None:
-        warn("this older sequence plan does not bind the ordered frame list; make a new plan to check it",
-             "plan_sequence_unbound")
+        warn("this older sequence plan does not bind the ordered frame list; make a new plan to check it", "plan_sequence_unbound")
     elif tool == "sequence":
         if not isinstance(expected_frames, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_frames):
             _reject_plan(audit_path, digest, "plan_field_invalid",
@@ -1343,9 +1342,11 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
         emit(_from_plan_cwd(plan.get("output")), plan=path, plan_sha256=digest, tool=tool, stages=[tool], check=None,
              unbound_inputs=unbound)
         return 0
+    warn_untested_ffmpeg()
+    if replay_env is not None and "FFMPEG_SKILL_VERSION_WARNED" in os.environ:
+        replay_env["FFMPEG_SKILL_VERSION_WARNED"] = os.environ["FFMPEG_SKILL_VERSION_WARNED"]
     info(f"executing plan {path}: {tool} " + " ".join(argv))
-    proc = run_tool([str(script)] + with_flags(argv, child_args() + ["--json"]),
-                    env=replay_env)  # before a `--` in the plan's argv
+    proc = run_tool([str(script)] + with_flags(argv, child_args() + ["--json"]), env=replay_env)  # before a `--` in the plan's argv
     for is_command, line in stderr_records(proc.stderr):
         if is_command and not line.startswith("[dry-run]"):
             STATE.commands.append(line)
@@ -1715,10 +1716,8 @@ def main() -> int:
         if not isinstance(proj, dict):
             die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
         if "plan_version" in proj:
-            warn_untested_ffmpeg()
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
-    warn_untested_ffmpeg()
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
@@ -1777,6 +1776,7 @@ def main() -> int:
     # 2.0 refuses an existing output without --overwrite; the final place_output() would, but
     # only after every stage had run -- say so before the first one instead
     _check_existing_output(["ffmpeg", output])
+    warn_untested_ffmpeg()
     # The default work dir name comes only from the output path, with no PID or timestamp --
     # two concurrent render.py runs targeting the same output (a batch.py "project" recipe
     # processing several files in parallel, or simply running render.py twice by mistake) shared
