@@ -811,14 +811,31 @@ FFmpeg itself:
 
 ### Updating
 
-Releases are frequent (often several a week), and nothing updates by itself: the tools never go online, so a copy stays at the version you installed until you replace it.
+Releases are frequent (often several a week). Use the update method that matches how you installed the skill.
 
 ```bash
 grep '"version"' ~/.claude/skills/ffmpeg-skill/package.json   # the version installed (Cursor: ~/.cursor/skills, Codex: ~/.agents/skills)
 npm view ffmpeg-skill version                                  # the latest release
-npx ffmpeg-skill@latest setup                                  # replace every installed copy with the latest
-claude plugin update                                           # when installed as a Claude Code plugin
+npx ffmpeg-skill@latest setup                                   # install or refresh for each detected agent home; if FFmpeg is missing, may run the system package manager
+npx ffmpeg-skill@latest setup --no-ffmpeg                       # same without a package manager; still runs doctor (nonzero if FFmpeg is missing)
+npx ffmpeg-skill@latest --cursor                                # one home agent without setup (also --claude, --codex); skips doctor
+npx ffmpeg-skill@latest --project                               # run from the same project directory
+npx ffmpeg-skill@latest --dir ./my-skills                        # use the same parent directory as before
 ```
+
+For plugin and extension installs:
+
+| Host | Update | Uninstall |
+|---|---|---|
+| Claude Code | Run `claude plugin marketplace update ffmpeg-skill`, then `claude plugin update ffmpeg-skill@ffmpeg-skill`. Restart Claude Code to apply the update. | Run `claude plugin uninstall ffmpeg-skill@ffmpeg-skill`. |
+| Codex CLI | On 0.167.0, run `codex plugin marketplace upgrade ffmpeg-skill`. When the configured marketplace yields an upgraded root, Codex attempts to refresh the cache for the existing configured plugin installation. | Run `codex plugin remove ffmpeg-skill@ffmpeg-skill`. |
+| Gemini CLI | Run `gemini extensions update ffmpeg-skill` to pull changes from the source. | Run `gemini extensions uninstall ffmpeg-skill`. Restart the Gemini CLI session after either change. |
+
+For a Claude Code project or local install, add the matching `--scope project` or `--scope local` to both `claude plugin update` and `claude plugin uninstall`. Before Claude Code 2.1.281, `plugin update` defaults to user scope when the flag is omitted.
+
+On Codex CLI 0.167.0, if the marketplace is already current but the cached plugin is still old,
+rerun `codex plugin add ffmpeg-skill@ffmpeg-skill` after the release reaches the `plugin` branch.
+This refreshes the cache without a separate uninstall and sets the plugin to enabled in your Codex user config.
 
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
 
