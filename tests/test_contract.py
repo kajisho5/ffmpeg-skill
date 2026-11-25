@@ -4752,7 +4752,8 @@ sys.exit(fit.main())
                 tested_proc = run_with_banner(tested_banner, self.src, "--start", "0", "--end", "1",
                                               "-o", out_dry, "--dry-run", "--json")
                 self.assertEqual(tested_proc.returncode, 0, tested_proc.stderr)
-                self.assertNotIn("outside the tested versions", tested_proc.stderr)
+                self.assertNotIn("outside the range spanned by tested CI builds", tested_proc.stderr)
+                self.assertNotIn("warning: FFmpeg", tested_proc.stderr)
                 tested_doc = json.loads(tested_proc.stdout)
                 self.assertNotIn("ffmpeg_version_untested", [w["code"] for w in (tested_doc.get("diagnostics") or {}).get("warnings") or []])
 
@@ -4817,6 +4818,28 @@ sys.exit(fit.main())
             vp = run_with_banner("ffprobe version 9.1.0 Copyright", self.src, "--quick", "--json", tool_name="verify")
             self.assertEqual(vp.returncode, 0, vp.stderr)
             self.assertEqual(vp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, vp.stderr)
+
+            # render.py (--stop-after clips with 2 trimmed clips) and two-destination render pack:
+            # each emits exactly 1 warning on stderr across parent + all child processes
+            r_proj = tmp / "render_clips.json"
+            r_proj.write_text(json.dumps({
+                "output": str(tmp / "render_out.mp4"),
+                "clips": [{"src": str(self.src), "in": 0, "out": 1}, {"src": str(self.src), "in": 1, "out": 2}],
+            }), encoding="utf-8")
+            rp = run_with_banner("ffprobe version 9.1.0 Copyright", str(r_proj),
+                                 "--dry-run", "--stop-after", "clips", "--json", tool_name="render")
+            self.assertEqual(rp.returncode, 0, rp.stderr)
+            self.assertEqual(json.loads(rp.stdout)["status"], "planned")
+            self.assertEqual(rp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, rp.stderr)
+
+            pack_dir = tmp / "pack_out"
+            pack_dir.mkdir()
+            pp = run_with_banner("ffprobe version 9.1.0 Copyright", str(self.src),
+                                 "--template", "tiktok,x", "-o", str(pack_dir),
+                                 "--dry-run", "--json", tool_name="render")
+            self.assertEqual(pp.returncode, 0, pp.stderr)
+            self.assertEqual(json.loads(pp.stdout)["status"], "planned")
+            self.assertEqual(pp.stderr.count("warning: FFmpeg 9.1 is outside"), 1, pp.stderr)
 
     def test_fourth_review_p3_regressions(self):
         """Fourth review P3 items: render re-encoded a clip at speed 1.0 (#47); a brand's default

@@ -76,7 +76,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
+from _common.runner import absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination, warn_untested_ffmpeg
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
 from _common.probe import AUDIO_MEDIA_EXT
@@ -386,6 +386,7 @@ def render_pack(names: List[str], args) -> int:
     outputs: List[str] = []
     failed: List[str] = []
     stopped: List[Dict[str, Any]] = []  # destinations a timeout stopped: {kind, exit_code}
+    warn_untested_ffmpeg()
     for name in names:
         # the destination decides the container: an audio-only destination in a pack must not be
         # handed a .mp4 name the single-template form would never have written (review 12)
@@ -1714,8 +1715,10 @@ def main() -> int:
         if not isinstance(proj, dict):
             die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
         if "plan_version" in proj:
+            warn_untested_ffmpeg()
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
+    warn_untested_ffmpeg()
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
     if args.write_project:
         # Only the filled project: the point is to edit it before rendering, so nothing runs.
