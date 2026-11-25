@@ -183,8 +183,12 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video copied when the output keeps picture, audio extracted for an audio-only extension)"],
                      required=FF + ["filter:loudnorm"], optional=[{"capability": AAC, "when": "output extension isn't .wav/.aif/.aiff/.caf/.mp3/.opus/.ogg/.flac/.mka (audio_codec_for()'s default)"}] + AUDIO_OUT,
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)"],
-                    required=FF + ["filter:silencedetect"], optional=[{"capability": X264, "when": "removing silences from a video"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
+    "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)", "pacing-profile@1 (--extract-profile)", "pacing-cut-plan@1 and verified MKV master or MP4 delivery (--profile)"],
+                    required=FF + ["filter:silencedetect"], optional=[{"capability": "encoder:ffv1", "when": "--profile renders a master"},
+                                                                    {"capability": "bsf:setts", "when": "--profile preserves the kept final frame duration"},
+                                                                    {"capability": "filter:scdet", "when": "--extract-profile on video"},
+                                                                    {"capability": "filter:loudnorm", "when": "--extract-profile"},
+                                                                    {"capability": X264, "when": "editing an ordinary video or encoding a pacing MP4 delivery"}, HDR_X265, {"capability": AAC, "when": "removing silences from a video"},
                                                                     {"capability": "external:whisper", "when": "--transcribe (with --filler or a sentence flag)"},
                                                                     {"capability": "external:parakeet", "when": "--transcribe (with --filler or a sentence flag; English; either engine family satisfies it)"}] + AUDIO_OUT,
                     video_required=False, audio_only=True, visual=False, verify=["probe"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
@@ -252,7 +256,7 @@ DRY_RUN_ANALYSIS = {
     "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
     "report": "probe and loudness measurements run (and check.py, with --platform); contact sheets are not drawn under --dry-run (a report_section_dry_run skip); the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
-    "silence": "silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use; so does --transcribe with --sentence-min-silence or --sentence-margin-tail",
+    "silence": "with --profile or --extract-profile, pacing measurements run without publishing any file; otherwise silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use; so does --transcribe with --sentence-min-silence or --sentence-margin-tail",
     "loudness": "the loudnorm measurement pass runs so input_i and the planned pass-2 command are real; the normalised output is not written",
     "check": "read-only tool; the loudness measurement (or, when it is skipped, the audio row's volumedetect) and the --content decode run under --dry-run too, so every row is present",
     "stabilize": "vidstabdetect (pass 1, into a temp file) runs; the stabilised output (pass 2) is not written",
@@ -263,7 +267,7 @@ DRY_RUN_ANALYSIS = {
     "overlay": "only for a multi-line --text on FFmpeg 8.0, 8.0.1 or 8.1.0: one drawtext measures each line on a generated one-frame picture (the input is not read), so the planned per-line positions are the ones a run uses; otherwise no ffmpeg runs and the composited output is never written",
 }
 DRY_RUN_NOTES = {
-    "verify": "not supported: the flag is accepted but the steps run and outputs are written",
+    "verify": "in the legacy footage suite the flag is accepted but the steps run and outputs are written; --profile runs a read-only source/output gate, including under --dry-run",
     "sequence": "no ffmpeg runs; ffprobe decodes every frame of the sequence once, and when that check completes a frame that does not decode as an image is refused (still_unreadable) as in a real run; when ffprobe fails on the frame list or reads back no frame, a note says the frames were not checked and the dry run completes; the video is not written",
 }
 
@@ -939,6 +943,14 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present with `silent`: which tracks were silent and how to refuse them"},
                  "timing": {"type": "object", "description": "#486: {tempo, atempo, length_samples, sample_rate}: the --tempo factor (null without it), the atempo stages (each 0.5..2.0, [] at tempo 1) whose product it is, --length-samples (null without it) and the sample rate that count is in (null when not measured yet); with --length-samples a length_samples verification step counts the written track's decoded samples (exact for PCM/FLAC/ALAC, within tolerance_samples, one codec frame, for a lossy codec)"},
                  "audio": {"type": "object", "description": "what the mix was built from: voice (null | light | medium | strong), stereo_widen, channel (--channel N, the 0-based channel kept, else null), sample_rate (--sample-rate, else null; both are read back from the output as the channels / sample_rate verification steps), effects/effects_volume, and with --music the music_volume plus duck (null when --duck was not given, else the threshold in dB and linear, the sidechain gate's ratio, attack_ms, release_ms, and amount_db, the depth in dB the bed is lowered under speech)"}}
+    if name in ("silence", "verify"):
+        extra["cut_plan"] = {"type": "object", "description": "pacing-cut-plan@1, source frame and audio sample spans, times in milliseconds"}
+    if name == "silence":
+        from _common.pacing import profile_schema
+        extra["profile"] = profile_schema()
+    if name == "verify":
+        extra.update(checks={"type": "object"}, max_frame_pts_error_ms={"type": "number"},
+                     boundary_sample_deltas={"type": "array"}, output_pauses_ms={"type": "array"})
     for key, prop in EMITTED_KEYS.get(name, {}).items():
         extra.setdefault(key, prop)
     if name in ("overlay", "graphics", "caption", "grid"):
@@ -2167,7 +2179,7 @@ def mcp_input_schema(spec: Dict[str, Any]) -> Dict[str, Any]:
             if key in p:
                 out[key] = p[key]
         props[dest] = out
-    props["argv"] = {"type": "array", "items": {"type": "string"}, "description": "raw CLI arguments (non-canonical compatibility path; when present every other key is ignored)"}
+    props["argv"] = {"type": "array", "items": {"type": "string"}, "description": "raw CLI arguments; when present every other key is ignored"}
     structured: Dict[str, Any] = {}
     if src.get("required"):
         structured["required"] = list(src["required"])

@@ -1378,3 +1378,58 @@ ffmpeg-skill contains no agent-specific code.
 - `tests/test_contract.py`: schema, consistency (scripts = MCP = installer), MCP inputSchema derived from the contract (equality, determinism, drift, round trips), dry-run, JSON shapes, verification policy, real-media run
 - `evals/contract/`: questions an agent must answer from the contract alone, with the expected answers checked against the live contract
 - `tests/release_check.sh`: runs the contract from the packed and installed copies before a release
+
+### Pacing profiles and the independent master gate
+
+```sh
+python3 scripts/silence.py reference-a.mp4 --extract-profile --references reference-b.mov -o editor.json
+python3 scripts/silence.py interview.mp4 --profile editor.json --protect-ranges keep.json --dry-run
+python3 scripts/silence.py interview.mp4 --profile editor.json --protect-ranges keep.json -o tight.mkv
+python3 scripts/verify.py tight.mkv --source interview.mp4 --profile editor.json --protect-ranges keep.json --json
+```
+
+The profile file is a standalone `pacing-profile@1` object. Standard output includes it under
+`profile`. For a preset, replace the path with `sns-short`, `youtube-talk` or `podcast-natural`.
+Their target/maximum interior pauses are 90/180, 240/400 and 500/950 ms respectively.
+`keep.json` is an array such as `[{"start_ms":1240,"end_ms":1510,"reason":"breath before answer"}]`.
+Times always refer to the original input. Use the same ranges to allow intentional long pauses
+during verification. A dry run decodes media, returns the full cut plan and leaves the destination untouched.
+To save the reviewed cuts for execution, use
+`silence.py interview.mp4 --profile editor.json -o tight.mkv --plan edit.json`, then
+`render.py edit.json`. Replay checks the input fingerprints and the regenerated frame/sample map.
+The apply report includes exclusive frame/sample ranges, durations before and after editing, time
+saved, removal count and candidates for human review. Verification recomputes the plan from the
+source rather than trusting the apply report. Apply runs this independent gate on a staged master before publishing it. A failed gate exits nonzero and leaves the destination untouched.
+
+Analysis uses per-channel RMS in 10 ms windows after a speech-band filter, using the loudest
+channel. The floor is the 10th percentile, bounded at −120 dBFS. The threshold is the floor
+plus an offset estimated as one third of the gap from the floor to the 75th-percentile RMS, bounded to 6–18 dB (12 dB in the presets). The threshold is capped at −20 dBFS. Interior pauses supply the target median and maximum
+p95. Each reference has equal weight: the final value is the median of the per-reference
+estimates. The profile retains their medians, p95s, and ranges. Missing pauses fall back to
+the talk policy and are labelled in `probe_meta.fallback_fields`. Continuous sound/high room
+tone can resemble a music bed. The reasons and low confidence flag qualify the estimates.
+`scdet` and integrated loudness are descriptive measurements. Unmeasurable loudness is null.
+Removed source material, original join processing and asymmetric speech margins cannot be
+observed in a finished reference. The profile identifies its policy fields, including the
+one-third/two-thirds padding split. Editing does not normalize gain or introduce scene cuts.
+
+The edit accepts one video and one audio stream. Times are relative to the first picture.
+Common nonzero timestamps are rebased; earlier audio is trimmed and later audio padded on
+that clock. Verification stages FFV1 + 32-bit PCM in Matroska. Request `.mkv` to keep that
+master or `.mp4` for H.264/AAC delivery. Before publication the MP4 is checked for codecs,
+dimensions, frame count and presentation times, channel count, sample rate and A/V duration.
+Standalone MP4 verification reconstructs the master and compares decoded content with a
+fresh delivery encode; use the same FFmpeg build and encoder for this check.
+Measurements use temporary disk for decoded PCM.
+Picture cuts snap inside detected silence on actual presentation timestamps, including VFR.
+Short speech islands are kept. `merge_gap_below_ms` suppresses a neighboring removal when a
+merge would swallow speech. The target padding is distributed according to the before/after
+ratio. Frame granularity can prevent a requested silence limit; the gate reports the failure.
+
+A zero-cross shift moves both audio boundaries by the same number of samples, minimizing the
+worst channel jump within the search radius and preferring zero crossings on ties.
+Micro-fades act on each side of internal joins only. The gate compares decoded frames and
+PCM, measures silence and the loudest adjacent-sample change within ±2 ms of every join,
+checks individual frame timestamps and the audio sample clock (1.01 ms container tolerance).
+`max_boundary_sample_delta` uses full-scale units (opposite rails differ by approximately 2).
+The click check is conservative and may flag a real transient. Review it before delivery.

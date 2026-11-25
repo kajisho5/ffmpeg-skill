@@ -2710,5 +2710,169 @@ class NotMeasuredAnalysisTests(unittest.TestCase):
         self.assertNotIn("reason", levels)
 
 
+class PacingTests(unittest.TestCase):
+    """Run the public CLI with measured picture timestamps and original PCM."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls.folder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.folder.cleanup)
+        cls.root = Path(cls.folder.name)
+
+    def media(self, name, rate="30", kind="talk", vfr=False):
+        path = self.root/(name+".mkv")
+        if path.exists():
+            return path
+        # A repeatable quiet 1 kHz bed; DC ramp is inaudible to the speech band, but an
+        # abrupt jump between two points on it clicks on the unfiltered original sound.
+        gap = "0.0008*sin(2*PI*1000*t)"
+        if kind == "ramp":
+            gap += "+0.3*(t-1.5)"
+        expr = f"if(between(t,0.8,2.2),{gap},0.16*sin(2*PI*440*t))"
+        if kind == "edges":
+            expr = f"if(between(t,0.3,2.7),{expr},0)"
+        if kind == "bed":
+            expr = "0.15*sin(2*PI*440*t)"
+        args = ["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i",
+                f"testsrc2=size=48x32:rate={rate}:duration=3", "-f", "lavfi", "-i",
+                f"aevalsrc='{expr}':s=48000:d={3.003 if rate != '30' else 3}"]
+        if vfr:
+            args += ["-vf", "select='not(eq(mod(n,4),1))'", "-fps_mode", "vfr"]
+        subprocess.run([*args, "-c:v", "ffv1", "-c:a", "pcm_s24le", str(path)], check=True)
+        return path
+
+    def call(self, tool, *argv, ok=True):
+        result = subprocess.run([sys.executable, str(SCRIPTS/(tool+".py")), *map(str,argv), "--json"],
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode == 0, ok, (result.stdout, result.stderr))
+        return json.loads(result.stdout)
+
+    def test_profile_references_floor_and_bgm_confidence(self):
+        a, b = self.media("floor"), self.media("constant", kind="bed")
+        output = self.root/"measured.json"
+        r = self.call("silence", a, "--extract-profile", "--references", b, "-o", output)
+        profile = json.loads(output.read_text())
+        self.assertEqual(r["profile"], profile)
+        self.assertEqual(profile["contract"], "pacing-profile@1")
+        meta = profile["probe_meta"]
+        self.assertEqual((meta["analysis_count"], meta["confidence"], meta["bgm_suspected"]), (2,"low",True))
+        self.assertTrue(meta["warnings"])
+        floors = sorted(row["measurements"]["noise_floor_db"] for row in meta["samples"])
+        self.assertAlmostEqual(meta["between_files"]["noise_floor_db"]["median"], sum(floors)/2)
+        self.assertAlmostEqual(meta["between_files"]["noise_floor_db"]["p95"], floors[0]*.05+floors[1]*.95)
+        self.assertTrue(meta["samples"][1]["bgm_reasons"])
+        self.assertAlmostEqual(meta["samples"][0]["measurements"]["noise_floor_db"], -65, delta=2)
+        self.assertGreater(meta["samples"][0]["interior_pauses"]["median"], 1300)
+        self.assertEqual(len(meta["between_files"]["noise_floor_db"]["range"]), 2)
+        self.assertTrue(profile["loudness"]["target_lufs"] < 0)
+        self.assertGreater(profile["video_rhythm"]["median_shot_ms"], 0)
+        self.call("silence", a, "--profile", output, "--dry-run")
+
+    def test_mp4_delivery_with_zero_and_shifted_source_clocks(self):
+        source = self.media("mp4-clock", "30000/1001")
+        normal = self.root/"normal.mp4"
+        shifted = self.root/"shifted.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), "-c:v", "libx264", "-c:a", "aac", str(normal)], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(normal), "-c", "copy", "-output_ts_offset", "5", str(shifted)], check=True)
+        for path in (normal, shifted):
+            output = self.root/("delivered-"+path.name)
+            self.call("silence", path, "--profile", "youtube-talk", "-o", output)
+            gate = self.call("verify", output, "--source", path, "--profile", "youtube-talk")
+            self.assertTrue(gate["checks"]["delivery_audio_content"])
+            self.assertTrue(gate["checks"]["delivery_picture_content"])
+            self.assertTrue(gate["checks"]["delivery_sync"])
+
+    def test_cfr_vfr_protection_and_independent_wrong_master(self):
+        for rate,vfr in [("30",False), ("30000/1001",True)]:
+            with self.subTest(rate=rate):
+                stem = "vfr" if vfr else "cfr"
+                source = self.media(stem, rate, vfr=vfr)
+                protected = self.root/(stem+"-protect.json")
+                protected.write_text('[{"start_ms":1300,"end_ms":1500,"reason":"emphasis"}]')
+                output = self.root/(stem+"-master.mkv")
+                options = ["--profile", "youtube-talk", "--protect-ranges", protected]
+                planned = self.call("silence", source, *options, "-o", output, "--dry-run")
+                self.assertFalse(output.exists())
+                report = self.call("silence", source, *options, "-o", output)
+                plan = report["cut_plan"]
+                self.assertEqual(plan, planned["cut_plan"])
+                self.assertEqual(plan["cut_count"], 2)
+                self.assertTrue(plan["long_pause_candidates"])
+                gate = self.call("verify", output, "--source", source, *options)
+                self.assertTrue(all(gate["checks"].values()))
+                # Simulate a writer that ignores the plan. A clean receipt or the same
+                # profile supplied to both processes must never certify this original.
+                gate = self.call("verify", source, "--source", source, *options, ok=False)
+                self.assertFalse(gate["checks"]["kept_content"])
+                self.assertFalse(gate["checks"]["residual"])
+
+    def test_nonzero_splice_fails_without_fade_and_passes_with_it(self):
+        from _common.pacing import preset
+        source = self.media("ramp", kind="ramp")
+        for mode in ("none", "micro_fade"):
+            with self.subTest(mode=mode):
+                data = preset("youtube-talk")
+                data["silence_detection"]["noise_floor_db"] = -60
+                data["audio_seam"]["seam_mode"] = mode
+                profile, output = self.root/(mode+".json"), self.root/(mode+".mkv")
+                profile.write_text(json.dumps(data))
+                gate = self.call("silence", source, "--profile", profile, "-o", output, ok=mode=="micro_fade")
+                if mode == "micro_fade":
+                    self.assertTrue(gate["verified"])
+                    gate = self.call("verify", output, "--source", source, "--profile", profile)
+                else:
+                    self.assertFalse(output.exists())
+                    self.assertEqual(gate["status"], "failed")
+                self.assertEqual(gate["checks"]["clicks"], mode=="micro_fade")
+                self.assertEqual(len(gate["boundary_sample_deltas"]), 1)
+
+    def test_saved_plan_replay_rejects_a_changed_review_map_before_publication(self):
+        source = self.media("replay")
+        output = self.root/"replayed.mkv"
+        saved = self.root/"reviewed.json"
+        report = self.call("silence", source, "--profile", "youtube-talk", "-o", output, "--plan", saved)
+        plan = json.loads(saved.read_text())
+        self.assertEqual(plan["cut_plan"], report["cut_plan"])
+        self.assertFalse(output.exists())
+        result = self.call("render", saved)
+        self.assertTrue(result["tool_result"]["verified"])
+        before = output.read_bytes()
+        plan["cut_plan"]["keep"][0]["end_frame"] -= 1
+        saved.write_text(json.dumps(plan))
+        self.call("render", saved, "--overwrite", ok=False)
+        self.assertEqual(output.read_bytes(), before)
+
+    def test_head_and_tail_are_measured_below_interior_detection_floor(self):
+        from _common.pacing import pauses, preset
+        detection = preset("youtube-talk")["silence_detection"]
+        self.assertEqual(pauses([-100, -12, -100, -100], 40, detection), [(0, 10), (20, 40)])
+        source = self.media("head-tail", kind="edges")
+        output = self.root/"trimmed-edges.mkv"
+        self.call("silence", source, "--profile", "sns-short", "-o", output)
+        gate = self.call("verify", output, "--source", source, "--profile", "sns-short")
+        self.assertTrue(gate["checks"]["leading"] and gate["checks"]["trailing"])
+        self.assertEqual(gate["cut_plan"]["cut_count"], 3)
+
+    def test_zero_cross_shift_finds_smallest_multichannel_discontinuity(self):
+        from _common.pacing_edit import splice_shift
+        pcm = [0]*60
+        pcm[10:16] = [-70, 70, -200, 200, -1, 1]
+        pcm[30:36] = [80, -80, 100, -100, 1, -1]
+        self.assertEqual(splice_shift(pcm, 2, 7, 16, 1), 1)
+        self.assertEqual(splice_shift(pcm, 2, 7, 16, 0), 0)
+
+    def test_refuses_bad_ranges_and_input_alias_even_with_overwrite(self):
+        source = self.media("guard")
+        before = source.read_bytes()
+        self.call("silence", source, "--profile", "sns-short", "-o", source, "--overwrite", ok=False)
+        invalid = self.root/"invalid.json"
+        invalid.write_text('[{"start_ms":120,"end_ms":90,"reason":"bad"}]')
+        dest = self.root/"not-written.mkv"
+        self.call("silence", source, "--profile", "podcast-natural", "--protect-ranges", invalid, "-o", dest, ok=False)
+        self.assertFalse(dest.exists())
+        self.assertEqual(source.read_bytes(), before)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
