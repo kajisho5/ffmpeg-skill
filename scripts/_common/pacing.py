@@ -83,6 +83,8 @@ def read_profile(name):
             or type(meta["bgm_suspected"]) is not bool or not isinstance(meta["confidence"], str)
             or any(not isinstance(meta[k], list) or not all(isinstance(v, str) for v in meta[k])
                    for k in ("sample_names", "reasons"))
+            or not isinstance(meta.get("origin", ""), str)
+            or not isinstance(meta.get("warnings", []), list) or not all(isinstance(v, str) for v in meta.get("warnings", []))
             or meta["analysis_count"] != len(meta["sample_names"])):
         raise ValueError("invalid probe metadata")
     return data
@@ -246,6 +248,15 @@ def profile_schema():
                 spec = {"type": "integer"}
             else:
                 spec = {"type": "number"}
+            if number(default):
+                spec["minimum"] = {"noise_floor_db": -120, "min_silence_detect_ms": 10,
+                                   "min_clip_frames": 1, "min_removed_frames": 1}.get(key, 0)
+                maxima = {"noise_floor_db": 0, "noise_floor_offset_db": 60, "micro_fade_ms": 50,
+                          "zero_cross_search_ms": 50, "max_boundary_sample_delta": 2}
+                if key in maxima:
+                    spec["maximum"] = maxima[key]
+            if key == "analysis_bandpass_hz":
+                spec["items"].update(exclusiveMinimum=0, exclusiveMaximum=4000)
             props[key] = spec
         fields[group] = dict(type="object", properties=props,
                              required=[k for k in props if k not in ("origin", "warnings")])
