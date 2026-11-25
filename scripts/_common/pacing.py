@@ -35,7 +35,7 @@ def preset(name):
                 loudness=dict(target_lufs=None, true_peak_db=None, lra_max=None),
                 video_rhythm=dict(median_shot_ms=None, min_shot_ms=None),
                 probe_meta=dict(origin=name, analysis_count=0, sample_names=[], bgm_suspected=False,
-                                confidence="preset", reasons=[]))
+                                confidence="preset", reasons=[], warnings=[]))
 
 
 def number(value):
@@ -57,7 +57,7 @@ def read_profile(name):
         for field, default in fields.items():
             value = data[group].get(field)
             if field not in data[group]:
-                if group == "probe_meta" and field == "origin":
+                if group == "probe_meta" and field in ("origin", "warnings"):
                     continue
                 raise ValueError("missing " + group + "." + field)
             if number(default) and (not number(value) or
@@ -120,13 +120,15 @@ def decoded_pcm(path, options, fmt, code):
                     yield view
 
 
-def envelope(path, band):
+def envelope(path, band, alignment=""):
     # Loudest channel avoids cancellation on an opposite-polarity stereo microphone.
     meta = probe(path)
     if not meta.get("audio"):
         raise ValueError("a pacing measurement requires audio")
     channels = meta["audio"]["channels"]
     filters = f"highpass=f={band[0]},lowpass=f={band[1]},aresample=8000"
+    if alignment:
+        filters = alignment + "," + filters
     step = 80 * channels
     levels = []
     with decoded_pcm(path, ["-af", filters], "s16le", "h") as pcm:
@@ -208,6 +210,7 @@ def extract(paths):
                   flag_long_pause_above_ms=max(pacing["max_keep_silence_ms"], 2*target))
     profile["probe_meta"].update(origin="references", analysis_count=len(paths),
                                 sample_names=[s["name"] for s in samples], samples=samples,
+                                warnings=["Possible music bed: use an isolated voice track, a preset or a reviewed threshold."] if reasons else [],
                                 between_files={k: stats(v) for k, v in rows.items()}, reasons=reasons,
                                 bgm_suspected=bool(reasons), confidence="low" if reasons or "target_keep_silence_ms" not in rows else "measured",
                                 policy_fields=["analysis_bandpass_hz", "min_silence_detect_ms",
@@ -245,5 +248,5 @@ def profile_schema():
                 spec = {"type": "number"}
             props[key] = spec
         fields[group] = dict(type="object", properties=props,
-                             required=[k for k in props if k != "origin"])
+                             required=[k for k in props if k not in ("origin", "warnings")])
     return dict(type="object", required=list(fields), properties=fields)

@@ -183,7 +183,7 @@ TOOL_META: Dict[str, Dict[str, Any]] = {
     "loudness": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["loudness measurement JSON (--measure-only)", "normalised artifact (video copied when the output keeps picture, audio extracted for an audio-only extension)"],
                      required=FF + ["filter:loudnorm"], optional=[{"capability": AAC, "when": "output extension isn't .wav/.aif/.aiff/.caf/.mp3/.opus/.ogg/.flac/.mka (audio_codec_for()'s default)"}] + AUDIO_OUT,
                      video_required=False, audio_only=True, visual=False, verify=["probe", "check"], produces_artifact=True, idempotency="content_equivalent", deterministic=True),
-    "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)", "pacing-profile@1 (--extract-profile)", "pacing-cut-plan@1 and lossless MKV (--profile)"],
+    "silence": dict(role="analysis_and_execution", inputs=["video or audio asset"], outputs=["silence list JSON (--list)", "artifact with silences removed", "EDL text (--edl)", "pacing-profile@1 (--extract-profile)", "pacing-cut-plan@1 and verified MKV master or MP4 delivery (--profile)"],
                     required=FF + ["filter:silencedetect"], optional=[{"capability": "encoder:ffv1", "when": "--profile renders a master"},
                                                                     {"capability": "bsf:setts", "when": "--profile preserves the kept final frame duration"},
                                                                     {"capability": "filter:scdet", "when": "--extract-profile on video"},

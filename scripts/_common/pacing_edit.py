@@ -18,14 +18,15 @@ from _common.emit import write_plan
 
 def frames(path):
     args = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames", "-show_entries",
-            "frame=best_effort_timestamp_time,duration_time,pkt_duration_time:stream_tags=DURATION", "-of", "json", path]
+            "frame=best_effort_timestamp_time,duration_time,pkt_duration_time:stream=duration:stream_tags=DURATION", "-of", "json", path]
     document = json.loads(run_analysis(args).stdout)
     data = document["frames"]
     if not data:
         raise ValueError("pacing edits require a video stream")
     pts = [float(f["best_effort_timestamp_time"])*1000 for f in data]
-    if abs(pts[0]) > 1 or any(a >= b for a, b in zip(pts, pts[1:])):
-        raise ValueError("expected zero-origin, increasing video presentation timestamps")
+    origin = pts[0]
+    if any(a >= b for a, b in zip(pts, pts[1:])):
+        raise ValueError("expected increasing video presentation timestamps")
     last = data[-1]
     length = last.get("duration_time") or last.get("pkt_duration_time")
     if not length or float(length) <= 0:
@@ -33,34 +34,41 @@ def frames(path):
         # end of this particular track (the container duration may be the audio).
         streams = document.get("streams") or []
         end = streams[0].get("tags", {}).get("DURATION") if streams else None
+        if not end and streams and streams[0].get("duration"):
+            end = "0:0:" + str(float(streams[0]["duration"]) + origin/1000)
         if not end:
             raise ValueError("final frame duration unavailable")
         h, m, sec = end.split(":")
         track_end = (int(h)*3600 + int(m)*60 + float(sec))*1000
         if track_end <= pts[-1]:
             raise ValueError("final video frame has no positive duration")
-        return pts+[track_end]
-    return pts + [pts[-1] + float(length)*1000]
+        return [t-origin for t in pts+[track_end]]
+    return [t-origin for t in pts + [pts[-1] + float(length)*1000]]
 
 
 def sound(path, stack):
     args = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", path]
     streams = json.loads(run_analysis(args).stdout)["streams"]
     audio = [s for s in streams if s["codec_type"] == "audio"]
-    if len(audio) != 1 or len(streams) != 2 or abs(float(audio[0].get("start_time", 0))) > .001:
+    video = [s for s in streams if s["codec_type"] == "video"]
+    if len(audio) != 1 or len(video) != 1 or len(streams) != 2:
         raise ValueError("master requires one aligned audio stream and one video stream")
-    pcm = stack.enter_context(decoded_pcm(path, [], "s32le", "i"))
+
     # A timestamp discontinuity inside either track is invisible to an end-to-end length check.
     cmd = ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_frames", "-show_entries",
            "frame=best_effort_timestamp_time,nb_samples", "-of", "json", path]
     blocks = json.loads(run_analysis(cmd).stdout)["frames"]
     rate = int(audio[0]["sample_rate"])
+    origin = float(blocks[0]["best_effort_timestamp_time"])
+    delta = round((origin-float(video[0]["start_time"]))*rate)
+    alignment = f"atrim=start_sample={-delta}" if delta < 0 else f"adelay={delta}S:all=1" if delta else ""
+    pcm = stack.enter_context(decoded_pcm(path, ["-af", alignment] if alignment else [], "s32le", "i"))
     position = 0
     for block in blocks:
-        if abs(float(block["best_effort_timestamp_time"])-position/rate) > .00101:
+        if abs(float(block["best_effort_timestamp_time"])-origin-position/rate) > .00101:
             raise ValueError("audio timestamps differ from the decoded sample clock")
         position += int(block["nb_samples"])
-    return int(audio[0]["sample_rate"]), audio[0]["channels"], pcm
+    return int(audio[0]["sample_rate"]), audio[0]["channels"], pcm, alignment
 
 
 def ranges(path, end):
@@ -102,12 +110,12 @@ def splice_shift(pcm, channels, end, start, radius):
 
 def make_plan(path, profile, protect, stack):
     pts = frames(path)
-    rate, channels, pcm = sound(path, stack)
+    rate, channels, pcm, alignment = sound(path, stack)
     sample = lambda ms: round(ms * rate / 1000)
     if len(pcm)//channels < sample(pts[-1])-round(rate*.001) or abs(len(pcm)/channels-sample(pts[-1])) > rate*.05:
         raise ValueError("source audio and picture durations differ")
     detection, timing, rules, seam = (profile[k] for k in ("silence_detection", "pacing", "cut_rules", "audio_seam"))
-    levels, duration = envelope(path, detection["analysis_bandpass_hz"])
+    levels, duration = envelope(path, detection["analysis_bandpass_hz"], alignment)
     spans = pauses(levels, duration, detection)
     protections = ranges(protect, pts[-1])
     margin = max(seam["micro_fade_ms"], seam["zero_cross_search_ms"]) + 1
@@ -195,7 +203,7 @@ def edited_audio(keep, rate, channels, pcm, seam):
             yield samples
 
 
-def render(path, dest, plan, rate, channels, pcm, profile, tmp):
+def render(path, dest, plan, rate, channels, pcm, profile, tmp, *, measuring=False):
     keep = plan["keep"]
     raw = Path(tmp) / "audio.raw"
     with raw.open("wb") as out:
@@ -217,7 +225,7 @@ def render(path, dest, plan, rate, channels, pcm, profile, tmp):
            "-vf", f"settb=expr=1/1000000,select='{select}',setpts='{offset}'",
            "-fps_mode", "passthrough", "-enc_time_base", "1:1000000", "-c:v", "ffv1",
            "-bsf:v", packet_clock, "-c:a", "pcm_s32le", "-map_chapters", "-1", "-f", "matroska", dest]
-    run(cmd, quiet=True)
+    run_analysis(cmd) if measuring else run(cmd, quiet=True)
 
 
 def frame_hashes(path):
@@ -230,7 +238,7 @@ def verify(source, output, profile, protect, stack):
     plan, pts, rate, ch, pcm = make_plan(source, profile, protect, stack)
     keep = plan["keep"]
     actual_pts = frames(output)
-    actual_rate, actual_ch, actual_pcm = sound(output, stack)
+    actual_rate, actual_ch, actual_pcm, _ = sound(output, stack)
     expected_pts, protected, joins = [], [], []
     protected_audio_matches = True
     time = samples = 0
@@ -286,6 +294,45 @@ def verify(source, output, profile, protect, stack):
                 boundary_sample_deltas=deltas, output_pauses_ms=remaining, cut_plan=plan)
 
 
+def encode_delivery(master, dest):
+    run_analysis(["ffmpeg", "-v", "error", "-nostdin", "-i", master, "-map", "0:v:0", "-map", "0:a:0",
+                  "-fps_mode", "passthrough", "-enc_time_base", "1:1000000", "-c:v", "libx264", "-c:a", "aac",
+                  "-movflags", "+faststart", dest])
+
+
+def delivery_checks(master, output):
+    def streams(path):
+        args = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", path]
+        return {s["codec_type"]: s for s in json.loads(run_analysis(args).stdout)["streams"]}
+    before, after = streams(master), streams(output)
+    expected, actual = frames(master), frames(output)
+    video, audio = after["video"], after["audio"]
+    # Audio duration uses the presentation track, excluding AAC encoder padding.
+    return dict(delivery_codecs=(video["codec_name"], audio["codec_name"]) == ("h264", "aac"),
+                delivery_geometry=all(video[k] == before["video"][k] for k in ("width", "height")),
+                delivery_frames=len(actual)==len(expected) and all(abs(a-b)<=1.01 for a,b in zip(actual, expected)),
+                delivery_audio=all(audio[k] == before["audio"][k] for k in ("sample_rate", "channels")),
+                delivery_sync=abs(float(audio["start_time"])-float(video["start_time"]))<=.00101 and
+                              abs(float(audio["duration"])*1000-expected[-1])<=1.1)
+
+
+def verify_delivery(source, output, profile, protect, stack):
+    with tempfile.TemporaryDirectory() as tmp:
+        master = str(Path(tmp)/"expected.mkv")
+        plan, _, rate, channels, pcm = make_plan(source, profile, protect, stack)
+        render(source, master, plan, rate, channels, pcm, profile, tmp, measuring=True)
+        result = verify(source, master, profile, protect, stack)
+        expected = str(Path(tmp)/"expected.mp4")
+        encode_delivery(master, expected)
+        checks = delivery_checks(master, output)
+        checks["delivery_picture_content"] = frame_hashes(expected) == frame_hashes(output)
+        with decoded_pcm(expected, [], "s32le", "i") as ref, decoded_pcm(output, [], "s32le", "i") as actual:
+            checks["delivery_audio_content"] = hashlib.sha256(ref).digest() == hashlib.sha256(actual).digest()
+        result["checks"].update(checks)
+        result["verified"] = all(result["checks"].values())
+        return result
+
+
 def plan_digest(plan):
     return hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
@@ -320,7 +367,8 @@ def _cli(args, checking, stack):
             if not Path(path).is_file():
                 raise ValueError("missing local media: " + path)
         if checking:
-            result = verify(args.source, args.paths[0], profile, args.protect_ranges, stack)
+            gate = verify_delivery if Path(args.paths[0]).suffix.lower() == ".mp4" else verify
+            result = gate(args.source, args.paths[0], profile, args.protect_ranges, stack)
             if not result["verified"]:
                 die("pacing verification failed", kind="verification", output=None, **result)
             print_json(dict(status="completed", dry_run=STATE.dry_run, output=None, commands=list(STATE.commands), **result))
@@ -331,9 +379,9 @@ def _cli(args, checking, stack):
         if not dest and not (args.extract_profile or STATE.dry_run):
             raise ValueError("supply -o OUTPUT.mkv for the lossless pacing master")
         if dest:
-            extension = ".json" if args.extract_profile else ".mkv"
-            if Path(dest).suffix.lower() != extension:
-                raise ValueError("pacing output requires " + extension)
+            extension = Path(dest).suffix.lower()
+            if extension not in ((".json",) if args.extract_profile else (".mkv", ".mp4")):
+                raise ValueError("expected a JSON profile or a .mkv/.mp4 media output")
             guard_sidecar(dest, *inputs, args.profile, args.protect_ranges)
         if args.extract_profile:
             report = dict(profile=extract(inputs))
@@ -356,11 +404,20 @@ def _cli(args, checking, stack):
                 if args.extract_profile:
                     Path(staged).write_text(json.dumps(report["profile"], allow_nan=False, indent=2)+"\n", encoding="utf-8")
                 else:
+                    staged = str(Path(tmp)/"master.mkv")
                     render(args.input, staged, plan, rate, channels, pcm, profile, tmp)
                     with ExitStack() as verification_stack:
                         gate = verify(args.input, staged, profile, args.protect_ranges, verification_stack)
                     if not gate["verified"]:
                         die("pacing verification failed before publication", kind="verification", output=None, **gate)
+                    if extension == ".mp4":
+                        delivery = str(Path(tmp)/"delivery.mp4")
+                        encode_delivery(staged, delivery)
+                        checks = delivery_checks(staged, delivery)
+                        if not all(checks.values()):
+                            die("pacing delivery failed before publication", kind="verification", checks=checks)
+                        gate["checks"].update(checks)
+                        staged = delivery
                     report["verification"] = [dict(step=k, ok=v) for k, v in gate["checks"].items()]
                 if STATE.overwrite:
                     from _common.runner import refuse_changed_output

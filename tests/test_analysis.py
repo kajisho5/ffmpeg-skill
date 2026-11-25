@@ -2757,6 +2757,10 @@ class PacingTests(unittest.TestCase):
         self.assertEqual(profile["contract"], "pacing-profile@1")
         meta = profile["probe_meta"]
         self.assertEqual((meta["analysis_count"], meta["confidence"], meta["bgm_suspected"]), (2,"low",True))
+        self.assertTrue(meta["warnings"])
+        floors = sorted(row["measurements"]["noise_floor_db"] for row in meta["samples"])
+        self.assertAlmostEqual(meta["between_files"]["noise_floor_db"]["median"], sum(floors)/2)
+        self.assertAlmostEqual(meta["between_files"]["noise_floor_db"]["p95"], floors[0]*.05+floors[1]*.95)
         self.assertTrue(meta["samples"][1]["bgm_reasons"])
         self.assertAlmostEqual(meta["samples"][0]["measurements"]["noise_floor_db"], -65, delta=2)
         self.assertGreater(meta["samples"][0]["interior_pauses"]["median"], 1300)
@@ -2764,6 +2768,20 @@ class PacingTests(unittest.TestCase):
         self.assertTrue(profile["loudness"]["target_lufs"] < 0)
         self.assertGreater(profile["video_rhythm"]["median_shot_ms"], 0)
         self.call("silence", a, "--profile", output, "--dry-run")
+
+    def test_mp4_delivery_with_zero_and_shifted_source_clocks(self):
+        source = self.media("mp4-clock", "30000/1001")
+        normal = self.root/"normal.mp4"
+        shifted = self.root/"shifted.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(source), "-c:v", "libx264", "-c:a", "aac", str(normal)], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(normal), "-c", "copy", "-output_ts_offset", "5", str(shifted)], check=True)
+        for path in (normal, shifted):
+            output = self.root/("delivered-"+path.name)
+            self.call("silence", path, "--profile", "youtube-talk", "-o", output)
+            gate = self.call("verify", output, "--source", path, "--profile", "youtube-talk")
+            self.assertTrue(gate["checks"]["delivery_audio_content"])
+            self.assertTrue(gate["checks"]["delivery_picture_content"])
+            self.assertTrue(gate["checks"]["delivery_sync"])
 
     def test_cfr_vfr_protection_and_independent_wrong_master(self):
         for rate,vfr in [("30",False), ("30000/1001",True)]:

@@ -1413,11 +1413,14 @@ Removed source material, original join processing and asymmetric speech margins 
 observed in a finished reference. The profile identifies its policy fields, including the
 one-third/two-thirds padding split. Editing does not normalize gain or introduce scene cuts.
 
-The master path accepts one picture and one aligned audio stream with zero-origin timestamps.
-It writes FFV1 + signed 32-bit PCM in Matroska so the gate can compare retained picture and audio
-against decoded source content. Additional streams, a late audio start or an unavailable final
-frame duration are refused. Encoded delivery copies can be produced by the existing export
-workflow after this master passes. Measurements use temporary disk for decoded PCM.
+The edit accepts one video and one audio stream. Times are relative to the first picture.
+Common nonzero timestamps are rebased; earlier audio is trimmed and later audio padded on
+that clock. Verification stages FFV1 + 32-bit PCM in Matroska. Request `.mkv` to keep that
+master or `.mp4` for H.264/AAC delivery. Before publication the MP4 is checked for codecs,
+dimensions, frame count and presentation times, channel count, sample rate and A/V duration.
+Standalone MP4 verification reconstructs the master and compares decoded content with a
+fresh delivery encode; use the same FFmpeg build and encoder for this check.
+Measurements use temporary disk for decoded PCM.
 Picture cuts snap inside detected silence on actual presentation timestamps, including VFR.
 Short speech islands are kept. `merge_gap_below_ms` suppresses a neighboring removal when a
 merge would swallow speech. The target padding is distributed according to the before/after
