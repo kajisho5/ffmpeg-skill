@@ -2816,6 +2816,24 @@ class TimelineExportTests(unittest.TestCase):
                 self.assertEqual([[e.get("type") for e in c.findall("adjust-conform")] for c in spine],
                                  [[conform], [], [conform]])
 
+    def test_fcpxml_formats_have_no_name_without_a_rate_731(self):
+        """#731: Final Cut Pro 13 said "Encountered an unexpected value" on importing a sequence
+        format named FFVideoFormat1080p, because its names carry the rate (FFVideoFormat1080p30).
+        Every format, the sequence's and each asset's, is written as FCP 13 writes one it has no
+        name for: size, frameDuration and colorSpace, no name."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/ntsc.mp4"] = {"duration": 8, "video": {"fps": 29.97, "width": 1920, "height": 1080}, "audio": {"channels": 2}}
+        for frame in ({}, {"frame": {"aspect": "9:16", "width": 1080, "fit": "pad"}}):
+            with self.subTest(frame=frame):
+                tl = tl_mod.build({"clips": [{"src": "a.mp4"}, {"src": "ntsc.mp4"}], **frame}, probes, lambda p: f"/m/{p}")
+                formats = ET.fromstring(tl_mod.to_fcpxml(tl).encode("utf-8")).findall("./resources/format")
+                self.assertGreaterEqual(len(formats), 2)
+                for f in formats:
+                    self.assertIsNone(f.get("name"), f.attrib)
+                    self.assertEqual(f.get("colorSpace"), "1-1-1 (Rec. 709)", f.attrib)
+
     def test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip(self):
         """FCPXML 1.10's asset-clip content model is timeMap, the adjust-* elements, anchored
         items, then markers."""

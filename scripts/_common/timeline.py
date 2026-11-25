@@ -510,8 +510,11 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         key = (width, height, frame_duration)
         if key not in ids:
             ids[key] = f"r{len(ids) + 1}"
-            res.append(f'    <format id="{ids[key]}" name="FFVideoFormat{height}p" frameDuration="{frame_duration}" '
-                       f'width="{width}" height="{height}"/>')
+            # No name: Final Cut Pro's names carry the rate (FFVideoFormat1080p30), and one without it
+            # (FFVideoFormat1080p) is "an unexpected value" on import (#731). FCP 13 writes a format
+            # it has no name for as size, frameDuration and colorSpace, and that imports cleanly.
+            res.append(f'    <format id="{ids[key]}" frameDuration="{frame_duration}" width="{width}" '
+                       f'height="{height}" colorSpace="1-1-1 (Rec. 709)"/>')
         return ids[key]
 
     seq_fmt = fmt(tl["width"], tl["height"], fd)  # r1: the sequence's frame
