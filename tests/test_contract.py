@@ -9532,6 +9532,52 @@ class EvalRunnerTests(unittest.TestCase):
         task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
         self.assertTrue(run.score("called render.py --template reel", task)[0])
 
+    def test_score_slot_matches_a_whole_name_not_a_word_that_contains_it(self):
+        run = self.evals_run
+        # agent_prompts_24.json's slots are bare stems, and a substring test let any word holding
+        # one fill the slot: "execute" ran cut, "benefit" fit, "looks" look, so a transcript that
+        # never called the script passed its routing check
+        for slot, text in (("cut", "I will execute the plan"), ("fit", "a clear benefit"),
+                           ("look", "The output looks fine"), ("cut", "ran shortcut.py a.mp4"),
+                           ("cut.py", "ran shortcut.py a.mp4"), ("render", "the renderer is ready"),
+                           ("cut.py", "I will cut the clip")):  # a slot written with .py needs the script
+            task = {"id": 7, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # the script on a command line or by path, and the tool name an MCP harness logs, still fill it
+        for slot, text in (("cut", "python3 scripts/cut.py a.mp4"), ("cut.py", "$ cut.py a.mp4"),
+                           ("look", "python3 ~/.claude/skills/ffmpeg-skill/scripts/look.py out.mp4"),
+                           ("cut", "python C:\\skills\\ffmpeg-skill\\scripts\\cut.py a.mp4"),
+                           ("cut", "Ran `cut.py`."), ("cut", "scripts/cut.pyで切り出しました"),
+                           ("look", "mcp__ffmpeg-skill__look"), ("look", 'mcp__ffmpeg-skill__look({"input": "out.mp4"})'),
+                           ("fit|render", "ran render.py project.json"),
+                           ("--dry-run", "cut.py a.mp4 --dry-run"), ("--on-missing skip", "join.py --on-missing skip"),
+                           ("--list", "join.py --list a.mp4")):
+            task = {"id": 8, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertTrue(run.score(text, task)[0], f"{slot!r} in {text!r}")
+
+    def test_score_bare_slot_needs_the_tool_called_not_the_word_written(self):
+        run = self.evals_run
+        # the request is part of the transcript, and a bare slot that took the plain word let a
+        # run that only restated the request pass ("I will cut the clip" filled cut); it takes the
+        # script's file name or the MCP tool name, not prose, another script or another file
+        for slot, text in (("cut", "I will cut the clip"), ("look", "let me look at the output"),
+                           ("check", "check the file first"), ("audio", "the audio is fine"),
+                           ("fit", "fit it to 9:16"), ("look", "tools/call look"),
+                           ("cut", "ran auto_cut.py a.mp4"), ("cut", "ran jump_cut.py a.mp4"),
+                           ("cut", "ran pre-cut.py a.mp4"), ("cut", "wrote cut.mp4"), ("cut", "read cut-list.txt"),
+                           ("cut", "deleted cut.pyc"), ("render", "inspected render.pycache"),
+                           ("cut", "mcp__ffmpeg-skill__cut_list"), ("cut", "mcp__ffmpeg-skill__auto_cut"),
+                           ("cut.py", "ran scripts/shortcut_cut.py a.mp4"), ("cut.py", "ran x.cut.py")):
+            task = {"id": 9, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # a flag slot is the whole flag: a longer flag that starts with it does not fill it
+        for slot, text in (("--keep-alpha", "fit.py --keep-alpha-matte"), ("--list", "join.py --list-formats"),
+                           ("--dry-run", "cut.py a.mp4 ---dry-run")):
+            task = {"id": 10, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        self.assertTrue(run.score("fit.py --keep-alpha=1", {"id": 11, "request": "r", "expect": ["--keep-alpha"],
+                                                          "grader_expect": None, "grader_not": None})[0])
+
     def test_score_grader_expect_regex_must_match(self):
         run = self.evals_run
         task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}
