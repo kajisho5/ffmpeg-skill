@@ -77,9 +77,9 @@ TABLE = {
 TIMEOUT_S = 600
 
 
-def run_json(cmd):
+def run_json(cmd, env=None):
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_S)
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_S)
     except subprocess.TimeoutExpired:
         return None, subprocess.CompletedProcess(cmd, -1, "", f"no result after {TIMEOUT_S} s (timed out)")
     start = proc.stdout.find("{")

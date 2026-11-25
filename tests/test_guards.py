@@ -372,6 +372,56 @@ class FfmpegVersionGuard(unittest.TestCase):
     warns once per run on stderr when the FFmpeg build sits outside TESTED_FFMPEG_RANGE,
     without modifying diagnostics.warnings."""
 
+    @staticmethod
+    def _valid_result(tool: str, doc: object, proc: "subprocess.CompletedProcess[str]"):
+        """Return None when `doc`/`proc` is a valid expected result (allowing probe's status-less
+        object and check's intentional nonzero verification verdict), else an error description."""
+        if not isinstance(doc, dict):
+            return f"missing/invalid JSON (rc={proc.returncode}); tail={proc.stderr[-160:]}"
+        err = doc.get("error")
+        if tool == "check" and proc.returncode == 1 and isinstance(err, dict) and err.get("kind") == "verification":
+            checks = doc.get("checks")
+            if isinstance(checks, list) and any(isinstance(c, dict) and c.get("status") == "FAIL" for c in checks):
+                return None
+        if err:
+            return f"unexpected error (rc={proc.returncode}): {err}"
+        if proc.returncode != 0:
+            return f"nonzero exit rc={proc.returncode}; tail={proc.stderr[-160:]}"
+        if tool == "probe":
+            if not isinstance(doc.get("file"), str) or not doc["file"].strip():
+                return "missing probe file identity"
+            return None
+        if doc.get("status") != "completed":
+            return f"unexpected status={doc.get('status')!r}"
+        return None
+
+    def test_rejects_ordinary_failure_or_missing_result_with_warning(self):
+        """discussion_r4659004360: an ordinary failure or missing JSON result with a warning is
+        rejected, while valid probe/check/tool results are preserved."""
+        warn_err = "warning: FFmpeg 10.0 is outside the range spanned by tested CI builds (6.1-9.0); results proceed as usual\n"
+        self.assertIsNotNone(self._valid_result("cut", None, subprocess.CompletedProcess([], 1, "", warn_err)))
+        self.assertIsNotNone(self._valid_result(
+            "cut", {"status": "failed", "error": {"kind": "ffmpeg", "message": "boom"}},
+            subprocess.CompletedProcess([], 1, "", warn_err),
+        ))
+        self.assertIsNotNone(self._valid_result("probe", {}, subprocess.CompletedProcess([], 0, "", warn_err)))
+        self.assertIsNotNone(self._valid_result("probe", {"streams": []}, subprocess.CompletedProcess([], 0, "", warn_err)))
+        self.assertIsNotNone(self._valid_result(
+            "check", {"checks": [], "error": {"kind": "verification", "reason": "check_failed"}},
+            subprocess.CompletedProcess([], 1, "", warn_err),
+        ))
+        self.assertIsNotNone(self._valid_result(
+            "check", {"checks": [{"check": "codec", "status": "PASS"}], "error": {"kind": "verification", "reason": "check_failed"}},
+            subprocess.CompletedProcess([], 1, "", warn_err),
+        ))
+        self.assertIsNone(self._valid_result("cut", {"status": "completed"}, subprocess.CompletedProcess([], 0, "", warn_err)))
+        self.assertIsNone(self._valid_result("probe", {"file": "plain.mkv", "dry_run": True}, subprocess.CompletedProcess([], 0, "", warn_err)))
+        self.assertIsNone(self._valid_result(
+            "check",
+            {"checks": [{"check": "aspect", "status": "FAIL"}], "failed": 1, "ok": False, "error": {"kind": "verification", "reason": "check_failed"}},
+            subprocess.CompletedProcess([], 1, "", warn_err),
+        ))
+
     def test_every_tool_warns_once_on_untested_ffmpeg(self):
         import platform
         import shutil
@@ -409,18 +459,16 @@ class FfmpegVersionGuard(unittest.TestCase):
                 out = ["-o", str(work / f"fv_{tool.replace(' ', '_').replace('-', '')}{ext}")] if ext else []
                 cmd = [sys.executable, str(ROOT / "scripts" / f"{name}.py"), str(src),
                        *[a.format(**facts) for a in args], *out, "--dry-run", "--json"]
-                proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=sweep.TIMEOUT_S)
-                start = proc.stdout.find("{")
-                try:
-                    doc = json.loads(proc.stdout[start:]) if start >= 0 else None
-                except ValueError:
-                    doc = None
+                doc, proc = sweep.run_json(cmd, env=env)
+                bad = self._valid_result(tool, doc, proc)
+                if bad:
+                    missed[tool] = bad
+                    continue
                 err_hits = proc.stderr.count("warning: FFmpeg 10.0 is outside")
                 if err_hits != 1:
                     missed[tool] = f"stderr warning count={err_hits}; rc={proc.returncode}; tail={proc.stderr[-160:]}"
                     continue
-                if isinstance(doc, dict) and "diagnostics" in doc:
+                if "diagnostics" in doc:
                     codes = [w.get("code") for w in (doc.get("diagnostics") or {}).get("warnings") or []]
                     if "ffmpeg_version_untested" in codes:
                         missed[tool] = f"unexpected diagnostics warning={codes}"

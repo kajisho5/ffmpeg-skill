@@ -4747,8 +4747,14 @@ sys.exit(fit.main())
                     env.update(extra_env)
                 return tool(tool_name, *args, env=env, check=False)
 
-            # Tested releases (including 9.0.2): no stderr version warning and no diagnostics change
-            for tested_banner in ("ffprobe version 7.1.1 Copyright", "ffprobe version 9.0.2 Copyright"):
+            # Tested releases (including n8.0 tag, Ubuntu suffix, 7.1.1, and 9.0.2): no stderr version warning
+            for tested_banner in (
+                "ffprobe version 6.1.1-3ubuntu5 Copyright",
+                "ffprobe version 7.1.1 Copyright",
+                "ffprobe version n8.0 Copyright",
+                "ffprobe version 8.0.1-3ubuntu2 Copyright",
+                "ffprobe version 9.0.2 Copyright",
+            ):
                 tested_proc = run_with_banner(tested_banner, self.src, "--start", "0", "--end", "1",
                                               "-o", out_dry, "--dry-run", "--json")
                 self.assertEqual(tested_proc.returncode, 0, tested_proc.stderr)
@@ -4792,6 +4798,7 @@ sys.exit(fit.main())
             for banner in (
                 "ffprobe version N-115000-g1234abcd Copyright\nlibavutil      59. 39.100 / 59. 39.100",
                 "ffprobe version N-12345-gabcdef Copyright",
+                "ffprobe version n8.0-1-gabcdef0 Copyright",
             ):
                 gp = run_with_banner(banner, self.src, "--start", "0", "--end", "1", "-o", out_dry, "--dry-run", "--json")
                 self.assertEqual(gp.returncode, 0, gp.stderr)
@@ -8459,17 +8466,44 @@ class SilentFallbackTests(unittest.TestCase):
         self.assertIn("drawtext_newline_glyph", [w["code"] for w in doc["diagnostics"]["warnings"]])
 
     # ------------------------------------------------------------------ source checks
-    def test_no_stderr_only_warning_is_left_in_the_sources(self):
-        """A `warning:` line printed with info() reaches stderr and no document. Every one goes
-        through warn() (stderr AND diagnostics.warnings), with no exception left."""
+    @staticmethod
+    def _unexpected_stderr_warnings(sources, root=ROOT):
         pattern = re.compile(r"""\b(?:info|print)\(\s*f?["']warning\b|sys\.stderr\.write\(\s*f?["']warning\b""", re.I)
+        # Maintainer-approved internal-only warning under the feature freeze (#556, scripts/_common/runner.py)
+        allowed = ("scripts/_common/runner.py", 'print(f"warning: {st[\'message\']}", file=sys.stderr)')
+        allowed_seen = False
         left = {}
-        for path in script_sources() + [ROOT / "mcp" / "server.py"]:
+        root_resolved = root.resolve()
+        for path in sources:
+            resolved = path.resolve()
+            rel = resolved.relative_to(root_resolved).as_posix() if resolved.is_relative_to(root_resolved) else path.as_posix()
             for line in path.read_text(encoding="utf-8").splitlines():
                 code = line.split("#", 1)[0]
                 if pattern.search(code) and not code.strip().startswith(("(", '"', "'")):
-                    left[path.name] = left.get(path.name, 0) + 1
+                    if (rel, code.strip()) == allowed and not allowed_seen:
+                        allowed_seen = True
+                        continue
+                    left[rel] = left.get(rel, 0) + 1
+        return left
+
+    def test_no_stderr_only_warning_is_left_in_the_sources(self):
+        """A `warning:` line printed with info() reaches stderr and no document. Every one goes
+        through warn() (stderr AND diagnostics.warnings), except the single approved internal #556
+        version warning in scripts/_common/runner.py."""
+        left = self._unexpected_stderr_warnings(script_sources() + [ROOT / "mcp" / "server.py"])
         self.assertEqual(left, {}, "stderr-only warnings: use warn(msg, code, ...) so the line reaches --json too")
+        # Negative controls: same statement in a different runner.py and extra calls in the approved source are rejected
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            other = root / "scripts" / "other" / "runner.py"
+            other.parent.mkdir(parents=True)
+            other.write_text('print(f"warning: {st[\'message\']}", file=sys.stderr)\n', encoding="utf-8")
+            self.assertEqual(self._unexpected_stderr_warnings([other], root=root), {"scripts/other/runner.py": 1})
+
+            approved = root / "scripts" / "_common" / "runner.py"
+            approved.parent.mkdir(parents=True)
+            approved.write_text('print(f"warning: {st[\'message\']}", file=sys.stderr)\nprint("warning: extra", file=sys.stderr)\n', encoding="utf-8")
+            self.assertEqual(self._unexpected_stderr_warnings([approved], root=root), {"scripts/_common/runner.py": 1})
 
     def test_every_diagnostic_code_is_in_the_contract_under_its_bucket(self):
         """json_output.diagnostic_codes is the list a caller switches on: every warn() /
@@ -8754,6 +8788,9 @@ class FfmpegVersionRangeTests(unittest.TestCase):
             ("6.1.1-3ubuntu5", (6, 1), "tested"),
             ("7.1", (7, 1), "tested"),
             ("8.0.1", (8, 0), "tested"),
+            ("8.0.1-3ubuntu2", (8, 0), "tested"),
+            ("n8.0", (8, 0), "tested"),
+            ("n8.0.1", (8, 0), "tested"),
             ("9.0.2", (9, 0), "tested"),
             ("9.1.0", (9, 1), "untested"),
             ("5.1.1-static", (5, 1), "untested"),
@@ -8764,6 +8801,8 @@ class FfmpegVersionRangeTests(unittest.TestCase):
             ("2026-10-01-git-0123abcd-full_build", (0, 0), "git"),
             ("8.0-git-g1234567", (8, 0), "git"),
             ("8.0-nightly-20261125", (8, 0), "git"),
+            ("n8.0-1-gabcdef0", (8, 0), "git"),
+            ("n8.0.1-12-g1234abcd", (8, 0), "git"),
         ):
             with self.subTest(tok=tok, parsed=parsed):
                 st = _common.ffmpeg_version_status(tok, parsed)
@@ -8788,6 +8827,7 @@ class FfmpegVersionRangeTests(unittest.TestCase):
                 ("ffprobe version N-115000-g1234abcd Copyright\nlibavutil      59. 39.100 / 59. 39.100", "git/nightly"),
                 ("ffprobe version 8.0-git-g1234567 Copyright", "git/nightly"),
                 ("ffprobe version 8.0-nightly-20261125 Copyright", "git/nightly"),
+                ("ffprobe version n8.0-1-gabcdef0 Copyright", "git/nightly"),
                 ("ffprobe version custom-vendor-build\nlibavutil      59. 39.100 / 59. 39.100", "could not be read"),
             ):
                 with self.subTest(banner=banner):

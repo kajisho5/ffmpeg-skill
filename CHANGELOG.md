@@ -11,6 +11,11 @@
 
 ### Added
 
+- Internal stderr warning when the `ffprobe` build on `PATH` is outside the tested CI range (`6.1-9.0`),
+  unreadable, or a git/nightly build (#556). Supported execution still proceeds outside sampled builds or
+  with unknown builds, while versions below the supported minimum remain rejected; preserves the frozen
+  `doctor`, `result`, and diagnostic schemas.
+
 - **`color.py --source-alpha-mode straight|premultiplied`, for a premultiplied source graded with `--keep-alpha`** (#453).
   `premultiplied` divides the colour by the alpha in RGB before the grade and multiplies it again after, so an
   offset or a non-linear grade no longer lifts or darkens partly transparent edges; the alpha is untouched.

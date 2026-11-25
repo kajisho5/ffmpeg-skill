@@ -125,7 +125,7 @@ _FFMPEG_VERSION: "Optional[Tuple[int, int]]" = None
 _FFMPEG_VERSION_IS_RELEASE = False   # ffmpeg_version() read a release number, not the libavutil major
 _FFMPEG_VERSION_TOKEN: "Optional[str]" = None
 _VERSION_WARNED = False
-_GIT_VERSION_TOKEN = re.compile(r"(?:^N-\d+(?:-g[0-9a-f]+)?\b|(?:^|[-_])(?:git|nightly)(?:[-_]|$))", re.I)
+_GIT_VERSION_TOKEN = re.compile(r"(?:^N-\d+(?:-g[0-9a-f]+)?\b|(?:^|[-_])(?:git|nightly)(?:[-_]|$)|^n?\d+\.\d+(?:\.\d+)?-\d+-g[0-9a-f]{7,}\b)", re.I)
 
 
 def _probe_limit() -> float:
