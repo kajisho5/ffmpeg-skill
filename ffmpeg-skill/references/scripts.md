@@ -1536,6 +1536,12 @@ both neighbours by >= 12/255 mean luma while the neighbours differ by at most a 
 -- a stray frame at a cut, a decode glitch; WARN when there is any, with the first five times,
 never FAIL, because a camera flash or a strobe is real) and a one-frame decode adds `first frame`
 (WARN when it is one flat colour, luma spread < 4/255: the frame a feed's autoplay shows first).
+Since #574 `frame timing` reads every frame's time from the packets (no decode) and holds the
+steps to the file's own median step, not to the stated rate (a file with dropped frames states
+an average rate the gap has already lowered): a step more than 1.5 median steps long is a gap of
+round(step / median) - 1 missing frames, WARN with the first five times; a repeated time is FAIL;
+one frame PASSes. A phone that lowers its rate in low light makes gaps on purpose, so they are a
+WARN, never a FAIL.
 A render project enables it with `"check": {"platform":
 "reels", "content": true}`.
 `--levels bt709|ebu-r103` (opt-in, one more decode of every frame) adds a `legal levels` row: the
