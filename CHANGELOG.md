@@ -8,6 +8,8 @@
 
 - A 10-bit (or deeper) source written as 8-bit now says so in the result's `notes`, for every tool,
   measured on the written file (#696). A stream copy that keeps the depth, and an 8-bit source, say nothing.
+- A stream-copy `cut` of an MXF keeps its start timecode: the copy's keyframe was read 3/23 s early (0.96 s for
+  `--start 1.5`, where FFmpeg lands on 1.44 s), so the label was withheld and `source_carry` listed it as dropped (#696).
 
 ## 4.8.1
 
@@ -15,8 +17,6 @@ _Automated release: version and notes generated from pull requests merged since 
 
 - fix(fit): advise on flagged interlaced input (#730)
 - chore: one file per defect-ledger entry, so two open fixes never conflict (#678) (#735)
-- A stream-copy `cut` of an MXF keeps its start timecode: the copy's keyframe was read 3/23 s early (0.96 s for
-  `--start 1.5`, where FFmpeg lands on 1.44 s), so the label was withheld and `source_carry` listed it as dropped (#696).
 
 ## 4.8.0
 
