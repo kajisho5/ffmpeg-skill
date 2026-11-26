@@ -1885,6 +1885,23 @@ class SourceCarryTests(MediaFixtures):
                   "-of", "csv=p=0", path).stdout.split()
         return sorted(set(tags))
 
+    def test_a_stream_copy_cut_of_an_mxf_keeps_the_start_timecode_of_the_keyframe_it_lands_on(self):
+        """#696: `cut --start 1.5` of an MXF (MPEG-2, GOP 12 at 25 fps, 01:00:00:00) landed on the
+        keyframe at 1.44 s but seek_keyframe read the one at 0.96 s: seek_shift took the MXF for a
+        demuxer that seeks by dts and asked 3/23 s early, though its demuxer seeks by pts like
+        MOV's. The label was withheld, so source_carry listed the timecode as dropped. The read
+        lands where ffmpeg does (frame 36, 01:00:01:11) and the label is written."""
+        import cut
+        src = OUT / "tc_mxf.mxf"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=5",
+           "-f", "lavfi", "-i", "sine=r=48000:d=5", "-c:v", "mpeg2video", "-g", "12", "-bf", "0", "-c:a", "pcm_s16le",
+           "-timecode", "01:00:00:00", src)
+        self.assertAlmostEqual(cut.seek_keyframe(str(src), 1.5)[0], 1.44, places=3)
+        doc = json.loads(script("cut.py", src, "--start", "1.5", "--end", "3", "-o", OUT / "tc_mxf_cut.mxf",
+                                "--overwrite", "--json").stdout)
+        self.assertEqual([t for t in self._timecode_written(OUT / "tc_mxf_cut.mxf") if t != ","], ["01:00:01:11"])
+        self.assertIn("timecode", (doc.get("source_carry") or {}).get("kept", []), doc.get("source_carry"))
+
     def test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame(self):
         """A source whose video starts after the file's origin (0.5 s here): a re-encoded cut from
         0.2 s and a fit trim from 0 both start on the picture's first frame, but the grid lookup
