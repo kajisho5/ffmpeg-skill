@@ -924,7 +924,7 @@ python3 scripts/check.py spot.mxf --platform broadcast --levels ebu-r103
 python3 scripts/check.py new.mp4 --platform custom --compare old.mp4 --expect-changed 12-18
 ```
 
-**No picture:** after a small re-render, says whether anything changed outside the span the edit was meant to touch: both pictures are subtracted frame by frame on a 32x18 grid, and a change_scope row FAILs with the time and place of a change nobody declared, WARNs when the declared span did not change, and FAILs when the two files could not be compared. A 200x60 box on a 1080p frame leaves the whole-frame SSIM above 0.99; this row finds it.
+**No picture:** after a small re-render, says whether anything changed outside the span the edit was meant to touch: both pictures are subtracted frame by frame on a 32x18 grid, and a change_scope row FAILs with the time and place of a change nobody declared, WARNs when the declared span did not change, and FAILs when the two files could not be compared. A 200x60 box on a 1080p frame leaves the whole-frame SSIM above 0.99; this row finds it. --expect-audio-changed 12-18 does the same for the sound: 0.1 s windows of the difference of the two decoded tracks, an audio_change_scope row, and an untouched AAC re-encode at 64 kbps or more is not a change.
 
 ### report.py
 

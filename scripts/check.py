@@ -48,7 +48,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, upload_limit_note, resolve as resolve_platform
-from _common.probe import (CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
+from _common.probe import (AUDIO_LEVEL_DB, AUDIO_REL_DB, AUDIO_WINDOW, audio_change_windows, CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity, own_length
 from _common.probe import PROBED_AUDIO
@@ -121,15 +121,17 @@ def display_size(v: Dict[str, Any]) -> "Tuple[int, int]":
     return (h, w) if int(v.get("rotation") or 0) % 180 == 90 else (w, h)
 
 
-def parse_expect_changed(values: "List[str]") -> "List[Dict[str, Any]]":
-    """--expect-changed values -> [{start, end, rect}] (rect [x, y, w, h] in displayed pixels, or
-    None for the whole frame); [] for `none`. Refuses anything it cannot read: a declaration that
-    was silently dropped would turn into a FAIL the caller cannot explain, or a PASS it did not earn."""
+def parse_expect_changed(values: "List[str]", flag: str = "--expect-changed") -> "List[Dict[str, Any]]":
+    """--expect-changed / --expect-audio-changed values -> [{start, end, rect}] (rect [x, y, w, h] in
+    displayed pixels, or None for the whole frame; sound takes no rectangle); [] for `none`.
+    Refuses anything it cannot read: a declaration that was silently dropped would turn into a
+    FAIL the caller cannot explain, or a PASS it did not earn."""
     from _common.decision import parse_time
     import math
+    sound = flag != "--expect-changed"
     if any(v.strip().lower() == "none" for v in values):
         if len(values) > 1:
-            die("--expect-changed none says the picture must not change at all; it cannot be combined with a span")
+            die(f"{flag} none says the {'sound' if sound else 'picture'} must not change at all; it cannot be combined with a span")
         return []
     spans = []
     for raw in values:
@@ -140,17 +142,19 @@ def parse_expect_changed(values: "List[str]") -> "List[Dict[str, Any]]":
                 raise ValueError(raw)
             start, end = parse_time(start_text), parse_time(end_text)
         except (ValueError, SystemExit):
-            die(f"--expect-changed takes START-END (seconds or H:MM:SS), optionally @X,Y,W,H, or none; got {raw!r}")
+            die(f"{flag} takes START-END (seconds or H:MM:SS){'' if sound else ', optionally @X,Y,W,H,'} or none; got {raw!r}")
         if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end < start:
-            die(f"--expect-changed {raw!r}: a span starts at 0 or later and ends at or after its start")
+            die(f"{flag} {raw!r}: a span starts at 0 or later and ends at or after its start")
         rect = None
         if "@" in raw:
+            if sound:
+                die(f"{flag} {raw!r}: sound has no rectangle; give START-END only")
             try:
                 rect = [int(n) for n in rect_text.split(",")]
             except ValueError:
                 rect = []
             if len(rect) != 4 or rect[0] < 0 or rect[1] < 0 or rect[2] <= 0 or rect[3] <= 0:
-                die(f"--expect-changed {raw!r}: the rectangle is X,Y,W,H in displayed pixels, whole numbers, W and H above 0")
+                die(f"{flag} {raw!r}: the rectangle is X,Y,W,H in displayed pixels, whole numbers, W and H above 0")
         spans.append({"start": start, "end": end, "rect": rect})
     return spans
 
@@ -360,6 +364,72 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     return doc
 
 
+def audio_change_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str, Any], a: Dict[str, Any], row: Any) -> "Dict[str, Any]":
+    """--expect-audio-changed: measure where the sound differs from the reference and grade it
+    against the declaration, as change_scope_row() does for the picture: a comparison that could
+    not be made is a FAIL, never a WARN or a PASS."""
+    want = "a change only where declared" if declared else "no change in the sound"
+
+    def not_compared(why: str, fix: str) -> "Dict[str, Any]":
+        row("audio_change_scope", "FAIL", f"not compared: {why}", want, fix,
+            reason="nothing was measured, so this does not say the rest of the sound is unchanged")
+        return {}
+
+    ra = probe(args.compare).get("audio") or {}
+    if not a or not ra:
+        return not_compared("one of the files has no sound", "--expect-audio-changed needs an audio track in both files")
+    if a.get("duration") is None or ra.get("duration") is None or abs(a["duration"] - ra["duration"]) > AUDIO_WINDOW:
+        return not_compared(f"{a.get('duration')} s against the reference's {ra.get('duration')} s",
+                            "an edit that changes the length cannot be paired; compare the parts separately")
+    win = audio_change_windows(args.input, args.compare, min(a["duration"], ra["duration"]))
+    if win is None:
+        return not_compared("the comparison pass failed", f"check that both files decode: probe.py {args.input}")
+    lead = max(0.0, float(a.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
+
+    def at(n: int) -> float:
+        return round(lead + n * AUDIO_WINDOW, 3)
+
+    def inside(n: int, d: "Dict[str, Any]") -> bool:
+        return at(n) <= d["end"] and at(n + 1) > d["start"]
+
+    def runs(windows: "List[int]") -> "List[Dict[str, Any]]":
+        return [{"start": at(f), "end": at(g + 1), "windows": g - f + 1,
+                 "peak": max((win["peaks"][n] for n in range(f, g + 1) if win["peaks"][n] is not None), default=None)} for f, g in _runs(windows)]
+
+    def span(d: "Dict[str, Any]") -> str:
+        return f"{d['start']:.2f}-{d['end']:.2f}"
+
+    outside = [n for n in win["changed"] if not any(inside(n, d) for d in declared)]
+    quiet = [{"start": d["start"], "end": d["end"]} for d in declared if not any(inside(n, d) for n in win["changed"])]
+    doc = {"declared": [{"start": d["start"], "end": d["end"]} for d in declared], "observed": runs(win["changed"]), "undeclared": runs(outside),
+           "declared_unchanged": quiet, "window": AUDIO_WINDOW, "floor": {"relative_db": AUDIO_REL_DB, "level_db": AUDIO_LEVEL_DB},
+           "windows": win["windows"], "quiet_peak": win["quiet_peak"]}
+    idle = "; ".join(f"declared {span(d)} but nothing changed there" for d in quiet)
+    differ = [f"{k} {x} against {y}" for k, x, y in (("codec", a.get("codec"), ra.get("codec")), ("sample rate", a.get("sample_rate"), ra.get("sample_rate")),
+                                                      ("channels", a.get("channels"), ra.get("channels"))) if x != y]
+    if differ:
+        STATE_NOTES.append("--expect-audio-changed: the two files are not encoded alike (" + ", ".join(differ) + "), so part of "
+                           "what was measured is the encoder's difference, not the edit")
+    floor_note = f"floor {AUDIO_REL_DB:g} dB against the signal and {AUDIO_LEVEL_DB:g} dB of level, largest unchanged window {win['quiet_peak']} dB"
+    if outside:
+        first, more = doc["undeclared"][0], len(doc["undeclared"]) - 1
+        value = (f"changed {span(first)} ({first['windows']} window{'s' if first['windows'] != 1 else ''} of {AUDIO_WINDOW:g} s)"
+                 + (f" and {more} more span{'s' if more != 1 else ''}" if more else "") + ": not declared")
+        row("audio_change_scope", "FAIL", value + (f"; {idle}" if idle else "") + f" ({floor_note})", want,
+            f"listen to {args.input} and {args.compare} from {first['start']:g} s", reason="the sound changed where the edit was not meant to reach")
+    elif idle:
+        row("audio_change_scope", "WARN", idle + f" ({floor_note})", want, "listen to that span: the edit probably did not apply",
+            reason="a declared change was not found")
+    else:
+        seen = ", ".join(span(d) for d in doc["observed"]) or "nothing"
+        value = (f"changed {seen} inside the declared span{'s' if len(declared) != 1 else ''}; nothing else above the floor"
+                 if declared else "no window above the floor") + f" ({floor_note}, {win['windows']} windows)"
+        row("audio_change_scope", "WARN" if differ else "PASS", value, want,
+            "compare two renders made with the same encoder settings" if differ else "",
+            reason="the two files are not encoded alike: " + ", ".join(differ) if differ else "")
+    return doc
+
+
 def main() -> int:
     STATE_NOTES.clear()  # module state: a second main() in one process starts without the first's notes
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -390,6 +460,9 @@ def main() -> int:
                          "file's time (repeatable), optionally only inside a rectangle of displayed pixels, or `none`. A "
                          "change_scope row FAILs on a change anywhere else (with its time and place) or when the two "
                          "could not be compared, and WARNs when a declared span did not change")
+    ap.add_argument("--expect-audio-changed", action="append", metavar="SPAN|none",
+                    help="with --compare: where the sound may differ from REFERENCE, START-END (repeatable) or none; "
+                         "an audio_change_scope row FAILs on a change elsewhere (same length only)")
     ap.add_argument("--change-floor", type=int, default=CHANGE_FLOOR, metavar="N",
                     help="--expect-changed: a 60x60-ish tile (the frame in %dx%d) counts as changed when its largest "
                          "channel difference is above N of 255 (default %%(default)d)" % CHANGE_GRID)
@@ -426,6 +499,11 @@ def main() -> int:
         if not args.compare:
             die("--expect-changed says where the picture may differ from a reference, so it needs --compare REFERENCE")
         declared_changes = parse_expect_changed(args.expect_changed)
+    declared_audio = None
+    if args.expect_audio_changed:
+        if not args.compare:
+            die("--expect-audio-changed says where the sound may differ from a reference, so it needs --compare REFERENCE")
+        declared_audio = parse_expect_changed(args.expect_audio_changed, "--expect-audio-changed")
     if not 1 <= args.change_floor <= 254:
         die(f"--change-floor {args.change_floor} is outside 1..254 (a difference of 0-255 per channel)")
 
@@ -755,6 +833,9 @@ def main() -> int:
     scope_doc = None
     if declared_changes is not None and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
         scope_doc = change_scope_row(args, declared_changes, meta, v, row)
+    audio_doc = None
+    if declared_audio is not None and not dry_run_input_pending(args.input) and not dry_run_input_pending(args.compare):
+        audio_doc = audio_change_row(args, declared_audio, meta, a, row)
     # read after every measurement, --compare's included, so a replacement at any point shows
     identity = None if dry_run_input_pending(args.input) else file_identity(args.input)
     if identity is not None and identity != identity_before and expected_identity is None:
@@ -801,6 +882,8 @@ def main() -> int:
         extra["levels"] = levels_doc
     if scope_doc is not None:
         extra["change_scope"] = scope_doc
+    if audio_doc:
+        extra["audio_change_scope"] = audio_doc
     if identity is not None:
         extra["input_identity"] = identity
     if failed:

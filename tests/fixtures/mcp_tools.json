@@ -219,6 +219,7 @@
    "compare",
    "content",
    "dry_run",
+   "expect_audio_changed",
    "expect_changed",
    "expect_identity",
    "fast",
