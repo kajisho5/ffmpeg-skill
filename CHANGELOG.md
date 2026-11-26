@@ -6,6 +6,17 @@
 
 (nothing yet)
 
+## 4.14.0
+
+_Automated release: version and notes generated from pull requests merged since 4.13.0._
+
+### Added
+
+- `check.py --content` adds a `frame timing` row (#574): every frame's time, read from the packets,
+  against the file's median step. A gap WARNs with how many frames are missing and where; a repeated
+  time FAILs.
+- feat: check.py --content finds dropped and repeated frames (#574) (#751)
+
 ## 4.13.0
 
 _Automated release: version and notes generated from pull requests merged since 4.12.0._
