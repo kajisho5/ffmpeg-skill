@@ -504,10 +504,14 @@ raise SystemExit(export.main())
         181,129,75 where the straight run wrote 177,126,77)."""
         bands = "if(lt(X,16),255,if(lt(X,32),128,if(lt(X,48),64,0)))"
         src = OUT / "alpha_pm_709_src.mov"
+        # The frames carry the tags themselves as well as the encoder options: the FFmpeg 7.1
+        # Debian CI job takes the probe's colour from the frames, so options alone would leave
+        # the fixture unable to satisfy its own premise there.
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
            "color=c=0x30C050:s=64x64:r=1:d=1,format=gbrap,geq=a='" + bands + "':"
            "r='round(r(X,Y)*" + bands + "/255)':g='round(g(X,Y)*" + bands + "/255)':"
-           "b='round(b(X,Y)*" + bands + "/255)',format=yuva444p10le",
+           "b='round(b(X,Y)*" + bands + "/255)',format=yuva444p10le,"
+           "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709",
            "-frames:v", "1", "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le",
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", src)
         self.assertEqual(probe(str(src))["video"]["color_space"], "bt709", "the fixture is the tagged one")
