@@ -50,6 +50,7 @@ from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis, with_mapped_chapters
 from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
+from _common.placement import bbox
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
@@ -157,19 +158,11 @@ def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, siz
     if why:
         note(f"picture: not measured: {why}")
         return {"measured": False, "reason": why}
-    rows = [r for r in range(H) if white[r * W:(r + 1) * W] != black[r * W:(r + 1) * W]]
-    if not rows:
+    box = bbox((int.from_bytes(white, "big") ^ int.from_bytes(black, "big")).to_bytes(W * H, "big"), W, H)
+    if box is None:
         note("picture: not measured: no pixel of the frame changed with the picture")
         return {"measured": False, "reason": "no pixel of the frame changed with the picture"}
-    left, right = W, -1
-    for r in rows:
-        # the row's difference as one integer: its leading zero bytes are the columns before the
-        # first differing pixel, its trailing ones those after the last (no per-pixel loop)
-        d = int.from_bytes(white[r * W:(r + 1) * W], "big") ^ int.from_bytes(black[r * W:(r + 1) * W], "big")
-        x0 = W - (d.bit_length() + 7) // 8
-        x1 = W - 1 - ((d & -d).bit_length() - 1) // 8
-        left, right = min(left, x0), max(right, x1)
-    x, y, w, h = left, rows[0], right - left + 1, rows[-1] - rows[0] + 1
+    x, y, w, h = box
     scale = crop_scale if crop_scale is not None else w / sw
     pic = {"measured": True, "x": x, "y": y, "width": w, "height": h, "frame_width": W, "frame_height": H,
            "frame_share": round(w * h / (W * H), 4), "scale": round(scale, 4),

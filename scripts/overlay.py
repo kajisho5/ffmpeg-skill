@@ -38,6 +38,7 @@ from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as 
 from _common import still_input_args  # noqa: E402
 from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, cfr_filter, cfr_at_input, with_cfr, default_output, die, escape_drawtext, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
+from _common.placement import measure_placement
 from _common.color import is_rgb
 from _common.decision import length_output_t, window_expr, windowed_overlay_x
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
@@ -755,6 +756,13 @@ def main() -> int:
         result = probe(output, role="output")
         info(f"wrote {output} ({fmt_secs(result['duration'])})")
     extra = {"dropped_non_av_streams": dropped_streams, **({"font_used": font_used} if args.text else {})}
+    if not STATE.dry_run:
+        # one instant: the position is fixed, so the box is the same wherever the layer is on
+        # screen -- the end of its fade-in (halfway when the window is shorter), or its first
+        # placed piece; a moving or keyed --video covers what its frame at that instant does
+        s0 = start or 0.0
+        at = placements[0][2] if args.video and placements else s0 + args.fade
+        extra["placement"] = measure_placement(cmd, meta, result["video"], [min(at, (s0 + end) / 2) if end else at])
     # a layer adds coverage: with --keep-alpha the written alpha is at or above the main input's in
     # every frame; without it, an output that lost the main input's used alpha fails the `alpha` step
     alpha_report(args, alpha_codec, src_alpha, output, extra, composite=True)

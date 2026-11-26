@@ -45,6 +45,7 @@ from _common import (guard_sidecar, refuse_output_is_input, require_filter, aac_
                      EMOJI_ASSET_HINT, text_width_em, wrap_text, WRAP_MODES,
                      SAFE_WIDTH_FRACTION, drawtext_draws_newline_glyph, is_multiline, _DRAWTEXT_PENDING)
 from _common.emit import note, warn
+from _common.placement import measure_placement
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            report as alpha_report, source_alpha, source_format, tag_args, video_line)
 from _common.fonts import font_choice, record_font_choice, require_font_file
@@ -909,6 +910,11 @@ def main(force_route: Optional[str] = None) -> int:
         extra["emoji"] = emoji_result
     if sliced_atoms:
         extra["broken_inside_word"] = len(sliced_atoms)
+    if not STATE.dry_run:
+        # a template moves and fades, so its box is the union over four instants of its own span
+        # (the hook's is --duration, not the clip's)
+        span = (min(e, s + args.duration) if args.template == "hook" else e) - s
+        extra["placement"] = measure_placement(cmd, meta, r["video"], [s + span * f for f in (0.2, 0.5, 0.8, 0.97)])
     # drawn layers add coverage: with --keep-alpha the written alpha is at or above the source's
     # in every frame; without it, an output that lost a used alpha fails the `alpha` step
     alpha_report(args, alpha_codec, src_alpha, output, extra, composite=True)

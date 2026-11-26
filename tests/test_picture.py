@@ -8902,5 +8902,116 @@ class HdrRgbSourceTests(unittest.TestCase):
                 if source != big:
                     self._assert_colours(out, "bt2020", preset)
 
+class PlacementTests(unittest.TestCase):
+    """#547: caption, overlay and graphics report the box of what they drew, measured. Each case
+    reads the written file at the instant the layer is on screen and finds what changed against
+    the same instant of the source: the box the result gives has to be that box."""
+
+    W, H = 640, 360
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = OUT / "placement547"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        q = ("ffmpeg", "-y", "-hide_banner", "-loglevel", "error")
+        cls.src = cls.dir / "base.mp4"
+        sh(*q, "-f", "lavfi", "-i", f"color=c=0x30406a:s={cls.W}x{cls.H}:r=25:d=4", "-f", "lavfi", "-i", "sine=d=4", "-shortest",
+           "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", cls.src)
+        cls.logo = cls.dir / "logo.png"
+        sh(*q, "-f", "lavfi", "-i", "color=c=red:s=100x60", "-frames:v", "1", cls.logo)
+
+    def gray(self, path, at):
+        return subprocess.run(["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(path), "-frames:v", "1", "-vf", "format=gray",
+                               "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+
+    def changed_box(self, out, at, step=40):
+        """(x, y, w, h) of the pixels of `out` at `at` that differ from the source's by more than `step`."""
+        a, b, W = self.gray(self.src, at), self.gray(out, at), self.W
+        hit = [i for i in range(len(a)) if abs(a[i] - b[i]) > step]
+        xs, ys = [i % W for i in hit], [i // W for i in hit]
+        return min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+
+    def run_tool(self, tool, name, *args):
+        out = self.dir / name
+        doc = json.loads(script(tool, self.src, *args, "-o", out, "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        return doc, out
+
+    def assertBox(self, doc, box, tol):
+        p = doc["placement"]
+        self.assertTrue(p["measured"], p)
+        self.assertEqual((p["frame_width"], p["frame_height"]), (self.W, self.H))
+        got = (p["x"], p["y"], p["width"], p["height"])
+        # the file's box is of the pixels that changed by more than a step; the measured one counts
+        # every pixel the layer touched (an antialiased edge, a faint outline)
+        self.assertTrue(all(abs(g - e) <= tol for g, e in zip(got, box)), (got, box))
+
+    def test_an_image_overlay_reports_the_rectangle_it_wrote(self):
+        doc, out = self.run_tool("overlay.py", "ov_logo.mp4", "--image", self.logo, "--position", "bottom-right", "--margin", "20")
+        self.assertBox(doc, self.changed_box(out, 2, 8), 0)
+        self.assertEqual(doc["placement"]["touches_edge"], [])
+        self.assertNotIn("rendered_placement", doc["unverified"])
+        # a margin of 0 puts the layer on the frame's edge, and the box says so
+        doc, out = self.run_tool("overlay.py", "ov_logo0.mp4", "--image", self.logo, "--position", "bottom-right", "--margin", "0")
+        self.assertBox(doc, self.changed_box(out, 2, 8), 0)
+        self.assertEqual(doc["placement"]["touches_edge"], ["right", "bottom"])
+
+    def test_a_timed_text_overlay_is_measured_while_it_is_on_screen(self):
+        doc, out = self.run_tool("overlay.py", "ov_text.mp4", "--text", "Hello world", "--position", "top-left",
+                                 "--start", "1", "--end", "3", "--fade", "0.5")
+        self.assertBox(doc, self.changed_box(out, 2, 8), 3)  # nothing is drawn at 0.5 s; the box is of the window
+        self.assertEqual(doc["unverified"], [])
+
+    def test_a_caption_reports_the_union_of_its_cues(self):
+        cues = self.dir / "cues.srt"
+        cues.write_text("1\n00:00:00,500 --> 00:00:01,500\nHi\n\n2\n00:00:02,000 --> 00:00:03,500\nA longer second line of words\n", encoding="utf-8")
+        doc, out = self.run_tool("caption.py", "cap_two.mp4", "--srt", cues)
+        first, second = self.changed_box(out, 1, 8), self.changed_box(out, 2.7, 8)
+        x0, y0 = min(first[0], second[0]), min(first[1], second[1])
+        x1, y1 = max(first[0] + first[2], second[0] + second[2]), max(first[1] + first[3], second[1] + second[3])
+        self.assertBox(doc, (x0, y0, x1 - x0, y1 - y0), 3)
+        self.assertEqual(doc["placement"]["samples"], 2)
+        self.assertEqual(doc["unverified"], ["legibility"], "what the words look like is still a look")
+
+    def test_a_caption_that_runs_off_the_frame_touches_its_edges(self):
+        ass = self.dir / "long.ass"
+        ass.write_text("[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\nWrapStyle: 2\n\n[V4+ Styles]\n"
+                       "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+                       "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+                       "MarginR, MarginV, Encoding\nStyle: Default,DejaVu Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,"
+                       "100,100,0,0,1,2,0,2,10,10,20,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
+                       "MarginV, Effect, Text\nDialogue: 0,0:00:00.50,0:00:03.00,Default,,0,0,0,,This caption is much too long to fit on one line\n",
+                       encoding="utf-8")
+        doc, out = self.run_tool("caption.py", "cap_long.mp4", "--ass", ass)
+        self.assertBox(doc, self.changed_box(out, 1.5, 8), 3)
+        p = doc["placement"]
+        self.assertEqual((p["x"], p["width"]), (0, self.W))
+        self.assertEqual(p["touches_edge"], ["left", "right"])
+
+    def test_a_graphics_text_layer_reports_where_it_drew(self):
+        doc, out = self.run_tool("graphics.py", "gfx_bug.mp4", "--template", "bug", "--title", "LIVE NOW", "--position", "top-right")
+        self.assertBox(doc, self.changed_box(out, 2, 8), 3)
+        self.assertEqual(doc["unverified"], [])
+        # a template that moves is the union of four instants of its own span: the progress bar ends full width
+        doc, _ = self.run_tool("graphics.py", "gfx_progress.mp4", "--template", "progress")
+        p = doc["placement"]
+        self.assertEqual((p["x"], p["width"], p["samples"]), (0, self.W, 4))
+
+    def test_where_nothing_was_measured_the_property_stays_unverified(self):
+        sys.path.insert(0, str(SCRIPTS))
+        from _common.placement import measure_placement
+        p = measure_placement(["ffmpeg", "-i", "x", "-map", "0:v:0"], {}, {"width": 64, "height": 36}, [0.0])
+        self.assertEqual(p["measured"], False)
+        self.assertIn("reason", p)
+        # the soft-subtitle mode draws nothing: no box, and the table's property is still named
+        cues = self.dir / "mux.srt"
+        cues.write_text("1\n00:00:00,500 --> 00:00:01,500\nHi\n", encoding="utf-8")
+        doc, _ = self.run_tool("caption.py", "cap_mux.mkv", "--srt", cues, "--mode", "mux")
+        self.assertNotIn("placement", doc)
+        self.assertIn("rendered_placement", doc["unverified"])
+        dry = json.loads(script("overlay.py", self.src, "--text", "x", "--dry-run", "--json").stdout)
+        self.assertNotIn("placement", dry)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

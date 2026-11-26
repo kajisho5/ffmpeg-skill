@@ -997,6 +997,12 @@ point crosses the motion or detail threshold. The `crop_content_off_centre` warn
 includes the affected axis, suggested anchor and `review_points`. `kept.start` and
 `kept.end` are fractions of the displayed source along that axis.
 
+Keys added after 4.8.0, additive (#547):
+
+| key | tool | what it holds |
+|---|---|---|
+| `placement` | `caption.py --mode burn`, `overlay.py`, `graphics.py` (not under `--dry-run`) | where what the run drew landed in the frame it wrote, measured: `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`. The run's own filter graph is rendered over a black and a white frame of the written size at the instants the layer is on screen, and the box is the rectangle of the pixels the layer changed (outline, box and any opacity above a few percent included). One box per run: the union of the cues (`caption.py`, sampled at each cue's middle, at most 12 cues and always the longest) or of the template's four instants (`graphics.py`); the end of the fade-in for `overlay.py`. `touches_edge` lists the frame edges the box reaches: a layer cut by the frame and one flush with it look the same in the pixels, so it says where, not why. `{measured: false, reason}` and a note when no frame came back. A measured box removes `rendered_placement` from `unverified` (`legibility` stays); `render.py` does not pass it on and keeps `rendered_placement` |
+
 Each `review_points` entry has `source_time` (the sample seek time in seconds),
 `output_time_estimate` (the corresponding seek after trimming and retiming, or
 `null` when the output frame rate or length is uncertain or the seek would fall after
