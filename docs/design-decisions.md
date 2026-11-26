@@ -126,6 +126,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
 - [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
 - [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
+- [After 4.8.0 — where caption, overlay and graphics drew (#547)](#after-480--where-caption-overlay-and-graphics-drew-547)
 <!-- contents:end -->
 
 ## Time limits
@@ -6733,3 +6734,48 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_track_refusals_name_their_reason_and_run_under_a_dry_run`,
   `test_a_track_file_is_checked_and_the_output_may_not_be_one`,
   `test_a_dry_run_lists_the_tracks_and_writes_nothing`.
+
+## After 4.8.0 — where caption, overlay and graphics drew (#547)
+
+- **`caption.py` (burn), `overlay.py` and `graphics.py` report `placement`, the box of what they drew,
+  measured.** `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`.
+  The run's own filter graph (every input but the main one as the run has it, the main one replaced
+  by a colour source of the written size) is rendered over a black and a white frame at the instants
+  the layer is on screen, with one filter thread (#543). A pixel the layer did not touch has the
+  background value in both renders; the box is the rectangle of the pixels where either differs by more than 8
+  levels (about 3 % opacity), so the outline, a `--box` and a layer of any colour on any colour count,
+  and a layer that is black on black is still seen through the white render. The helper is
+  `_common/placement.py`; `fit.py`'s `picture` shares its `bbox()`. One filter graph, two small renders
+  of at most 12 frames each, whatever the length of the clip. A removed `rendered_placement` is the
+  consequence: it leaves `unverified` only where `placement.measured` is true (`emit()`), so a
+  `{measured: false, reason}` keeps it, as does `--mode mux` (nothing is drawn) and a dry run.
+  `legibility` stays: that the box is where it should be says nothing of whether it reads.
+- **The open questions of the issue.** *One box per run, the union of what the run drew*: the
+  union of the cues for a caption (a per-cue list can be a thousand rows), of a template's text, bars
+  and boxes for graphics; a tool draws one layer per run, so "per layer" is per run. *Time-varying
+  layers*: the instants are chosen where the layer is on screen -- each sampled cue's middle
+  (up to 12 cues, spread through the list, and always the one with the longest text, which is the one
+  that runs off the frame); the end of an overlay's fade-in (halfway through a shorter window), or its
+  first `--place` piece; four instants of a graphics template's own span (0.2, 0.5, 0.8, 0.97; the
+  hook's span is `--duration`) so a bar that fills or slides is measured at its widest. A moving or
+  keyed `--video` layer, and a karaoke or animated cue, are measured at those instants only; `samples`
+  says how many. *`clipped`*: the field is `touches_edge`, the list of frame edges the box reaches.
+  A layer cut by the frame and one that sits flush with it by design (`--margin 0`, a lower-third bar
+  that starts at the left edge, the full-width progress bar) are the same pixels, and `clipped`
+  would have said "cut" of a progress bar. Naming what the pixels show is the claim the code can
+  keep; a caption that reaches both side edges (its margins are never 0) is the signal the issue wanted.
+- **`render.py` does not pass the box on and keeps `rendered_placement` in `unverified`.** A stage's box
+  is on that stage's frame, and the stages after it (`export`'s presets, a later `fit`) can scale or
+  reframe it, so the box would describe a frame that is not delivered; a cache hit would have to replay
+  it too. A caller that needs the box of a rendered project runs the stage tool on the delivered file.
+- **Not done.** Text or a layer cut by the frame is not told apart from one placed on its edge (above);
+  a layer on an `--alpha-codec` canvas is measured over opaque black and white frames, which the
+  result's alpha step does not cover; a variable-frame-rate source's conform filter (`fps`) is taken out of the
+  measuring graph, whose main picture is a few frames at chosen instants (it would fill the gaps between
+  them with copies).
+- Code: `placement.measure_placement()`, `bbox()`, `sample_cues()`; `overlay.main()`, `graphics.main()`,
+  `caption.main()` call it after the write; `emit()` drops `rendered_placement`; `_contract.EMITTED_KEYS`.
+  Tests: `PlacementTests` (tests/test_picture.py): `test_an_image_overlay_reports_the_rectangle_it_wrote`,
+  `test_a_timed_text_overlay_is_measured_while_it_is_on_screen`, `test_a_caption_reports_the_union_of_its_cues`,
+  `test_a_caption_that_runs_off_the_frame_touches_its_edges`, `test_a_graphics_text_layer_reports_where_it_drew`,
+  `test_where_nothing_was_measured_the_property_stays_unverified`.
