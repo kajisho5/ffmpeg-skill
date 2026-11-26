@@ -2022,6 +2022,26 @@ sys.exit(fit.main())
         # a direct push has no PR by SHA either, and keeps the title rules
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
+        # A PR merged with a merge commit is that one commit, not its branch's: the branch commit
+        # "... (#453)" named an issue, and asking for PR 453's labels stopped every release after
+        # 4.7.1. The real git log, on a throwaway repository.
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                       GIT_COMMITTER_EMAIL="t@t")
+            git = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "base")
+            git("tag", "v1.0.0")
+            git("checkout", "-q", "-b", "topic")
+            git("commit", "-q", "--allow-empty", "-m", "feat: x (#453)")
+            git("checkout", "-q", "main")
+            git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #715 from o/topic")
+            git("commit", "-q", "--allow-empty", "-m", "fix: y (#716)")
+            subjects = [s for _, s in rv._main_commits("v1.0.0..HEAD", cwd=repo)]
+        self.assertEqual(subjects, ["fix: y (#716)", "Merge pull request #715 from o/topic"])
+        self.assertIn('"--first-parent", rev_range', (ROOT / ".github" / "workflows" / "release.yml").read_text(),
+                      "the release notes list main's commits too, not a merged branch's")
 
     def test_release_version_resolver_does_not_depend_on_a_pr_title(self):
         """3.13.2 (2026-11-19): four PRs titled without a fix/feat prefix carried only `chore`
