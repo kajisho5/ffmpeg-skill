@@ -1530,8 +1530,8 @@ import fit
 replacement = sys.argv.pop(1)
 sys.argv[0] = "fit.py"
 real_probe = fit.probe
-def probe_then_replace(path, role="input"):
-    measured = real_probe(path, role)
+def probe_then_replace(path, role="input", **kwargs):
+    measured = real_probe(path, role, **kwargs)
     if role == "input":
         shutil.copyfile(replacement, path)
     return measured

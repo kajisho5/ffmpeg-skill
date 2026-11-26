@@ -15,7 +15,7 @@ import sys
 from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.emit import die, refuse, warn
+from _common.emit import die, note, refuse, warn
 from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
@@ -271,7 +271,7 @@ def _refuse_not_media(path: str, stderr: str) -> "None":
            hint=hint, path=path)
 
 
-def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str, Any]:
+def probe(path: str, role: str = "input", *, required: bool = True, advise_deinterlace: bool = False) -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
     role="output" marks a file this tool just wrote: a read failure is then reported as an
@@ -402,6 +402,8 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
         } for n, s in enumerate(subs)],
     }
     if video:
+        if advise_deinterlace and video.get("field_order") in ("tt", "bb", "tb", "bt"):
+            note("Input video is marked interlaced. For progressive editing, run deinterlace.py first.")
         r_rate = _fraction(video.get("r_frame_rate"))
         avg_rate = _fraction(video.get("avg_frame_rate"))
         fps = float(avg_rate) if avg_rate else (float(r_rate) if r_rate else None)
