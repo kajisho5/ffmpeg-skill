@@ -56,6 +56,7 @@ from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.decision import ntsc_rate
 from _common.emit import note, warn
+from _common.placement import measure_placement, sample_cues
 from _common.probe import display_size, square_pixels, square_pixels_note
 from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
@@ -2182,6 +2183,8 @@ def main() -> int:
              "and type size only)")
     extra["caption"] = dict(caption_stats, **ass_counts)
     extra["font_used"] = font_used
+    if not STATE.dry_run:  # the union of the cues' boxes, at the middle of each (the longest always one)
+        extra["placement"] = measure_placement(cmd, meta, result["video"], sample_cues(burn_cues or [], meta.get("duration")))
     if getattr(args, "_asr", None):
         extra["transcription"] = args._asr
     if emoji_plan:

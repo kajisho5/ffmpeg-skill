@@ -1680,6 +1680,8 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
             [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
             [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+
+`placement` is the union of the template's box over four instants of its own span, measured on the written size (#547); `touches_edge` says which frame edges it reaches (a bar that is full width by design reaches them too).
 `--keep-alpha` draws the template on the input's alpha (a canvas from `background.py --transparent`,
 or any alpha clip) and writes it in an alpha line (see `background.py`; ProRes 4444 by default) with
 the source's colour tags kept (an RGB input that is neither HDR nor BT.2020, on a ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709): boxes and bars are composited as layers with their alpha, drawtext and
@@ -1872,6 +1874,8 @@ caption.py INPUT --srt FILE[:LANG] | --ass FILE | --text CUES.txt [--write-srt O
            [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
+
+A burned caption's `placement` is the union of its cues' boxes (rendered at the middle of each, at most 12 cues and always the longest), `touches_edge` included: a caption that runs off the frame reaches left and right (#547). `legibility` stays in `unverified`.
 **Side files and `--overwrite` (2.2.4).** The files caption.py writes besides the
 video -- the `.srt` from `--text`/`--transcribe` (or `--write-srt`), the generated
 `.ass` (or `--write-ass`), `<output>_adjusted.srt`, `<output>_offset.ass` -- are
@@ -2149,6 +2153,8 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--platform NAME] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
            [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+
+The result's `placement` is the box the layer landed in, `{x, y, width, height, frame_width, frame_height, touches_edge}`, measured by rendering the same filter graph over a black and a white frame of the written size at the end of the fade-in (#547): `touches_edge` names the frame edges it reaches. `rendered_placement` leaves `unverified` when it is measured.
 `--keep-alpha` composites onto the input's alpha (a `background.py --transparent` canvas or an alpha
 clip) and writes the result in an alpha line with the source's tags kept (an RGB input that is neither HDR nor BT.2020, on a
 ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709), checked as

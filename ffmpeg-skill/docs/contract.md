@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.8.4`) | any release |
+| `skill.version` | the npm / package.json version (`4.9.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.8.4", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.9.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -996,6 +996,12 @@ margin. Its `basis` is `luma_motion_proxy`. The `verdict` is `ok`, `review`, or
 point crosses the motion or detail threshold. The `crop_content_off_centre` warning
 includes the affected axis, suggested anchor and `review_points`. `kept.start` and
 `kept.end` are fractions of the displayed source along that axis.
+
+Keys added after 4.8.0, additive (#547):
+
+| key | tool | what it holds |
+|---|---|---|
+| `placement` | `caption.py --mode burn`, `overlay.py`, `graphics.py` (not under `--dry-run`) | where what the run drew landed in the frame it wrote, measured: `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`. The run's own filter graph is rendered over a black and a white frame of the written size at the instants the layer is on screen, and the box is the rectangle of the pixels the layer changed (outline, box and any opacity above a few percent included). One box per run: the union of the cues (`caption.py`, sampled at each cue's middle, at most 12 cues and always the longest) or of the template's four instants (`graphics.py`); the end of the fade-in for `overlay.py`. `touches_edge` lists the frame edges the box reaches: a layer cut by the frame and one flush with it look the same in the pixels, so it says where, not why. `{measured: false, reason}` and a note when no frame came back. A measured box removes `rendered_placement` from `unverified` (`legibility` stays); `render.py` does not pass it on and keeps `rendered_placement` |
 
 Each `review_points` entry has `source_time` (the sample seek time in seconds),
 `output_time_estimate` (the corresponding seek after trimming and retiming, or
