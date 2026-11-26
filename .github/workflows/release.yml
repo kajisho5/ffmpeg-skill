@@ -224,38 +224,20 @@ jobs:
 
           bullets = "\n".join(f"- {s}" for s in subjects) or "- (no commit subjects found)"
           closes_line = f"\n\nCloses: {', '.join(f'#{n}' for n in sorted(issues))}" if issues else ""
-          section = (
-              f"## {new}\n\n"
-              f"_Automated release: version and notes generated from pull requests merged "
-              f"since {old}._\n\n"
-              f"{bullets}{closes_line}\n\n"
-          )
-
+          # changelog.d/*.md fragments (#678) and anything a branch opened before them still wrote
+          # under "## Unreleased" become the new section, ahead of the generated bullets; the
+          # fragments are deleted here and `git add -A changelog.d` below commits that.
+          from changelog_fragments import assemble, take_fragments
           changelog_path = root / "CHANGELOG.md"
-          changelog = changelog_path.read_text(encoding="utf-8")
-          # Whatever sits under "## Unreleased" (hand-written bullets from the merged PRs, or the
-          # placeholder "(nothing yet)") moves into the new version's section, ahead of the
-          # generated commit-subject bullets, and the placeholder is put back. The anchor used to
-          # be the literal "(nothing yet)" line, so a PR that wrote real notes there broke the
-          # bump step (1.4.1's first run).
-          m = re.search(r"## Unreleased\n(.*?)(?=^## )", changelog, re.S | re.M)
-          # A hand-bumped major writes its own section on top and leaves no "## Unreleased"
-          # (4.0.0): the first release after it then failed here and nothing was published. With
-          # no such section there is nothing to carry, and the new section goes above the first
-          # version heading.
-          first = m or re.search(r"^## ", changelog, re.M)
-          assert first, "CHANGELOG.md has no '## Unreleased' section and no version heading"
-          unreleased = m.group(1).strip() if m else ""
-          if unreleased and unreleased != "(nothing yet)":
-              section = section.replace(f"since {old}._\n\n", f"since {old}._\n\n{unreleased}\n", 1)
-          changelog = (changelog[:first.start()] + "## Unreleased\n\n(nothing yet)\n\n" + section
-                       + changelog[m.end() if m else first.start():])
+          changelog = assemble(changelog_path.read_text(encoding="utf-8"), take_fragments(root / "changelog.d"),
+                               new, old, bullets, closes_line)
           changelog_path.write_text(changelog, encoding="utf-8")
           PY
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json server.json .claude-plugin/plugin.json .cursor-plugin/plugin.json .codex-plugin/plugin.json gemini-extension.json docs/contract.md CHANGELOG.md docs/roadmap.md docs/design-decisions.md
+          git add -A changelog.d
           git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
           # A merge that landed after this job's checkout makes the push non-fast-forward. The
           # bump is not replayed on top of it: this used to `git pull --rebase` here, which put

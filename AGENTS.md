@@ -8,6 +8,8 @@
 - Verify a finding against the tree at the commit you are reviewing, not against a summary: at
   least one earlier review reported committed media that is not in git and colour flags that were
   already validated.
+- **A change records itself as a fragment**: `changelog.d/<slug>.md` (format in
+  `changelog.d/README.md`), never lines under `## Unreleased`, so two open PRs do not conflict.
 - The contract (`python3 scripts/_contract.py --json`, `docs/contract.md`) is the authority on
   tool names, flags, dry-run semantics and error kinds; README and SKILL.md restate it and are
   tested against it.

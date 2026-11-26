@@ -134,10 +134,10 @@ Two real differences from the generic PyPI example:
   `.github/workflows/release.yml` runs on every push to `main`: it resolves the
   next version from the merged PRs' labels (`.github/scripts/resolve_version.py`),
   bumps `package.json`, the plugin manifests, `server.json`, `docs/contract.md`
-  and `docs/roadmap.md`, moves `## Unreleased` into the new version's section,
+  and `docs/roadmap.md`, moves the `changelog.d/` fragments (and anything under `## Unreleased`) into the new version's section,
   pushes that commit, tags it, creates the GitHub Release, publishes to npm with
   provenance, the `plugin` branch and the MCP Registry entry. A PR writes its
-  notes under `## Unreleased` and never bumps a version, except a major, which
+  notes as a fragment file `changelog.d/<slug>.md` (see `changelog.d/README.md`) and never bumps a version, except a major, which
   is a hand bump in a PR. A version that was tagged but did not reach npm is
   finished by the workflow's `recover` job (CONTRIBUTING.md, "Pull requests"),
   never by a local `npm publish`. (The 0.10.0 release was the last one done by

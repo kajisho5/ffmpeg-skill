@@ -30,6 +30,9 @@ _spec.loader.exec_module(RESOLVER)
 _spec = importlib.util.spec_from_file_location("defect_ledger", pathlib.Path(__file__).with_name("defect_ledger.py"))
 LEDGER_MOD = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(LEDGER_MOD)
+_spec = importlib.util.spec_from_file_location("changelog_fragments", pathlib.Path(__file__).with_name("changelog_fragments.py"))
+FRAGMENTS = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(FRAGMENTS)
 LEDGER = f"{LEDGER_MOD.DIR}/<date>-<issue>.json"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
@@ -224,8 +227,7 @@ def main() -> int:
     if EXEMPT_TITLE.match(args.title):
         print(f"title {args.title!r} declares no behaviour change: not judged")
         return 0
-    fixes = re.match(r"fix\b", args.title, re.I) or any(
-        line.startswith("+- ") for line in git("diff", base, args.head, "--", "CHANGELOG.md").splitlines())
+    fixes = re.match(r"fix\b", args.title, re.I) or FRAGMENTS.adds_fix(git, base, args.head)
     added_entries = LEDGER_MOD.added(git, base, args.head)
     # a class the ledger keeps recording needs a guard that covers every tool (docs/defect-guards.json)
     guards_path = pathlib.Path("docs/defect-guards.json")
