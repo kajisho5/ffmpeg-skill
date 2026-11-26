@@ -11,6 +11,7 @@ import os
 import platform
 import argparse
 import contextlib
+import errno
 import re
 import shutil
 import subprocess
@@ -2208,11 +2209,12 @@ def _remove_quietly(path: Optional[str]) -> None:
             pass
 
 
-def replace_checked(tmp: str, final: str) -> None:
+def replace_checked(tmp: str, final: str) -> "Optional[Dict[str, int]]":
     """os.replace(tmp, final) for a file a tool writes itself (a time map, a normalised export):
     under `final`'s output lock, after refuse_changed_output(), which removes `tmp` when it
-    refuses."""
-    replace_checked_together([(tmp, final)])
+    refuses. Returns the identity of the file left at `final` when the install had to create a
+    new inode (a filesystem without hard links), else None: `tmp`'s own identity was installed."""
+    return replace_checked_together([(tmp, final)]).get(final)
 
 
 def _keep_group(tmp: str, final: str, gid: int, staged_gid: int) -> None:
@@ -2264,26 +2266,142 @@ def write_sidecar(path: str, text: str, encoding: str = "utf-8") -> None:
             mode = existing.st_mode & 0o7777
             _keep_group(tmp, path, existing.st_gid, staged_gid)  # before chmod: chown clears setgid
         os.chmod(tmp, mode)
+        if existing is not None:
+            _keep_acl(tmp, path)  # the replaced file's access ACL, after its mode
         # the identity the file will have at path, captured before the install: reading it back
         # afterwards could record one another process put there in the gap as this run's
         staged = owned_identity(tmp)
-        replace_checked(tmp, path)
-        _remember_identity(path, (staged, False))  # a later write of this run's own side file is not refused
-        report_committed(path, identity=staged)
+        installed = replace_checked(tmp, path) or staged
+        _remember_identity(path, (installed, False))  # a later write of this run's own side file is not refused
+        report_committed(path, identity=installed)
     except BaseException:
         _remove_quietly(tmp)
         raise
 
 
-def _install_checked(tmp: str, final: str, expected: Any) -> None:
+def _acl_value(path: str) -> "Optional[Tuple[str, bytes]]":
+    """The target's access ACL, when the filesystem keeps one (#743 review).
+
+    Linux stores it in the `system.posix_acl_access` xattr; a file without one raises ENODATA
+    (ENOATTR on BSD) and a filesystem without xattrs ENOTSUP, both read as "no ACL". Any other
+    error means the ACL cannot be read, so the caller refuses rather than replacing a file whose
+    named-user permissions it cannot see.
+    """
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None:  # Windows, and platforms without xattrs
+        return None
+    name = "system.posix_acl_access"
+    try:
+        return name, getxattr(path, name)
+    except OSError as exc:
+        if exc.errno in (errno.ENODATA, getattr(errno, "ENOATTR", errno.ENODATA), errno.ENOTSUP,
+                         errno.EOPNOTSUPP):
+            return None
+        raise
+
+
+def _keep_acl(tmp: str, final: str) -> None:
+    """Give the staged file the access ACL of the file it replaces (#743 review).
+
+    The mode's group bits are the ACL's mask, so a file can allow a named user and deny the
+    owning group; replacing it with a mode-only copy would hand that group access the original
+    denied. The ACL is copied after the mode (setting it re-derives the mode bits from the ACL),
+    and a writer that cannot copy it is refused instead of replacing the file with one whose
+    named users' permissions are lost.
+    """
+    try:
+        acl = _acl_value(final)
+    except OSError as exc:
+        refuse("input", "output_acl_not_preserved",
+               f"refusing to replace {final!r}: its access ACL cannot be read ({exc.strerror or exc}), "
+               "so the permissions of the new file cannot match the ones it replaces",
+               path=final, error=str(exc))
+        return
+    if acl is None:
+        return
+    name, value = acl
+    try:
+        os.setxattr(tmp, name, value)
+    except OSError as exc:
+        refuse("input", "output_acl_not_preserved",
+               f"refusing to replace {final!r}: its access ACL cannot be copied to the new file "
+               f"({exc.strerror or exc}), which would change the permissions of its named users",
+               path=final, error=str(exc))
+
+
+def _install_exclusive(tmp: str, final: str) -> "Optional[Dict[str, int]]":
+    """Copy `tmp` into a name this call creates, for a filesystem without hard links (#743 review).
+
+    O_CREAT|O_EXCL creates the name or fails, so a file another process created after the check
+    is refused, never replaced -- the guarantee os.link() gives where hard links exist. The
+    staged file's group, mode and access ACL are copied to the new inode; a reader may see it
+    while it is being filled (the copy is not atomic, unlike a rename, but it never clobbers
+    another file). Returns the identity the new file was left with: it is a different inode
+    from the staged one, so the caller records this one.
+    """
+    staged = os.stat(tmp)
+    try:
+        fd = os.open(final, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        refuse("input", "output_exists",
+               f"refusing to write {final!r}: it did not exist when the run checked it and "
+               "another process created it before the write",
+               hint="choose another -o path",
+               outputs=[{"path": final, "created_before_write": True}])
+    created = os.fstat(fd).st_ino
+    done = False
+    try:
+        if hasattr(os, "fchown"):
+            try:
+                os.fchown(fd, -1, staged.st_gid)
+            except OSError as exc:
+                refuse("input", "output_group_not_settable",
+                       f"refusing to write {final!r}: the new file cannot be given the group of "
+                       f"the file it would replace ({exc.strerror or exc})",
+                       path=final, group=staged.st_gid, staged_group=os.fstat(fd).st_gid)
+        os.fchmod(fd, staged.st_mode & 0o7777)
+        try:
+            acl = _acl_value(tmp)
+        except OSError as exc:
+            refuse("input", "output_acl_not_preserved",
+                   f"refusing to write {final!r}: the staged file's access ACL cannot be read "
+                   f"({exc.strerror or exc})", path=final, error=str(exc))
+        if acl is not None:
+            try:
+                os.setxattr(fd, acl[0], acl[1])
+            except OSError as exc:
+                refuse("input", "output_acl_not_preserved",
+                       f"refusing to write {final!r}: its access ACL cannot be copied to the new "
+                       f"file ({exc.strerror or exc})", path=final, error=str(exc))
+        with os.fdopen(fd, "wb", closefd=False) as dst, open(tmp, "rb") as src:
+            shutil.copyfileobj(src, dst)
+        now = os.fstat(fd)
+        identity = {"size": now.st_size, "mtime_ns": now.st_mtime_ns, "ino": now.st_ino,
+                    "dev": now.st_dev}
+        done = True
+    finally:
+        os.close(fd)
+        if not done:  # this run's half-written file, never another process's
+            try:
+                if os.stat(final).st_ino == created:
+                    os.remove(final)
+            except OSError:
+                pass
+    _remove_quietly(tmp)
+    return identity
+
+
+def _install_checked(tmp: str, final: str, expected: Any) -> "Optional[Dict[str, int]]":
     """Put `tmp` at `final`, for a target refuse_changed_output() has just passed.
 
     A target the check recorded absent is installed with os.link(), which fails when anything is
     there: a file another process creates between the comparison and this install is refused
     instead of replaced, unless --overwrite consented to replacing whatever is at the path. A
-    checked target is replaced (os.replace) as before: a writer that ignores the output lock can
-    still write it between the comparison and the replace, as docs/design-decisions.md says. A
-    filesystem without hard links, and a path no check covers, keep the old replace.
+    filesystem without hard links installs by creating the name exclusively and copying the
+    staged file, so that file is still refused. A checked target is replaced (os.replace) as
+    before: a writer that ignores the output lock can still write it between the comparison and
+    the replace, as docs/design-decisions.md says. Returns the identity of an inode the copy
+    created (None when the staged inode itself was installed).
     """
     if expected is None and not STATE.overwrite:
         try:
@@ -2295,14 +2413,14 @@ def _install_checked(tmp: str, final: str, expected: Any) -> None:
                    hint="choose another -o path",
                    outputs=[{"path": final, "created_before_write": True}])
         except OSError:
-            os.replace(tmp, final)
-            return
+            return _install_exclusive(tmp, final)
         _remove_quietly(tmp)
-        return
+        return None
     os.replace(tmp, final)
+    return None
 
 
-def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
+def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> "Dict[str, Dict[str, int]]":
     """Replace each (tmp, final) only once every final has passed refuse_changed_output(), all
     under their output locks: files that belong together (a fill and its key). A file already at a
     final is moved aside first and put back if a later replace fails, so a failed pair leaves
@@ -2312,6 +2430,7 @@ def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
         for tmp, _final in pairs:
             _remove_quietly(tmp)
     aside: List[Tuple[str, Optional[str]]] = []  # (final, where its earlier file went, or None)
+    installed: Dict[str, Dict[str, int]] = {}  # finals the exclusive install had to copy
     try:
         with contextlib.ExitStack() as stack:
             for final in sorted({final for _tmp, final in pairs}):
@@ -2333,11 +2452,13 @@ def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
                         kept = reserve_sibling(d, stem, ext, "keep")
                         os.replace(final, kept)
                     try:
-                        _install_checked(tmp, final, expected[final])
+                        identity = _install_checked(tmp, final, expected[final])
                     except BaseException:
                         if kept:
                             os.replace(kept, final)
                         raise
+                    if identity:
+                        installed[final] = identity
                     aside.append((final, kept))  # replaced: undone below if a later one fails
             except BaseException:
                 for final, kept in reversed(aside):
@@ -2354,6 +2475,7 @@ def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
     except BaseException:
         cleanup()
         raise
+    return installed
 
 
 # set only by batch.py for the steps it runs: the path of a JSON file {"replaceable": {real path:

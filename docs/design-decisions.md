@@ -510,11 +510,16 @@ exists. When a decision changes, edit the entry in the same PR.
   `replace_checked()`, so the same comparison runs under the path's lock (#696); a target the check
   recorded absent is installed with `os.link()`, which fails if another process created one in the
   gap unless `--overwrite` consented (it replaces that path whatever is there; a filesystem
-  without hard links keeps the old replace), an existing target keeps its permission bits and its
-  group (the staged file takes the target's group before its mode, and a writer that may not give
-  it that group is refused with `output_group_not_settable` instead of replacing the file with one
-  in another group; the owner is not restored, which needs privilege), and the identity recorded
-  is the staged file's,
+  without hard links creates the name exclusively and copies the staged file into it, so the file
+  that appeared is refused there too, and a reader may see the copy while it is being filled),
+  an existing target keeps the permission bits, group and access ACL it had when the staged file
+  took them (the staged file takes the target's group before its mode and its
+  `system.posix_acl_access` after it, and a writer that may not give the new file that group or
+  copy that ACL is refused with `output_group_not_settable` or `output_acl_not_preserved` instead
+  of replacing the file with one of another group or whose named users' permissions changed; a
+  concurrent change made after that moment is not tracked, and the owner is not restored, which
+  needs privilege), and the identity recorded
+  is the staged file's, or the copied inode's when the name had to be created,
   not one read back after the install, while the concat lists, work files and manifests a tool
   makes for itself stay plain `open()`. Code:
   `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
@@ -527,6 +532,9 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
   `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
   `test_a_side_file_keeps_the_group_of_the_file_it_replaces`,
+  `test_a_file_created_after_the_check_is_refused_without_hard_links`,
+  `test_a_write_still_lands_without_hard_links`,
+  `test_a_side_file_keeps_the_access_acl_of_the_file_it_replaces`,
   `test_a_side_file_created_between_the_comparison_and_the_install_is_refused`,
   `test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite`,
   `test_an_overwrite_pair_puts_back_a_file_that_appeared_at_a_checked_absent_target`,

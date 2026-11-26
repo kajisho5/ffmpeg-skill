@@ -10338,6 +10338,71 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertFalse(staged_second.exists(), "the staged file of the failed install is removed")
         self.assertEqual(self.temps(), [], "a hidden sibling or backup is removed")
 
+    def test_a_file_created_after_the_check_is_refused_without_hard_links(self):
+        """#743 review: where os.link() is unavailable, the fallback called os.replace(), which
+        overwrote a file another process created after the comparison. The fallback now creates
+        the name exclusively, so that file is refused too."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def create_then_install(tmp, final, expected):
+            if not os.path.lexists(final):
+                Path(final).write_bytes(b"theirs")  # another process, after the comparison
+            real(tmp, final, expected)
+
+        with mock.patch.object(self.runner.os, "link",
+                               side_effect=PermissionError(1, "Operation not supported")), \
+                mock.patch.object(self.runner, "_install_checked", create_then_install):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"),
+                             ("input", "output_exists"))
+        self.assertEqual(path.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [], "the staged copy is removed")
+
+    def test_a_write_still_lands_without_hard_links(self):
+        """#743 review: refusing every os.link() error would block ordinary writes on filesystems
+        without hard links; the exclusive create installs the staged file and records the copied
+        inode's identity, so the run's own next write is not refused."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        with mock.patch.object(self.runner.os, "link",
+                               side_effect=PermissionError(1, "Operation not supported")):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "again\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "again\n")
+        self.assertEqual(self.temps(), [])
+
+    @unittest.skipUnless(hasattr(os, "setxattr"), "access ACLs need xattrs")
+    def test_a_side_file_keeps_the_access_acl_of_the_file_it_replaces(self):
+        """#743 review: a mode-only copy loses the ACL's named users, and a 0640 whose mask
+        denies the owning group would hand that group read access. The staged file takes the
+        target's ACL; a writer that cannot copy it refuses instead of replacing the file."""
+        import struct
+        from unittest import mock
+        path = self.work / "edl.txt"
+        path.write_text("theirs", encoding="utf-8")
+        os.chmod(path, 0o640)
+        entries = [(0x01, 6, 0xFFFFFFFF), (0x02, 4, 1234), (0x04, 4, 0xFFFFFFFF),
+                   (0x10, 4, 0xFFFFFFFF), (0x20, 0, 0xFFFFFFFF)]  # user rw, named user r, group r
+        blob = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", t, p, i) for t, p, i in entries)
+        try:
+            os.setxattr(path, "system.posix_acl_access", blob)
+        except OSError as exc:
+            self.skipTest(f"this filesystem cannot store an access ACL: {exc}")
+        _common.STATE.overwrite = True
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(os.getxattr(path, "system.posix_acl_access"), blob)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o640)
+        # a writer that cannot copy the ACL refuses, leaving the file and its ACL as they were
+        with mock.patch.object(self.runner.os, "setxattr",
+                               side_effect=PermissionError(1, "Operation not permitted")):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"),
+                             ("input", "output_acl_not_preserved"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(os.getxattr(path, "system.posix_acl_access"), blob)
+
     @unittest.skipIf(os.name == "nt", "group ownership is not kept on Windows")
     def test_a_side_file_keeps_the_group_of_the_file_it_replaces(self):
         """#743 review: write_sidecar() installs the staged inode with os.replace(), so a side
