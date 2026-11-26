@@ -65,7 +65,9 @@ def measure_placement(cmd: List[str], meta: Dict[str, Any], out_video: Dict[str,
             graph, mapped = f"{graph};{cmd[cmd.index('-map', graph_at) + 1]}format=gray[mgray]", "[mgray]"
         else:
             graph, mapped = f"{graph},format=gray", "0:v:0"
-        rest = cmd[first + 2:last + 2] + [cmd[graph_at], graph, "-map", mapped, "-frames:v", str(len(times)), "-f", "rawvideo", "-"]
+        # passthrough: the frames sit at chosen instants, not on a grid; a constant-rate output
+        # (FFmpeg 7.1's default here) repeated the first sample in place of the second
+        rest = cmd[first + 2:last + 2] + [cmd[graph_at], graph, "-map", mapped, "-fps_mode", "passthrough", "-frames:v", str(len(times)), "-f", "rawvideo", "-"]
         dark, light = (_render(rest, c, W, H, (meta.get("video") or {}).get("pix_fmt"), times) for c in ("black", "white"))
         reason = f"ffmpeg did not give {len(times)} frame(s) of {W}x{H} from the filter graph"
         if dark and light:
