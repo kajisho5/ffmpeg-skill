@@ -3395,13 +3395,13 @@ sys.exit(fit.main())
         text, a test over every tool). `mechanism: null` needs `why_none`, and a class gets that
         answer once: the second defect of a class with no mechanism behind it is the evidence
         that the mechanism is what has to change."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
         seen_without = {}
-        path = ROOT / "docs" / "defect-ledger.jsonl"
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            where = f"{path.name}:{n}"
+        for entry in ledger.rows(ROOT):
+            where = n = entry.pop("_where")
             for key in ("date", "issue", "class", "what", "escaped", "mechanism"):
                 self.assertIn(key, entry, where)
             self.assertIn(entry["class"], self.DEFECT_CLASSES, where)
@@ -3413,6 +3413,43 @@ sys.exit(fit.main())
                              f"{where}: class {entry['class']!r} already had a defect closed with no mechanism "
                              f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
             seen_without[entry["class"]] = n
+
+    def test_two_fixes_add_ledger_entries_without_a_conflict_678(self):
+        """#678: every fix appended a line to docs/defect-ledger.jsonl, so two open fixes always
+        conflicted in its last line, and external PRs (a fork's branch the maintainer cannot push
+        to) stalled each time main moved. An entry is a file under docs/defect-ledger/: two
+        branches that each add one merge with no conflict, and the ledger reader and revert_proof
+        find the entry a change adds, as a file or as a line a branch opened before the split
+        still adds to the .jsonl."""
+        import importlib.util
+        import tempfile
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        entry = lambda n: json.dumps({"date": "2026-11-26", "issue": n, "class": "claim", "what": "w", "escaped": "e", "mechanism": "m"})
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / ledger.LEGACY).write_text(entry(1) + "\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n in (2, 3):
+                run("checkout", "-q", "-b", f"fix{n}", "main")
+                (root / ledger.DIR).mkdir(exist_ok=True)  # git keeps no empty directory
+                (root / ledger.DIR / f"2026-11-26-{n}.json").write_text(entry(n) + "\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"fix: {n}")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "fix2")], [2])
+            run("checkout", "-q", "fix2")
+            run("merge", "-q", "--no-edit", "fix3")  # check=True: a conflict fails here
+            self.assertEqual([e["issue"] for e in ledger.rows(root)], [1, 2, 3])
+            # a branch opened before the split adds its line to the .jsonl: that is an entry too
+            run("checkout", "-q", "-b", "old", "main")
+            with open(root / ledger.LEGACY, "a", encoding="utf-8") as fh:
+                fh.write(entry(4) + "\n")
+            run("commit", "-q", "-am", "fix: 4")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "old")], [4])
+        self.assertTrue((ROOT / ledger.DIR).is_dir(), "the repository keeps its entries under docs/defect-ledger/")
 
     def test_the_632_scripts_read_what_a_change_did(self):
         """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the

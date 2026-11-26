@@ -6,6 +6,7 @@ entries, the test here that catches the class wherever it happens: in the tools 
 one written after the test. A fix of a class whose guard is pending does not pass revert_proof.py,
 so a fix of one tool cannot be the end of a class that keeps coming back.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -373,7 +374,10 @@ class GuardRegistryTests(unittest.TestCase):
         the test that guards it or the issue where the guard is still to be written; a registered
         test exists. A new class that reaches three fails this until it is registered."""
         guards = json.loads((ROOT / "docs" / "defect-guards.json").read_text(encoding="utf-8"))
-        rows = [json.loads(l) for l in (ROOT / "docs" / "defect-ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        rows = ledger.rows(ROOT)
         counts = {}
         for r in rows:
             counts[r["class"]] = counts.get(r["class"], 0) + 1
