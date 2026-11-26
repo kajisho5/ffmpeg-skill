@@ -437,7 +437,7 @@ depend on the client and tokenizer.
 
 ```bash
 npx ffmpeg-skill doctor          # human-readable
-npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unknown / detection / errors / tools / gpu_encoders / ffmpeg_security
+npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unknown / detection / errors / tools / gpu_encoders / ffmpeg_security / ffmpeg_tested
 ```
 
 `doctor` reads `ffmpeg -encoders`, `-decoders`, `-filters` and `-bsfs` and resolves every capability the contract declares against this machine's build. Three states per capability: `available`, `missing`, `unknown`. Exit 0 when everything required is available, 1 when something required is missing, 2 when nothing is proven missing but a required capability is unknown. With detection on (the default), `contract --json` carries the same lists under `capabilities`. `doctor` also reports fonts: the default drawtext family, and `fonts.scripts` — one `available`/`missing`/`unknown` per writing system (ja, zh, ko, ar, he, hi, bn, ta, th, lo, ru, el, latin) with the file it would use — so "can this machine render Korean captions" is answered before the job, not after. `doctor --json`'s `tools` field folds that down to one answer per tool — `{"caption": {"usable": "no", "missing": ["filter:subtitles"], "fix": "..."}, ...}` — so "is `doctor` overall `ok`" and "can I run `caption.py` on this machine" are answered separately: a plain Homebrew `ffmpeg` is `ok` for tools that don't need `subtitles`/`drawtext`/`zscale`, while `caption`'s own `usable` is `"no"`.

@@ -671,6 +671,11 @@ timeout. The field is an SPDX identifier for a recognized GPL or LGPL notice, `"
 FFmpeg's nonfree build notice, or `null` when the binary or its notice could not be read or
 recognized. The result is informational and leaves capability decisions and the exit code unchanged.
 
+`doctor`'s `ffmpeg_tested` field (#556) says whether the FFmpeg the tools run is one the test suite covers:
+`{tested: "6.x-9.x", build: release|git|unknown, covered, why?}`. When it is not (another major, a git
+or vendor build, an unreadable version), doctor prints a warning line and every tool adds one
+`ffmpeg_version_untested` warning to its result; nothing is refused and the run goes on as before.
+
 `doctor`'s `ffmpeg_security` field compares the `ffmpeg` and `ffprobe` versions with a small table of
 high-severity FFmpeg CVEs and the first upstream release on each branch that carries the fix. The table is
 hand-maintained in `scripts/_contract.py` (`FFMPEG_ADVISORIES`), copied from

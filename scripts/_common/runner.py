@@ -333,6 +333,7 @@ def require_tool(name: str) -> str:
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
                    f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
                    code=127, version=f"{found[0]}.{found[1]}", required=floor)
+        _report_untested_build(found)
     if path:
         return path
     system = platform.system()
@@ -346,6 +347,33 @@ def require_tool(name: str) -> str:
 
 
 MIN_FFMPEG = (6, 1)   # requirements.ffmpeg since 3.0.0 (_contract.MIN_FFMPEG is the same floor)
+# the FFmpeg majors the test suite runs on (#556; .github/workflows/ci.yml: Ubuntu apt 6.1, Debian
+# 7.1, Homebrew 8.x, gyan.dev 9.0; a test keeps the two in step). Whole majors: a defect seen on
+# one version so far was one major's behaviour, and a minor outside the exact ones CI runs is no
+# less covered than the next patch release.
+TESTED_FFMPEG_MAJORS = (6, 9)
+
+
+def tested_build(found: "Tuple[int, int]", release: bool) -> "Tuple[str, Optional[str]]":
+    """("release" | "git" | "unknown", None when the build is one the suite covers, else why not)."""
+    lo, hi = TESTED_FFMPEG_MAJORS
+    if found == (0, 0):
+        return "unknown", "its version could not be read"
+    if not release:
+        return "git", f"a git or vendor build (FFmpeg {found[0]} from libavutil), so its release cannot be matched to the tested {lo}.x-{hi}.x"
+    return "release", None if lo <= found[0] <= hi else f"the test suite runs FFmpeg {lo}.x-{hi}.x"
+
+
+def _report_untested_build(found: "Tuple[int, int]") -> None:
+    """Once per run, a warning when the build on PATH is outside the tested majors, a git build or
+    unreadable (#556): the run goes on as before, but its results are not covered by the suite."""
+    build, why = tested_build(found, _FFMPEG_VERSION_IS_RELEASE)
+    if why is None or any(w.get("code") == "ffmpeg_version_untested" for w in STATE.warnings):
+        return
+    version = None if build == "unknown" else f"{found[0]}.{found[1]}" if build == "release" else f"{found[0]}"
+    warn(f"FFmpeg {version or '(version unknown)'} on PATH: {why}; the results are not covered by the test suite on this build",
+         "ffmpeg_version_untested", version=version, build=build,
+         tested=f"{TESTED_FFMPEG_MAJORS[0]}.x-{TESTED_FFMPEG_MAJORS[1]}.x")
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")

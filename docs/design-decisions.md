@@ -76,6 +76,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
 - [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
 - [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
+- [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3685,6 +3686,25 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   ffprobe pass over the packets, so the row costs no decode of the picture.
 - **`batch.py`'s per-item table is not changed here.** #574 also asked for the row there; this
   change adds it to `check.py` only.
+
+## After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)
+
+- **Whole majors, 6 to 9.** `runner.TESTED_FFMPEG_MAJORS` is the range of majors CI installs (Ubuntu
+  apt 6.1, Debian 7.1, Homebrew 8.x, gyan.dev 9.0). Exact minors would warn on 8.0.2 against CI's
+  8.0.1, which the suite protects no less; the defects seen on one version so far were one major's
+  behaviour. A test reads the versions out of `.github/workflows/ci.yml` so the two cannot drift.
+  Test: `test_a_build_outside_the_tested_majors_is_said_once_and_the_run_goes_on_556`.
+- **A warning, once per run, at the first ffmpeg/ffprobe lookup.** `runner.require_tool()` already
+  reads the version there for the 6.1 floor; `_report_untested_build()` adds
+  `ffmpeg_version_untested` {version, build, tested} the first time and not again. Nothing is
+  refused: the build works as well as it did, the result only says the suite has not seen it.
+- **A git or vendor build is its own case (`build: git`).** Its libavutil major names the FFmpeg
+  major but not the release, so it is neither "tested" nor "untested"; it is reported as a build
+  the suite cannot be matched to. An unreadable version is `build: unknown`.
+- **doctor says the same** (`ffmpeg_tested`, and a warning line on stderr), from the same
+  `runner.tested_build()`.
+- **SKILL.md is not changed.** It is at its byte budget, and the warning reaches a caller in every
+  result; README names the doctor field.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 
