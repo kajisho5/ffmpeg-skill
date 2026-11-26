@@ -3045,7 +3045,12 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   anything runs, dry runs included (`kind: input`, reason `output_container_codecs`, the encoders
   named in `details`), by the one check every ffmpeg command passes (`runner._check_container_codecs`);
   the encoders are still not switched to VP9/Opus for a WebM name. A stream copy is still left to
-  the muxer, since what it copies is not in the command. metadata.py and `export.py --preset
+  the muxer, since what it copies is not in the command. The same check refuses an `.mxf` output of
+  the tools' libx264/AAC encode (#736): MXF takes PCM sound only ("not supported by the bitstream
+  filter 'pcm_rechunk'"), and with PCM the H.264 of the default B-frame line still wrote dts the
+  muxer rejects on a read-back, so the encoders are not switched to PCM for an `.mxf` name (nothing
+  here writes MPEG-2 or DNxHD); the hint names `.mov` (`--codec prores`) and `.mkv`. A stream copy
+  (`cut.py` without `--accurate`, `metadata.py`) still writes MXF. metadata.py and `export.py --preset
   copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Tests:
   `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`,
   `test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs`.
