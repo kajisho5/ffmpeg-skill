@@ -148,7 +148,7 @@ def parse_expect_changed(values: "List[str]", flag: str = "--expect-changed") ->
         rect = None
         if "@" in raw:
             if sound:
-                die(f"{flag} {raw!r}: sound has no rectangle; give START-END only")
+                die(f"{flag} {raw!r}: only --expect-changed takes a rectangle; give START-END only")
             try:
                 rect = [int(n) for n in rect_text.split(",")]
             except ValueError:
@@ -314,10 +314,20 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     nout, nref = v.get("nb_frames") or len(pts) or None, rv.get("nb_frames") or len(ref_pts) or None
     if not nout or not nref:
         return not_compared("a frame count could not be read", "remux the file that has no readable frame count (export.py --preset copy)")
+    removed = getattr(args, "removed", None) or []
+    ref_origin = float(probe(args.compare).get("start_time") or 0.0)
+    if removed:
+        # the reference frames a cut keeps, counted from their own times, so the pairing is checked
+        # before it is made and not inferred from where the shorter file runs out
+        if not ref_pts:
+            return not_compared("the reference's frame times could not be read", "remux the reference (export.py --preset copy) and check it again")
+        nref = sum(1 for t in ref_pts if not any(s <= t - ref_origin < e for s, e in removed))
     if int(nout) != int(nref):
-        return not_compared(f"{nout} frames against the reference's {nref}",
-                            "an edit that changes the length cannot be paired frame by frame; compare the parts separately")
-    tiles = change_tiles(args.input, args.compare, args.change_floor, squares=(square_pixels(v), square_pixels(rv)))
+        return not_compared(f"{nout} frames against the reference's {nref}" + (" left after --expect-removed" if removed else ""),
+                            "declare the removed spans with --expect-removed START-END (the reference's time)" if not removed
+                            else "the removed spans do not match the cut: give them in the reference's time, as the edit was asked")
+    tiles = change_tiles(args.input, args.compare, args.change_floor, squares=(square_pixels(v), square_pixels(rv)),
+                         removed=[(s + ref_origin, e + ref_origin) for s, e in removed])
     if tiles is None:
         return not_compared("the comparison pass failed", look + "0")
     n = tiles["frames"]
@@ -331,6 +341,8 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         # on variable-rate video. `none` too: its FAIL names where the change is
         return not_compared("the frame times could not be read", "remux the file (export.py --preset copy) and check it again")
     doc = change_scope(tiles, declared, times, size, args.change_floor)
+    if removed:
+        doc["removed"] = [{"start": s, "end": e} for s, e in removed]
 
     def span(d: "Dict[str, Any]") -> str:
         return f"{d['start']:.2f}-{d['end']:.2f}"
@@ -375,13 +387,22 @@ def audio_change_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
             reason="nothing was measured, so this does not say the rest of the sound is unchanged")
         return {}
 
-    ra = probe(args.compare).get("audio") or {}
+    ref_meta = probe(args.compare)
+    ra = ref_meta.get("audio") or {}
     if not a or not ra:
         return not_compared("one of the files has no sound", "--expect-audio-changed needs an audio track in both files")
-    if a.get("duration") is None or ra.get("duration") is None or abs(a["duration"] - ra["duration"]) > AUDIO_WINDOW:
-        return not_compared(f"{a.get('duration')} s against the reference's {ra.get('duration')} s",
-                            "an edit that changes the length cannot be paired; compare the parts separately")
-    win = audio_change_windows(args.input, args.compare, min(a["duration"], ra["duration"]))
+    # Matroska stores no length per track: the container's then stands for it
+    a, ra = dict(a, duration=a.get("duration") or meta.get("duration")), dict(ra, duration=ra.get("duration") or ref_meta.get("duration"))
+    removed = getattr(args, "removed", None) or []
+    left = None if ra.get("duration") is None else ra["duration"] - sum(min(e, ra["duration"]) - s for s, e in removed if s < ra["duration"])
+    if a.get("duration") is None or left is None or abs(a["duration"] - left) > AUDIO_WINDOW:
+        return not_compared(f"{a.get('duration')} s against the reference's {ra.get('duration')} s"
+                            + (f" ({left:.3f} s left after --expect-removed)" if removed and left is not None else ""),
+                            "declare the removed spans with --expect-removed START-END (the reference's time)" if not removed
+                            else "the removed spans do not match the cut: give them in the reference's time, as the edit was asked")
+    ref_lead = max(0.0, float(ra.get("start_time") or 0.0) - float(ref_meta.get("start_time") or 0.0))
+    win = audio_change_windows(args.input, args.compare, min(a["duration"], left),
+                               removed=[(max(0.0, s - ref_lead), max(0.0, e - ref_lead)) for s, e in removed])
     if win is None:
         return not_compared("the comparison pass failed", f"check that both files decode: probe.py {args.input}")
     lead = max(0.0, float(a.get("start_time") or 0.0) - float(meta.get("start_time") or 0.0))
@@ -402,7 +423,7 @@ def audio_change_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     outside = [n for n in win["changed"] if not any(inside(n, d) for d in declared)]
     quiet = [{"start": d["start"], "end": d["end"]} for d in declared if not any(inside(n, d) for n in win["changed"])]
     doc = {"declared": [{"start": d["start"], "end": d["end"]} for d in declared], "observed": runs(win["changed"]), "undeclared": runs(outside),
-           "declared_unchanged": quiet, "window": AUDIO_WINDOW, "floor": {"relative_db": AUDIO_REL_DB, "level_db": AUDIO_LEVEL_DB},
+           "declared_unchanged": quiet, **({"removed": [{"start": s, "end": e} for s, e in removed]} if removed else {}), "window": AUDIO_WINDOW, "floor": {"relative_db": AUDIO_REL_DB, "level_db": AUDIO_LEVEL_DB},
            "windows": win["windows"], "quiet_peak": win["quiet_peak"]}
     idle = "; ".join(f"declared {span(d)} but nothing changed there" for d in quiet)
     differ = [f"{k} {x} against {y}" for k, x, y in (("codec", a.get("codec"), ra.get("codec")), ("sample rate", a.get("sample_rate"), ra.get("sample_rate")),
@@ -463,6 +484,8 @@ def main() -> int:
     ap.add_argument("--expect-audio-changed", action="append", metavar="SPAN|none",
                     help="with --compare: where the sound may differ from REFERENCE, START-END (repeatable) or none; "
                          "an audio_change_scope row FAILs on a change elsewhere (same length only)")
+    ap.add_argument("--expect-removed", action="append", metavar="SPAN",
+                    help="a span START-END of REFERENCE's time the edit cut out (repeatable), taken out before comparing")
     ap.add_argument("--change-floor", type=int, default=CHANGE_FLOOR, metavar="N",
                     help="--expect-changed: a 60x60-ish tile (the frame in %dx%d) counts as changed when its largest "
                          "channel difference is above N of 255 (default %%(default)d)" % CHANGE_GRID)
@@ -504,6 +527,19 @@ def main() -> int:
         if not args.compare:
             die("--expect-audio-changed says where the sound may differ from a reference, so it needs --compare REFERENCE")
         declared_audio = parse_expect_changed(args.expect_audio_changed, "--expect-audio-changed")
+    args.removed = []
+    if args.expect_removed:
+        if declared_changes is None and declared_audio is None:
+            die("--expect-removed says what the edit cut out of the reference, so it needs --expect-changed or --expect-audio-changed")
+        if any(v.strip().lower() == "none" for v in args.expect_removed):
+            die("--expect-removed takes START-END; leave it out when nothing was cut")
+        spans = sorted((d["start"], d["end"]) for d in parse_expect_changed(args.expect_removed, "--expect-removed"))
+        for (s0, e0), (s1, e1) in zip(spans, spans[1:]):
+            if s1 < e0:
+                die(f"--expect-removed {s0:g}-{e0:g} and {s1:g}-{e1:g} overlap; give the cut once")
+        if any(e <= s for s, e in spans):
+            die("--expect-removed: a removed span ends after its start")
+        args.removed = spans
     if not 1 <= args.change_floor <= 254:
         die(f"--change-floor {args.change_floor} is outside 1..254 (a difference of 0-255 per channel)")
 

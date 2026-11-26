@@ -222,6 +222,7 @@
    "expect_audio_changed",
    "expect_changed",
    "expect_identity",
+   "expect_removed",
    "fast",
    "input",
    "json_brief",

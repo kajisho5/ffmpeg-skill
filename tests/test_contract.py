@@ -2461,9 +2461,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 74_300),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_000),  # +500 more for color.py --source-alpha-mode (#453)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_600),  # +600 for the same and check.py --expect-audio-changed (#442, #449)
+            ({}, 12, 74_500),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_800),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):

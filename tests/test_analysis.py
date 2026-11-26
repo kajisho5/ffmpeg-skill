@@ -984,7 +984,7 @@ class AnalysisTests(MediaFixtures):
         for bad, say in ((["--expect-audio-changed", "2-3", "--expect-audio-changed", "none"], "cannot be combined"),
                          (["--expect-audio-changed", "3-2"], "ends at or after its start"),
                          (["--expect-audio-changed", "2"], "START-END"),
-                         (["--expect-audio-changed", "2-3@0,0,10,10"], "sound has no rectangle")):
+                         (["--expect-audio-changed", "2-3@0,0,10,10"], "only --expect-changed takes a rectangle")):
             code, doc, row = check(tone_gain, tone_old, *bad)
             self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
             self.assertIn(say, doc["error"]["message"], bad)
@@ -993,6 +993,64 @@ class AnalysisTests(MediaFixtures):
         self.assertIn("needs --compare", json.loads(proc.stdout)["error"]["message"])
         code, doc, row = check(OUT / "aud_not_written_yet.m4a", tone_old, "--expect-audio-changed", "none", "--dry-run")
         self.assertEqual((code, row), (0, None), doc)
+
+    def test_check_expect_removed_pairs_a_cut_with_the_reference_minus_its_spans(self):
+        """#442 phase 3: --expect-removed START-END (the reference's time) takes the cut spans out of
+        the reference before the picture and the sound are paired, so a cut is graded like a
+        same-length edit. A span that does not match the cut is a FAIL: as "not compared" when the
+        lengths disagree, and as an undeclared change when they agree but the wrong part went."""
+        src, cut, wrong = OUT / "rm_src.mkv", OUT / "rm_cut.mkv", OUT / "rm_wrong.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25",
+           "-f", "lavfi", "-i", "anoisesrc=c=pink:r=48000:a=0.3:seed=3", "-t", "6", "-ac", "2", "-c:v", "ffv1", "-c:a", "flac", src)
+
+        def remove(out, *spans):
+            # whole seconds, so the picture's frames and the sound's samples go at the same instants
+            drop = "+".join(f"gte(t,{a})*lt(t,{b})" for a, b in spans)
+            edges = [0] + [t for span in spans for t in span] + [6]
+            keep = list(zip(edges[::2], edges[1::2]))
+            parts = "".join(f"[s{i}]atrim={a}:{b},asetpts=PTS-STARTPTS[k{i}];" for i, (a, b) in enumerate(keep))
+            graph = (f"[0:v]select='not({drop})',setpts=N/25/TB[v];[0:a]asplit={len(keep)}" + "".join(f"[s{i}]" for i in range(len(keep)))
+                     + ";" + parts + "".join(f"[k{i}]" for i in range(len(keep))) + f"concat=n={len(keep)}:v=0:a=1[a]")
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
+               "-c:v", "ffv1", "-c:a", "flac", out)
+        remove(cut, (1, 2), (4, 5))
+        remove(wrong, (2, 3), (4, 5))
+
+        def check(path, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(src), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            rows = {r["check"]: r for r in doc.get("checks", [])}
+            return proc.returncode, doc, rows.get("change_scope"), rows.get("audio_change_scope")
+
+        both = ("--expect-changed", "none", "--expect-audio-changed", "none")
+        code, doc, pic, snd = check(cut, "--expect-removed", "4-5", "--expect-removed", "1-2", *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (0, "PASS", "PASS"), (pic, snd))
+        self.assertEqual(doc["change_scope"]["removed"], [{"start": 1.0, "end": 2.0}, {"start": 4.0, "end": 5.0}])
+        self.assertEqual(doc["audio_change_scope"]["removed"], doc["change_scope"]["removed"])
+        self.assertEqual((doc["change_scope"]["frames"], doc["audio_change_scope"]["windows"]), (100, 40))
+        # without the declaration the lengths differ, and the fix names the flag
+        code, doc, pic, snd = check(cut, *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (1, "FAIL", "FAIL"))
+        self.assertIn("not compared: 100 frames against the reference's 150", pic["value"])
+        self.assertIn("--expect-removed", pic["fix"])
+        # the right length but the wrong part cut: the picture after the first join differs
+        code, doc, pic, snd = check(wrong, "--expect-removed", "1-2", "--expect-removed", "4-5", *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (1, "FAIL", "FAIL"), (pic, snd))
+        self.assertEqual([(u["start"], u["end"]) for u in doc["change_scope"]["undeclared"]], [(1.0, 2.0)])
+        self.assertEqual([(u["start"], u["end"]) for u in doc["audio_change_scope"]["undeclared"]], [(1.0, 2.0)])
+        code, doc, pic, snd = check(cut, "--expect-removed", "1-2.5", *both)
+        self.assertIn("not compared: 100 frames against the reference's 112 left after --expect-removed", pic["value"])
+        self.assertIn("(4.500 s left after --expect-removed)", snd["value"])
+
+        for bad, say in ((["--expect-removed", "1-2"], "needs --expect-changed or --expect-audio-changed"),
+                         (["--expect-removed", "none", *both], "leave it out when nothing was cut"),
+                         (["--expect-removed", "1-3", "--expect-removed", "2-4", *both], "overlap"),
+                         (["--expect-removed", "2-2", *both], "ends after its start"),
+                         (["--expect-removed", "1-2@0,0,8,8", *both], "only --expect-changed takes a rectangle")):
+            code, doc, pic, snd = check(cut, *bad)
+            self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
+            self.assertIn(say, doc["error"]["message"], bad)
 
     def test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame(self):
         """#439: the pure grading step. A declared span covers every frame whose own interval
