@@ -6,6 +6,13 @@
 
 (nothing yet)
 
+## 4.8.1
+
+_Automated release: version and notes generated from pull requests merged since 4.8.0._
+
+- fix(fit): advise on flagged interlaced input (#730)
+- chore: one file per defect-ledger entry, so two open fixes never conflict (#678) (#735)
+
 ## 4.8.0
 
 _Automated release: version and notes generated from pull requests merged since 4.7.1._
