@@ -127,6 +127,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
 - [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
 - [After 4.8.0 — where caption, overlay and graphics drew (#547)](#after-480--where-caption-overlay-and-graphics-drew-547)
+- [After 4.8.0 — a copy is verified against what its keyframes allow (#620)](#after-480--a-copy-is-verified-against-what-its-keyframes-allow-620)
 <!-- contents:end -->
 
 ## Time limits
@@ -6554,8 +6555,8 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   length asked. A model reads the first lines and reports from them. `wrote` adds no measurement
   and changes no other field; the miss is shown above 40 ms (more than one frame at 25 fps) and
   written in capitals because that is the part a reader skims past. `verified` is unchanged: a
-  stream copy that ends on a packet is a valid file (#620 stays open for whether a miss should
-  fail a delivery). Pinned by
+  stream copy that ends on a packet is a valid file (#620, which asked whether a miss should
+  fail a delivery, is decided in "After 4.8.0 — a copy is verified against what its keyframes allow"). Pinned by
   `test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses`.
 
 ## After 4.5.1 — a class that keeps coming back gets a guard
@@ -6779,3 +6780,42 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_a_timed_text_overlay_is_measured_while_it_is_on_screen`, `test_a_caption_reports_the_union_of_its_cues`,
   `test_a_caption_that_runs_off_the_frame_touches_its_edges`, `test_a_graphics_text_layer_reports_where_it_drew`,
   `test_where_nothing_was_measured_the_property_stays_unverified`.
+
+## After 4.8.0 — a copy is verified against what its keyframes allow (#620)
+
+- **A stream copy's length is judged against the span the source's keyframes allow, not against a
+  tolerance.** The owner's decision of 2026-11-26 (a freeze exception, like every old open issue).
+  `--tolerance` says when a copy is re-encoded, and stays that; it cannot say whether the file that
+  was written is the file that was planned, because a copy that lands 0.4 s early passes a 0.5 s
+  tolerance and so does one that lost half its frames. the step `copy_span` holds the written
+  picture's length to `sum(out - in)` over `snapped_segments`: `in` is the keyframe the copy begins
+  at (the measured seek of `seek_keyframe`, `plan_part`'s start for a join), or the first picture at
+  or after the start where an MP4 edit list hides the pre-roll; `out` is the end keyframe of a join's
+  part on B-frame `.mp4`/`.mov`, else the requested end, because `-t` counts from the requested start
+  (measured on H.264 and HEVC, with and without `--no-edit-list`: a start between keyframes moves
+  `in` and leaves `out`). The slack is derived too: a frame, plus the source's reorder depth
+  (largest pts minus dts in the two seconds after the start, or in the join's packets), per part,
+  since ffmpeg's `-t` compares decode times and a 4-B-frame HEVC copy runs 0.2 s past its end. A
+  container with no stream length of its own (Matroska) is judged by the container, 0.05 s longer.
+- **A miss is `verified: false`, exit 0, the file kept.** The file is valid, `--accurate` is named in
+  a note, and `cut.py` is a core tool whose exit codes are promised until 5.0, so the exit
+  status of `export.py` and `join.py --copy` (exit 1, `kind: verification`, decided in 4.0) is not
+  copied. Whether a miss of a requested property is a failure is decided by who named it:
+  a property the caller named or the tool planned and can state fails; a file that is as planned but
+  moved from the request warns (the table is in `docs/contract.md`).
+- **`copy_drift_large` at 0.25 s.** A copy within `--tolerance` is kept, and a caller that reads
+  only `verified: true` never learns it moved 0.44 s. 0.25 s is half the default `--tolerance`, so
+  the warning covers the band where the copy is kept but visibly off; one or two frames, the
+  ordinary keyframe snap of a one-second GOP, stay quiet. It is a constant (`COPY_DRIFT_WARN`), not an
+  option, and a warning, not a refusal.
+- **Not done.** `export.py --preset copy --duration S` is not judged against S (the copy ends on a
+  packet at or after S, from 0); an audio-only copy is packet-exact and keeps its older check; a
+  `--smart` cut keeps its own packet and frame checks, and a re-encode reports no `snapped_segments`.
+- **`cut_total_duration` stays.** A `--segments` copy whose parts each snap within `--tolerance` can still
+  add up to three times the length asked for (three 0.04 s clips from a source with a keyframe every 0.2 s
+  write 0.37 s for 0.12 s asked), and the keyframes allow that; the older step bounds the total against the request, and the new one asks whether
+  the file is the one planned. Dropping it for the keyframe span would have let that cut through.
+- Code: `cut.copy_landing()`, the `copy_span` step in `cut.main()`. Tests: `CopySpanTests`
+  (tests/test_cut_copy.py): `test_a_copy_reports_where_it_landed_and_is_verified_against_that_span`,
+  `test_a_segments_copy_is_judged_by_its_snapped_parts_not_by_the_tolerance`,
+  `test_a_written_file_that_misses_the_snapped_span_is_not_verified`.
