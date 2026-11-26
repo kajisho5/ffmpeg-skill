@@ -6882,6 +6882,7 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   (tests/test_cut_copy.py): `test_a_copy_reports_where_it_landed_and_is_verified_against_that_span`,
   `test_a_segments_copy_is_judged_by_its_snapped_parts_not_by_the_tolerance`,
   `test_a_written_file_that_misses_the_snapped_span_is_not_verified`.
+
 ## After 4.8.3 — word-timed cuts in cut.py (#449)
 
 Four items were asked; two already existed when this was built, so only the other two were added.
