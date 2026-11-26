@@ -346,7 +346,7 @@ DTS_HEURISTIC = 3.0 / 23
 def seek_shift(src: str) -> float:
     """How much earlier than `-ss t` ffmpeg's input seek asks the demuxer for: DTS_HEURISTIC for a
     demuxer that does not seek by pts (Matroska, MPEG-TS...) when a stream has a decode delay, 0
-    for MP4/MOV (AVFMT_SEEK_TO_PTS) or a source with no delay. One probe per source."""
+    for MP4/MOV and MXF (AVFMT_SEEK_TO_PTS) or a source with no delay. One probe per source."""
     if src not in _SEEK_SHIFTS:
         proc = run([require_tool("ffprobe"), "-v", "error", "-show_entries", "format=format_name:stream=has_b_frames",
                     "-of", "json", src], quiet=True, check=False)
@@ -356,7 +356,7 @@ def seek_shift(src: str) -> float:
             delay = any(int(st.get("has_b_frames") or 0) > 0 for st in doc.get("streams") or [])
         except (ValueError, TypeError, AttributeError):
             name, delay = "", False
-        _SEEK_SHIFTS[src] = 0.0 if ("mov" in name.split(",") or not delay) else DTS_HEURISTIC
+        _SEEK_SHIFTS[src] = 0.0 if ({"mov", "mxf"} & set(name.split(",")) or not delay) else DTS_HEURISTIC
     return _SEEK_SHIFTS[src]
 
 
@@ -434,16 +434,12 @@ def first_frame_from(src: str, meta: dict, start: float, reencode: bool, edit_li
     """Seconds from the source picture's first frame to the frame a cut from `start` begins on,
     for its start timecode: the first frame at or after `start` for a re-encode and an edit-listed
     copy that hides its keyframe's pre-roll, the keyframe for any other copy (it shows the
-    pre-roll). None when where a copy lands cannot be read, and for an MXF source, whose demuxer
-    lands a seek on another keyframe than seek_keyframe's read (-ss 1.5: the one at 1.44 s, read as
-    the one at 0.96 s), so no label would be known to be right."""
+    pre-roll). None when where a copy lands cannot be read."""
     v0, rate = stream_starts(meta)[0], frame_rate(meta)
     if reencode:
         # a start before the picture's first frame (a video that starts after the file's origin)
         # begins on that first frame, not on a grid frame before it
         return grid_at_or_after(max(start, v0), v0, rate) - v0
-    if "mxf" in str(meta.get("format") or "").split(","):
-        return None
     key = seek_keyframe(src, start)
     if key is None:
         return None

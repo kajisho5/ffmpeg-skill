@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- A stream-copy `cut` of an MXF keeps its start timecode: the copy's keyframe was read 3/23 s early (0.96 s for
+  `--start 1.5`, where FFmpeg lands on 1.44 s), so the label was withheld and `source_carry` listed it as dropped (#696).
 
 ## 4.8.2
 
