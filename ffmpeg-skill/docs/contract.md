@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.14.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.15.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.14.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.15.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -670,6 +670,11 @@ and in the human-readable report. It reads the executable's `-L` notice locally 
 timeout. The field is an SPDX identifier for a recognized GPL or LGPL notice, `"nonfree"` for
 FFmpeg's nonfree build notice, or `null` when the binary or its notice could not be read or
 recognized. The result is informational and leaves capability decisions and the exit code unchanged.
+
+`doctor`'s `ffmpeg_tested` field (#556) says whether the FFmpeg the tools run is one the test suite covers:
+`{tested: "6.x-9.x", build: release|git|unknown, covered, why?}`. When it is not (another major, a git
+or vendor build, an unreadable version), doctor prints a warning line and every tool adds one
+`ffmpeg_version_untested` warning to its result; nothing is refused and the run goes on as before.
 
 `doctor`'s `ffmpeg_security` field compares the `ffmpeg` and `ffprobe` versions with a small table of
 high-severity FFmpeg CVEs and the first upstream release on each branch that carries the fix. The table is

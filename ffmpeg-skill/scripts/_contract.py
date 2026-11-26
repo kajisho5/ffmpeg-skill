@@ -526,6 +526,7 @@ DIAGNOSTIC_CODES = {
     "source_items_dropped": ("warnings", "the written file lacks a subtitle track, chapters, a cover picture, surround channels, attached files or a second video stream the first input carried (source_carry lists everything kept and dropped, tags included); not repeated for a subtitle track the tool already reports through dropped_non_av_streams; {dropped}"),
     "audio_tracks_dropped": ("warnings", "the source has more audio tracks than the output kept (the tools write one; cut.py also reports dropped_audio_streams). Not compared when two or more inputs have sound (grid --audio-from, a mix): which source the output carries is the tool's choice; {source, kept, dropped}"),
     "audio_lead_dropped": ("warnings", "cut.py: an audio-only stream copy of a source whose sound starts after --start (by at least one frame of its picture) begins at the sound's first packet, so that much silence is left out and the extraction is early against the picture; kept as a copy within --tolerance, as a start that snaps is (--accurate pads it); a dry run reports it from the source, also where a run may re-encode instead (length_unjudged); {seconds: the total, segments: [{index, seconds}]}"),
+    "ffmpeg_version_untested": ("warnings", "once per run: the FFmpeg on PATH is outside the majors the test suite runs (TESTED_FFMPEG_MAJORS, 6.x-9.x), a git or vendor build, or its version could not be read; the run goes on as before (#556); {version, build: release|git|unknown, tested}"),
     "copy_drift_large": ("warnings", "cut.py: a stream copy landed more than 0.25 s (half the default --tolerance) from the requested in or out, measured against the keyframes it can land on (snapped_segments against requested_*); the copy is kept and --accurate cuts on the frame; {seconds: the largest in or out drift, threshold}"),
     "grid_no_drawtext": ("fallbacks", "grid.py --label auto on a build without the drawtext filter: the cells were not labelled, as with --label none"),
     "scenes_sheet_no_drawtext": ("fallbacks", "scenes.py --sheet on a build without the drawtext filter: the sheet was drawn without timecode stamps, as with --no-timecode"),
@@ -1334,6 +1335,16 @@ def ffmpeg_unsupported(version: Optional[str]) -> Optional[str]:
     return FFMPEG_UNSUPPORTED.format(v=f"{v[0]}.{v[1]}") if v and tuple(v[:2]) < MIN_FFMPEG else None
 
 
+def _ffmpeg_tested() -> Dict[str, Any]:
+    """doctor's `ffmpeg_tested` (#556): the build the tools run against the majors the suite covers,
+    as the tools' own `ffmpeg_version_untested` warning reads it (ffprobe's version)."""
+    from _common import runner
+    found = runner.ffmpeg_version()
+    build, why = runner.tested_build(found, runner._FFMPEG_VERSION_IS_RELEASE)
+    lo, hi = runner.TESTED_FFMPEG_MAJORS
+    return {"tested": f"{lo}.x-{hi}.x", "build": build, "covered": why is None, **({"why": why} if why else {})}
+
+
 def _exe_report() -> Dict[str, Any]:
     """`ffmpeg_path` / `ffmpeg_source` / `ffprobe_path` / `ffprobe_source`: which binary the tools run
     and why ("path": what PATH resolves; "homebrew-ffmpeg-full": macOS, a lean Homebrew ffmpeg on
@@ -1667,6 +1678,7 @@ def doctor() -> Dict[str, Any]:
         "ffmpeg_license": _ffmpeg_license(exes.get("ffmpeg_path")),
         # non-fatal: never part of `ok`, `usable` or the exit code
         "ffmpeg_security": ffmpeg_security(versions, {b: exes.get(f"{b}_source") for b in versions}),
+        "ffmpeg_tested": _ffmpeg_tested(),
         "available": available,
         "missing": missing_required,
         "missing_optional": missing_optional,
@@ -2379,7 +2391,9 @@ def main() -> int:
         # On stderr in both modes, so `doctor --json`'s stdout stays one JSON document: an
         # unsupported Python or FFmpeg (also in the document as `unsupported`, and part of `ok`)
         # and the FFmpeg security advisories (`ffmpeg_security.warnings`, never part of `ok`).
-        for line in d["unsupported"] + d["ffmpeg_security"]["warnings"]:
+        tested = d.get("ffmpeg_tested") or {"covered": True}
+        untested = [] if tested["covered"] else [f"warning: FFmpeg on PATH: {tested['why']}; the tools run, but their results are not covered by the test suite on this build"]
+        for line in d["unsupported"] + d["ffmpeg_security"]["warnings"] + untested:
             if line:
                 print(line, file=sys.stderr)
         if args.json:
