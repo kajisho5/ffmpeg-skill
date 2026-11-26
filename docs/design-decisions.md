@@ -504,14 +504,19 @@ exists. When a decision changes, edit the entry in the same PR.
   `run()` stages only an existing target, so a target absent at the check is opened by ffmpeg
   itself, and a file created at that name after the lock's comparison and before ffmpeg opens it
   is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
-  itself); files written with a plain `open()` after their check (EDLs, SRTs, chapter lists) are
-  not compared. Code: `runner.refuse_changed_output()`, `replace_checked()`, `run()`,
+  itself); a file a tool writes itself and a caller named (an EDL, an SRT/ASS, a chapter or description
+  list, a project, a report) goes through `write_sidecar()`, which stages it and puts it in place by
+  `replace_checked()`, so the same comparison runs under the path's lock (#696), while the concat
+  lists, work files and manifests a tool makes for itself stay plain `open()`. Code:
+  `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
   `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`
   (`test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced`,
   `test_a_target_created_after_the_check_is_refused_unless_overwrite`,
   `test_overwrite_still_replaces_a_target_swapped_during_the_encode`,
   `test_place_output_refuses_a_target_put_there_after_its_check`,
-  `test_a_side_file_a_tool_replaces_itself_is_rechecked`, `test_a_link_created_at_an_absent_target_is_refused`,
+  `test_a_side_file_a_tool_replaces_itself_is_rechecked`,
+  `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
+  `test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper`, `test_a_link_created_at_an_absent_target_is_refused`,
   `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,
   `test_a_pair_whose_second_replace_fails_leaves_what_was_there`,
   `test_a_directory_link_switched_during_the_run_is_refused`; `test_export_key_fill_without_overwrite_writes_both`

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import absent_word, file_arg, _stop_child, _unwatch, _watch
+from _common.runner import absent_word, file_arg, _stop_child, _unwatch, _watch, write_sidecar
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -390,7 +390,7 @@ def main() -> int:
         lines.append("")
     report = "\n".join(lines)
     if args.report:
-        Path(args.report).write_text(report, encoding="utf-8")
+        write_sidecar(args.report, report)
         info(f"wrote {args.report}")
     if not args.json:
         print(report)

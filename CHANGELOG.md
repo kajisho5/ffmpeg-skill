@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- An EDL, an SRT/ASS, a chapter or description list, a project or a report a tool writes itself is
+  now staged and put in place through the same replace-time check as an ffmpeg output: a file
+  another process created or edited at that path during the run is refused (`output_exists`)
+  instead of overwritten, and a failed write leaves the previous file whole (#696).
 
 ## 4.8.3
 

@@ -32,7 +32,7 @@ import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
-from _common import guard_sidecar, mix_color_chains, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common import guard_sidecar, mix_color_chains, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE, write_sidecar
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.decision import av_trim, conform_output_t, conform_to_length, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -394,14 +394,11 @@ def main() -> int:
     # failed (#462 A41, the silence.py --edl sibling)
     if args.edl:
         if not STATE.dry_run:
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e, _c in filled:
-                    fh.write(f"{s:.3f}-{e:.3f}\n")
+            write_sidecar(args.edl, "".join(f"{s:.3f}-{e:.3f}\n" for s, e, _c in filled))
         info(f"wrote {args.edl}")
     if args.write_project:
         if not STATE.dry_run:
-            with open(args.write_project, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(project, indent=2) + "\n")
+            write_sidecar(args.write_project, json.dumps(project, indent=2) + "\n")
         info(f"wrote {args.write_project}")
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {len(filled)} cuts, audio from input {a})")

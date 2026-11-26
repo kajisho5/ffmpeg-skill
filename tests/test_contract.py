@@ -10219,6 +10219,59 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(silence.write_time_map, str(path), tm), (None, None))
         self.assertEqual(json.loads(path.read_text(encoding="utf-8")), tm)
 
+    def test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written(self):
+        """#696: write_sidecar() gives an EDL, an SRT or a chapter list the replace-time recheck an
+        ffmpeg output gets: a file another process put at the path after the output check is
+        refused and the staged copy removed; an unchanged one (or --overwrite) is written, and
+        this run may write its own side file again."""
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        path.write_text("theirs", encoding="utf-8")  # appeared during the encode
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), ("input", "output_exists"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "theirs")
+        self.assertEqual([p.name for p in self.work.iterdir()], ["edl.txt"], "the staged copy is removed")
+        # a target left as the check saw it (here: absent) is written, and this run may write its
+        # own side file again
+        path.unlink()
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours again\n")
+        # --overwrite consented to replacing whatever is at the path
+        path.write_text("theirs again", encoding="utf-8")
+        _common.STATE.overwrite = True
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours once more\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours once more\n")
+
+    def test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper(self):
+        """#696's class, swept: a file a tool writes itself and a caller named (an EDL, an SRT/ASS,
+        a chapter/description list, a project, a report) is staged and put in place by
+        write_sidecar(); the concat lists, work files and manifests a tool makes for itself stay
+        plain open()/write_text()."""
+        writes = {
+            "scenes.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"')],
+            "multicam.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"'),
+                            ('write_sidecar(args.write_project,', 'open(args.write_project, "w"')],
+            "metadata.py": [('write_sidecar(args.chapters_out,', 'Path(args.chapters_out).write_text'),
+                            ('write_sidecar(args.description_out,', 'Path(args.description_out).write_text')],
+            "silence.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"')],
+            "caption.py": [('write_sidecar(path,', 'open(path, "w"'),
+                           ('write_sidecar(dst,', 'Path(dst).write_text')],
+            "_common/asr.py": [('write_sidecar(path,', 'open(path, "w"')],
+            "_ass_overlay.py": [('write_sidecar(path,', 'open(path, "w"')],
+            "render.py": [('write_sidecar(dest,', 'Path(dest).write_text'),
+                          ('write_sidecar(pack,', 'Path(pack).write_text'),
+                          ('write_sidecar(args.init,', 'Path(args.init).write_text'),
+                          ('write_sidecar(args.write_project,', 'Path(args.write_project).write_text')],
+            "report.py": [('write_sidecar(output,', 'Path(output).write_text')],
+            "verify.py": [('write_sidecar(args.report,', 'Path(args.report).write_text')],
+        }
+        for name, pairs in writes.items():
+            source = (SCRIPTS / name).read_text(encoding="utf-8")
+            for called, plain in pairs:
+                self.assertIn(called, source, f"{name}: the side file is not written through write_sidecar()")
+                self.assertNotIn(plain, source, f"{name}: {plain!r} still writes the side file with a plain open")
+
     @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
     def test_a_link_created_at_an_absent_target_is_refused(self):
         """The check is about the path as named, not where it resolves: a symlink another process

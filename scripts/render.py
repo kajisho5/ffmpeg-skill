@@ -76,7 +76,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
+from _common.runner import absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination, write_sidecar
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
 from _common.probe import AUDIO_MEDIA_EXT
@@ -450,7 +450,7 @@ def render_pack(names: List[str], args) -> int:
         if not outdir.is_dir():
             die(f"pack: the output folder {outdir} does not exist, so the table was not written", kind="input",
                 pack=rows, outputs=outputs)
-        Path(pack).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        write_sidecar(pack, "\n".join(lines) + "\n")
     info(("[dry-run] would write " if STATE.dry_run else "wrote ") + pack)
     if failed:
         # a destination that was stopped makes the pack a stopped run: its kind and exit code (124,
@@ -1472,7 +1472,7 @@ def export_timeline(proj: Dict[str, Any], rel, dest: str) -> int:
     verification: List[Dict[str, Any]] = []
     if not STATE.dry_run:
         try:
-            Path(dest).write_text(text, encoding="utf-8")
+            write_sidecar(dest, text)
         except OSError as exc:
             die(f"cannot write {dest}: {exc}", kind="output")
         verification.append({"step": "parse", "ok": tlmod.parses(dest, fmt)})
@@ -1672,7 +1672,7 @@ def main() -> int:
         return 0
     if args.init:
         guard_sidecar(args.init)
-        Path(args.init).write_text(json.dumps(TEMPLATE, indent=2) + "\n", encoding="utf-8")
+        write_sidecar(args.init, json.dumps(TEMPLATE, indent=2) + "\n")
         info(f"wrote {args.init}; edit clips/src and run: render.py {args.init}")
         # the path alone, or under --json the document every other mode prints (A102)
         emit(args.init, stages=[], check=None)
@@ -1728,7 +1728,7 @@ def main() -> int:
         guard_sidecar(args.write_project, args.project, *[str(where / s) for s in srcs],
                       *project_input_files(proj, lambda p: p if os.path.isabs(str(p)) else str(where / str(p))))
         try:
-            Path(args.write_project).write_text(json.dumps(proj, indent=2) + "\n", encoding="utf-8")
+            write_sidecar(args.write_project, json.dumps(proj, indent=2) + "\n")
         except OSError as exc:
             die(f"cannot write {args.write_project}: {exc}", kind="output")
         info(f"wrote {args.write_project}; edit it and run: render.py {args.write_project}")

@@ -60,7 +60,7 @@ from _common.runner import (
     _odd_dimension_retry, _on_signal, _OutputLock, _pid_dead, place_output, PROBE_TIMEOUT, _progress_line,
     read_text_or_die, refuse_output_is_input, refuse_unwritten_output, _remember_output, require_tool, run, run_analysis, _run_captured,
     run_keeping_subtitles, run_tool, _run_with_progress, shell_quote, sibling_temp, still_input_args, _SIGNALS_INSTALLED, _stage_existing_output,
-    STATE, _timed_out, _unwatch, _watch, X264_PRESETS
+    STATE, _timed_out, _unwatch, _watch, X264_PRESETS, replace_checked, write_sidecar
 )
 from _common.emit import (
     absorb_stage, audit, _brief, input_length, _BRIEF_DROP, _brief_summary, _CURRENT_CTX, die, emit, info, note, _plan_at_exit, _plan_inputs,

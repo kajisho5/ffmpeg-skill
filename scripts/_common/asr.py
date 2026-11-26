@@ -18,7 +18,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from _common.decision import _unspaced_script, fmt_srt_time, parse_time
 from _common.emit import die, info
-from _common.runner import parse_json, read_json, read_text_or_die
+from _common.runner import parse_json, read_json, read_text_or_die, write_sidecar
 
 # The engines this skill knows how to drive, and how to install each -- one string, so every
 # tool that needs a transcript refuses in the same words. The two Parakeet engines are
@@ -240,20 +240,18 @@ def _engine_cues(srt: str, engine: str, video: str) -> List[Tuple[float, float, 
 
 
 def write_srt(cues: List[Tuple[float, float, str]], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        for i, (s, e, t) in enumerate(cues, 1):
-            # A blank line is SRT's own block separator (index/timecode/text, blank, next block).
-            # Cue text can contain one -- parse_text_cues() turns a bare "|" into "\n", so a source
-            # line with two adjacent pipes ("a||b") becomes "a\n\nb" -- and writing that blank line
-            # raw would split one cue into two malformed half-blocks (the second missing its own
-            # index/timecode). Collapse any run of blank lines within the cue text to a single
-            # newline so the cue's own text can never fake the format's block boundary. A line of
-            # only spaces or tabs is blank to every SRT reader too, so it goes the same way.
-            t = "\n".join(ln for ln in t.split("\n") if ln.strip())
-            fh.write(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
-    # under batch.py: this SRT as written is the run's own (an edit made after it is not)
-    from _common.runner import report_committed
-    report_committed(path)
+    blocks = []
+    for i, (s, e, t) in enumerate(cues, 1):
+        # A blank line is SRT's own block separator (index/timecode/text, blank, next block).
+        # Cue text can contain one -- parse_text_cues() turns a bare "|" into "\n", so a source
+        # line with two adjacent pipes ("a||b") becomes "a\n\nb" -- and writing that blank line
+        # raw would split one cue into two malformed half-blocks (the second missing its own
+        # index/timecode). Collapse any run of blank lines within the cue text to a single
+        # newline so the cue's own text can never fake the format's block boundary. A line of
+        # only spaces or tabs is blank to every SRT reader too, so it goes the same way.
+        t = "\n".join(ln for ln in t.split("\n") if ln.strip())
+        blocks.append(f"{i}\n{fmt_srt_time(s)} --> {fmt_srt_time(e)}\n{t}\n\n")
+    write_sidecar(path, "".join(blocks))
 
 
 def transcribe_result(video: str, out_srt: str, language: Optional[str], model: Optional[str], audio_stream: int = 0,

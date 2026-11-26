@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 # `detect_scenes` moved into _common/probe.py in 1.16.0 (see silence.py); the body is unchanged.
 from _common import (guard_sidecar, detect_scenes, STATE, add_common, apply_common, beat_grid, default_font_file, die, emit,
                      ffmpeg_base, info, print_json, probe, run, decode_pcm_mono,
-                     rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow)
+                     rms_envelope, BEAT_MIN_CONFIDENCE, decode_gray_frames, frame_flow, label_shot_flow, write_sidecar)
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
@@ -423,9 +423,7 @@ def main() -> int:
     # existing file, or failed, left the EDL behind, and the corrected retry was then refused for it
     if args.highlights and args.edl:
         if not STATE.dry_run:  # the contract says --edl is not written under --dry-run
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                for s, e in picks:
-                    fh.write(f"{s:.2f}-{e:.2f}\n")
+            write_sidecar(args.edl, "".join(f"{s:.2f}-{e:.2f}\n" for s, e in picks))
         info(f"wrote {args.edl}")
 
     if STATE.json:  # --json-brief too: emit() is what adds the diagnostics (scenes_sheet_no_drawtext)

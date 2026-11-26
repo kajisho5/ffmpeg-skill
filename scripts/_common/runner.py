@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 
@@ -2196,6 +2197,30 @@ def replace_checked(tmp: str, final: str) -> None:
     under `final`'s output lock, after refuse_changed_output(), which removes `tmp` when it
     refuses."""
     replace_checked_together([(tmp, final)])
+
+
+def write_sidecar(path: str, text: str, encoding: str = "utf-8") -> None:
+    """Write a side file a tool produces itself (an EDL, an SRT, a chapter or project list).
+
+    Staged as a hidden sibling temp and put in place by replace_checked(), so the replace runs
+    under the path's output lock after refuse_changed_output(): a file another process put there
+    after the output check is refused instead of overwritten, and a full disk or an interrupted
+    write leaves the previous file whole (#696). The mode is what open() would have given it.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=".ffskill-side", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fh:
+            fh.write(text)
+        mask = os.umask(0)  # mkstemp makes the file 0600; give it the mode open() would have
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
+        replace_checked(tmp, path)
+        _remember_identity(path)  # a later write of this run's own side file is not refused
+        report_committed(path)
+    except BaseException:
+        _remove_quietly(tmp)
+        raise
 
 
 def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:

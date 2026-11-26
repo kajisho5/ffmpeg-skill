@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 from _common import (guard_sidecar, add_common, apply_common, default_output, description_block, detect_scenes, detect_silences,
                      die, emit, ffmpeg_base, fmt_chapter_time, info, propose_chapters, time_arg, probe, run,
-                     STATE, read_text_or_die)
+                     STATE, read_text_or_die, write_sidecar)
 from _common.emit import input_length, refuse_still
 from _common.emit import record_fallback, refuse
 from _common.probe import AUDIO_MEDIA_EXT
@@ -228,7 +228,7 @@ def write_proposal(args, chapters: List[Dict[str, Any]]) -> Dict[str, Any]:
         if STATE.dry_run:
             info(f"[dry-run] would write {args.chapters_out} ({len(chapters)} chapters)")
         else:
-            Path(args.chapters_out).write_text(body, encoding="utf-8")
+            write_sidecar(args.chapters_out, body)
             info(f"wrote {args.chapters_out} ({len(chapters)} chapters)")
         files["chapters"] = args.chapters_out
     if args.description_out:
@@ -236,7 +236,7 @@ def write_proposal(args, chapters: List[Dict[str, Any]]) -> Dict[str, Any]:
         if STATE.dry_run:
             info(f"[dry-run] would write {args.description_out}")
         else:
-            Path(args.description_out).write_text(body, encoding="utf-8")
+            write_sidecar(args.description_out, body)
             info(f"wrote {args.description_out}")
         files["description"] = args.description_out
     return files

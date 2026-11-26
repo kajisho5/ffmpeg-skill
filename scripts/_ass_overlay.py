@@ -24,6 +24,8 @@ import re
 from unicodedata import bidirectional
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from _common.runner import write_sidecar
+
 
 # One sentinel character stands in drawn text where an emoji was, so the placeholder is inserted
 # AFTER the brace-stripping that keeps caller-supplied text from injecting override commands.
@@ -394,6 +396,5 @@ def text_overlay_ass(elements: Sequence[Dict[str, Any]], *, play_w: int, play_h:
     body = "\n".join(header + ["", "[Events]",
                                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
                                "MarginV, Effect, Text"] + events) + "\n"
-    with open(path, "w", encoding="utf-8-sig") as fh:
-        fh.write(body)
+    write_sidecar(path, body, encoding="utf-8-sig")
     return path

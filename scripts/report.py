@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common import guard_sidecar, STATE, add_common, apply_common, child_args, die, emit, info, probe, read_text_or_die, run_tool
 from _common.emit import record_skip, warn
-from _common.runner import file_arg
+from _common.runner import file_arg, write_sidecar
 
 HERE = Path(__file__).resolve().parent
 
@@ -211,7 +211,7 @@ def pack_report(args) -> int:
         info(f"wrote {output}")
     else:
         try:
-            Path(output).write_text(doc, encoding="utf-8")
+            write_sidecar(output, doc)
         except OSError as e:
             die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
@@ -339,7 +339,7 @@ def main() -> int:
         info(f"wrote {output}")  # printed as "[dry-run] would write"; nothing is written
     else:
         try:
-            Path(output).write_text(doc, encoding="utf-8")
+            write_sidecar(output, doc)
         except OSError as e:
             die(f"cannot write {output}: {e}", kind="output")
         info(f"wrote {output} ({os.path.getsize(output) / 1024:.0f} KB)")
