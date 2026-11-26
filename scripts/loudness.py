@@ -301,7 +301,7 @@ def main() -> int:
     ap.add_argument("--tp", "--true-peak", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
-    ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container (default 192k), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
+    ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container that takes it (default 192k; ignored for .mxf's PCM), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
                          "refused for .wav/.flac/.aif/.aiff/.caf/.mka. Raised to 256k/320k for AAC only when the encoder overshoots the true-peak ceiling and you did not pin it")
     ap.add_argument("--versions", metavar="LIST",
                     help="write one normalised file per target from this master, each measured after: a comma list of "
