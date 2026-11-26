@@ -492,7 +492,8 @@ exists. When a decision changes, edit the entry in the same PR.
   together go through `replace_checked_together()`: export.py stages the key as well as the fill
   (its placeholder counted as this run's own, so run()'s check does not refuse it) and puts both
   in place only when both targets passed, moving an earlier file aside and putting it back if the
-  second replace fails, so a refused or failed pair never leaves a new file beside an old one. The
+  second replace fails (under `--overwrite` that includes a file another process created at a
+  target the check saw absent), so a refused or failed pair never leaves a new file beside an old one. The
   check also records the directory the path resolved to, and is found by the name as well as the
   resolved place (the name first, so a place another checked path also reaches does not stand in
   for it; a write through another spelling of the same path updates every record of that place):
@@ -524,6 +525,7 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
   `test_a_side_file_created_between_the_comparison_and_the_install_is_refused`,
   `test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite`,
+  `test_an_overwrite_pair_puts_back_a_file_that_appeared_at_a_checked_absent_target`,
   `test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one`,
   `test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper`, `test_a_link_created_at_an_absent_target_is_refused`,
   `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,

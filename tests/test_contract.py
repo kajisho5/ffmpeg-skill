@@ -10303,6 +10303,39 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
         self.assertEqual(self.temps(), [], "the staged copy was installed, not left behind")
 
+    def test_an_overwrite_pair_puts_back_a_file_that_appeared_at_a_checked_absent_target(self):
+        """#743 review (Major): with --overwrite the backup was skipped for a target the check
+        recorded absent, so a file another process created there during the encode was replaced
+        by the first install and, when a later install in the pair failed, the rollback removed
+        ours without putting that file back. A failed pair leaves what was there."""
+        from unittest import mock
+        first, second = self.work / "pair-a.txt", self.work / "pair-b.txt"
+        # both targets are absent when the run checks them: recorded absent
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(first), str(second)]), (None, None))
+        staged_first, staged_second = self.work / "a.tmp", self.work / "b.tmp"
+        staged_first.write_text("ours-a", encoding="utf-8")
+        staged_second.write_text("ours-b", encoding="utf-8")
+        _common.STATE.overwrite = True
+        real_check, real_install = self.runner.refuse_changed_output, self.runner._install_checked
+
+        def check_then_create(path, cleanup=None):
+            real_check(path, cleanup)
+            if path == str(first) and not os.path.lexists(path):
+                Path(path).write_bytes(b"theirs")  # another process, during the encode
+
+        def fail_second_install(tmp, final, expected):
+            if final == str(second):
+                raise OSError("the second install fails")  # a full disk, a refused replace
+            real_install(tmp, final, expected)
+
+        with mock.patch.object(self.runner, "refuse_changed_output", check_then_create), \
+                mock.patch.object(self.runner, "_install_checked", fail_second_install):
+            with self.assertRaises(OSError):
+                self.runner.replace_checked_together([(str(staged_first), str(first)),
+                                                      (str(staged_second), str(second))])
+        self.assertEqual(first.read_bytes(), b"theirs", "the file that was at the path is put back")
+        self.assertEqual(self.temps(), [], "the staged files are removed")
+
     def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
         """#743 review: write_sidecar() read the path back after the install, so a file another
         process put there in that gap was recorded as this run's and the next write replaced it."""

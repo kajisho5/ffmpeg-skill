@@ -2291,12 +2291,15 @@ def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
             for _tmp, final in pairs:
                 refuse_changed_output(final, cleanup)
             # what each check decided: None = recorded absent, so a file that appeared in the gap
-            # is refused by the link install; a state or _NO_RECORD keeps the replace
+            # is refused by the link install or, under --overwrite, replaced after being moved
+            # aside; a state or _NO_RECORD keeps the replace
             expected = {final: _recorded_state(final) for _tmp, final in pairs}
             try:
                 for tmp, final in pairs:
                     kept = None
-                    if len(pairs) > 1 and expected[final] is not None and os.path.lexists(final):
+                    # an existing target is put back if a later pair fails: under --overwrite that
+                    # includes one that appeared at a target the check recorded absent
+                    if len(pairs) > 1 and os.path.lexists(final) and (expected[final] is not None or STATE.overwrite):
                         d, base = os.path.split(final)
                         stem, ext = os.path.splitext(base)
                         kept = reserve_sibling(d, stem, ext, "keep")
