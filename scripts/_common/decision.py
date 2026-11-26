@@ -1446,7 +1446,10 @@ LOSSLESS_AUDIO_EXT = {".wav", ".flac", ".aif", ".aiff", ".caf", ".mka"}  # the A
 # header" and nothing written, measured on 6.1.1 and 9.0.1), so a re-encoded sound is 16-bit PCM
 # as the source fixture's is. Not an AUDIO_CODECS entry: these outputs keep their picture.
 CONTAINER_AUDIO_CODECS: Dict[str, List[str]] = {
-    ".mxf": ["-c:a", "pcm_s16le"],
+    # MXF's PCM essence takes 48 kHz only: the muxer refuses any other rate ("only 48khz is
+    # implemented"), so the shared entry resamples a 44.1 kHz source instead of failing at the
+    # header write (#736).
+    ".mxf": ["-c:a", "pcm_s16le", "-ar", "48000"],
 }
 
 # Every audio-only extension this skill reads (AUDIO_MEDIA_EXT) that has no codec above: a run
@@ -1463,7 +1466,7 @@ def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str
     names (`-q:a 0` for .mp3, 256k for .m4a), which through 3.8.8 it never reached (A143), and is
     the AAC rate of any other container (192k when it is None). A lossless extension takes none;
     the caller refuses a bitrate for it. A container that takes one codec (CONTAINER_AUDIO_CODECS)
-    dictates it whatever the bitrate."""
+    dictates it whatever the bitrate, and the rate its muxer fixes too (MXF PCM: 48 kHz, #736)."""
     ext = os.path.splitext(output_path)[1].lower()
     if ext in CONTAINER_AUDIO_CODECS:
         return list(CONTAINER_AUDIO_CODECS[ext])

@@ -12037,7 +12037,7 @@ class MxfAudioCodec736Tests(unittest.TestCase):
             for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
             if ("aac_args()" in line or '"-c:a", "aac"' in line) and not line.strip().startswith("#"))
         self.assertEqual(hard_coded, [], "these writing tools pick AAC without the output's extension")
-        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le"])
+        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le", "-ar", "48000"])
         self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])
         self.assertFalse(decision.is_audio_output("out.mxf"), "an MXF output keeps its picture")
 

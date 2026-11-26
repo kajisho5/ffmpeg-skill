@@ -619,7 +619,7 @@ class CutJoinTests(unittest.TestCase):
         the MXF muxer, whose pcm_rechunk refused it ("Codec 'aac' is not supported", then "Could
         not write header") and wrote nothing. The output holds 16-bit PCM at the cut's length, and
         the shared helper keeps the other containers and the picture-only meaning of .mxf."""
-        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le"])
+        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le", "-ar", "48000"])
         self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])
         self.assertEqual(decision.audio_codec_for("out.wav"), ["-c:a", "pcm_s16le"])
         self.assertFalse(decision.is_audio_output("out.mxf"), "an MXF output keeps its picture")
@@ -636,6 +636,18 @@ class CutJoinTests(unittest.TestCase):
         self.assertEqual(meta["audio"]["codec"], "pcm_s16le", meta.get("audio"))
         self.assertTrue(meta.get("video"), "the picture is written beside the sound")
         self.assertAlmostEqual(meta["duration"], 1.5, delta=0.1)
+        # the muxer implements 48 kHz only ("only 48khz is implemented", 6.1.1 and 9.0.1): a 44.1 kHz
+        # source is resampled by the same shared entry instead of failing at the header write.
+        s44 = DIR / "sound441.mp4"
+        if not s44.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=3",
+               "-f", "lavfi", "-i", "sine=f=440:d=3:sample_rate=44100", "-c:v", "libx264", "-preset", "ultrafast",
+               "-c:a", "aac", "-ar", "44100", "-shortest", s44)
+        out44 = DIR / "accurate_mxf_441.mxf"
+        data = cut_json(s44, "--start", "1", "--end", "2.5", "--accurate", "-o", out44)
+        self.assertEqual(data["status"], "completed", data)
+        meta = probe(str(out44))
+        self.assertEqual((meta["audio"]["codec"], meta["audio"]["sample_rate"]), ("pcm_s16le", 48000))
 
     def test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc(self):
         """A re-encode goes through x264 whatever the SDR source, so trimming an iPhone HEVC
