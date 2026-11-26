@@ -9,6 +9,9 @@
 - Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
   Adding the emoji presentation selector (U+FE0F) still sends them through emoji handling (#696).
 
+- Keep the colours of BT.709 and untagged SDR clips when mixing them in either order with
+  grid, join, broll or multicam (#696).
+
 ### Added
 
 - **`color.py --source-alpha-mode straight|premultiplied`, for a premultiplied source graded with `--keep-alpha`** (#453).
