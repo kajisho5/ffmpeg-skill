@@ -254,11 +254,13 @@ Irregular timing between the windows is not seen; `--accurate` is always availab
 
 A source with no B-frames (iPhone "Most Compatible" H.264) cuts its parts as
 every 2.x release did: from the keyframe at (or before) each start to the end
-asked for, each part within `--tolerance`. A multi-segment copy also checks the
-written total in `verification` (`cut_total_duration`). The total's tolerance is
-the smaller of `--tolerance` and the requested length, with a floor of one source
-frame for video. With `--tolerance -1`, the requested length still bounds the
-verification. A miss keeps the written copy with `verified: false` and a note
+asked for, each part within `--tolerance`. A stream copy of video is also checked against the span its keyframes allow
+(`copy_span`, #620): `snapped_segments` is `[[in, out], ...]`, where each copy can land (the
+keyframe it begins at, the end keyframe or the requested end), and the written length is held to the sum of
+those spans within one frame plus the source's reorder depth per part, not to `--tolerance`. A copy whose
+in or out sits more than 0.25 s from the request adds the warning `copy_drift_large`. A multi-segment
+copy also checks the written total against the request (`cut_total_duration`): its tolerance is the
+smaller of `--tolerance` and the requested length, with a floor of one frame. A miss keeps the written copy with `verified: false` and a note
 that suggests `--accurate`. On B-frame video a copied
 `.mp4`/`.mov` part runs from the keyframe at (or before) its start to the first
 keyframe at or after its end (never an earlier one), each end within
