@@ -28,7 +28,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common.asr import _dicts
+from _common.words import _words_from_words_file
 from _common.runner import parse_json, replace_checked, same_file
 from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
@@ -521,45 +521,6 @@ def resolve_filler(args, meta):
         warn(f"--filler: {block['matched_untimed']} listed word(s) in the transcript carry no usable timing and were "
              "not removed (nothing measured to cut on)", "filler_words_untimed", count=block["matched_untimed"])
     return block, [(s["start"], s["end"]) for s in spans]
-
-
-def _words_from_words_file(path, data):
-    """_words_from_transcript() for a --words file, plus whisper.cpp's own shape: its
-    --output-json-full document (transcription[].tokens[], offsets in milliseconds) is what the
-    refusals here tell a caller to make, and it was then refused for having no word timings (#404).
-    Read as --transcribe reads the same file."""
-    words, had_segments, untimed = _words_from_transcript(data)
-    if not words and isinstance(data, dict) and isinstance(data.get("transcription"), list):
-        words = _asr._words_from_whisper_cpp_json(path)
-        had_segments = had_segments or bool(data["transcription"])
-    return words, had_segments, untimed
-
-
-def _words_from_transcript(data):
-    """([{word,start,end}], whether the document had segments at all, [{word}] of the words
-    that carried no usable timing) from a whisper JSON. The third list lets --filler count a
-    listed word it could not cut instead of dropping it unseen."""
-    raw, had_segments = [], False
-    if isinstance(data, dict):
-        # a "words" or "segments" that is not a list, and a segment that is not an object, carry no
-        # words: the file is then refused for having none, not by a traceback
-        raw = _dicts(data.get("words"))
-        segments = _dicts(data.get("segments"))
-        had_segments = bool(segments)
-        for seg in segments:
-            raw.extend(_dicts(seg.get("words")))
-    elif isinstance(data, list):
-        raw = list(data)
-    out, untimed = [], []
-    for w in raw:
-        if not isinstance(w, dict):
-            continue
-        try:
-            out.append({"word": str(w.get("word") or w.get("text") or ""),
-                        "start": float(w["start"]), "end": float(w["end"])})
-        except (KeyError, TypeError, ValueError):
-            untimed.append({"word": str(w.get("word") or w.get("text") or "")})
-    return out, had_segments, untimed
 
 
 def silence_kinds(path: str, silences: "List[Tuple[float, float]]", duration: float,

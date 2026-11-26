@@ -157,6 +157,7 @@ missing field `null`).
 ```
 cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate | --smart] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
+cut.py INPUT --words words.json --word-segments 0-4,7-12 [--onset-search S] [--margin S] [--margin-lead S] [--margin-tail S]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
@@ -240,6 +241,20 @@ A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `audio_offset_ms` per part, `audio_parts_checked`, `ok`: the
 written file measured against the source) and `segment_end_snap_seconds` (where
 each part's end moved to its keyframe).
+
+**Word-timed cuts (`--words`, `--word-segments`, #449).** `--word-segments 0-4,7-12` keeps inclusive
+0-based word-index ranges of a whisper JSON (every word needs a timing: the indices count them all),
+joined in order with `--declick-ms` like `--segments`, which it does not combine with. A range runs
+from its first word's start less `--margin-lead` to its last word's end plus `--margin-tail`
+(`--margin` is both; no default, so no margin unless asked), the start rounded down and the end up
+to the source's frame grid; two ranges the margins make overlap meet at the middle. `--onset-search S`
+looks `S` seconds either side of a start for where the sound rises (5 ms blocks: a 15 dB rise that
+holds 30 ms, the one nearest the transcript time, never earlier than the previous word's midpoint)
+and cuts from that: engines time a word after a pause early as often as late. With no rise there it
+says `measured: null` and the transcript time stands. `word_segments` lists each range's words and
+text, the transcript's times, the onset (`transcript`, `measured` or `reason`) and `cut`; a dry run
+measures and writes nothing. `silence.py --margin-lead/--margin-tail` and `--sentence-*` already cut
+dead air with a lead and a tail of their own.
 
 **VFR guard (`--vfr-guard`).** `sampled` (default since 3.0.0): `cut.py` samples
 the packet timestamps before every copy (up to five 6 s windows; no decoding) into
