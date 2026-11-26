@@ -940,14 +940,11 @@ class ContractTests(unittest.TestCase):
         """4.0.1 was not published: 4.0.0 was bumped by hand, its section sat on top of
         CHANGELOG.md with no `## Unreleased` above it, and the bump step of the next release
         asserted on the missing heading. The step's own lines are run here on both shapes."""
-        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        start = release.index('          m = re.search(r"## Unreleased')
-        step = textwrap.dedent(release[start:release.index("          changelog_path.write_text(changelog", start)])
-        def bumped(changelog):
-            scope = {"re": re, "changelog": changelog, "old": "4.0.0",
-                     "section": "## 4.0.1\n\n_Automated release: since 4.0.0._\n\n- fix: one\n\n"}
-            exec(step, scope)
-            return scope["changelog"]
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        bumped = lambda changelog: frag.assemble(changelog, [], "4.0.1", "4.0.0", "- fix: one")
         head = "# Changelog\n\n> note\n\n"
         after_a_hand_bump = bumped(head + "## 4.0.0\n\nThe third break.\n\n## 3.15.1\n\nold\n")
         self.assertEqual(re.findall(r"(?m)^## (\S+)", after_a_hand_bump), ["Unreleased", "4.0.1", "4.0.0", "3.15.1"])
@@ -1648,6 +1645,8 @@ sys.exit(fit.main())
         log = sh("git", "log", f"{last_tag}..HEAD", "--format=%B----COMMIT----", cwd=ROOT, check=False).stdout
         closed = sorted(set(int(n) for n in re.findall(r"(?im)^closes\s+#(\d+)\.?\s*$", log)))
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for fragment in sorted((ROOT / "changelog.d").glob("*.md")):  # not yet folded in by the release (#678)
+            changelog += fragment.read_text(encoding="utf-8")
         missing = [n for n in closed if f"#{n}" not in changelog]
         self.assertEqual(missing, [], f"issue(s) closed since {last_tag} but not mentioned in CHANGELOG.md: {missing}")
 
@@ -3450,6 +3449,69 @@ sys.exit(fit.main())
             run("commit", "-q", "-am", "fix: 4")
             self.assertEqual([e["issue"] for e in ledger.added(run, "main", "old")], [4])
         self.assertTrue((ROOT / ledger.DIR).is_dir(), "the repository keeps its entries under docs/defect-ledger/")
+
+    def test_changelog_fragments_678(self):
+        """#678: every PR edited `## Unreleased`, so two open PRs always conflicted there. A change
+        is a file under changelog.d/ that starts with its section heading; the release folds them
+        into the new version's section (Fixed / Added / Changed, then the generated bullets), with
+        whatever a branch opened before the split still wrote under `## Unreleased`, and deletes
+        them. Two branches that each add one merge with no conflict, and revert_proof counts a
+        `### Fixed` fragment as a fix the way it counts a `+- ` line in CHANGELOG.md."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        # the shape of a real release: 4.8.0's section is the automated line, `### ` groups, then bullets
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        real = re.search(r"(?m)^## 4\.8\.0\n.*?(?=^## )", changelog, re.S).group(0)
+        self.assertRegex(real, r"(?s)^## 4\.8\.0\n\n_Automated release: .*?_\n\n### Fixed\n\n.*### Added\n\n.*\n- ci: ")
+        head = "# Changelog\n\n> note\n\n"
+        legacy = "### Changed\n\n- **Old branch.** Wrote under Unreleased (#1)."
+        out = frag.assemble(
+            head + "## Unreleased\n\n" + legacy + "\n\n## 4.8.0\n\nprev\n",
+            [("b.md", "### Added\n\n- **New flag** (#3).\n"), ("a.md", "### Fixed\n\n- Fix one (#2).\n  More.\n"),
+             ("c.md", "### Fixed\n- Fix two (#4).\n")],
+            "4.9.0", "4.8.0", "- fix: one (#2)\n- feat: two", "\n\nCloses: #2, #3")
+        self.assertEqual(out, head + "## Unreleased\n\n(nothing yet)\n\n## 4.9.0\n\n"
+                         "_Automated release: version and notes generated from pull requests merged since 4.8.0._\n\n"
+                         + legacy + "\n\n### Fixed\n\n- Fix one (#2).\n  More.\n- Fix two (#4).\n\n"
+                         "### Added\n\n- **New flag** (#3).\n- fix: one (#2)\n- feat: two\n\nCloses: #2, #3\n\n## 4.8.0\n\nprev\n")
+        self.assertEqual(re.findall(r"(?m)^### (\w+)", out.split("## 4.8.0")[0]), ["Changed", "Fixed", "Added"])
+        # no fragment, no legacy text: today's output; a headingless fragment is kept, under Changed
+        self.assertIn("since 4.8.0._\n\n- fix: one\n\n", frag.assemble(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n", [], "4.9.0", "4.8.0", "- fix: one"))
+        self.assertIn("### Changed\n\nloose note", frag.assemble(head + "## 4.8.0\n", [("x.md", "loose note\n")], "4.9.0", "4.8.0", "- b"))
+        # the shipped CHANGELOG.md and fragments: every fragment names its section
+        for path in (ROOT / "changelog.d").glob("*.md"):
+            if path.name != "README.md":
+                self.assertIn(frag.split_fragment(path.read_text(encoding="utf-8"))[0], frag.SECTIONS, path.name)
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / "changelog.d").mkdir()
+            (root / "CHANGELOG.md").write_text(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n\nprev\n", encoding="utf-8")
+            (root / "changelog.d" / "README.md").write_text("format\n", encoding="utf-8")
+            (root / "docs" / "defect-ledger" / "README.md").write_text("ledger\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n, section in ((2, "Fixed"), (3, "Added")):
+                run("checkout", "-q", "-b", f"b{n}", "main")
+                (root / "changelog.d" / f"{n}.md").write_text(f"### {section}\n\n- Change {n}.\n", encoding="utf-8")
+                (root / "docs" / "defect-ledger" / f"2026-11-26-{n}.json").write_text("{}\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"change {n}")
+            self.assertTrue(frag.adds_fix(run, "main", "b2"))
+            self.assertFalse(frag.adds_fix(run, "main", "b3"), "an Added fragment is not a fix")
+            run("checkout", "-q", "b2")
+            run("merge", "-q", "--no-edit", "b3")  # check=True: a conflict fails here
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").glob("[0-9]*.md")), ["2.md", "3.md"])
+            # the release step's own call, on this copy: the fragments move into the section and are deleted
+            got = frag.assemble((root / "CHANGELOG.md").read_text(encoding="utf-8"), frag.take_fragments(root / "changelog.d"),
+                                "4.9.0", "4.8.0", "- chore: x")
+            self.assertIn("### Fixed\n\n- Change 2.\n\n### Added\n\n- Change 3.\n- chore: x\n\n## 4.8.0", got)
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").iterdir()), ["README.md"])
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("take_fragments", release)
+        self.assertIn("git add -A changelog.d", release)
 
     def test_the_632_scripts_read_what_a_change_did(self):
         """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the
