@@ -1131,6 +1131,27 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(self._rows(edges, "--content")["dropouts"]["status"], "PASS")
         self.assertEqual(self._rows(short, "--content")["dropouts"]["status"], "PASS")
 
+    def test_check_content_frame_timing_finds_dropped_and_repeated_frames_574(self):
+        """#574: --content grades the frame times against the file's own median step. Five frames
+        dropped at 1.2 s are one gap of 5, also in an MP4 whose stated average rate the gap has
+        already lowered (95/4); a repeated time is a FAIL; an even file and a one-frame file PASS."""
+        def clip(name, *vf):
+            path = OUT / name
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25", "-t", "4",
+               *vf, "-fps_mode", "passthrough", "-c:v", "libx264", path)
+            return path
+        drop = "select='not(between(n,30,34))'"
+        cases = ((clip("timing_even.mp4"), "PASS", "0 missing in 0 gaps (100 frames, usual step 40.0 ms)"),
+                 (clip("timing_drop.mp4", "-vf", drop), "WARN", "5 missing in 1 gap: 1.16s (5 missing) (95 frames, usual step 40.0 ms)"),
+                 (clip("timing_drop.mkv", "-vf", drop), "WARN", "5 missing in 1 gap: 1.16s (5 missing)"),
+                 (clip("timing_repeat.mkv", "-vf", "setpts='if(eq(N,50),PREV_OUTPTS,PTS)'"), "FAIL", "1 repeated, 1 missing in 1 gap: 1.96s (repeated)"),
+                 (clip("timing_one.mp4", "-frames:v", "1"), "PASS", "1 frame: no step to compare"))
+        for path, status, value in cases:
+            r = self._rows(path, "--content", "--no-loudness")["frame timing"]
+            self.assertEqual(r["status"], status, (path.name, r))
+            self.assertTrue(r["value"].startswith(value), (path.name, r))
+        self.assertNotIn("frame timing", self._rows(cases[0][0], "--no-loudness"))
+
     def test_check_colour_row_reads_the_matrix_tag(self):
         """#325: the colour row decided "untagged" from primaries and transfer only, so a file whose
         only tag is a BT.601 matrix passed as "untagged (players assume bt709)" while a tag-honouring

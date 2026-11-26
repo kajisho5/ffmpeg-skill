@@ -451,6 +451,32 @@ def audio_change_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     return doc
 
 
+def frame_timing_row(path: str, v: Dict[str, Any], origin: float, row: Any) -> None:
+    """--content: the frame times, from packets (no decode), against the file's own usual step, the
+    median time between two frames (#574). Not the stated rate: a file with dropped frames states an
+    average rate that the gaps have already lowered. A repeated time is a FAIL; a step more than 1.5
+    usual steps long is a gap of round(step / usual) - 1 frames, a WARN with where."""
+    pts = presentation_times(path, float(v.get("start_time") or 0.0))
+    steps = [(a, b - a) for a, b in zip(pts, pts[1:])]
+    usual = sorted(d for _, d in steps)[len(steps) // 2] if steps else 0.0
+    want = "one frame every usual step (the median), no gap and no repeated time"
+    if len(pts) == 1:
+        return row("frame timing", "PASS", "1 frame: no step to compare", want, "")
+    if usual <= 1e-6:
+        return row("frame timing", "WARN", "could not measure", want, "remux the file (export.py --preset copy) and check it again",
+                   reason="the frame times could not be read, so a dropped or doubled frame would not be seen")
+    repeated = [(a, 0) for a, d in steps if d <= 1e-6]
+    gaps = [(a, round(d / usual) - 1) for a, d in steps if d > 1.5 * usual]
+    at = ", ".join(f"{a - origin:.2f}s" + (f" ({n} missing)" if n else " (repeated)") for a, n in sorted(repeated + gaps)[:5])
+    status = "FAIL" if repeated else ("WARN" if gaps else "PASS")
+    value = (f"{len(repeated)} repeated, " if repeated else "") + f"{sum(n for _, n in gaps)} missing in {len(gaps)} gap{'s' if len(gaps) != 1 else ''}"
+    row("frame timing", status, value + (f": {at}" + (" ..." if len(repeated) + len(gaps) > 5 else "") if at else "")
+        + f" ({len(pts)} frames, usual step {usual * 1000:.1f} ms)", want,
+        "look.py at those times: frames lost at capture or at a join (re-export with export.py writes every frame on the "
+        "grid); a phone lowers its rate in low light on purpose" if status != "PASS" else "",
+        reason="two frames at one time play as one, and in a gap the player holds the last frame" if status != "PASS" else "")
+
+
 def main() -> int:
     STATE_NOTES.clear()  # module state: a second main() in one process starts without the first's notes
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -463,7 +489,7 @@ def main() -> int:
     ap.add_argument("--max-mb", type=float, help="the caller's own maximum file size in MB: over it FAILs (the platform table's limit is guidance, WARN)")
     ap.add_argument("--no-loudness", action="store_true", help="skip the loudness measurement (faster)")
     ap.add_argument("--content", action="store_true",
-                    help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes and first frame rows")
+                    help="also check the content (one decode pass, plus an audio-only and a video-only one): black, frozen, silence, dropouts, flashes, first frame and frame timing rows")
     ap.add_argument("--levels", choices=LEGAL_RANGE_CHOICES, default=None,
                     help="also measure the broadcast signal range (one more decode of every frame): a legal levels row with "
                          "the share of luma and chroma samples outside bt709 (16-235 / 16-240) or ebu-r103 (luma -1..103 %%), "
@@ -814,6 +840,8 @@ def main() -> int:
                     "look.py at those times: a stray frame at a cut or join is an edit error (re-cut with cut.py "
                     "--accurate, or join.py again); a camera flash or a strobe in the footage is fine" if flashes else "",
                     reason="one frame that matches neither neighbour is usually a frame left over at a cut, or a decode glitch" if flashes else "")
+        if v and not dry_run_input_pending(args.input):
+            frame_timing_row(args.input, v, float(meta.get("start_time") or 0.0), row)
         if "silence" in cd and span:
             share = _span_total(cd["silence"]) / span
             row("silence", "FAIL" if share >= SILENCE_FAIL else ("WARN" if share > SILENCE_WARN else "PASS"),
