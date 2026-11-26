@@ -1374,6 +1374,15 @@ _WEBM_AUDIO_ENCODER_RE = re.compile(r"^(?:libopus|opus|libvorbis|vorbis)$")
 _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec$")
 
 
+# What each muxer takes, as (video encoders, sound encoders, what to say, the way out), by extension.
+_CONTAINER_ENCODERS = {
+    ".webm": (_WEBM_VIDEO_ENCODER_RE, _WEBM_AUDIO_ENCODER_RE, "WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound",
+              "name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha"),
+    ".mxf": (re.compile(r"^(?:mpeg2video|dnxhd)$"), re.compile(r"^pcm_\w+$"), "MXF, which holds MPEG-2/DNxHD video and PCM sound (H.264 writes dts it rejects)",
+             "name a .mov (--codec prores) or .mkv output; cut.py without --accurate keeps an MXF's own streams"),
+}
+
+
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
     """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a"/"s")
     stream, and no filter graph could make one. An encoder option for a stream the output will
@@ -1407,13 +1416,12 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
 
 
 def _check_container_codecs(cmd: Sequence[str]) -> None:
-    """A `.webm` output whose command encodes a picture or a sound WebM cannot hold (the tools'
-    H.264/HEVC and AAC lines) is refused before anything runs, dry runs included: the muxer
-    refused it only after the encode had started, as `kind: ffmpeg` with "Nothing was written
-    into output file", and a dry run said completed (#488). A stream copy is left to the muxer:
-    what it copies is not named in the command."""
+    """A `.webm` or `.mxf` output whose command encodes what the muxer cannot hold (the tools' H.264/HEVC
+    and AAC lines) is refused before anything runs, dry runs included, not after the encode started
+    (#488, MXF #736). A stream copy is left to the muxer: what it copies is not named in the command."""
     output = cmd[-1]
-    if os.path.splitext(output)[1].lower() != ".webm":
+    rule = _CONTAINER_ENCODERS.get(os.path.splitext(output)[1].lower())
+    if not rule:
         return
     refused: List[Any] = []
     for i, tok in enumerate(cmd[:-2]):
@@ -1421,20 +1429,14 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
         if not m:
             continue
         stream, value = m.group(1) or m.group(2), cmd[i + 1]
-        if value == "copy" or stream is None:
-            continue
-        allowed = _WEBM_VIDEO_ENCODER_RE if stream == "v" else _WEBM_AUDIO_ENCODER_RE
-        if not allowed.match(value):
+        if value != "copy" and stream and not rule[0 if stream == "v" else 1].match(value):
             refused.append((stream, value))
     # only for a stream the output will have: asked last, and only when something would be refused
     refused = [value for stream, value in dict.fromkeys(refused) if _an_input_has(cmd, stream)]
     if refused:
         refuse("input", "output_container_codecs",
-               f"output {output!r} is WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound; this tool "
-               f"encodes {' and '.join(refused)} for it",
-               hint="name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); "
-                    "a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha",
-               output=output, container="webm", encoders=refused)
+               f"output {output!r} is {rule[2]}; this tool encodes {' and '.join(refused)} for it",
+               hint=rule[3], output=output, container=output.rsplit(".", 1)[1].lower(), encoders=refused)
 
 
 def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:

@@ -10698,6 +10698,41 @@ class Issue415Tests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(d / "not_written_yet.mkv"))
 
+    def test_an_mxf_output_of_a_reencode_is_refused_before_ffmpeg_runs(self):
+        """#736: MXF takes PCM sound only, so every tool's AAC line failed in the muxer after the
+        encode started ("Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'",
+        nothing written) and a dry run said completed; the H.264 line writes dts the muxer
+        rejects on a read-back. Refused now through the one check every command passes, real and
+        dry run alike, for the three cut modes and the tools of the sweep that broadcast masters
+        meet; a stream copy of the same MXF still writes a decodable file with its PCM sound."""
+        d = self.dir("mxf_out")
+        mxf = d / "in.mxf"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5", "-f", "lavfi", "-i", "sine=r=48000:d=5",
+               "-c:v", "mpeg2video", "-g", "12", "-bf", "0", "-c:a", "pcm_s16le", "-timecode", "01:00:00:00", mxf)
+        for name, argv in (("cut", ["--start", "1.5", "--end", "3", "--accurate"]),
+                           ("cut", ["--start", "1.5", "--end", "3", "--smart"]), ("cut", ["--remove", "1-2"]),
+                           ("fit", ["--duration", "2.5", "--method", "speed"]), ("color", ["--correct", "--contrast", "1.1"]),
+                           ("loudness", []), ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, argv=argv, dry=bool(dry)):
+                    out = d / f"{name}.mxf"
+                    doc = json.loads(tool(name, mxf, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                    self.assertEqual(doc["status"], "failed")
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                    self.assertEqual(err["details"]["container"], "mxf")
+                    self.assertTrue(err["details"]["encoders"])
+                    self.assertIn(".mov", err["hint"])
+                    self.assertFalse(out.exists())
+        kept = d / "copy.mxf"
+        doc = json.loads(tool("cut", mxf, "--start", "1.5", "--end", "3", "-o", kept, "--json").stdout)
+        self.assertEqual(doc["status"], "completed")
+        probed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                                 "-of", "csv=p=0", str(kept)], capture_output=True, text=True)
+        self.assertEqual(probed.stdout.strip(), "pcm_s16le")
+        decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
+        self.assertEqual(decoded.stderr.strip(), "")
+
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
         54 in the real run, and nothing said so."""

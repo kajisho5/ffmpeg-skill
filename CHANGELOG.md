@@ -32,6 +32,9 @@ _Automated release: version and notes generated from pull requests merged since 
 
 - fix(fit): advise on flagged interlaced input (#730)
 - chore: one file per defect-ledger entry, so two open fixes never conflict (#678) (#735)
+- An `.mxf` output of a re-encode (`cut.py --accurate`/`--smart`/`--remove`, fit, color, audio, export and the rest) is refused
+  before ffmpeg runs, as `.webm` is, with `kind: input`, `reason: output_container_codecs` and a hint to `.mov` or `.mkv`. It
+  failed after the encode started with "Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'" (#736).
 
 ## 4.8.0
 
