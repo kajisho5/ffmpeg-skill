@@ -10243,6 +10243,69 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours once more\n"), (None, None))
         self.assertEqual(path.read_text(encoding="utf-8"), "ours once more\n")
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not kept on Windows")
+    def test_a_side_file_keeps_the_mode_of_the_file_it_replaces(self):
+        """#743 review: write_sidecar() gave the staged file the umask's mode on every write, so
+        replacing an existing 0600 sidecar under --overwrite widened it to 0644."""
+        path = self.work / "edl.txt"
+        path.write_text("theirs", encoding="utf-8")
+        os.chmod(path, 0o600)
+        _common.STATE.overwrite = True  # consent to replace the existing file
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600, "the existing file's mode is kept")
+        # a new side file still gets the mode open() would have given it under this umask
+        fresh = self.work / "fresh.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(fresh)), (None, None))
+        self.assertEqual(self.call(self.runner.write_sidecar, str(fresh), "new\n"), (None, None))
+        mask = os.umask(0)
+        os.umask(mask)
+        self.assertEqual(os.stat(fresh).st_mode & 0o777, 0o666 & ~mask)
+
+    def test_a_side_file_created_between_the_comparison_and_the_install_is_refused(self):
+        """#743 review (Major): the install was os.replace(), which overwrote a file another
+        process created after refuse_changed_output() passed. A target the check recorded absent
+        is installed with a link that fails when anything appeared in that gap."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def create_then_install(tmp, final, expected):
+            if not os.path.lexists(final):
+                Path(final).write_bytes(b"theirs")  # another process, after the comparison
+            real(tmp, final, expected)
+
+        with mock.patch.object(self.runner, "_install_checked", create_then_install):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"),
+                             ("input", "output_exists"))
+        self.assertEqual(path.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [], "the staged copy is removed")
+
+    def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
+        """#743 review: write_sidecar() read the path back after the install, so a file another
+        process put there in that gap was recorded as this run's and the next write replaced it."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def install_then_swap(tmp, final, expected):
+            real(tmp, final, expected)
+            other = path.with_name(path.name + ".other")
+            other.write_bytes(b"theirs")
+            os.replace(other, path)  # another process replaces it after this run's install
+
+        with mock.patch.object(self.runner, "_install_checked", install_then_swap):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_bytes(), b"theirs")
+        # the recorded identity is the staged file's, so the foreign file is not adopted: the
+        # next write without --overwrite refuses it
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"),
+                         ("input", "output_exists"))
+        self.assertEqual(path.read_bytes(), b"theirs")
+
     def test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper(self):
         """#696's class, swept: a file a tool writes itself and a caller named (an EDL, an SRT/ASS,
         a chapter/description list, a project, a report) is staged and put in place by

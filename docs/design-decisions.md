@@ -506,8 +506,12 @@ exists. When a decision changes, edit the entry in the same PR.
   is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
   itself); a file a tool writes itself and a caller named (an EDL, an SRT/ASS, a chapter or description
   list, a project, a report) goes through `write_sidecar()`, which stages it and puts it in place by
-  `replace_checked()`, so the same comparison runs under the path's lock (#696), while the concat
-  lists, work files and manifests a tool makes for itself stay plain `open()`. Code:
+  `replace_checked()`, so the same comparison runs under the path's lock (#696); a target the check
+  recorded absent is installed with `os.link()`, which fails if another process created one in the
+  gap (a filesystem without hard links keeps the old replace), an existing target keeps its permission
+  bits and the identity recorded is the staged file's,
+  not one read back after the install, while the concat lists, work files and manifests a tool
+  makes for itself stay plain `open()`. Code:
   `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
   `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`
   (`test_a_target_replaced_during_the_encode_is_refused_and_an_unchanged_one_replaced`,
@@ -516,6 +520,9 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_place_output_refuses_a_target_put_there_after_its_check`,
   `test_a_side_file_a_tool_replaces_itself_is_rechecked`,
   `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
+  `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
+  `test_a_side_file_created_between_the_comparison_and_the_install_is_refused`,
+  `test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one`,
   `test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper`, `test_a_link_created_at_an_absent_target_is_refused`,
   `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,
   `test_a_pair_whose_second_replace_fails_leaves_what_was_there`,
