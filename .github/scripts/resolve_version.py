@@ -191,6 +191,17 @@ def _gh_pr_for_sha(repo: str) -> Callable[[str], Optional[int]]:
     return pr_for_sha
 
 
+def _main_commits(rev_range: str, cwd: Optional[str] = None) -> List[List[str]]:
+    # [sha, subject] of the commits main itself gained: --first-parent, so a PR merged with a
+    # merge commit counts once, as that merge commit (its PR found by SHA), and not as every
+    # commit on its branch. A branch commit titled "... (#453)" named an issue, and the labels
+    # lookup of "PR 453" stopped every release after 4.7.1 (2026-11-24).
+    out = subprocess.run(["git", "log", "--first-parent", rev_range, "--format=%H %s"],
+                         capture_output=True, text=True, check=True, cwd=cwd).stdout
+    pairs = [line.split(" ", 1) for line in out.splitlines() if line.strip()]
+    return [p for p in pairs if len(p) == 2 and p[1].strip()]
+
+
 def _git_paths(sha: str) -> List[str]:
     out = subprocess.run(["git", "show", "--format=", "--name-only", sha],
                          capture_output=True, text=True, check=True).stdout
@@ -225,10 +236,7 @@ def main() -> int:
     last = os.environ["LAST_VERSION"]
     repo = os.environ["GITHUB_REPOSITORY"]
     rev_range = f"v{last}..HEAD" if last != "0.0.0" else "HEAD"
-    pairs = [line.split(" ", 1) for line in subprocess.run(
-        ["git", "log", rev_range, "--format=%H %s"], capture_output=True, text=True, check=True
-    ).stdout.splitlines() if line.strip()]
-    pairs = [p for p in pairs if len(p) == 2 and p[1].strip()]
+    pairs = _main_commits(rev_range)
     subjects = [p[1] for p in pairs]
     shas = [p[0] for p in pairs]
     added = contract_additions(_contract_at(f"v{last}"), _contract_at(None)) if last != "0.0.0" else []
