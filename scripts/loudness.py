@@ -27,7 +27,7 @@ LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
 from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
-from _common.decision import CONTAINER_AUDIO_CODECS, LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, container_audio_rate, late_sound_lead, sample_rate_refusal
+from _common.decision import CONTAINER_AUDIO_CODECS, PAD_SOUND_FROM_ZERO, bitrate_refusal, container_audio_rate, late_sound_lead, sample_rate_refusal
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, refuse_unwritten_output, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -302,7 +302,7 @@ def main() -> int:
     ap.add_argument("--tp", "--true-peak", type=float, default=-1.0, help="true peak ceiling in dBTP (default -1)")
     ap.add_argument("--lra", type=float, default=11.0, help="loudness range target in LU (default 11)")
     ap.add_argument("--measure-only", action="store_true", help="print the measured stats as JSON and exit")
-    ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container that takes it (default 192k; ignored for .mxf's PCM), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
+    ap.add_argument("--audio-bitrate", default=None, help="audio bitrate: AAC's in a video container that takes it (default 192k; refused for .mxf, whose PCM takes none), and the codec's of a lossy audio output (.m4a/.aac default 256k, .mp3/.ogg/.opus their own setting); "
                          "refused for .wav/.flac/.aif/.aiff/.caf/.mka. Raised to 256k/320k for AAC only when the encoder overshoots the true-peak ceiling and you did not pin it")
     ap.add_argument("--versions", metavar="LIST",
                     help="write one normalised file per target from this master, each measured after: a comma list of "
@@ -337,9 +337,13 @@ def main() -> int:
         # loudnorm encodes the sound: a .wma name (an -o, or a .wma input's default) is refused
         # before the measuring pass, not after it (#517)
         refuse_unwritten_output(args.output or default_output(args.input, "loudnorm"))
-    if args.audio_bitrate is not None and not args.measure_only and out_ext in LOSSLESS_AUDIO_EXT:
-        # A143: the rate was dropped without a word; a lossless codec has none to set
-        die(f"--audio-bitrate has no effect on a lossless {out_ext} output; drop it, or write a lossy one (.m4a, .mp3, ...)")
+    if not args.measure_only:
+        # A143/#736: a lossless codec has no bitrate to set, and MXF's PCM ignores one; both used
+        # to be dropped without a word, so the one refusal names the flag the caller passed
+        refusal = bitrate_refusal(args.output or default_output(args.input, "loudnorm"),
+                                  args.audio_bitrate, "--audio-bitrate")
+        if refusal:
+            die(refusal)
     if plan is not None and not args.measure_only:
         # each version measures the master against its own target (loudnorm's offset depends on
         # it): a pass against -I/--tp first would be one more full decode whose result is unused

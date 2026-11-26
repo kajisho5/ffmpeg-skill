@@ -1507,6 +1507,25 @@ def sample_rate_refusal(output_path: str, requested: Optional[int]) -> Optional[
             f"{fixed} Hz only: drop --sample-rate or pass {fixed}")
 
 
+def bitrate_refusal(output_path: str, requested: Optional[str], flag: str = "--bitrate") -> Optional[str]:
+    """The refusal for a bitrate the output's codec cannot take, else None.
+
+    A lossless audio extension has no bitrate to set, and a single-codec container
+    (CONTAINER_AUDIO_CODECS, MXF's PCM) ignores one whatever was asked; both used to be dropped
+    without a word (A143, #736), so the writers that take a bitrate refuse instead. One helper
+    keeps `audio.py --bitrate` and `loudness.py --audio-bitrate` on the same rule."""
+    if requested is None:
+        return None
+    ext = os.path.splitext(output_path)[1].lower()
+    if ext in CONTAINER_AUDIO_CODECS:
+        return (f"{flag} has no effect on a {ext} output, whose sound is PCM and takes no bitrate: "
+                f"drop {flag}, or write a lossy one (.m4a, .mp3, ...)")
+    if ext in LOSSLESS_AUDIO_EXT:
+        return (f"{flag} has no effect on a lossless {ext} output; drop it, or write a lossy one "
+                f"(.m4a, .mp3, ...)")
+    return None
+
+
 def is_audio_output(output_path: str) -> bool:
     """True when the output extension is an audio-only container this skill writes (AUDIO_CODECS:
     .wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka).

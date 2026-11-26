@@ -2420,7 +2420,8 @@ The typed dynamics flags speak dB where the filter takes a linear value: a knee
 (2.82843); the defaults `--help` gives are ffmpeg's own, in the flag's unit (A135).
 `--bitrate` is the AAC rate beside a picture (192k) and the rate of a lossy audio output's
 codec (`.m4a`/`.aac` 256k, `.mp3` `-q:a 0`, `.ogg` `-q:a 6`, `.opus` 128k when it is not given);
-`.wav`, `.aif`/`.aiff` and `.caf` (PCM), and `.flac` and `.mka` (FLAC), refuse it (A143). A `--music-fade-out` on a bed shorter than the output (and
+`.wav`, `.aif`/`.aiff` and `.caf` (PCM), and `.flac` and `.mka` (FLAC), refuse it (A143), and so
+does an `.mxf` output, whose PCM takes none (#736). A `--music-fade-out` on a bed shorter than the output (and
 not `--music-loop`ed) ends where the bed ends (A142).
 With `--replace`, `--music` or a kept picture the sound is padded with silence or trimmed to the
 source's length counted in samples at the track's rate (`apad=whole_len=N,atrim=end_sample=N`),
@@ -2510,10 +2511,12 @@ ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
 +3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
 did not pass `--audio-bitrate` (an `.m4a`/`.aac` output starts at its 256k, so only 320k is
 left; an `.mxf` output's PCM takes no bitrate, so those steps are skipped), then with the
-loudnorm ceiling lowered by the overshoot -- until the file itself meets
-`--tp`. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
+loudnorm ceiling lowered by the overshoot -- for at most five retries, accepting the file
+within a fixed tolerance of `--tp`; past that the command fails a verification step naming
+the peak it could not reach. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
 container's AAC (through 3.8.8 an `.m4a` was 256k whatever was asked, and its retries too);
-`.wav`/`.flac`/`.aif`/`.aiff`/`.caf`/`.mka` refuse it. `result` reports
+`.wav`/`.flac`/`.aif`/`.aiff`/`.caf`/`.mka` refuse it, and so does an `.mxf` output, whose PCM
+takes none. `result` reports
 `tp_ceiling_used`, `audio_bitrate_used` (absent for a container whose codec takes no bitrate,
 such as `.mxf`'s PCM), `encodes`, and a `note` when the
 integrated loudness ended more than 1 LU from the target because of it.

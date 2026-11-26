@@ -12058,6 +12058,25 @@ class MxfAudioCodec736Tests(unittest.TestCase):
         for tool in ("audio.py", "loudness.py"):
             self.assertIn("sample_rate_refusal(", (SCRIPTS / tool).read_text(encoding="utf-8"), tool)
 
+    def test_a_pinned_bitrate_the_mxf_pcm_cannot_use_is_refused(self):
+        """PCM takes no bitrate, so an `.mxf` output dropped an explicit one without a word
+        (audio.py --bitrate and loudness.py --audio-bitrate alike). Both refuse it now through
+        the same decision helper; lossless extensions keep their own refusal, and a lossy output
+        that does take the bitrate is untouched (#736)."""
+        from _common import decision
+        refusal = decision.bitrate_refusal("out.mxf", "128k")
+        self.assertIn(".mxf", refusal)
+        self.assertIn("--bitrate", refusal)
+        self.assertIn("no effect", refusal)
+        self.assertIn("--audio-bitrate", decision.bitrate_refusal("out.mxf", "96k", "--audio-bitrate"))
+        self.assertIsNone(decision.bitrate_refusal("out.mxf", None))
+        self.assertIn("lossless", decision.bitrate_refusal("out.wav", "64k"))
+        self.assertIsNone(decision.bitrate_refusal("out.m4a", "64k"))
+        self.assertIsNone(decision.bitrate_refusal("out.mp4", "128k"))
+        # both writers that take a bitrate ask the one helper before ffmpeg runs
+        for tool in ("audio.py", "loudness.py"):
+            self.assertIn("bitrate_refusal(", (SCRIPTS / tool).read_text(encoding="utf-8"), tool)
+
     def test_mxf_pcm_neither_reports_nor_retries_a_bitrate_it_ignores(self):
         """PCM takes no bitrate: an .mxf output must not claim `audio_bitrate_used`, and an AAC
         true-peak retry must not re-encode the same PCM at 256k/320k (#736)."""

@@ -34,7 +34,7 @@ from _common.probe import SILENT_PEAK_DBFS
 from _common.runner import path_denied
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs, sample_rate_refusal
 from _common.emit import file_origin, own_length, refuse, stream_end, warn
-from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, conform_filter, conform_to_length, late_sound_lead
+from _common.decision import PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, bitrate_refusal, conform_filter, conform_to_length, late_sound_lead
 
 # --downmix: ITU-R BS.775 fold-down, renormalised by pan's '<' (see main()).
 DOWNMIX_PAN = "pan=stereo|FL<FL+0.707*FC+0.707*BL+0.707*SL|FR<FR+0.707*FC+0.707*BR+0.707*SR"
@@ -514,7 +514,7 @@ def main() -> int:
                         help="a track's ISO 639-2 language code (eng, jpn ...), in track order")
     ap.add_argument("--bitrate", default=None,
                     help="audio bitrate: AAC's beside a picture (default 192k), and the codec's of a lossy audio output "
-                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf/.mka, and .mxf's PCM takes none")
+                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf/.mka and for .mxf, whose PCM takes none")
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
                          "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")
@@ -595,9 +595,10 @@ def main() -> int:
         run(ffmpeg_base() + ["-i", args.input, "-map", "0:V", "-map", "0:s?", "-c", "copy", output])
         emit(output, expect_streams={"video": 1, "audio": 0})
         return 0
-    if args.bitrate is not None and Path(output).suffix.lower() in LOSSLESS_AUDIO_EXT:
-        # A143: the rate used to be dropped without a word for every audio extension
-        die(f"--bitrate has no effect on a lossless {Path(output).suffix.lower()} output; drop it, or write a lossy one (.m4a, .mp3, ...)")
+    if args.bitrate is not None and not args.track:
+        refusal = bitrate_refusal(output, args.bitrate, "--bitrate")
+        if refusal:
+            die(refusal)
     streams = meta.get("audio_streams") or []
     if streams and not (0 <= args.audio_stream < len(streams)) and not STATE.dry_run:
         die(f"--audio-stream {args.audio_stream}: input has {len(streams)} audio stream(s), 0..{len(streams) - 1}")

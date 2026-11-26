@@ -4463,10 +4463,13 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   written at and reports it (`audio_bitrate_used` said 192k), so its overshoot retry is 320k
   only; a pinned rate is reported for `.mp3`/`.ogg`/`.opus` too, which had no
   `audio_bitrate_used`. A container whose codec takes no bitrate (`.mxf`'s PCM) reports none and
-  skips the 256k/320k retries; an explicit `--sample-rate` other than the rate its muxer fixes
+  skips the 256k/320k retries, and an explicit `--bitrate`/`--audio-bitrate` for it is refused
+  rather than dropped without a word; an explicit `--sample-rate` other than the rate its muxer fixes
   (48 kHz) is refused rather than silently replaced. Code: `decision.audio_codec_for()`,
-  `decision.sample_rate_refusal()`. Test: `test_bitrate_reaches_the_codec_of_an_audio_output`,
-  `test_mxf_pcm_neither_reports_nor_retries_a_bitrate_it_ignores`.
+  `decision.sample_rate_refusal()`, `decision.bitrate_refusal()`. Test:
+  `test_bitrate_reaches_the_codec_of_an_audio_output`,
+  `test_mxf_pcm_neither_reports_nor_retries_a_bitrate_it_ignores`,
+  `test_a_pinned_bitrate_the_mxf_pcm_cannot_use_is_refused`.
 - **A filter graph over 100,000 characters (8,000 on Windows) reaches ffmpeg in a file.** Linux
   refuses one argument over 128 KiB and Windows a command line over 32,767 characters; a graph
   built per item (`scenes.py --sheet`'s select, ~50 characters a scene) crossed it between 2,400 and

@@ -1706,6 +1706,12 @@ class Audit459AudioTests(MediaFixtures):
                                         expect_fail=True).stdout)
                 self.assertEqual(doc["error"]["kind"], "input")
                 self.assertIn("lossless", doc["error"]["message"])
+            with self.subTest(tool=tool, ext=".mxf"):
+                doc = json.loads(script(tool, self.voice, flag, "128k", "-o", OUT / "a459_bitrate.mxf", "--json",
+                                        expect_fail=True).stdout)
+                self.assertEqual(doc["error"]["kind"], "input")
+                self.assertIn(".mxf", doc["error"]["message"])
+                self.assertIn("no effect", doc["error"]["message"])
 
     def test_dynamics_help_gives_the_filters_own_defaults_in_the_flags_unit(self):
         """A135: the help said acompressor's threshold defaults to -12.4 dB (it is 0.125, -18.06 dB),
