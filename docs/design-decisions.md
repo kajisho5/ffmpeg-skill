@@ -3307,9 +3307,15 @@ it had dropped, and nothing could make a transparent canvas to draw one graphic 
   255/128/64/0, premultiplied, graded with `--correct --gamma 1.6` and a LUT): ProRes 4444's
   re-straightened colour is within 0.9 codes of the opaque band's at alpha 128 and 1.7 at 64; qtrle,
   whose grade goes through an 8-bit 4:4:4 working picture, within 1.7 and 2.9, so the test holds
-  it to 3.5. Code:
-  `alpha.unpremultiply_leg()`, `color.main()`. Test:
-  `test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453`.
+  it to 3.5. The ProRes 4444 leg that keeps the mask at 16 bits converted the graded YUV to RGB
+  with `format=gbrp16le`'s swscale default, BT.601, so on a BT.709-tagged master the whole
+  premultiplied run was written by that matrix while the stream stayed tagged BT.709: an opaque
+  pixel was 181,129,75 where the straight run wrote 177,126,77 (the reporter's LUT, #740). The
+  leg now names the matrix its samples are in (`alpha.wide_merge_leg`, the source's, or the
+  BT.709 an RGB source's YUV line is, #496); an untagged source keeps swscale's default. Code:
+  `alpha.unpremultiply_leg()`, `alpha.wide_merge_leg()`, `color.main()`. Test:
+  `test_color_source_alpha_mode_premultiplied_grades_the_straight_colour_453`,
+  `test_color_source_alpha_mode_premultiplied_on_a_tagged_master_matches_straight_740`.
 - **Compositing is checked against a floor, not an equality.** A layer drawn on the picture adds
   coverage, so the written alpha cannot equal the source's: `graphics.py`/`overlay.py` pass when the
   stream stores an alpha plane, no frame's alpha is below the source's, and the output did not turn

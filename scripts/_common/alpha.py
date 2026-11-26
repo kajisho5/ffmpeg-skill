@@ -395,6 +395,21 @@ def unpremultiply_leg(meta: Optional[Dict[str, Any]]) -> str:
             + (f"scale=out_color_matrix={matrix}," if matrix else "") + f"format={v.get('pix_fmt')},")
 
 
+def wide_merge_leg(codec: str, meta: Optional[Dict[str, Any]] = None) -> str:
+    """color.py's merge leg for a premultiplied ProRes 4444 master: the source's mask stays at 16
+    bits through the RGB premultiply (alphamerge negotiates 8).
+
+    The graded YUV is converted to that RGB with the matrix its samples are in, not by
+    `format=gbrp16le` alone: swscale read a BT.709-tagged grade as BT.601, and the written stream,
+    tagged BT.709, carried the 709->601 shift on opaque pixels (#740)."""
+    v = (meta or {}).get("video") or {}
+    m = "bt709" if rgb_to_bt709_line(meta, codec) else _SWS_MATRIX.get(v.get("color_space") or "")
+    conv = f"scale=in_color_matrix={m}," if m else ""
+    return ("[ka_g]" + conv + "format=gbrp16le[ka_rgb];"
+            "[ka_a]alphaextract,format=gray16le[ka_m];"
+            "[ka_rgb][ka_m]mergeplanes=map1p=1:map2p=2:map3s=1:format=gbrap16le")
+
+
 def tag_args(meta: Optional[Dict[str, Any]]) -> List[str]:
     """The source's colour tags as output options, so the written stream says what the frames do
     (an alpha line keeps the source's tags, as --codec prores does; an RGB source on a YUV line is

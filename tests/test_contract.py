@@ -12021,6 +12021,34 @@ def _unused_imports(path: Path) -> "list":
     return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
 
 
+class PremultipliedMergeMatrix740Tests(unittest.TestCase):
+    """#740: color.py's wide merge leg (a premultiplied ProRes 4444 master's mask kept at 16 bits
+    through the RGB premultiply) converted the graded YUV to RGB with `format=gbrp16le` alone,
+    which is swscale's BT.601 default: a BT.709-tagged source was read as BT.601 and written back
+    tagged BT.709, so opaque pixels came out by the 709->601 shift."""
+
+    def test_the_wide_merge_leg_names_the_matrix_the_grade_leaves(self):
+        from _common.alpha import wide_merge_leg
+        legs = {name: wide_merge_leg("prores4444", meta) for name, meta in (
+            ("bt709", {"video": {"color_space": "bt709"}}),
+            ("bt601", {"video": {"color_space": "smpte170m"}}),
+            ("untagged", {"video": {}}),
+            ("rgb", {"video": {"pix_fmt": "rgba", "color_space": "gbr"}}))}
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["bt709"])
+        self.assertIn("scale=in_color_matrix=bt601,format=gbrp16le", legs["bt601"])
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["rgb"],
+                      "an RGB source on a YUV line is the BT.709 that line is (#496)")
+        self.assertNotIn("in_color_matrix", legs["untagged"],
+                         "an untagged source has no matrix to name: swscale's own default stands")
+
+    def test_color_py_builds_the_leg_through_the_helper(self):
+        src = (SCRIPTS / "color.py").read_text(encoding="utf-8")
+        self.assertIn("wide_merge_leg(alpha_codec, meta)", src)
+        inline = [i for i, line in enumerate(src.splitlines(), 1)
+                  if "format=gbrp16le" in line and not line.strip().startswith("#")]
+        self.assertEqual(inline, [], f"color.py builds the wide merge leg inline at line {inline}")
+
+
 class Audit467Tests(unittest.TestCase):
     """The items of audit #467 still open at 3.8.10: memory, distribution, the contract's size,
     the demo gallery and the agent eval runner."""
