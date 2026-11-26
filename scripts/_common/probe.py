@@ -526,7 +526,7 @@ def probe(path: str, role: str = "input", *, required: bool = True, advise_deint
         STATE.audio_inputs.add(os.path.realpath(path))
     if role == "input" and getattr(STATE, "first_input", None) is None:
         STATE.first_input = (path, len(out.get("audio_streams") or []),
-                             (out.get("video") or {}).get("hdr10_static"))
+                             (out.get("video") or {}).get("hdr10_static"), (out.get("video") or {}).get("bit_depth"))
     if role == "input" and out["timecode"].get("value") and getattr(STATE, "source_timecode", None) is None:
         STATE.source_timecode = (out["timecode"]["value"], duration)
     # what a source carries besides its picture and sound, for emit()'s source_carry comparison:

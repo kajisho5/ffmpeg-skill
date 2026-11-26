@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 4.8.2
+
+_Automated release: version and notes generated from pull requests merged since 4.8.1._
+
+### Fixed
+
+- A 10-bit (or deeper) source written as 8-bit now says so in the result's `notes`, for every tool,
+  measured on the written file (#696). A stream copy that keeps the depth, and an 8-bit source, say nothing.
+- fix: a deeper picture written as 8-bit says so in the result (#696) (#737)
+
 ## 4.8.1
 
 _Automated release: version and notes generated from pull requests merged since 4.8.0._
