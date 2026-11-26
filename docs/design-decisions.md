@@ -316,8 +316,11 @@ exists. When a decision changes, edit the entry in the same PR.
   video, a grid with a converted cell, and since 2.10.3 a `join`/`multicam`/`broll`/`overlay --video`
   with a converted clip, where an untagged clip beside a BT.601 one was shifted on 7.1+: 7.08 mean /
   25.0 max with the BT.601 clip first, 9.12 / 40.1 with it second, on 7.1.1 and 8.1.3), so a
-  one-input re-encode of an untagged source, and a grid or join of untagged/BT.709 clips, keep their
-  commands. Known on FFmpeg 7.0.x only (not in CI): its `colorspace` filter does not declare the
+  one-input re-encode and a mix of all-untagged sources keep their commands. An already tagged
+  BT.709 clip beside an untagged one needs the same label (#696): in both input orders the second
+  picture shifted even when the two inputs held identical samples. Grid, join, broll and multicam
+  now share this decision in `mix_color_chains`. Known on FFmpeg 7.0.x only (not in CI): its
+  `colorspace` filter does not declare the
   converted link, so a BT.601 clip *first* in `grid`/`join` still takes the others with it; the fix
   would change #332's conversion filter for every tool, so it is left. Code: `_common/color.py`,
   `_common/decision.py`. Tests:

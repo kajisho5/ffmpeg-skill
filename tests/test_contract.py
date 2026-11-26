@@ -2022,6 +2022,26 @@ sys.exit(fit.main())
         # a direct push has no PR by SHA either, and keeps the title rules
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
+        # A PR merged with a merge commit is that one commit, not its branch's: the branch commit
+        # "... (#453)" named an issue, and asking for PR 453's labels stopped every release after
+        # 4.7.1. The real git log, on a throwaway repository.
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                       GIT_COMMITTER_EMAIL="t@t")
+            git = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "base")
+            git("tag", "v1.0.0")
+            git("checkout", "-q", "-b", "topic")
+            git("commit", "-q", "--allow-empty", "-m", "feat: x (#453)")
+            git("checkout", "-q", "main")
+            git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #715 from o/topic")
+            git("commit", "-q", "--allow-empty", "-m", "fix: y (#716)")
+            subjects = [s for _, s in rv._main_commits("v1.0.0..HEAD", cwd=repo)]
+        self.assertEqual(subjects, ["fix: y (#716)", "Merge pull request #715 from o/topic"])
+        self.assertIn('"--first-parent", rev_range', (ROOT / ".github" / "workflows" / "release.yml").read_text(),
+                      "the release notes list main's commits too, not a merged branch's")
 
     def test_release_version_resolver_does_not_depend_on_a_pr_title(self):
         """3.13.2 (2026-11-19): four PRs titled without a fix/feat prefix carried only `chore`
@@ -2188,6 +2208,17 @@ sys.exit(fit.main())
             self.assertEqual(_common.matrix_chain(meta(color_space="smpte170m"), meta()), "")
         finally:
             _common.STATE.codec, _common.STATE.hw = saved
+
+    def test_mix_color_chains_accepts_missing_metadata(self):
+        """An input that was not probed is accepted just as by matrix_chain."""
+        tagged = {"video": {"color_space": "bt709"}}
+        self.assertEqual(_common.mix_color_chains([None, {}], None), ["", ""])
+        self.assertEqual(_common.mix_color_chains([None, {}], None, draws_colour=True),
+                         [_common.label_chain(None, None), _common.label_chain({}, None)])
+        self.assertEqual(_common.mix_color_chains([tagged, None], None),
+                         [_common.matrix_chain(tagged, None), _common.label_chain(None, None)])
+        self.assertEqual(_common.mix_color_chains([None, tagged], None),
+                         [_common.label_chain(None, None), _common.matrix_chain(tagged, None)])
 
     def test_fold_bt709_matrix_into_the_tools_graph(self):
         """run() moves the encoder line's conversion -vf into the tool's own graph, first: with no
@@ -3932,7 +3963,7 @@ sys.exit(fit.main())
         JPEG are converted to BT.709 by every tool that re-encodes them; a still composited over the
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
-        beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
+        beside a converted or already BT.709 cell. Two untagged cells need no label."""
         s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
@@ -3965,7 +3996,10 @@ sys.exit(fit.main())
             ("waveform", [self.src, "--image", png], {"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p": 1}),
             ("grid", [self.src, s601, "--cols", "2", "--rows", "1"], {"colorspace=ispace=smpte170m:": 1, label: 1}),
             ("grid", [s601, self.src, png, s709, "--cols", "2", "--rows", "2"], {"colorspace=ispace=smpte170m:": 1, label: 1, rgb: 1}),
-            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [s709, self.src, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [self.src, self.src, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [s709, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
         ]
         for n, (name, args, want) in enumerate(cases):
             with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
