@@ -2439,7 +2439,8 @@ stream-copied picture would drift from it (`fit.py --method speed` retimes both)
 `--channel N` keeps channel N of the track (0-based, `pan=mono|c0=cN`, first in the chain) as a
 1-channel output, or both sides of a stereo one with `--stereo`; an index past the track's channels
 and `--downmix` are refused. `--sample-rate HZ` (1000..768000) resamples the output (`aresample`,
-after the mix and the fades; `--length-samples` counts in this rate). Each is read back from the
+after the mix and the fades; `--length-samples` counts in this rate), and a `.mxf` output takes
+48 kHz only, so another `--sample-rate` is refused before ffmpeg runs. Each is read back from the
 output by probe as a verification step, `channels` and `sample_rate` (`expected`, `measured`), and
 the `audio` block reports `channel` and `sample_rate`.
 For a stereo recording with only the right microphone usable, run
@@ -2502,15 +2503,19 @@ stream-copies the picture and carries subtitle/data tracks where supported (`dro
 Audio-only outputs such as `.mka` keep the sound. Audio becomes the codec the
 output container takes: AAC in the video containers that take it, 16-bit PCM at 48 kHz in `.mxf`
 (whose muxer refuses AAC and any other sample rate), or the codec matching the extension (.wav, .aif/.aiff, .caf → PCM, .flac/.mka → FLAC, .mp3).
+An explicit `--sample-rate` other than 48000 is refused for an `.mxf` output rather than replaced
+by the rate its muxer fixes.
 The written file is measured again: a lossy encoder can push peaks past the
 ceiling loudnorm held (ffmpeg's AAC at 192k turned one transient from -2.4 to
 +3.7 dBFS). When it does, the tool re-encodes -- first at 256k then 320k if you
 did not pass `--audio-bitrate` (an `.m4a`/`.aac` output starts at its 256k, so only 320k is
-left), then with the loudnorm ceiling lowered by the overshoot -- until the file itself meets
+left; an `.mxf` output's PCM takes no bitrate, so those steps are skipped), then with the
+loudnorm ceiling lowered by the overshoot -- until the file itself meets
 `--tp`. A pinned `--audio-bitrate` reaches an audio output's codec as well as a video
 container's AAC (through 3.8.8 an `.m4a` was 256k whatever was asked, and its retries too);
 `.wav`/`.flac`/`.aif`/`.aiff`/`.caf`/`.mka` refuse it. `result` reports
-`tp_ceiling_used`, `audio_bitrate_used`, `encodes`, and a `note` when the
+`tp_ceiling_used`, `audio_bitrate_used` (absent for a container whose codec takes no bitrate,
+such as `.mxf`'s PCM), `encodes`, and a `note` when the
 integrated loudness ended more than 1 LU from the target because of it.
 
 ### export.py — delivery presets

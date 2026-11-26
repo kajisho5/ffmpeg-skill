@@ -324,6 +324,12 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
     "report":    dict(video="never", audio="never", note="measures via look/check; produces an HTML report, not a re-encoded artifact"),
 }
 
+# A writer's note that names AAC is the audio_codec_for() path, so a .mxf output takes the PCM its
+# muxer implements instead (#736); stated once here rather than repeated in every entry.
+for _reencode_note in REENCODE_META.values():
+    if "AAC" in _reencode_note.get("note", ""):
+        _reencode_note["note"] += " A .mxf output takes 16-bit PCM at 48 kHz instead (#736)."
+
 IDEMPOTENCY = {
     "bit_exact": "same inputs and flags give byte-identical output (with the CPU encoders: under --hw / $FFMPEG_SKILL_HW a "
                  "VideoToolbox encode is content_equivalent at best)",

@@ -32,7 +32,7 @@ from typing import Any, Dict, List
 
 from _common.probe import SILENT_PEAK_DBFS
 from _common.runner import path_denied
-from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
+from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs, sample_rate_refusal
 from _common.emit import file_origin, own_length, refuse, stream_end, warn
 from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, atempo_chain_with_lead, conform_filter, conform_to_length, late_sound_lead
 
@@ -514,7 +514,7 @@ def main() -> int:
                         help="a track's ISO 639-2 language code (eng, jpn ...), in track order")
     ap.add_argument("--bitrate", default=None,
                     help="audio bitrate: AAC's beside a picture (default 192k), and the codec's of a lossy audio output "
-                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf/.mka")
+                         "(.m4a/.aac default 256k, .mp3 -q:a 0, .ogg -q:a 6, .opus 128k); refused for .wav/.flac/.aif/.aiff/.caf/.mka, and .mxf's PCM takes none")
     ap.add_argument("--on-silent", choices=["warn", "fail"], default="warn",
                     help="a --music/--replace/--effects file (or, under --duck, the voice) whose peak is at or below "
                          "--silence-threshold: warn (default: mix it, report it under `silent`) or fail (refuse before ffmpeg runs)")
@@ -625,6 +625,9 @@ def main() -> int:
                 "the picture's length; write -o NAME.wav (or .flac, .m4a, ...)", kind="input")
     if args.sample_rate is not None and not (SAMPLE_RATE_RANGE[0] <= args.sample_rate <= SAMPLE_RATE_RANGE[1]):
         die(f"--sample-rate must be {SAMPLE_RATE_RANGE[0]}..{SAMPLE_RATE_RANGE[1]} Hz, got {args.sample_rate}")
+    rate_refusal = sample_rate_refusal(output, args.sample_rate)
+    if args.sample_rate is not None and rate_refusal:
+        die(rate_refusal)
     if args.channel is not None:
         if args.channel < 0:
             die(f"--channel is a 0-based channel index, got {args.channel}")

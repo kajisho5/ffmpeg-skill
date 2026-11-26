@@ -74,7 +74,7 @@ from _common.probe import (
     display_size, pixel_aspect, square_pixels, square_pixels_note
 )
 from _common.decision import (
-    aac_args, add_pad_fill_args, conform_filter, conform_to_length, conform_output_t, length_output_t, silence_filter, aspect_ratio, audio_codec_for, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
+    aac_args, add_pad_fill_args, conform_filter, conform_to_length, conform_output_t, length_output_t, silence_filter, aspect_ratio, audio_codec_for, sample_rate_refusal, AUDIO_CODECS, brand_caption_style, BRAND_DEFAULTS,
     description_block, _evidence_rank, fmt_chapter_time, propose_chapters,
     frame_flow, label_shot_flow, MOTION_GRID, MOTION_SEARCH, MOTION_STATIC_PX, MOTION_PAN_SPREAD,
     filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOURSE_MARKERS, FILLER_MAX_WORD,
@@ -181,7 +181,7 @@ __all__ = [
     "Any", "Dict", "Fraction", "List", "Optional", "Path", "Sequence", "Tuple", "argparse", "json", "math", "os",
     "platform", "re", "shutil", "subprocess", "sys", "unicodedata",
     "aac_args", "add_common", "add_pad_fill_args", "ADVANCE_EM", "analyze_levels", "LEGAL_RANGE_CHOICES", "LEGAL_RANGES", "legal_limits", "measure_signal_range", "apply_common", "detect_scenes", "detect_silences", "SCORE_RE", "SIL_RE", "_aspect_string",
-    "audio_codec_for", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
+    "audio_codec_for", "sample_rate_refusal", "AUDIO_CODECS", "BIDI_SCRIPTS", "_bit_depth", "brand_caption_style", "BRAND_DEFAULTS",
     "brand_states_font", "_brief", "_BRIEF_DROP", "_brief_summary", "bt709_matrix_args", "bt709_matrix_filter", "bt709_tag_args", "cfr_args", "cfr_at_input", "cfr_filter", "graph_with_cfr", "with_cfr", "_char_em",
     "char_script", "_check_existing_output", "refuse_existing_outputs", "guard_sidecar", "_check_no_overwrite_input", "_check_output_path", "child_args", "option_args",
     "child_limit", "_CHILDREN", "_cleanup_partial_output", "_cmdline", "CODECS", "color_hex", "_COLOR_TOKEN_RE",

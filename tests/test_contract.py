@@ -12041,6 +12041,42 @@ class MxfAudioCodec736Tests(unittest.TestCase):
         self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])
         self.assertFalse(decision.is_audio_output("out.mxf"), "an MXF output keeps its picture")
 
+    def test_a_pinned_sample_rate_the_mxf_muxer_cannot_write_is_refused(self):
+        """The .mxf entry's -ar is appended after the writer's own, so an explicit 44100 would be
+        replaced by 48000 without a word: both writers that take --sample-rate refuse instead, and
+        48000 is accepted (#736)."""
+        import loudness
+        from _common import decision
+        self.assertEqual(decision.container_audio_rate("out.mxf"), 48000)
+        self.assertIsNone(decision.container_audio_rate("out.mp4"))
+        refusal = decision.sample_rate_refusal("out.mxf", 44100)
+        self.assertIn("--sample-rate 44100", refusal)
+        self.assertIn("48000 Hz only", refusal)
+        self.assertIsNone(decision.sample_rate_refusal("out.mxf", 48000))
+        self.assertIsNone(decision.sample_rate_refusal("out.mp4", 44100))
+        # audio.py --sample-rate and loudness.py --sample-rate both go through the one refusal
+        for tool in ("audio.py", "loudness.py"):
+            self.assertIn("sample_rate_refusal(", (SCRIPTS / tool).read_text(encoding="utf-8"), tool)
+
+    def test_mxf_pcm_neither_reports_nor_retries_a_bitrate_it_ignores(self):
+        """PCM takes no bitrate: an .mxf output must not claim `audio_bitrate_used`, and an AAC
+        true-peak retry must not re-encode the same PCM at 256k/320k (#736)."""
+        import loudness
+        self.assertEqual(loudness.bitrate_steps(".mxf", False, "192k"), [])
+        self.assertEqual(loudness.bitrate_steps(".mp4", False, "192k"), ["256k", "320k"])
+        self.assertEqual(loudness.bitrate_steps(".mp4", True, "192k"), [])
+        self.assertFalse(loudness.bitrate_reported(".mxf", False))
+        self.assertFalse(loudness.bitrate_reported(".mxf", True))
+        self.assertTrue(loudness.bitrate_reported(".mp4", False))
+
+    def test_every_aac_note_says_what_an_mxf_output_takes(self):
+        """A note that says AAC is audio_codec_for()'s path: it must not claim AAC unconditionally
+        now that a .mxf output takes the PCM its muxer implements (#736)."""
+        notes = [m["note"] for m in _contract.REENCODE_META.values() if "AAC" in m.get("note", "")]
+        self.assertTrue(notes, "no note names AAC, so this check saw nothing")
+        for note in notes:
+            self.assertIn("A .mxf output takes 16-bit PCM at 48 kHz", note)
+
 
 class Audit467Tests(unittest.TestCase):
     """The items of audit #467 still open at 3.8.10: memory, distribution, the contract's size,

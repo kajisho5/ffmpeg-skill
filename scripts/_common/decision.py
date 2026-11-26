@@ -1482,6 +1482,31 @@ def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str
     return args + ["-b:a", bitrate]
 
 
+def container_audio_rate(output_path: str) -> Optional[int]:
+    """The sample rate a single-codec container fixes, or None when it fixes none.
+
+    CONTAINER_AUDIO_CODECS carries the rate as well as the codec where the muxer implements one
+    (MXF's PCM: 48 kHz, #736). A caller that lets the user pin a rate through `-ar` has to refuse
+    a different one: appending the container's `-ar` after the caller's would otherwise replace
+    it without a word."""
+    ext = os.path.splitext(output_path)[1].lower()
+    args = CONTAINER_AUDIO_CODECS.get(ext, [])
+    return int(args[args.index("-ar") + 1]) if "-ar" in args else None
+
+
+def sample_rate_refusal(output_path: str, requested: Optional[int]) -> Optional[str]:
+    """The refusal for an explicit sample rate a single-codec output cannot hold, else None.
+
+    The container's `-ar` is appended after the writer's own, so 44100 would be replaced by 48000
+    without a word: a writer that lets the user pin a rate refuses instead (#736)."""
+    fixed = container_audio_rate(output_path)
+    if fixed is None or requested is None or requested == fixed:
+        return None
+    ext = os.path.splitext(output_path)[1].lower()
+    return (f"--sample-rate {requested} cannot be written to a {ext} output, whose sound is "
+            f"{fixed} Hz only: drop --sample-rate or pass {fixed}")
+
+
 def is_audio_output(output_path: str) -> bool:
     """True when the output extension is an audio-only container this skill writes (AUDIO_CODECS:
     .wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka).

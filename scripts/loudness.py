@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from typing import Optional
 
 from _platforms import TP_TOLERANCE_DB
 
@@ -26,7 +27,7 @@ LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is
 from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
 from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
-from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, late_sound_lead
+from _common.decision import CONTAINER_AUDIO_CODECS, LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, container_audio_rate, late_sound_lead, sample_rate_refusal
 from _common import STATE, add_common, apply_common, emit, AUDIO_CODECS, refuse_unwritten_output, audio_codec_for, default_output, die, ffmpeg_base, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, dry_run_input_pending
 
 
@@ -114,7 +115,7 @@ def loudnorm_mode(stats: dict, lufs: float, tp: float, lra: float) -> str:
 
 def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output: str) -> dict:
     """One normalised file at `lufs` / `tp_max`, measured after: the keys emit() takes for it."""
-    sr = args.sample_rate or meta["audio"].get("sample_rate") or 48000
+    sr = args.sample_rate or container_audio_rate(output) or meta["audio"].get("sample_rate") or 48000
     ext = os.path.splitext(output)[1].lower()
     bitrate_pinned = args.audio_bitrate is not None
     # an AAC audio extension starts at its own rate (256k for .m4a/.aac), which is what it was
@@ -188,7 +189,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     # loudnorm ceiling by the measured overshoot, which in linear mode also lowers the
     # integrated loudness -- reported, never hidden.
     ceiling, rounds = tp_max, 0
-    steps = [] if bitrate_pinned or ext in AUDIO_CODECS and "aac" not in AUDIO_CODECS[ext] else [b for b in ("256k", "320k") if _kbps(b) > _kbps(bitrate)]
+    steps = bitrate_steps(ext, bitrate_pinned, bitrate)
     while not after.get("silent") and float(after["input_tp"]) > tp_max + TP_TOLERANCE_DB and rounds < 5:
         rounds += 1
         overshoot = float(after["input_tp"]) - tp_max
@@ -206,7 +207,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
         info(f"result:   {float(after['input_i']):.1f} LUFS, TP {float(after['input_tp']):.1f} dBTP (target {lufs} LUFS, TP <= {tp_max:g})")
     result = {k: after[k] for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset", "silent")}
     result["tp_ceiling_used"] = round(ceiling, 2)
-    if ext not in AUDIO_CODECS or "aac" in AUDIO_CODECS[ext] or bitrate_pinned:
+    if bitrate_reported(ext, bitrate_pinned):
         # a pinned rate reaches an .mp3/.ogg/.opus codec too (A143); unpinned, those keep their own
         result["audio_bitrate_used"] = bitrate
     result["encodes"] = rounds + 1
@@ -307,7 +308,7 @@ def main() -> int:
                     help="write one normalised file per target from this master, each measured after: a comma list of "
                          + ", ".join(f"{n} ({i:g} LUFS / {t:g} dBTP)" for n, (i, t) in VERSION_TARGETS.items())
                          + ", or LUFS/TP pairs such as -16/-1.5; files are <name>_loudnorm_<target>.<ext> (not with -o)")
-    ap.add_argument("--sample-rate", type=int, help="output sample rate (default: 48000; loudnorm upsamples internally to 192k)")
+    ap.add_argument("--sample-rate", type=int, help="output sample rate (default: 48000; loudnorm upsamples internally to 192k); a .mxf output takes 48 kHz only, so another value is refused")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -329,6 +330,9 @@ def main() -> int:
     if not meta.get("audio"):
         die("input has no audio stream")
     out_ext = os.path.splitext(args.output or default_output(args.input, "loudnorm"))[1].lower()
+    rate_refusal = sample_rate_refusal(args.output or default_output(args.input, "loudnorm"), args.sample_rate)
+    if not args.measure_only and rate_refusal:
+        die(rate_refusal)
     if not args.measure_only:
         # loudnorm encodes the sound: a .wma name (an -o, or a .wma input's default) is refused
         # before the measuring pass, not after it (#517)
@@ -383,6 +387,19 @@ def audio_length(meta: dict) -> "Optional[float]":
     container's, which is the picture's when the picture runs longer (and would fail a correct
     output against an expected length the sound never had)."""
     return own_length(meta.get("audio"))
+
+
+def bitrate_steps(ext: str, bitrate_pinned: bool, bitrate: str) -> "list":
+    """The AAC bitrates a true-peak retry may re-encode at: none when the user pinned one, and none
+    for a container whose codec takes no bitrate (LOSSLESS_AUDIO_EXT, or MXF's PCM, #736)."""
+    fixed = ext in CONTAINER_AUDIO_CODECS or ext in AUDIO_CODECS and "aac" not in AUDIO_CODECS[ext]
+    return [] if bitrate_pinned or fixed else [b for b in ("256k", "320k") if _kbps(b) > _kbps(bitrate)]
+
+
+def bitrate_reported(ext: str, bitrate_pinned: bool) -> bool:
+    """Whether `audio_bitrate_used` names a rate this output's codec actually takes: not for a
+    single-codec container, whose PCM ignores it whatever was asked (#736)."""
+    return ext not in CONTAINER_AUDIO_CODECS and (ext not in AUDIO_CODECS or "aac" in AUDIO_CODECS[ext] or bitrate_pinned)
 
 
 def _kbps(value: str) -> int:
