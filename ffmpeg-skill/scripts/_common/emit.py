@@ -168,6 +168,18 @@ def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None
         ctx.notes.append(note_line)
 
 
+def _report_reduced_bit_depth(output: str, meta: Dict[str, Any], ctx: "Context") -> None:
+    # A 10-bit (or deeper) picture written as 8-bit (#696, from #558): the reduction is decided
+    # (docs/design-decisions.md, "After 3.6.0": an SDR H.264 line is 8-bit), saying so was not.
+    # Measured on the written file for every tool; not for several pictures or a still.
+    from .probe import MEDIA_EXT, _STILL_EXT
+    src, out = (list(getattr(STATE, "first_input", None) or ()) + [None] * 4)[3], ((meta or {}).get("video") or {}).get("bit_depth")
+    ext = os.path.splitext(output)[1].lower()
+    if src and out and out < src and src > 8 and ext in MEDIA_EXT and ext not in _STILL_EXT and len(STATE.video_inputs or ()) <= 1:
+        ctx.notes.append(f"the source picture is {src}-bit and this output is {out}-bit: the encoder writes {out} bits "
+                         f"(a ProRes master, --codec prores where the tool offers it, keeps the depth)")
+
+
 # source_carry: the items compared, in report order. The first group is content a viewer or
 # listener notices missing and raises the warning; the second is tags, listed but never warned
 # about (every camera file has a creation_time, so a warning for it would fire on every run).
@@ -915,6 +927,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
         _report_dropped_audio_tracks(meta, ctx)
         _report_dropped_hdr10_metadata(meta, ctx)
+        _report_reduced_bit_depth(output, meta, ctx)
         carry = source_carry(output, ctx, extra)
         if carry and "source_carry" not in extra:
             extra["source_carry"] = carry
