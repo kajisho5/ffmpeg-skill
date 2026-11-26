@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.8.0
+
+_Automated release: version and notes generated from pull requests merged since 4.7.1._
+
 ### Fixed
 
 - Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
@@ -20,6 +26,17 @@
   `straight` (default) is today's command. The result and its `alpha` step name the mode (`source_alpha_mode`);
   without `--keep-alpha` the flag is refused (`source_alpha_mode_needs_keep_alpha`). The premultiplied write
   (`--alpha-mode premultiplied`, every tool that has it) now multiplies in 16-bit RGB instead of 8-bit.
+- ci: the release reads main's own commits (--first-parent), not a merged branch's (#734)
+- fix: preserve colors when mixing tagged BT.709 and untagged clips (#709)
+- feat: add agents plugin marketplace and Codex plugin (#673)
+- fix: evals/run.py fills a slot with a whole name, not a word that contains it ("execute" ran cut) (#718)
+- feat: measure, apply and verify reference pacing (#733)
+- Test decoding of MP4 sweep outputs (#720)
+- docs: document plugin and extension lifecycle (#726)
+- test: pin selected-channel stereo PCM level and document the upmix (#727)
+- test: check Japanese broadcast audio levels after delivery (#728)
+- fix: preserve text-default pictographs in captions and titles (#725)
+- Merge pull request #715 from kajisho5/claude/ffmpeg-skill-repo-setup-cn8xm4
 
 ## 4.7.1
 
