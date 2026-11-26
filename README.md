@@ -616,7 +616,9 @@ A rectangle you already know, sitting still for the whole clip, can be filled fr
 
 ### Does it auto-track faces or subjects for reframing?
 
-`fit.py --fit crop` centres the crop unless you pass `--crop-x` and `--crop-y`. Check
+No. `fit.py --fit crop` keeps one fixed window, centred unless you pass `--crop-x` and
+`--crop-y`, and nothing follows a face or a subject. To follow a subject that moves, split
+the clip where it moves (`cut.py`) and give each segment its own `--crop-x`, then `join.py` them. Check
 `crop_check.review_points` for sampled moments when luma motion or edge detail falls
 outside the kept window. Use `look.py OUTPUT --at TIME` with an indicated
 `output_time_estimate` to inspect one. `crop.py` cuts the rectangle you pass.
