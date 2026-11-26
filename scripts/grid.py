@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
+from _common import add_common, apply_common, audio_codec_for, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
     as_limited, draws_chroma, drawn_chain, drawtext_text_opts, escape_drawtext, ffmpeg_base, info, mix_color_chains, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
@@ -217,7 +217,7 @@ def main() -> int:
     cmd += video_args(None, args.crf, args.preset)
     cmd += cfr_args(None, args.fps)
     if args.audio_from is not None:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     cmd += ["-t", conform_output_t(target_duration, audio_rate) if conformed else f"{target_duration:.3f}", output]

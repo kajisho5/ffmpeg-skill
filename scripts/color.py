@@ -33,7 +33,7 @@ import sys
 from typing import List, Optional
 
 from _common.runner import absent_word, carried_stream_maps, fail_if_classified
-from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, audio_codec_for, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, refuse, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
@@ -357,7 +357,7 @@ def retag(args: argparse.Namespace, meta: dict, has_audio: bool, src_alpha=lambd
         # silently reporting "completed" with streams missing.
         info("re-encoding video/audio with the new tags (subtitles/data streams kept)")
         label = ["-vf", f"setparams=color_primaries={names[1]}:color_trc={names[2]}:colorspace={names[0]}"]
-        enc = x264_args(args.crf, args.preset, keep_bt709=False) + (aac_args() if has_audio else [])
+        enc = x264_args(args.crf, args.preset, keep_bt709=False) + (audio_codec_for(output) if has_audio else [])
         cmd = (ffmpeg_base() + ["-i", args.input, "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?",
                                 "-map", "0:s?", "-map", "0:d?"] + carried_stream_maps(args.input, output) + label + enc
                + ["-c:s", "copy", "-c:d", "copy", output])
@@ -672,7 +672,7 @@ def main() -> int:
         cmd = ffmpeg_base() + ["-i", args.input, "-vf", with_cfr(vf, meta), "-map", "0:v:0", "-map", f"0:a:{args.audio_stream}?"]
         # --lut/--correct grade the source's own pixels, so a BT.601 source is converted to the BT.709
         # the line is tagged with; --to-sdr's zscale chain already writes BT.709 and converts nothing more
-        cmd += x264_args(args.crf, args.preset, source=None if args.to_sdr else meta) + cfr_args(meta) + (aac_args() if has_audio else [])
+        cmd += x264_args(args.crf, args.preset, source=None if args.to_sdr else meta) + cfr_args(meta) + (audio_codec_for(output) if has_audio else [])
     dropped_streams = run_keeping_subtitles(cmd, output)
     r = probe(output, role="output")
     info(f"wrote {output} ({fmt_secs(r['duration'])}, {r['video']['width']}x{r['video']['height']}, "

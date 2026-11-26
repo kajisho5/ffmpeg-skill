@@ -68,7 +68,7 @@ from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
 from _common.decision import UNWRITTEN_AUDIO_EXT
 from _common import refuse_unwritten_output
-from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
+from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
 DROPPED_STREAMS: List[str] = []
@@ -147,11 +147,11 @@ def parse_segments(spec: str, fps=None, clamp: bool = False) -> List[Tuple[float
 
 
 def encode_args(meta: dict, dst: str, crf: int, preset: str) -> List[str]:
-    """Codec arguments for a re-encoded cut: video + AAC into a video container, otherwise the codec
-    the audio extension names (PCM for .wav, FLAC, MP3, AAC...) with no video stream."""
+    """Codec arguments for a re-encoded cut: video + the sound codec the output container takes (AAC
+    into .mp4/.mov/.mkv, PCM into .mxf), otherwise the codec the audio extension names with no video."""
     if is_audio_output(dst) or not meta.get("video"):
         return ["-vn"] + audio_codec_for(dst)
-    return video_encode_args(meta, crf, preset) + aac_args()
+    return video_encode_args(meta, crf, preset) + audio_codec_for(dst)
 
 
 def video_encode_args(meta: dict, crf: int, preset: str) -> List[str]:
@@ -1326,7 +1326,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
     with open(listfile, "w", encoding="utf-8") as fh:
         for c in chunks:
             fh.write(concat_list_line(c) + "\n")
-    audio = [] if not meta.get("audio") else (aac_args() if has_v else audio_codec_for(dst))
+    audio = [] if not meta.get("audio") else audio_codec_for(dst)
     run(with_mapped_chapters(ffmpeg_base() + ["-f", "concat", "-safe", "0", "-i", listfile], meta, segments_map(segments), None)
         + (["-c:v", "copy"] + (tag if ext in (".mp4", ".mov", ".m4v") else []) if has_v else ["-vn"]) + audio
         + (["-movflags", "+faststart"] if ext in (".mp4", ".mov", ".m4v") and has_v else [])

@@ -16,7 +16,7 @@ import math
 import sys
 
 from _common.runner import with_mapped_chapters
-from _common import add_common, apply_common, aac_args, cfr_args, cfr_filter, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, audio_codec_for, cfr_args, cfr_filter, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs
 from _common.emit import warn
 from _common.decision import (HELD_FRAMES_WARN_BYTES, av_clip_length, av_trim, delivered_rate, frame_durations, frame_rate,
                               held_frames_bytes, stream_starts)
@@ -96,7 +96,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta)
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     span = float(meta.get("duration") or vdur or 0.0)

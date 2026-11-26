@@ -33,7 +33,7 @@ import os
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
-from _common import STATE, aac_args, concat_list_line, ffmpeg_base, require_tool, run
+from _common import STATE, audio_codec_for, concat_list_line, ffmpeg_base, require_tool, run
 from _common.color import carried_tag_args
 from _common.runner import fail_if_classified
 
@@ -370,7 +370,7 @@ def execute(src: str, segments: List[Tuple[float, float]], dst: str, meta: Dict[
                          f"aresample=async=1:first_pts=0,apad=whole_dur={b - a:.6f}{fades}[a{i}]")
             pads += f"[a{i}]"
         graph.append(f"{pads}concat=n={len(segments)}:v=0:a=1[a]")
-        cmd += ["-filter_complex", ";".join(graph), "-map", "0:v:0", "-map", "[a]"] + aac_args()
+        cmd += ["-filter_complex", ";".join(graph), "-map", "0:v:0", "-map", "[a]"] + audio_codec_for(dst)
     else:
         cmd += ["-map", "0:v:0"]
     cmd += ["-c:v", "copy", "-bsf:v", "filter_units=remove_types=9", "-sn", "-dn"]

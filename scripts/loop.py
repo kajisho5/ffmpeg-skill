@@ -32,7 +32,7 @@ import os
 import sys
 import tempfile
 
-from _common import STATE, concat_list_line, add_common, aac_args, apply_common, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, concat_list_line, add_common, audio_codec_for, apply_common, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, refuse_output_is_input, require_filter, require_tool, run, video_args, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import warn
 from _common.decision import HELD_FRAMES_WARN_BYTES, av_trim, held_frames_bytes, length_output_t, stream_starts
 from _common.probe import decode_gray_frames, decode_pcm_mono
@@ -351,7 +351,7 @@ def main() -> int:
     # not a variable-rate source's average, which re-timed every repeat by a frame or two
     cmd += ["-fps_mode", "passthrough"] if args.boomerang else forced_rate
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     cmd.append(output)

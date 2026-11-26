@@ -32,7 +32,7 @@ from _common.color import is_rgb
 from _common.decision import line_matrix_filter
 from _common.emit import note
 from _common.runner import ffmpeg_failure_extra, require_filter
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run_keeping_subtitles, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
+from _common import add_common, apply_common, audio_codec_for, cfr_args, with_cfr, default_output, die, emit, escape_filter_path, ffmpeg_base, info, probe, require_tool, run_keeping_subtitles, video_args, X264_PRESETS, run_analysis, dry_run_input_pending, fmt_secs, record_fallback, EVEN_SCALE
 
 
 def main() -> int:
@@ -124,7 +124,7 @@ def main() -> int:
         cmd += video_args(meta, args.crf, args.preset)
         cmd += cfr_args(meta)
         if has_audio:
-            cmd += aac_args()
+            cmd += audio_codec_for(output)
         else:
             cmd += ["-an"]
         # the frames keep their times, so the subtitle/data tracks are copied as fit.py and color.py

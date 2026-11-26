@@ -22,7 +22,7 @@ from fractions import Fraction
 
 from _common.decision import av_trim, cfr_at_input, cfr_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, silence_filter, stream_starts, tpad_length
 from _common.runner import with_mapped_chapters
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
+from _common import add_common, apply_common, audio_codec_for, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, time_arg, fmt_secs, run
 from _common.emit import input_length, refuse_still
 
 
@@ -170,7 +170,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta)
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     if not holds_end:

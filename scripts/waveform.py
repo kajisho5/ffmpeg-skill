@@ -41,7 +41,7 @@ from pathlib import Path
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common.probe import SILENT_PEAK_DBFS, refuse_not_a_still, square_pixels, square_pixels_note
 from _common import still_input_args  # noqa: E402
-from _common import (add_common, apply_common, aac_args, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
+from _common import (add_common, apply_common, audio_codec_for, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
                      fmt_secs, child_args, run_tool, measured_level_dbfs, sibling_temp)
 from _common import (default_font_file, drawtext_fontfile, input_length, refuse_existing_outputs,
@@ -349,7 +349,7 @@ def main() -> int:
         cmd += ["-map", "[v]"]
     cmd += ["-map", f"0:a:{args.audio_stream}"]
     cmd += video_args(None, args.crf, args.preset)  # the one encoder line, so --codec / --quality reach it (review 7)
-    cmd += aac_args()
+    cmd += audio_codec_for(output)
     # -shortest alone is not enough on FFmpeg 5.x: showwaves keeps emitting frames after the
     # audio ends (a 12 s source came out 14.08 s on 5.1.1, #146), so the output is also capped
     # at the source's own duration when probe knows it.

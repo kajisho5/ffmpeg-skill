@@ -18,7 +18,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, audio_codec_for, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 
 # hqdn3d's own AVOptions default to 0 (off); these tested presets are the light/medium/heavy
 # starting points its own documentation and common usage recommend (spatial then temporal,
@@ -78,7 +78,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     cmd += cfr_args(meta, args.fps)
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)

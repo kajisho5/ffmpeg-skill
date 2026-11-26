@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from _common.decision import (av_trim, conform_output_t, conform_to_length, frame_durations, frame_rate, frame_window,
                               grid_at_or_after, on_frame, silence_filter, stream_starts, window_expr, windowed_overlay_x)
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, mix_color_chains, overlay_format, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, audio_codec_for, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, mix_color_chains, overlay_format, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, is_still_input, square_pixels, square_pixels_note, still_loop_args
 from _common.emit import input_length
@@ -263,7 +263,7 @@ def main() -> int:
     if aout == "0:a:0":
         cmd += ["-c:a", "copy"]
     elif aout:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     cmd += ["-t", conform_output_t(dur_a, MIX_RATE) if aout == "[aout]" and dur_a > 0 else f"{dur_a:.3f}", output]

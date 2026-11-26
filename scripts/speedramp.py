@@ -23,7 +23,7 @@ from typing import Any, List, Tuple
 
 from _common.decision import atempo_chain_with_lead, av_trim, conform_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, on_frame, stream_starts
 from _common.runner import with_mapped_chapters
-from _common import add_common, apply_common, aac_args, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
+from _common import add_common, apply_common, audio_codec_for, default_output, die, emit, ffmpeg_base, info, probe, run, video_args, X264_PRESETS, fmt_secs, time_arg
 from _common.emit import input_length, refuse_still
 
 MAX_SPEED = 20.0
@@ -170,7 +170,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     cmd += ["-fps_mode", "cfr", "-r", f"{meta['video'].get('fps') or 30.0:g}"]
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     edges = bounds + [math.inf]

@@ -22,7 +22,7 @@ Examples:
 import argparse
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
+from _common import add_common, apply_common, audio_codec_for, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
 
 MODES = {"frame": 0, "field": 1}
 PARITIES = {"auto": -1, "tff": 0, "bff": 1}
@@ -74,7 +74,7 @@ def main() -> int:
     cmd += video_args(meta, args.crf, args.preset)
     cmd += rate_args
     if has_audio:
-        cmd += aac_args()
+        cmd += audio_codec_for(output)
     else:
         cmd += ["-an"]
     dropped_streams = run_keeping_subtitles(cmd, output)

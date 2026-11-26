@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common.runner import path_denied, read_text_or_die, run_analysis
-from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, mix_color_chains, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, mix_color_chains, video_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts, warn_mostly_cropped
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -1044,7 +1044,7 @@ def main() -> int:
     # to meet the AAC tail (a 51-frame dissolve came out 52), which newer builds no longer do -- pass
     # the frames through as built, for a plain cut as much as for a transition
     cmd += ["-fps_mode", "passthrough"]
-    cmd += video_args(hdr_meta or metas[0], args.crf, args.preset, convert_matrix=False) + aac_args() + [output]
+    cmd += video_args(hdr_meta or metas[0], args.crf, args.preset, convert_matrix=False) + audio_codec_for(output) + [output]
     run(cmd)
     expected = unpending_length(lens, d)
     if expected is not None and cut_f:

@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, safe_margins_px, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
-from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, aac_args, cfr_args, cfr_filter, cfr_at_input, with_cfr, default_output, die, escape_drawtext, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, X264_PRESETS, time_arg, fmt_secs
+from _common import STATE, script_font_for_text, drawtext_clean, drawtext_line_metrics, drawtext_text_opts, drawtext_draws_newline_glyph, is_multiline, needs_shaping, LANGUAGE_NAMES, has_emoji, detect_script, emoji_clusters, load_brand, drawn_chain, label_chain, layer_base_chain, matrix_chain, overlay_format, range_chain, rgb_chain_to_bt709, video_args, add_common, apply_common, emit, audio_codec_for, cfr_args, cfr_filter, cfr_at_input, with_cfr, default_output, die, escape_drawtext, ffmpeg_base, info, probe, run_keeping_subtitles, validate_color, X264_PRESETS, time_arg, fmt_secs
 from _common.emit import note, warn
 from _common.color import is_rgb
 from _common.decision import length_output_t, window_expr, windowed_overlay_x
@@ -740,7 +740,7 @@ def main() -> int:
             note(f"--hw: --alpha-codec {alpha_codec} stays on the CPU (no VideoToolbox encoder writes it with its alpha)")
     else:
         cmd += video_args(meta, args.crf, args.preset, convert_matrix=not args.video) + cfr_args(meta)
-        cmd += aac_args() if meta.get("audio") else ["-an"]
+        cmd += audio_codec_for(output) if meta.get("audio") else ["-an"]
     if cfr_filter(meta):
         # the conform of a VFR source is the fps filter (in a graph, on the main picture as it is
         # decoded): the encoder line's -fps_mode cfr alone let a frame run up to two frames late (#512)

@@ -32,7 +32,7 @@ import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
-from _common import guard_sidecar, mix_color_chains, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common import guard_sidecar, mix_color_chains, video_args, audio_codec_for, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.decision import av_trim, conform_output_t, conform_to_length, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -372,7 +372,7 @@ def main() -> int:
 
     output = args.output or default_output(args.inputs[0], "multicam", "mp4")
     cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
-    cmd += video_args(metas[0], args.crf, args.preset, convert_matrix=False) + aac_args() + ["-t", conform_output_t(ref_dur, 48000) if conformed else f"{ref_dur:.3f}", output]
+    cmd += video_args(metas[0], args.crf, args.preset, convert_matrix=False) + audio_codec_for(output) + ["-t", conform_output_t(ref_dur, 48000) if conformed else f"{ref_dur:.3f}", output]
 
     if args.write_project:
         # Same cut decision as the combined render above (project_clips was built alongside the

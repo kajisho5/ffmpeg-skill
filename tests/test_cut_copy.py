@@ -614,7 +614,29 @@ class CutJoinTests(unittest.TestCase):
         self.assertFrameIs(frames[0], 297, "first frame of 9.9-10.1")
         self.assertFrameIs(frames[-1], 302, "last frame of 9.9-10.1")
 
-    # ------------------------------------------------------------------ the source codec
+    def test_a_reencoded_mxf_output_takes_the_pcm_its_muxer_accepts(self):
+        """#736: audio_codec_for() had no .mxf entry, so --accurate/--remove/--segments handed AAC to
+        the MXF muxer, whose pcm_rechunk refused it ("Codec 'aac' is not supported", then "Could
+        not write header") and wrote nothing. The output holds 16-bit PCM at the cut's length, and
+        the shared helper keeps the other containers and the picture-only meaning of .mxf."""
+        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le"])
+        self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])
+        self.assertEqual(decision.audio_codec_for("out.wav"), ["-c:a", "pcm_s16le"])
+        self.assertFalse(decision.is_audio_output("out.mxf"), "an MXF output keeps its picture")
+        mx = DIR / "mx.mxf"
+        if not mx.exists():
+            # the issue's fixture: the shape an MXF out of a broadcast tool has, PCM sound included
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=5",
+               "-f", "lavfi", "-i", "sine=f=440:d=5:sample_rate=48000", "-c:v", "mpeg2video", "-g", "12",
+               "-bf", "0", "-c:a", "pcm_s16le", "-timecode", "01:00:00:00", mx)
+        out = DIR / "accurate_mxf.mxf"
+        data = cut_json(mx, "--start", "1.5", "--end", "3", "--accurate", "-o", out)
+        self.assertEqual(data["status"], "completed", data)
+        meta = probe(str(out))
+        self.assertEqual(meta["audio"]["codec"], "pcm_s16le", meta.get("audio"))
+        self.assertTrue(meta.get("video"), "the picture is written beside the sound")
+        self.assertAlmostEqual(meta["duration"], 1.5, delta=0.1)
+
     def test_a_reencoded_cut_of_an_sdr_hevc_source_stays_hevc(self):
         """A re-encode goes through x264 whatever the SDR source, so trimming an iPhone HEVC
         clip with --accurate hands back H.264. With --keep-hevc it keeps HEVC, 8-bit and tagged BT.709."""

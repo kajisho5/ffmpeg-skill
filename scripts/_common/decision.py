@@ -1441,6 +1441,14 @@ AUDIO_CODECS = {
 
 LOSSLESS_AUDIO_EXT = {".wav", ".flac", ".aif", ".aiff", ".caf", ".mka"}  # the AUDIO_CODECS whose codec takes no bitrate
 
+# Video containers whose muxer takes one audio codec only (#736): MXF's pcm_rechunk refuses AAC
+# ("Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'", then "Could not write
+# header" and nothing written, measured on 6.1.1 and 9.0.1), so a re-encoded sound is 16-bit PCM
+# as the source fixture's is. Not an AUDIO_CODECS entry: these outputs keep their picture.
+CONTAINER_AUDIO_CODECS: Dict[str, List[str]] = {
+    ".mxf": ["-c:a", "pcm_s16le"],
+}
+
 # Every audio-only extension this skill reads (AUDIO_MEDIA_EXT) that has no codec above: a run
 # that would encode into an output named so is refused before ffmpeg runs, and only a stream copy
 # of WMA sound is written (runner.refuse_unwritten_output(), #517). That is .wma: FFmpeg's ASF
@@ -1454,8 +1462,11 @@ def audio_codec_for(output_path: str, bitrate: Optional[str] = None) -> List[str
     `bitrate` is one the caller asked for: it replaces the rate or quality an audio extension
     names (`-q:a 0` for .mp3, 256k for .m4a), which through 3.8.8 it never reached (A143), and is
     the AAC rate of any other container (192k when it is None). A lossless extension takes none;
-    the caller refuses a bitrate for it."""
+    the caller refuses a bitrate for it. A container that takes one codec (CONTAINER_AUDIO_CODECS)
+    dictates it whatever the bitrate."""
     ext = os.path.splitext(output_path)[1].lower()
+    if ext in CONTAINER_AUDIO_CODECS:
+        return list(CONTAINER_AUDIO_CODECS[ext])
     if ext not in AUDIO_CODECS:
         return ["-c:a", "aac", "-b:a", bitrate or "192k"]
     args = list(AUDIO_CODECS[ext])

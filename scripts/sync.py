@@ -33,7 +33,7 @@ import sys
 from typing import Dict, List
 
 from _common.runner import fail_if_classified, refuse_output_is_input
-from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
+from _common import STATE, video_args, add_common, apply_common, emit, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
 from _common.timeline import output_timecode_args
@@ -406,7 +406,7 @@ def main() -> int:
             # to the sample of the rate the second's sound is written at, not to the millisecond:
             # the endless apad is ended by this -t alone (length_output_t)
             ref_t = length_output_t(ref_dur, (second_meta.get("audio") or {}).get("sample_rate"), runs_on=True) if ref_dur else None
-            cmd += aac_args() + (["-t", ref_t] if ref_dur else ["-shortest"]) + [output]
+            cmd += audio_codec_for(output) + (["-t", ref_t] if ref_dur else ["-shortest"]) + [output]
             proc = run(cmd, check=False)
             fail_if_classified(proc)  # a cause the re-encode would hit too is reported, not retried (#415)
             if proc.returncode != 0:

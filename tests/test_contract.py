@@ -12021,6 +12021,25 @@ def _unused_imports(path: Path) -> "list":
     return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
 
 
+class MxfAudioCodec736Tests(unittest.TestCase):
+    def test_no_writing_tool_hard_codes_the_aac_its_container_may_refuse(self):
+        """#736: decision.audio_codec_for() had no .mxf entry, so every tool that re-encodes sound
+        handed AAC to the MXF muxer, whose pcm_rechunk refused it and wrote nothing. The choice is
+        the output extension's (audio_codec_for(output)); a hard-coded aac_args() in a writing tool
+        is this defect returning, so the source is scanned for one."""
+        from _common import decision
+        hard_coded = sorted(
+            f"{p.relative_to(ROOT)}:{i}"
+            for p in [*SCRIPTS.glob("*.py"), *(SCRIPTS / "_common").glob("*.py")]
+            if p != SCRIPTS / "_common" / "decision.py"
+            for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if "aac_args()" in line and not line.strip().startswith("#"))
+        self.assertEqual(hard_coded, [], "these writing tools pick AAC without the output's extension")
+        self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le"])
+        self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])
+        self.assertFalse(decision.is_audio_output("out.mxf"), "an MXF output keeps its picture")
+
+
 class Audit467Tests(unittest.TestCase):
     """The items of audit #467 still open at 3.8.10: memory, distribution, the contract's size,
     the demo gallery and the agent eval runner."""
