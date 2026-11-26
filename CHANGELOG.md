@@ -6,6 +6,22 @@
 
 (nothing yet)
 
+## 4.8.4
+
+_Automated release: version and notes generated from pull requests merged since 4.8.3._
+
+### Fixed
+
+- An `.mxf` output of a re-encode (`cut.py --accurate`/`--smart`, fit, color, audio, export and the rest) is refused
+  before ffmpeg runs, as `.webm` is, with `kind: input`, `reason: output_container_codecs` and a hint to `.mov` or `.mkv`. It
+  failed after the encode started with "Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'" (#736).
+
+### Changed
+
+- A change to the changelog is a file under `changelog.d/` instead of lines under `## Unreleased`, so two open PRs no longer conflict in `CHANGELOG.md`; the release folds the fragments into the new version's section (#678).
+- fix: an .mxf output of a re-encode is refused before ffmpeg runs (#736) (#744)
+- chore: changelog fragments instead of editing ## Unreleased (#678), and the README says the crop window is fixed (#570) (#742)
+
 ## 4.8.3
 
 _Automated release: version and notes generated from pull requests merged since 4.8.2._
