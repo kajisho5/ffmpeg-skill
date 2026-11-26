@@ -29,7 +29,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
 from _common import asr as _asr
 from _common.emit import warn
 from _common.asr import _dicts
-from _common.runner import parse_json, replace_checked, same_file
+from _common.runner import parse_json, replace_checked, same_file, write_sidecar
 from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
@@ -894,12 +894,13 @@ def main() -> int:
         if not args.edl:
             return
         if not STATE.dry_run:  # the EDL is an artifact like the cut itself: a plan writes nothing
-            with open(args.edl, "w", encoding="utf-8") as fh:
-                on_frames = bool(video_out and frame_rate(meta))
-                for s, e in held:
-                    # a frame-time bound is written down to the millisecond, not rounded up past
-                    # its frame: cut.py --segments cuts at the first frame at or after it (#416 review)
-                    fh.write(f"{_edl_time(s, on_frames)}-{_edl_time(e, on_frames)}\n")
+            on_frames = bool(video_out and frame_rate(meta))
+            rows = []
+            for s, e in held:
+                # a frame-time bound is written down to the millisecond, not rounded up past
+                # its frame: cut.py --segments cuts at the first frame at or after it (#416 review)
+                rows.append(f"{_edl_time(s, on_frames)}-{_edl_time(e, on_frames)}\n")
+            write_sidecar(args.edl, "".join(rows))
         info(f"wrote {args.edl}")
 
     if args.list or args.filler_list:

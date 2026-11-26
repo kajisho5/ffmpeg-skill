@@ -10281,6 +10281,175 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(silence.write_time_map, str(path), tm), (None, None))
         self.assertEqual(json.loads(path.read_text(encoding="utf-8")), tm)
 
+    def test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written(self):
+        """#696: write_sidecar() gives an EDL, an SRT or a chapter list the replace-time recheck an
+        ffmpeg output gets: a file another process put at the path after the output check is
+        refused and the staged copy removed; an unchanged one (or --overwrite) is written, and
+        this run may write its own side file again."""
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        path.write_text("theirs", encoding="utf-8")  # appeared during the encode
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), ("input", "output_exists"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "theirs")
+        self.assertEqual([p.name for p in self.work.iterdir()], ["edl.txt"], "the staged copy is removed")
+        # a target left as the check saw it (here: absent) is written, and this run may write its
+        # own side file again
+        path.unlink()
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours again\n")
+        # --overwrite consented to replacing whatever is at the path
+        path.write_text("theirs again", encoding="utf-8")
+        _common.STATE.overwrite = True
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours once more\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours once more\n")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not kept on Windows")
+    def test_a_side_file_keeps_the_mode_of_the_file_it_replaces(self):
+        """#743 review: write_sidecar() gave the staged file the umask's mode on every write, so
+        replacing an existing 0600 sidecar under --overwrite widened it to 0644."""
+        path = self.work / "edl.txt"
+        path.write_text("theirs", encoding="utf-8")
+        os.chmod(path, 0o600)
+        _common.STATE.overwrite = True  # consent to replace the existing file
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600, "the existing file's mode is kept")
+        # a new side file still gets the mode open() would have given it under this umask
+        fresh = self.work / "fresh.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(fresh)), (None, None))
+        self.assertEqual(self.call(self.runner.write_sidecar, str(fresh), "new\n"), (None, None))
+        mask = os.umask(0)
+        os.umask(mask)
+        self.assertEqual(os.stat(fresh).st_mode & 0o777, 0o666 & ~mask)
+
+    def test_a_side_file_created_between_the_comparison_and_the_install_is_refused(self):
+        """#743 review (Major): the install was os.replace(), which overwrote a file another
+        process created after refuse_changed_output() passed. A target the check recorded absent
+        is installed with a link that fails when anything appeared in that gap."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def create_then_install(tmp, final, expected):
+            if not os.path.lexists(final):
+                Path(final).write_bytes(b"theirs")  # another process, after the comparison
+            real(tmp, final, expected)
+
+        with mock.patch.object(self.runner, "_install_checked", create_then_install):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"),
+                             ("input", "output_exists"))
+        self.assertEqual(path.read_bytes(), b"theirs")
+        self.assertEqual(self.temps(), [], "the staged copy is removed")
+
+    def test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite(self):
+        """#743 review: --overwrite consents to replacing whatever is at the path, so the link
+        install must not refuse a file another process created after the comparison when it is
+        given; without --overwrite the same gap is still refused (the test above)."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def create_then_install(tmp, final, expected):
+            if not os.path.lexists(final):
+                Path(final).write_bytes(b"theirs")  # another process, after the comparison
+            real(tmp, final, expected)
+
+        _common.STATE.overwrite = True
+        with mock.patch.object(self.runner, "_install_checked", create_then_install):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(self.temps(), [], "the staged copy was installed, not left behind")
+
+    def test_an_overwrite_pair_puts_back_a_file_that_appeared_at_a_checked_absent_target(self):
+        """#743 review (Major): with --overwrite the backup was skipped for a target the check
+        recorded absent, so a file another process created there during the encode was replaced
+        by the first install and, when a later install in the pair failed, the rollback removed
+        ours without putting that file back. A failed pair leaves what was there."""
+        from unittest import mock
+        first, second = self.work / "pair-a.txt", self.work / "pair-b.txt"
+        # both targets are absent when the run checks them: recorded absent
+        self.assertEqual(self.call(self.runner.refuse_existing_outputs, [str(first), str(second)]), (None, None))
+        staged_first, staged_second = self.work / "a.tmp", self.work / "b.tmp"
+        staged_first.write_text("ours-a", encoding="utf-8")
+        staged_second.write_text("ours-b", encoding="utf-8")
+        _common.STATE.overwrite = True
+        real_check, real_install = self.runner.refuse_changed_output, self.runner._install_checked
+
+        def check_then_create(path, cleanup=None):
+            real_check(path, cleanup)
+            if path == str(first) and not os.path.lexists(path):
+                Path(path).write_bytes(b"theirs")  # another process, during the encode
+
+        def fail_second_install(tmp, final, expected):
+            if final == str(second):
+                raise OSError("the second install fails")  # a full disk, a refused replace
+            real_install(tmp, final, expected)
+
+        with mock.patch.object(self.runner, "refuse_changed_output", check_then_create), \
+                mock.patch.object(self.runner, "_install_checked", fail_second_install):
+            with self.assertRaises(OSError):
+                self.runner.replace_checked_together([(str(staged_first), str(first)),
+                                                      (str(staged_second), str(second))])
+        self.assertEqual(first.read_bytes(), b"theirs", "the file that was at the path is put back")
+        self.assertEqual(self.temps(), [], "the staged files are removed")
+
+    def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
+        """#743 review: write_sidecar() read the path back after the install, so a file another
+        process put there in that gap was recorded as this run's and the next write replaced it."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def install_then_swap(tmp, final, expected):
+            real(tmp, final, expected)
+            other = path.with_name(path.name + ".other")
+            other.write_bytes(b"theirs")
+            os.replace(other, path)  # another process replaces it after this run's install
+
+        with mock.patch.object(self.runner, "_install_checked", install_then_swap):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_bytes(), b"theirs")
+        # the recorded identity is the staged file's, so the foreign file is not adopted: the
+        # next write without --overwrite refuses it
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"),
+                         ("input", "output_exists"))
+        self.assertEqual(path.read_bytes(), b"theirs")
+
+    def test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper(self):
+        """#696's class, swept: a file a tool writes itself and a caller named (an EDL, an SRT/ASS,
+        a chapter/description list, a project, a report) is staged and put in place by
+        write_sidecar(); the concat lists, work files and manifests a tool makes for itself stay
+        plain open()/write_text()."""
+        writes = {
+            "scenes.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"')],
+            "multicam.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"'),
+                            ('write_sidecar(args.write_project,', 'open(args.write_project, "w"')],
+            "metadata.py": [('write_sidecar(args.chapters_out,', 'Path(args.chapters_out).write_text'),
+                            ('write_sidecar(args.description_out,', 'Path(args.description_out).write_text')],
+            "silence.py": [('write_sidecar(args.edl,', 'open(args.edl, "w"')],
+            "caption.py": [('write_sidecar(path,', 'open(path, "w"'),
+                           ('write_sidecar(dst,', 'Path(dst).write_text')],
+            "_common/asr.py": [('write_sidecar(path,', 'open(path, "w"')],
+            "_ass_overlay.py": [('write_sidecar(path,', 'open(path, "w"')],
+            "render.py": [('write_sidecar(dest,', 'Path(dest).write_text'),
+                          ('write_sidecar(pack,', 'Path(pack).write_text'),
+                          ('write_sidecar(args.init,', 'Path(args.init).write_text'),
+                          ('write_sidecar(args.write_project,', 'Path(args.write_project).write_text')],
+            "report.py": [('write_sidecar(output,', 'Path(output).write_text')],
+            "verify.py": [('write_sidecar(args.report,', 'Path(args.report).write_text')],
+        }
+        for name, pairs in writes.items():
+            source = (SCRIPTS / name).read_text(encoding="utf-8")
+            for called, plain in pairs:
+                self.assertIn(called, source, f"{name}: the side file is not written through write_sidecar()")
+                self.assertNotIn(plain, source, f"{name}: {plain!r} still writes the side file with a plain open")
+
     @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
     def test_a_link_created_at_an_absent_target_is_refused(self):
         """The check is about the path as named, not where it resolves: a symlink another process

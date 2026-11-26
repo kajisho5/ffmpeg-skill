@@ -57,7 +57,7 @@ from _common.asr import ENGINE_CHOICES
 from _common.decision import ntsc_rate
 from _common.emit import note, warn
 from _common.probe import display_size, square_pixels, square_pixels_note
-from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
+from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds, write_sidecar
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
@@ -712,7 +712,7 @@ def shift_ass_file(src: str, dst: str, offset: float) -> Tuple[int, int]:
     Dialogue lines copied unshifted because their timestamps could not be read)."""
     # read as the dry run reads it: a file that is not UTF-8 is refused as kind input on both
     text, n, unshifted = shift_ass_text(read_text_or_die(src, "--ass"), offset)
-    Path(dst).write_text(text, encoding="utf-8-sig")
+    write_sidecar(dst, text, encoding="utf-8-sig")
     return n, unshifted
 
 
@@ -1054,8 +1054,7 @@ def write_ass(cues: List[Tuple[float, float, str]], path: str, args, play_w: int
         if EMOJI_SENTINEL in body:
             body = body.replace(EMOJI_SENTINEL, emoji_placeholder(getattr(args, "_emoji_box_px", size), back_alpha))
         lines.append(f"Dialogue: 0,{t(start)},{t(end)},Default,,0,0,0,,{fx}{body}")
-    with open(path, "w", encoding="utf-8-sig") as fh:
-        fh.write("\n".join(header + lines) + "\n")
+    write_sidecar(path, "\n".join(header + lines) + "\n", encoding="utf-8-sig")
 
 
 # ------------------------------------------------------- multi-language subtitle tracks (1.16)

@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 
@@ -2109,6 +2110,20 @@ def _checked_state(path: str) -> "Optional[Tuple[Optional[Dict[str, int]], bool]
     return (owned_identity(path), os.path.islink(path))
 
 
+_NO_RECORD = object()
+
+
+def _recorded_state(path: str) -> Any:
+    """The state the output check (or this run's own write) recorded for `path`: None when it
+    recorded the target absent, a state when it recorded what was there, _NO_RECORD when no
+    check covers the path. Read under the output lock, after refuse_changed_output() passed."""
+    try:
+        recorded = STATE.checked.get(os.path.abspath(path)) or STATE.checked.get(_checked_key(path))
+    except OSError:
+        return _NO_RECORD
+    return _NO_RECORD if recorded is None else recorded[1]
+
+
 def _record_checked(path: str, state: Any) -> None:
     """Record what a check (or this run's own write) found at `path`, with the directory the path
     resolved to then, under the resolved place and under the path as named: a directory symlink
@@ -2129,15 +2144,17 @@ def _record_checked(path: str, state: Any) -> None:
             pass
 
 
-def _remember_identity(path: str) -> None:
+def _remember_identity(path: str, state: Any = _NO_RECORD) -> None:
     """Count `path` as this run's own and record the identity this run left it with, which a
-    later replace of it compares (refuse_changed_output)."""
+    later replace of it compares (refuse_changed_output). `state` is the identity of the staged
+    file that was put there, captured before the install: reading `path` back afterwards could
+    record a file another process replaced in the gap as this run's."""
     try:
         real = os.path.realpath(path)
         STATE.written.add(real)
     except OSError:
         return
-    _record_checked(path, _checked_state(path))
+    _record_checked(path, _checked_state(path) if state is _NO_RECORD else state)
 
 
 def refuse_changed_output(path: str, cleanup: "Optional[Callable[[], None]]" = None) -> None:
@@ -2198,6 +2215,65 @@ def replace_checked(tmp: str, final: str) -> None:
     replace_checked_together([(tmp, final)])
 
 
+def write_sidecar(path: str, text: str, encoding: str = "utf-8") -> None:
+    """Write a side file a tool produces itself (an EDL, an SRT, a chapter or project list).
+
+    Staged as a hidden sibling temp and put in place by replace_checked(), so the replace runs
+    under the path's output lock after refuse_changed_output(): a file another process put there
+    after the output check is refused instead of overwritten, and a full disk or an interrupted
+    write leaves the previous file whole (#696). The mode is what open() would have given it: an
+    existing target keeps its permission bits, a new one gets the umask's.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=".ffskill-side", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fh:
+            fh.write(text)
+        try:
+            mode = os.stat(path).st_mode & 0o7777  # an existing file keeps open()'s mode
+        except OSError:
+            mask = os.umask(0)  # mkstemp makes the file 0600; a new file gets open()'s mode
+            os.umask(mask)
+            mode = 0o666 & ~mask
+        os.chmod(tmp, mode)
+        # the identity the file will have at path, captured before the install: reading it back
+        # afterwards could record one another process put there in the gap as this run's
+        staged = owned_identity(tmp)
+        replace_checked(tmp, path)
+        _remember_identity(path, (staged, False))  # a later write of this run's own side file is not refused
+        report_committed(path, identity=staged)
+    except BaseException:
+        _remove_quietly(tmp)
+        raise
+
+
+def _install_checked(tmp: str, final: str, expected: Any) -> None:
+    """Put `tmp` at `final`, for a target refuse_changed_output() has just passed.
+
+    A target the check recorded absent is installed with os.link(), which fails when anything is
+    there: a file another process creates between the comparison and this install is refused
+    instead of replaced, unless --overwrite consented to replacing whatever is at the path. A
+    checked target is replaced (os.replace) as before: a writer that ignores the output lock can
+    still write it between the comparison and the replace, as docs/design-decisions.md says. A
+    filesystem without hard links, and a path no check covers, keep the old replace.
+    """
+    if expected is None and not STATE.overwrite:
+        try:
+            os.link(tmp, final)
+        except FileExistsError:
+            refuse("input", "output_exists",
+                   f"refusing to write {final!r}: it did not exist when the run checked it and "
+                   "another process created it before the write",
+                   hint="choose another -o path",
+                   outputs=[{"path": final, "created_before_write": True}])
+        except OSError:
+            os.replace(tmp, final)
+            return
+        _remove_quietly(tmp)
+        return
+    os.replace(tmp, final)
+
+
 def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
     """Replace each (tmp, final) only once every final has passed refuse_changed_output(), all
     under their output locks: files that belong together (a fill and its key). A file already at a
@@ -2214,16 +2290,22 @@ def replace_checked_together(pairs: "Sequence[Tuple[str, str]]") -> None:
                 stack.enter_context(_OutputLock(final))
             for _tmp, final in pairs:
                 refuse_changed_output(final, cleanup)
+            # what each check decided: None = recorded absent, so a file that appeared in the gap
+            # is refused by the link install or, under --overwrite, replaced after being moved
+            # aside; a state or _NO_RECORD keeps the replace
+            expected = {final: _recorded_state(final) for _tmp, final in pairs}
             try:
                 for tmp, final in pairs:
                     kept = None
-                    if len(pairs) > 1 and os.path.lexists(final):
+                    # an existing target is put back if a later pair fails: under --overwrite that
+                    # includes one that appeared at a target the check recorded absent
+                    if len(pairs) > 1 and os.path.lexists(final) and (expected[final] is not None or STATE.overwrite):
                         d, base = os.path.split(final)
                         stem, ext = os.path.splitext(base)
                         kept = reserve_sibling(d, stem, ext, "keep")
                         os.replace(final, kept)
                     try:
-                        os.replace(tmp, final)
+                        _install_checked(tmp, final, expected[final])
                     except BaseException:
                         if kept:
                             os.replace(kept, final)
@@ -2330,10 +2412,13 @@ def _write_owned_report(config: str, report: str) -> None:
         pass
 
 
-def report_committed(path: Optional[str], config: Optional[str] = None) -> None:
+def report_committed(path: Optional[str], config: Optional[str] = None,
+                     identity: "Optional[Dict[str, int]]" = None) -> None:
     """Under batch.py: record the identity `path` has right now, just after this process wrote it,
     if it passed this process's output check. What batch later lets a step replace is that file
-    as it was written; one edited afterwards no longer matches and is refused."""
+    as it was written; one edited afterwards no longer matches and is refused. `identity` is the
+    staged file's, captured before the install: reading `path` back could record one another
+    process put there in the gap as this run's."""
     config = config if config is not None else os.environ.get(OWNED_ENV, "")
     report = _owned_config(config).get("report")
     if not path or not isinstance(report, str) or not report:
@@ -2344,7 +2429,7 @@ def report_committed(path: Optional[str], config: Optional[str] = None) -> None:
         return
     if real not in _OWNED_TARGETS.get(config, []):
         return
-    ident = owned_identity(real)
+    ident = identity if identity is not None else owned_identity(real)
     if ident:
         _OWNED_COMMITTED.setdefault(config, {})[real] = ident
         _write_owned_report(config, report)
