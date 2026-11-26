@@ -6029,6 +6029,121 @@ class FitPictureTests(unittest.TestCase):
             _common.STATE.notes[:] = before
 
 
+class FitZoomTests(unittest.TestCase):
+    """#647: fit.py --zoom is a timed push-in on a video clip. Every frame keeps its timestamp (a
+    hand-written zoompan made its own frames at its own rate), the move happens in its window and
+    only there, toward the anchor, and a move outside the clip is refused as kind input."""
+
+    W, H, BOX = 640, 360, 40
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "fit_zoom"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        # a white 40x40 box centred on black, 4 s at 30 fps with sound
+        cls.src = cls.dir / "box_640x360.mp4"
+        x, y = (cls.W - cls.BOX) // 2, (cls.H - cls.BOX) // 2
+        tiny_clip(cls.src, f"color=c=black:s={cls.W}x{cls.H}:r=30,drawbox=x={x}:y={y}:w={cls.BOX}:h={cls.BOX}:c=white:t=fill",
+                  seconds=4, audio=True)
+
+    def box(self, path, t):
+        """(left, top, width, height) of the pixels at or above luma 128 in the frame shown at `t`."""
+        data = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t}", "-i", str(path), "-frames:v", "1",
+                               "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        self.assertEqual(len(data), self.W * self.H)
+        rows = [r for r in range(self.H) if max(data[r * self.W:(r + 1) * self.W]) >= 128]
+        cols = [c for c in range(self.W) if max(data[c::self.W]) >= 128]
+        return cols[0], rows[0], cols[-1] - cols[0] + 1, rows[-1] - rows[0] + 1
+
+    @staticmethod
+    def frames(path):
+        """The video stream's packet times, counted by ffprobe here, not by the tool."""
+        out = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time",
+                 "-of", "csv=p=0", path).stdout.split()
+        return sorted(float(t) for t in out)
+
+    def test_fit_zoom_pushes_in_over_its_window_and_keeps_every_frame_647(self):
+        out = self.dir / "zoom_in.mp4"
+        doc = json.loads(script("fit.py", self.src, "--zoom", "in", "--zoom-amount", "1.5", "--zoom-start", "1",
+                                "--zoom-duration", "2", "-o", out, "--json").stdout)
+        src_t, out_t = self.frames(self.src), self.frames(out)
+        self.assertEqual(len(out_t), len(src_t), "a frame was added or dropped")
+        self.assertEqual(len(out_t), 120)
+        self.assertLessEqual(max(abs((o - out_t[0]) - (s - src_t[0])) for o, s in zip(out_t, src_t)), 0.5 / 30)
+        m, s = probe(str(out))["video"], probe(str(self.src))["video"]
+        self.assertEqual(m["fps"], s["fps"])
+        self.assertAlmostEqual(m["duration"], s["duration"], delta=1 / 30)
+        # before the start: zoom 1; in the window: between; after the end: the end zoom, held
+        before, middle, after, last = (self.box(out, t) for t in (0.5, 2.0, 3.2, 3.9))
+        self.assertEqual(before, self.box(self.src, 0.5))
+        self.assertAlmostEqual(before[2], self.BOX, delta=1)
+        self.assertAlmostEqual(after[2], self.BOX * 1.5, delta=2, msg=f"after the move: {after}")
+        self.assertAlmostEqual(after[3], self.BOX * 1.5, delta=2, msg=f"after the move: {after}")
+        self.assertEqual(after, last, "the end zoom is held")
+        self.assertTrue(before[2] + 4 < middle[2] < after[2] - 4, f"halfway: {middle}")
+        for b in (before, middle, after):  # toward the centre: the box stays centred
+            self.assertAlmostEqual(b[0] + b[2] / 2, self.W / 2, delta=1.5, msg=f"{b}")
+            self.assertAlmostEqual(b[1] + b[3] / 2, self.H / 2, delta=1.5, msg=f"{b}")
+        zoom = doc["zoom"]
+        self.assertEqual((zoom["direction"], zoom["from"], zoom["to"], zoom["start"], zoom["end"]), ("in", 1.0, 1.5, 1.0, 3.0))
+        self.assertEqual(zoom["anchor"], {"x": 0.5, "y": 0.5})
+        check = zoom["check"]
+        self.assertTrue(check["measured"], check)
+        self.assertEqual((check["source_frames"], check["output_frames"]), (120, 120))
+        self.assertTrue(all(check[k] for k in ("frames_match", "timestamps_match", "duration_match", "fps_match")), check)
+
+    def test_fit_zoom_out_moves_toward_the_anchor_647(self):
+        """--zoom out starts at the amount and ends at 1; --crop-x 0 --crop-y 0 keeps the top-left
+        corner fixed, so the centred box sits at 1.5x its distance from that corner at the start."""
+        out = self.dir / "zoom_out_tl.mp4"
+        doc = json.loads(script("fit.py", self.src, "--zoom", "out", "--zoom-amount", "1.5", "--crop-x", "0",
+                                "--crop-y", "0", "-o", out, "--json").stdout)
+        x, y = (self.W - self.BOX) // 2, (self.H - self.BOX) // 2
+        first = self.box(out, 0)
+        self.assertAlmostEqual(first[0], x * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(first[1], y * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(first[2], self.BOX * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(self.box(out, 3.95)[2], self.BOX, delta=2)
+        self.assertEqual((doc["zoom"]["from"], doc["zoom"]["to"], doc["zoom"]["end"]), (1.5, 1.0, 4.0))
+
+    def test_fit_zoom_after_a_trim_is_not_measured_against_the_source_647(self):
+        """A trim changes the frames by itself: the check says it did not compare, never a pass."""
+        out = self.dir / "zoom_trim.mp4"
+        doc = json.loads(script("fit.py", self.src, "--duration", "2", "--method", "trim", "--from-center",
+                                "--zoom", "in", "--zoom-start", "1", "--zoom-duration", "1", "-o", out, "--json").stdout)
+        self.assertFalse(doc["zoom"]["check"]["measured"])
+        self.assertIn("reason", doc["zoom"]["check"])
+        # the window is in output seconds: the trimmed output is unzoomed before 1 s, zoomed after 2 s
+        self.assertAlmostEqual(self.box(out, 0.5)[2], self.BOX, delta=1)
+        self.assertAlmostEqual(self.box(out, 1.95)[2], self.BOX * 1.3, delta=2)
+
+    def test_fit_zoom_refuses_a_move_it_cannot_make_647(self):
+        still = self.dir / "box.png"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64", "-frames:v", "1", "-update", "1", still)
+        for args, what in (
+                (["--zoom", "in", "--zoom-amount", "1"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "0.8"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "nan"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "30"], "past 16384 px"),
+                (["--zoom", "in", "--zoom-start", "4"], "--zoom-start"),
+                (["--zoom", "in", "--zoom-start", "3", "--zoom-duration", "2"], "past the output's end"),
+                (["--zoom", "in", "--zoom-duration", "0"], "--zoom-duration"),
+                (["--zoom", "in", "--zoom-start", "-1"], "--zoom-start"),
+                (["--zoom-start", "1", "--aspect", "1:1"], "needs --zoom"),
+                (["--zoom", "in"], "still picture")):
+            src = still if what == "still picture" else self.src
+            proc = script("fit.py", src, *args, "-o", self.dir / "r.mp4", "--json", expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            with self.subTest(args=args):
+                self.assertEqual(err["kind"], "input", err)
+                self.assertIn(what, err["message"])
+        self.assertFalse((self.dir / "r.mp4").exists())
+
+
 class WordTimedCutTests(unittest.TestCase):
     """#449: cut.py --words/--word-segments cut on a transcript's words, with the start measured
     against the sound (--onset-search), margins of their own and the source's frame grid."""

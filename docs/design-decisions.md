@@ -77,6 +77,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
 - [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
 - [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
+- [After 4.14.0 — a timed zoom on video (#647)](#after-4140--a-timed-zoom-on-video-647)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3705,6 +3706,46 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `runner.tested_build()`.
 - **SKILL.md is not changed.** It is at its byte budget, and the warning reaches a caller in every
   result; README names the doctor field.
+
+## After 4.14.0 — a timed zoom on video (#647)
+
+- **Options on `fit.py`, not a new tool.** The project is reducing its tool count (#633, #683),
+  and `fit.py` already shapes the delivered frame (reframe, rotate, fades) and has the anchor a
+  zoom needs. The flags take `insert.py`'s words (`--zoom in|out`, `--zoom-amount`, default 1.3)
+  plus `--zoom-start` and `--zoom-duration`; `--crop-x`/`--crop-y` are the anchor, with the
+  meaning they have for a crop (0 keeps the left/top edge, 0.5 the centre), and with `--fit crop`
+  the one anchor places both. Code: `fit.main()`. Test:
+  `FitZoomTests.test_fit_zoom_out_moves_toward_the_anchor_647`.
+- **A per-frame `scale` and a `crop` back, not `zoompan`.** Measured on a 6 s 30 fps clip of
+  180 frames (FFmpeg 6.1.1): `zoompan` with `d=1` wrote the 180 frames at its default 25 fps, a
+  7.2 s picture, and with `d=125` each input frame became 125 (stopped at 20 s, 500 frames for 4
+  of the source's); it makes its own frames and timestamps.
+  `scale=eval=frame:flags=lanczos` to the zoomed size and `crop` to the frame wrote 180 frames at
+  30 fps in 6.0 s, each at the source's timestamp. `crop` reads `in_w` once, from the first
+  frame, so the offsets are written as the same expression of `t` the scale uses; the zoomed
+  sides grow in steps of 4 px and the offset is kept even (4:2:0), so a centred move stays
+  centred. Code: `fit.zoom_filters()`. Test:
+  `FitZoomTests.test_fit_zoom_pushes_in_over_its_window_and_keeps_every_frame_647`.
+- **Linear, the start zoom before the move and the end zoom held after it**, in output seconds
+  (after a `--method trim` the graph's clock is offset by the output-side seek, which the
+  expression subtracts). No easing: the issue did not need one. It is drawn on the delivered
+  frame, after the reframe and before the fades; with no reframe a non-square-pixel source is
+  made square first, as for every tool that scales. Test:
+  `FitZoomTests.test_fit_zoom_after_a_trim_is_not_measured_against_the_source_647`.
+- **The zoom adds no detail.** The zoomed frame is the delivered frame upscaled once with
+  lanczos; scaling up further first (what `insert.py` does for `zoompan`, which samples whole
+  pixels) adds no information to a frame of video. Detail at 1.5x needs a source with 1.5x the
+  delivered frame's pixels, reframed by another run.
+- **`zoom.check` is measured, or says it is not.** It compares the output's packet times
+  (`presentation_times()`) with the source's: count, timestamps within half a frame, length
+  within a frame, and rate. When the run also trims, retimes, conforms a variable rate or takes
+  `--fps`, the source's frames are not the output's, and the check is `measured: false` with the
+  reason, never a pass. Code: `fit.check_zoom()`.
+- **Refused as kind input:** `--zoom-amount` of 1 or less, or one that scales the frame past
+  16384 px on a side (the whole zoomed frame is scaled), a start at or past the output's end,
+  a move that ends past it (half a frame of slack), a zero duration, `--zoom-*` without
+  `--zoom`, and `--zoom` on a still (`insert.py --zoom` animates one). Test:
+  `FitZoomTests.test_fit_zoom_refuses_a_move_it_cannot_make_647`.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 

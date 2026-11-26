@@ -499,7 +499,11 @@
    "rotate",
    "smooth",
    "timeout",
-   "width"
+   "width",
+   "zoom",
+   "zoom_amount",
+   "zoom_duration",
+   "zoom_start"
   ],
   "required": []
  },
