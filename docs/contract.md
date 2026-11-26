@@ -287,7 +287,9 @@ video-only pass and a one-frame decode; without it the row set is unchanged.
 SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
 the two files could not be compared, and WARNs when a declared span did not change. `--expect-audio-changed
 SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
-decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document. `--expect-identity SIZE:MTIME_NS`
+decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
+`--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
+then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`

@@ -1441,7 +1441,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1495,10 +1495,12 @@ largest channel is above the floor (`--change-floor`, default 24 of 255). The JS
 unchanged part came). Limits: a change much smaller than a tile is diluted (a full-contrast
 change needs about a tenth of a tile, 19x19 px at 1080p); a faint shift over the whole picture
 stays under the floor in every tile, and `similarity` is the row for that; it compares the
-picture only; an edit that changes the length cannot be paired and FAILs as not compared. Compare
+picture only; an edit that changes the length cannot be paired and FAILs as not compared, unless
+`--expect-removed` declares what it cut (below). Compare
 two renders made with the same encoder settings: a different preset alone moved every frame's
 largest tile to 11 in the measurements behind the default.
-`--expect-audio-changed` (#442, with `--compare`) is the same for the sound, same-length edits only:
+`--expect-audio-changed` (#442, with `--compare`) is the same for the sound, same-length edits only
+(or with `--expect-removed`):
 `--expect-audio-changed 2-3` (a span in this file's time, both ends included, repeatable) or `none`;
 a rectangle is refused. Both first audio tracks go to 48 kHz stereo, are subtracted per channel and
 cut into 0.1 s windows; a window changed when the difference is louder than -3 dB against the
@@ -1513,6 +1515,16 @@ are placed on whole windows; a final stretch under one window is not compared. L
 change under about 3 dB, or a change confined to a few milliseconds, stays under the floor; sound
 at 32 kbps stereo AAC or 64 kbps Opus on noise-like material reads as changed (the codec is then
 what is measured); no flag sets the floor.
+`--expect-removed START-END` (#442 phase 3, repeatable, with `--expect-changed` or
+`--expect-audio-changed`) declares a span of the reference's time that the edit cut out. The
+reference is compared with those spans taken out: a reference frame whose time is inside one (start
+included, end not) is dropped, and its sound is cut at the same instants and joined. The declared
+change spans stay in this file's time. The mapping is declared and not detected: when the counts
+still disagree (frames, or a length more than 0.1 s apart) the row FAILs as not compared and says
+how many were left; when they agree but a different part was cut, the picture after the join
+differs and FAILs as an undeclared change. Both documents gain `removed`. A stream-copy cut lands
+on packets: in the measurement its AAC sound came out one packet (21 ms) late, which reads as
+changed throughout on noise-like sound; check the sound of a re-encoded (`cut.py --accurate`) cut.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
 black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
 duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below

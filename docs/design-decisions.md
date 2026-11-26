@@ -74,6 +74,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
+- [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3634,8 +3635,39 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   covers `--expect-audio-changed` and its result fields, not a second flag). The constants are
   `probe.AUDIO_REL_DB` and `probe.AUDIO_LEVEL_DB`; a source that needs another floor is a reason to
   add the flag, with its measurements.
-- **Remaining in #442:** phase 3 (a length-changing edit with the mapping declared, `--expect-removed`)
-  and phase 4 (`render.py` deriving the declaration from two project files); neither is started.
+- **Remaining in #442:** phase 3 shipped next (`--expect-removed`, below); phase 4 (`render.py`
+  deriving the declaration from two project files) is not started.
+
+## After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)
+
+- **Declared, never detected.** `--expect-removed START-END` names a span of the reference's time
+  that the edit cut out; the tool takes it out of the reference and pairs what is left as phases 1
+  and 2 do. It does not look for where the two files line up: an alignment search would find a
+  pairing for a wrong cut too, and the row exists to say the edit did what was asked. Code:
+  `check.change_scope_row()`, `check.audio_change_row()`, the `removed` argument of
+  `_common.probe.change_tiles()` and `audio_change_windows()`. Test:
+  `test_check_expect_removed_pairs_a_cut_with_the_reference_minus_its_spans`.
+- **The reference's time for what was removed, this file's time for what changed.** A removed span
+  is what the edit instruction said ("cut 30-35 of the original"); a changed span is where a caller
+  looks in the result. Converting either would make the caller do the arithmetic the flag saves.
+- **A frame is removed when its own time is in the span, start included, end not.** `cut.py
+  --remove 1-2` at 25 fps drops frames 25-49 and keeps frame 50 (2.00 s), so the same span
+  spelled the same way takes out the same frames. The sound is cut at the same instants after
+  resampling to 48 kHz and the parts are joined before the subtraction.
+- **A mismatch is a FAIL, of one of two kinds.** When the frame counts (or lengths, beyond one
+  0.1 s window) still disagree, the row is "not compared" and says how many frames or seconds were
+  left, so a caller sees which span is off. When they agree but a different part was cut, the
+  frames after the first join differ from the reference, and that is an undeclared change at its
+  own time.
+- **Not for stream-copy cuts of AAC sound.** A copy cut lands on packets: in the measurement
+  (`cut.py --remove 3-5` on 10 s of 25 fps H.264 and pink noise in AAC, FFmpeg 6.1.1) the picture
+  matched, but the sound came out one packet (21 ms) late, and on noise-like sound every window
+  then reads as changed. That is a true difference of the file, so it is reported, and the
+  reference says to check the sound of a `cut.py --accurate` cut.
+- **No new option beyond the flag** (the feature freeze; the owner approved #442 as an exception on
+  2026-11-26): no tolerance for a join, and the floors are phases 1 and 2's.
+- **Remaining in #442:** phase 4 (`render.py` deriving the declaration from two project files), the
+  floor survey and `--change-grid`.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 
