@@ -6,6 +6,17 @@
 
 (nothing yet)
 
+## 4.11.0
+
+_Automated release: version and notes generated from pull requests merged since 4.10.0._
+
+### Added
+
+- `check.py --expect-audio-changed SPAN|none` (with `--compare`): the sound's side of `--expect-changed` (#442, phase 2).
+  An `audio_change_scope` row and document say which 0.1 s windows of the two decoded tracks differ, graded against the
+  declared spans; an untouched AAC re-encode of the same sound at 64 kbps or more is not a change.
+- feat: check.py --expect-audio-changed, the sound's side of --expect-changed (#442) (#747)
+
 ## 4.10.0
 
 _Automated release: version and notes generated from pull requests merged since 4.9.0._
