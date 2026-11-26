@@ -73,6 +73,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
+- [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3573,6 +3574,67 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   full-contrast change needs about a tenth of a tile); a faint shift over the whole picture stays
   under the floor in every tile, and `similarity` is the row for that; picture only. Measured on
   FFmpeg 6.1.1 locally; the test runs on every FFmpeg in CI.
+
+## After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)
+
+- **The same contract as `--expect-changed`, for sound.** The caller declares where the sound may
+  differ (`SPAN|none`, the span spelled as phase 1's, no rectangle), the tool only measures, "not
+  compared" is FAIL (another length, a missing track, a failed pass), a declared span that did not
+  change is WARN, and files that are not encoded alike (codec, sample rate, channels) are a WARN
+  and a note on an otherwise passing row. Spans are closed at both ends and placed on whole
+  windows (`times[n] <= end and times[n+1] > start`), as for frames. Same length only: a removed
+  span (phase 3) is a declaration, never detection. Code: `check.audio_change_row()`,
+  `_common.probe.audio_change_windows()`. Test:
+  `test_check_expect_audio_changed_finds_the_edited_windows_and_not_a_re_encode`.
+- **Windows of 0.1 s, the last partial one not compared.** The edits this is for are a word (a few
+  tenths of a second) or a level change over seconds; 0.1 s places both to a tenth. The stretch
+  under one window at the end is dropped: with it, a window of a few samples that a codec's
+  padding had made differ between two copies of the same sound read as a change (found in the
+  first test).
+- **Not a waveform floor alone.** AAC keeps little of a noise's waveform: re-encoded pink noise
+  differs from its source by -7.6 dB against the signal at 128 kbps (-5.1 at 64 kbps, -4.4 at 32),
+  while real recordings sit at -18 to -23 dB (128 kbps). A floor above -5 dB on the waveform would
+  also pass every gain change under 6 dB (a +3 dB change is -10.7 dB; a +6 dB one -6.0 dB). So a
+  window changed when either test says so, both in dB against the louder file's own level in that
+  window and per channel (stereo; mono is duplicated, 5.1 downmixed):
+  1. the difference's RMS is above **-3 dB** of the signal (and above -70 dBFS: a difference under
+     that is 16-bit noise, not an edit). Replaced, inserted or muted sound is 0 dB or above because
+     the level is the louder file's; a codec's error is a fraction of the signal.
+  2. the two levels are more than **2.5 dB** apart (both above -60 dBFS). This is the test for
+     a gain change: the level moves by what the gain was, a codec leaves it within 1.5 dB.
+- **The floors are from 78 re-encodes, not guessed.** Ten 8 s sources at 48 kHz stereo: a tone,
+  pink noise, speech-like noise (two levels, the quieter at -54 dBFS mean), a decaying chord and
+  five LibreOffice gallery sound effects (11 or 22 kHz mono, looped to 8 s: applause, drama, a
+  storm, a nature recording, a spoken clip), each through AAC at 32, 64, 96, 128 and 256 kbps, AAC
+  at 44.1 kHz, MP3 128 kbps and Opus 64 kbps, FFmpeg 6.1.1. Worst unchanged window, test 1 / test 2
+  (dB):
+
+  | encode | test 1 (floor -3) | test 2 (floor 2.5) |
+  |---|---|---|
+  | AAC 256 / 128 kbps, MP3 128, AAC 44.1 kHz | -13.1 / -7.6 (pink noise) | 0.7 |
+  | AAC 64 kbps | -5.1 (pink noise) | 1.5 |
+  | AAC 32 kbps | -1.1 (storm) | 3.2 (storm) |
+  | Opus 64 kbps | -2.8 (pink noise) | 2.8 (pink noise) |
+
+  At 64 kbps and above on every source and for the MP3, nothing is flagged; the margin to test 1
+  is 2.1 dB at its narrowest (64 kbps AAC on pink noise, the hardest source) and to test 2 is 1.0.
+  The two rates under that, and Opus on noise, are flagged: the file is then not the same sound
+  to the ear either, and the row prints the floor and the largest unchanged window (`quiet_peak`),
+  as phase 1's does. Edits through AAC 128 kbps on the same sources: a +6 dB or -3 dB gain over
+  2-3 s flagged windows 20-29 (2.0-3.0 s) on every source with sound in them (the speech-like ones
+  skip their own silent dips: a gain on silence is no change); +2 dB was found in one to three windows on four sources
+  and in none on the rest (under the floor by design); a word replaced by other sound and one muted were
+  found at their own windows on all of them.
+- **Sound that starts later is placed on the container's clock.** A window's time is its index
+  times 0.1 s plus the audio stream's lead over the container start, so a span means the same
+  second as for `--expect-changed`.
+- **No `--audio-change-floor`.** Phase 1 has `--change-floor` for footage the measurements did not
+  cover; this phase adds no option under the feature freeze (the owner's decision of 2026-11-26
+  covers `--expect-audio-changed` and its result fields, not a second flag). The constants are
+  `probe.AUDIO_REL_DB` and `probe.AUDIO_LEVEL_DB`; a source that needs another floor is a reason to
+  add the flag, with its measurements.
+- **Remaining in #442:** phase 3 (a length-changing edit with the mapping declared, `--expect-removed`)
+  and phase 4 (`render.py` deriving the declaration from two project files); neither is started.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 

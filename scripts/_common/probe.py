@@ -1611,3 +1611,49 @@ def change_mask_tiles(mask: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "List
     """change_tiles()'s bit mask as [(column, row)], row by row."""
     gw = grid[0]
     return [(t % gw, t // gw) for t in range(grid[0] * grid[1]) if mask >> t & 1]
+
+
+# check.py --compare --expect-audio-changed (#442 phase 2): where the sound differs from the reference.
+AUDIO_WINDOW = 0.1       # seconds per window of the difference
+AUDIO_REL_DB = -3.0      # a window changed when the difference is louder than this against the louder file's own level (dB)
+AUDIO_LEVEL_DB = 2.5     # ... or when the two files' levels in it are further apart than this (dB)
+AUDIO_GATE_DB = -70.0    # a difference quieter than this (dBFS) is not a change, and a level under -60 is not compared
+
+
+def audio_change_windows(path: str, reference: str, seconds: float) -> "Optional[Dict[str, Any]]":
+    """Which windows of `path`'s first audio track differ from `reference`'s, over the first `seconds`
+    rounded down to whole windows (the stretch under one window is not compared: a codec's padding
+    there made a window of a few samples that differed from its reference by chance). Both go to 48 kHz
+    stereo float, are subtracted per channel, and ffmpeg's astats gives the RMS of the difference
+    and of each file per AUDIO_WINDOW. A window
+    changed when, in either channel, the difference is above AUDIO_GATE_DB and more than
+    AUDIO_REL_DB against the louder file (a codec's error is a fraction of the signal, so it is
+    judged against it), or the two levels (above -60 dBFS) are more than AUDIO_LEVEL_DB apart
+    (a gain change leaves a waveform difference under the first test).
+    {windows, changed [window indexes], peaks {index: dB of the first test}, quiet_peak (the
+    largest value of the first test in a window that did not change; None when none was above
+    the gate)}. None when the pass fails or yields fewer windows than `seconds` holds (a decode that stopped early): not measured, never "unchanged"."""
+    count = int(seconds / AUDIO_WINDOW + 0.05)
+    if count < 1:
+        return None
+    pre = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    graph = (f"[0:a:0]{pre}[a];[1:a:0]{pre}[b];[a][b]amerge=inputs=2,pan=6c|c0=c0-c2|c1=c1-c3|c2=c0|c3=c1|c4=c2|c5=c3,"
+             f"atrim=end_sample={count * round(AUDIO_WINDOW * 48000)},asetnsamples=n={round(AUDIO_WINDOW * 48000)},astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,"
+             "ametadata=mode=print:file=-")
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", path, "-i", reference,
+                         "-filter_complex", graph, "-f", "null", "-"], check=False)
+    levels = [float(line.rpartition("=")[2]) for line in proc.stdout.splitlines() if line.startswith("lavfi.astats.")]
+    if proc.returncode != 0 or len(levels) != 6 * count:
+        return None
+    changed: "List[int]" = []
+    peaks: "Dict[int, Optional[float]]" = {}
+    quiet: "Optional[float]" = None
+    for n in range(len(levels) // 6):
+        diff, a, b = levels[6 * n:6 * n + 2], levels[6 * n + 2:6 * n + 4], levels[6 * n + 4:6 * n + 6]
+        rel = max([d - max(x, y) for d, x, y in zip(diff, a, b) if d > AUDIO_GATE_DB], default=None)
+        if rel is not None and rel > AUDIO_REL_DB or any(max(x, y) > -60 and abs(x - y) > AUDIO_LEVEL_DB for x, y in zip(a, b)):
+            changed.append(n)
+            peaks[n] = None if rel is None else round(rel, 1)
+        elif rel is not None and (quiet is None or rel > quiet):
+            quiet = rel
+    return {"windows": len(levels) // 6, "changed": changed, "peaks": peaks, "quiet_peak": None if quiet is None else round(quiet, 1)}

@@ -907,6 +907,93 @@ class AnalysisTests(MediaFixtures):
         code, doc, row = check(OUT / "scope_not_written_yet.mp4", "--expect-changed", "none", "--dry-run")
         self.assertEqual((code, row), (0, None), doc)
 
+    def test_check_expect_audio_changed_finds_the_edited_windows_and_not_a_re_encode(self):
+        """#442 phase 2: --compare --expect-audio-changed SPAN|none. A gain change in 2-3 s and a
+        word-length segment replaced at 2.0-2.5 s are found at their own times (the windows are
+        0.1 s); an untouched copy re-encoded with AAC is not a change; a comparison that cannot
+        be made is a FAIL, never a pass."""
+        lavfi = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]
+        aac = lambda rate: ["-ac", "2", "-c:a", "aac", "-b:a", rate]
+        # pink noise is the hardest source for a codec: AAC keeps little of its waveform
+        noise = "anoisesrc=d=6:c=pink:r=48000:a=0.3:seed=%d"
+        tone = "sine=f=440:d=6:sample_rate=48000"
+        names = ("aud_tone", "aud_tone_gain", "aud_noise", "aud_noise_word", "aud_noise_copy", "aud_short", "aud_silent_video")
+        tone_old, tone_gain, noise_old, noise_word, noise_copy, short, mute = (OUT / (n + ".m4a") for n in names)
+        sh(*lavfi, tone, *aac("128k"), tone_old)
+        sh(*lavfi, tone, "-af", "volume=enable='between(t,2,3)':volume=6dB", *aac("128k"), tone_gain)
+        sh(*lavfi, noise % 1, *aac("128k"), noise_old)
+        sh(*lavfi, noise % 1, "-f", "lavfi", "-i", noise % 2, "-filter_complex",
+           "[0]asplit[x][y];[x]atrim=0:2,asetpts=PTS-STARTPTS[a];[1]atrim=2:2.5,asetpts=PTS-STARTPTS[b];[y]atrim=2.5:6,asetpts=PTS-STARTPTS[c];[a][b][c]concat=n=3:v=0:a=1",
+           *aac("128k"), noise_word)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", noise_old, "-c:a", "aac", "-b:a", "64k", noise_copy)
+        sh(*lavfi, tone, "-t", "4", *aac("128k"), short)
+        sh(*lavfi, "testsrc2=size=160x90:rate=10", "-t", "6", "-c:v", "libx264", "-an", OUT / "aud_mute.mp4")
+
+        def check(path, ref, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(ref), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return proc.returncode, doc, {r["check"]: r for r in doc.get("checks", [])}.get("audio_change_scope")
+
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "2-3")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        seen = doc["audio_change_scope"]["observed"]
+        self.assertEqual([(o["start"], o["end"], o["windows"]) for o in seen], [(2.0, 3.0, 10)], seen)
+        self.assertEqual(doc["audio_change_scope"]["undeclared"], [])
+        self.assertLess(doc["audio_change_scope"]["quiet_peak"], doc["audio_change_scope"]["floor"]["relative_db"])
+        # declared somewhere else it is a FAIL at the edit's own time, and the declared span says nothing changed
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "4-5")
+        self.assertEqual((code, row["status"]), (1, "FAIL"), row)
+        self.assertIn("changed 2.00-3.00 (10 windows of 0.1 s): not declared", row["value"])
+        self.assertIn("declared 4.00-5.00 but nothing changed there", row["value"])
+        self.assertEqual(check(tone_gain, tone_old, "--expect-audio-changed", "none")[2]["status"], "FAIL")
+        # a span that is too short for the edit leaves its remainder undeclared
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "2-2.5")
+        self.assertEqual([(u["start"], u["end"]) for u in doc["audio_change_scope"]["undeclared"]], [(2.6, 3.0)])
+        # a word replaced by other sound of the same loudness
+        code, doc, row = check(noise_word, noise_old, "--expect-audio-changed", "2-2.5")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        self.assertEqual([(o["start"], o["end"]) for o in doc["audio_change_scope"]["observed"]], [(2.0, 2.5)])
+        # the floor: a re-encode at half the bitrate of pink noise is not a change
+        code, doc, row = check(noise_copy, noise_old, "--expect-audio-changed", "none")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        self.assertEqual(doc["audio_change_scope"]["observed"], [])
+        self.assertLess(doc["audio_change_scope"]["quiet_peak"], doc["audio_change_scope"]["floor"]["relative_db"])
+        # a lossless master against its AAC delivery: no change, said as "not encoded alike"
+        master = OUT / "aud_noise_master.wav"
+        sh(*lavfi, noise % 1, "-ac", "2", master)
+        code, doc, row = check(noise_old, master, "--expect-audio-changed", "none")
+        self.assertEqual((code, row["status"]), (0, "WARN"), row)
+        self.assertEqual(doc["audio_change_scope"]["undeclared"], [])
+        self.assertTrue(any("not encoded alike (codec aac against pcm_s16le)" in n for n in doc["notes"]), doc.get("notes"))
+
+        # a comparison that cannot be made is a FAIL
+        for path, ref, why in ((short, tone_old, "4.0 s against the reference's 6.0 s"), (OUT / "aud_mute.mp4", tone_old, "one of the files has no sound")):
+            code, doc, row = check(path, ref, "--expect-audio-changed", "none")
+            self.assertEqual((code, row["status"]), (1, "FAIL"), row)
+            self.assertIn("not compared: " + why, row["value"])
+            self.assertNotIn("audio_change_scope", doc)
+        rows = []
+        with unittest.mock.patch.object(check_module, "audio_change_windows", return_value=None):
+            args = types.SimpleNamespace(input=str(tone_gain), compare=str(tone_old))
+            meta = check_module.probe(str(tone_gain))
+            out = check_module.audio_change_row(args, [], meta, meta["audio"], lambda *a, **k: rows.append(a))
+        self.assertEqual((out, rows[0][:2]), ({}, ("audio_change_scope", "FAIL")))
+        self.assertIn("the comparison pass failed", rows[0][2])
+
+        for bad, say in ((["--expect-audio-changed", "2-3", "--expect-audio-changed", "none"], "cannot be combined"),
+                         (["--expect-audio-changed", "3-2"], "ends at or after its start"),
+                         (["--expect-audio-changed", "2"], "START-END"),
+                         (["--expect-audio-changed", "2-3@0,0,10,10"], "sound has no rectangle")):
+            code, doc, row = check(tone_gain, tone_old, *bad)
+            self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
+            self.assertIn(say, doc["error"]["message"], bad)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(tone_gain), "--platform", "custom", "--no-loudness",
+                               "--json", "--expect-audio-changed", "2-3"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIn("needs --compare", json.loads(proc.stdout)["error"]["message"])
+        code, doc, row = check(OUT / "aud_not_written_yet.m4a", tone_old, "--expect-audio-changed", "none", "--dry-run")
+        self.assertEqual((code, row), (0, None), doc)
+
     def test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame(self):
         """#439: the pure grading step. A declared span covers every frame whose own interval
         touches it; with a rectangle, tiles it does not touch are still held to "unchanged"."""

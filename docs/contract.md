@@ -285,7 +285,9 @@ from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` 
 video-only pass and a one-frame decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference); with it, `--expect-changed
 SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
-the two files could not be compared, and WARNs when a declared span did not change. `--expect-identity SIZE:MTIME_NS`
+the two files could not be compared, and WARNs when a declared span did not change. `--expect-audio-changed
+SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
+decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
