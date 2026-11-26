@@ -3334,6 +3334,41 @@ sys.exit(fit.main())
             else:
                 self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
 
+    def test_a_build_outside_the_tested_majors_is_said_once_and_the_run_goes_on_556(self):
+        """#556: an ffprobe that reports a future major, a git build or an unreadable version adds one
+        ffmpeg_version_untested warning (build release / git / unknown) and the run succeeds; a tested
+        major adds none. The tested range follows the FFmpeg versions the CI workflow installs."""
+        from _common import runner
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        majors = {6 if "Ubuntu 24.04 apt = 6.1" in ci else None, 7 if "ffmpeg 7.1 apt" in ci else None,
+                  8 if "Homebrew = 8.x" in ci else None, int(re.search(r"choco install ffmpeg --version (\d+)\.", ci).group(1))}
+        self.assertEqual((min(majors - {None}), max(majors - {None})), runner.TESTED_FFMPEG_MAJORS, majors)
+        if os.name == "nt":
+            self.skipTest("the ffprobe shim is a POSIX shell script")
+        src = self.out("tested_src.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:d=1", src)
+        real = shutil.which("ffprobe")
+        cases = (("ffprobe version 9.0.2 Copyright", None), ("ffprobe version 6.1.1-3ubuntu5 Copyright", None),
+                 ("ffprobe version 10.0 Copyright", ("10.0", "release")),
+                 ("ffprobe version N-12345-gabcdef Copyright\nlibavutil      60. 3.100 / 60. 3.100", ("8", "git")),
+                 ("ffprobe version N-12345-gabcdef Copyright", (None, "unknown")))
+        for n, (banner, want) in enumerate(cases):
+            shim = self.out(f"tested_shim_{n}")
+            shim.mkdir(exist_ok=True)
+            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then printf "{banner}\\n"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
+            (shim / "ffprobe").chmod(0o755)
+            env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), str(src), "--start", "0", "--end", "0.5", "--json",
+                                   "-o", str(self.out(f"tested_out_{n}.mp4"))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
+            found = [w for w in json.loads(proc.stdout).get("diagnostics", {}).get("warnings", []) if w["code"] == "ffmpeg_version_untested"]
+            if want is None:
+                self.assertEqual(found, [], banner)
+                continue
+            self.assertEqual(len(found), 1, (banner, found))
+            self.assertEqual((found[0]["version"], found[0]["build"], found[0]["tested"]), (*want, "6.x-9.x"), banner)
+            self.assertEqual(proc.stderr.count("not covered by the test suite"), 1, proc.stderr)
+
     def test_doctor_checks_ffprobe_against_the_floor_too(self):
         """requirements name ffprobe >= 6.1 as well: an old ffprobe beside a 6.1 ffmpeg is unsupported."""
         from unittest import mock
