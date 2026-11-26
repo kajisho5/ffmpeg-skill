@@ -1426,7 +1426,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1483,6 +1483,21 @@ stays under the floor in every tile, and `similarity` is the row for that; it co
 picture only; an edit that changes the length cannot be paired and FAILs as not compared. Compare
 two renders made with the same encoder settings: a different preset alone moved every frame's
 largest tile to 11 in the measurements behind the default.
+`--expect-audio-changed` (#442, with `--compare`) is the same for the sound, same-length edits only:
+`--expect-audio-changed 2-3` (a span in this file's time, both ends included, repeatable) or `none`;
+a rectangle is refused. Both first audio tracks go to 48 kHz stereo, are subtracted per channel and
+cut into 0.1 s windows; a window changed when the difference is louder than -3 dB against the
+louder file's own level in it (a codec's error is a fraction of the signal; replaced or muted sound
+is 0 dB or more), or the two files' levels in it are more than 2.5 dB apart (a gain change). A
+difference under -70 dBFS and a level under -60 dBFS are not compared. The `audio_change_scope`
+row and document (`declared`, `observed`, `undeclared`, `declared_unchanged`, `window`, `floor`,
+`windows`, `quiet_peak`) follow `change_scope`: FAIL on a change outside the declaration with its
+time, and FAIL when not compared (a length more than 0.1 s apart, a missing track, a failed pass);
+WARN when a declared span did not change, or when codec, sample rate or channels differ. Spans
+are placed on whole windows; a final stretch under one window is not compared. Limits: a gain
+change under about 3 dB, or a change confined to a few milliseconds, stays under the floor; sound
+at 32 kbps stereo AAC or 64 kbps Opus on noise-like material reads as changed (the codec is then
+what is measured); no flag sets the floor.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
 black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
 duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below
