@@ -66,6 +66,7 @@ from _common.runner import subtitle_codec_for, subtitle_container_holds, declare
 from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
 from _common.emit import refuse_still
+from _common.words import parse_word_ranges, plan_word_ranges, read_word_list
 from _common.decision import UNWRITTEN_AUDIO_EXT
 from _common import refuse_unwritten_output
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
@@ -1627,6 +1628,13 @@ def main() -> int:
                            "this media file) instead of measuring the input again")
     snap.add_argument("--min-confidence", type=float, default=BEAT_MIN_CONFIDENCE,
                       help=f"refuse to snap below this measured beat confidence (default {BEAT_MIN_CONFIDENCE})")
+    wd = ap.add_argument_group("word-timed cuts (#449)")
+    wd.add_argument("--words", metavar="FILE", help="whisper JSON with word timings, for --word-segments")
+    wd.add_argument("--word-segments", metavar="FIRST-LAST[,...]", help="keep these 0-based word-index ranges of --words, e.g. 0-4,7-12")
+    wd.add_argument("--onset-search", type=float, metavar="SECONDS", help="start each range at the sound's measured rise within this many seconds of the word's time")
+    wd.add_argument("--margin", type=float, metavar="SECONDS", help="--word-segments: kept before and after the words (default 0)")
+    wd.add_argument("--margin-lead", type=float, metavar="SECONDS", help="--word-segments: kept before (default --margin)")
+    wd.add_argument("--margin-tail", type=float, metavar="SECONDS", help="--word-segments: kept after (default --margin)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset when re-encoding")
     add_common(ap)
@@ -1657,6 +1665,30 @@ def main() -> int:
 
     fps = (meta.get("video") or {}).get("fps")
     remove_notes: List[str] = []
+    word_docs = None
+    word_flags = {"--words": args.words, "--word-segments": args.word_segments, "--onset-search": args.onset_search,
+                  "--margin": args.margin, "--margin-lead": args.margin_lead, "--margin-tail": args.margin_tail}
+    if any(v is not None for v in word_flags.values()):
+        if not (args.words and args.word_segments):
+            die("--words (the transcript) and --word-segments (which of its words to keep) go together, and are what "
+                "--onset-search, --margin, --margin-lead and --margin-tail act on", kind="input")
+        if args.remove or args.segments or args.end or args.duration or args.start is not None:
+            die("--word-segments names what to keep by word: it does not combine with --segments, --remove, --start, "
+                "--end or --duration", kind="input")
+        for flag, value in word_flags.items():
+            if isinstance(value, float) and not (math.isfinite(value) and value >= 0):
+                die(f"{flag} must be a finite number of seconds, 0 or more (got {value:g})", kind="input")
+        if args.onset_search is not None and not (meta.get("audio") and args.onset_search > 0):
+            die(f"--onset-search measures the sound ({args.input} has " + ("some" if meta.get("audio") else "none")
+                + ") and looks more than 0 seconds either side", kind="input")
+        words = read_word_list(args.words)
+        rate = 0 if is_audio_output(args.output or "") or (meta.get("video") or {}).get("variable_frame_rate_suspected") else frame_rate(meta)
+        margin = args.margin or 0.0
+        word_docs = plan_word_ranges(args.input, words, parse_word_ranges(args.word_segments, len(words)),
+                                     margin if args.margin_lead is None else args.margin_lead,
+                                     margin if args.margin_tail is None else args.margin_tail,
+                                     args.onset_search, stream_starts(meta)[0], rate, total)
+        args.segments = ",".join(f"{a:.6f}-{b:.6f}" for a, b in (d["cut"] for d in word_docs))
     if args.remove:
         if args.segments or args.end or args.duration or args.start is not None:
             die("--remove names what to drop from the whole file: it does not combine with --segments, --start, --end or --duration")
@@ -1740,7 +1772,7 @@ def main() -> int:
 
     output = args.output or default_output(args.input, "cut")
     # --snap-source is read for its beat grid and is never an -i of the cut (#522's sweep)
-    refuse_output_is_input(output, args.input, *([args.snap_source] if args.snap_source else []))
+    refuse_output_is_input(output, args.input, *[p for p in (args.snap_source, args.words) if p])
     ext = os.path.splitext(output)[1].lower() or ".mp4"  # an upper-case .MP4 is still faststart
 
     # A segment that runs past the end of the video, with a join after it: whatever joins it (the
@@ -2112,6 +2144,7 @@ def main() -> int:
          requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in requested] if len(requested) > 1 else None,
          snapped_segments=snapped,
+         word_segments=[{**d, "cut": [round(a, 6), round(b, 6)]} for d, (a, b) in zip(word_docs, segments)] if word_docs else None,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None and not STATE.dry_run else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
          mode=mode, possible_reencode_reason=possible, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],

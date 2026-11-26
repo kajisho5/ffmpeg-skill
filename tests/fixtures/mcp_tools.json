@@ -350,11 +350,15 @@
    "input",
    "json_brief",
    "keep_hevc",
+   "margin",
+   "margin_lead",
+   "margin_tail",
    "min_confidence",
    "no_declick",
    "no_edit_list",
    "no_hw",
    "no_keep_hevc",
+   "onset_search",
    "output",
    "overwrite",
    "plan",
@@ -369,7 +373,9 @@
    "start",
    "timeout",
    "tolerance",
-   "vfr_guard"
+   "vfr_guard",
+   "word_segments",
+   "words"
   ],
   "required": []
  },
