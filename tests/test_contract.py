@@ -12025,15 +12025,17 @@ class MxfAudioCodec736Tests(unittest.TestCase):
     def test_no_writing_tool_hard_codes_the_aac_its_container_may_refuse(self):
         """#736: decision.audio_codec_for() had no .mxf entry, so every tool that re-encodes sound
         handed AAC to the MXF muxer, whose pcm_rechunk refused it and wrote nothing. The choice is
-        the output extension's (audio_codec_for(output)); a hard-coded aac_args() in a writing tool
-        is this defect returning, so the source is scanned for one."""
+        the output extension's (audio_codec_for(output)); a hard-coded aac_args() or a literal
+        ['-c:a','aac'] in a writing tool is this defect returning, so the tool sources are scanned.
+        export.py is left out: each delivery preset names its own container and its audio."""
         from _common import decision
+        preset_tables = {"export.py"}
         hard_coded = sorted(
             f"{p.relative_to(ROOT)}:{i}"
-            for p in [*SCRIPTS.glob("*.py"), *(SCRIPTS / "_common").glob("*.py")]
-            if p != SCRIPTS / "_common" / "decision.py"
+            for p in SCRIPTS.glob("*.py")
+            if p.name not in preset_tables
             for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-            if "aac_args()" in line and not line.strip().startswith("#"))
+            if ("aac_args()" in line or '"-c:a", "aac"' in line) and not line.strip().startswith("#"))
         self.assertEqual(hard_coded, [], "these writing tools pick AAC without the output's extension")
         self.assertEqual(decision.audio_codec_for("out.mxf"), ["-c:a", "pcm_s16le"])
         self.assertEqual(decision.audio_codec_for("out.mp4"), ["-c:a", "aac", "-b:a", "192k"])

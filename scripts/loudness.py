@@ -165,7 +165,7 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # .mp3/.ogg/.opus left alone keeps its own setting, as it always has)
             cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn"] + audio_codec_for(output, bitrate if ext not in AUDIO_CODECS or bitrate_pinned or own_rate else None)
         else:
-            cmd += probed_maps(meta) + ["-c:v", "copy", "-c:a", "aac", "-b:a", bitrate]
+            cmd += probed_maps(meta) + ["-c:v", "copy"] + audio_codec_for(output, bitrate)
             if ext in (".mp4", ".mov", ".m4v"):
                 cmd += ["-movflags", "+faststart"]
             dropped_streams = run_keeping_subtitles(cmd, output)
