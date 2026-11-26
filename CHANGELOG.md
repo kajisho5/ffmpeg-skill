@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-(nothing yet)
+### Fixed
+
+- A 10-bit (or deeper) source written as 8-bit now says so in the result's `notes`, for every tool,
+  measured on the written file (#696). A stream copy that keeps the depth, and an 8-bit source, say nothing.
 
 ## 4.8.0
 

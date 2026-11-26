@@ -30,6 +30,28 @@ class EditingTests(MediaFixtures):
     """Cut, fit, crop, join, insert, broll, freeze, pad, speedramp, loop, reverse, sequence, silence, metadata, straighten and sphere."""
 
     # ---------------------------------------------------------------- cut
+    def test_a_deeper_picture_written_as_8_bit_says_so_696(self):
+        """#696 (from #558, item 8): a 10-bit source re-encoded to 8-bit said nothing (`notes: []`).
+        The reduction is decided; the result now says it, measured on the written file, and says
+        nothing when the depth is kept (a stream copy) or the source was 8-bit already."""
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            ten = Path(tmp) / "ten.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-c:v", "libx265",
+               "-preset", "ultrafast", "-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error", "-tag:v", "hvc1", ten)
+            eight = Path(tmp) / "eight.mp4"
+            tiny_clip(eight, "testsrc2=s=160x90:r=25", seconds=2)
+            def notes(src, *args):
+                out = Path(tmp) / f"out_{len(os.listdir(tmp))}.mp4"
+                doc = json.loads(script("cut.py", src, "--start", "0.4", "--end", "1.6", *args, "-o", out, "--json").stdout)
+                return out, [n for n in doc["notes"] if "-bit" in n]
+            out, said = notes(ten, "--accurate")
+            self.assertEqual(probe(str(out))["video"]["bit_depth"], 8)
+            self.assertEqual(said, ["the source picture is 10-bit and this output is 8-bit: the encoder writes 8 bits "
+                                    "(a ProRes master, --codec prores where the tool offers it, keeps the depth)"])
+            out, said = notes(ten)  # a stream copy keeps the 10 bits
+            self.assertEqual((probe(str(out))["video"]["bit_depth"], said), (10, []))
+            self.assertEqual(notes(eight, "--accurate")[1], [])
+
     def test_cut_single_copy(self):
         out = OUT / "cut1.mp4"
         script("cut.py", self.src, "--start", "2", "--end", "6", "-o", out)
