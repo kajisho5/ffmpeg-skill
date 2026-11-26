@@ -10710,7 +10710,7 @@ class Issue415Tests(unittest.TestCase):
         ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5", "-f", "lavfi", "-i", "sine=r=48000:d=5",
                "-c:v", "mpeg2video", "-g", "12", "-bf", "0", "-c:a", "pcm_s16le", "-timecode", "01:00:00:00", mxf)
         for name, argv in (("cut", ["--start", "1.5", "--end", "3", "--accurate"]),
-                           ("cut", ["--start", "1.5", "--end", "3", "--smart"]), ("cut", ["--remove", "1-2"]),
+                           ("cut", ["--start", "1.5", "--end", "3", "--smart"]),
                            ("fit", ["--duration", "2.5", "--method", "speed"]), ("color", ["--correct", "--contrast", "1.1"]),
                            ("loudness", []), ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
             for dry in ((), ("--dry-run",)):
@@ -10724,14 +10724,18 @@ class Issue415Tests(unittest.TestCase):
                     self.assertTrue(err["details"]["encoders"])
                     self.assertIn(".mov", err["hint"])
                     self.assertFalse(out.exists())
-        kept = d / "copy.mxf"
-        doc = json.loads(tool("cut", mxf, "--start", "1.5", "--end", "3", "-o", kept, "--json").stdout)
-        self.assertEqual(doc["status"], "completed")
-        probed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
-                                 "-of", "csv=p=0", str(kept)], capture_output=True, text=True)
-        self.assertEqual(probed.stdout.strip(), "pcm_s16le")
-        decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
-        self.assertEqual(decoded.stderr.strip(), "")
+        # a stream copy still writes a decodable MXF with its PCM sound: one range, and a removal whose
+        # parts land on keyframes (a copy join since #739 reads the MXF keyframes right)
+        for name, argv in (("copy", ["--start", "1.5", "--end", "3"]), ("remove", ["--remove", "1-2"])):
+            with self.subTest(copy=name):
+                kept = d / f"{name}.mxf"
+                doc = json.loads(tool("cut", mxf, *argv, "-o", kept, "--json").stdout)
+                self.assertEqual((doc["status"], doc.get("mode")), ("completed", "copy"))
+                probed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                                         "-of", "csv=p=0", str(kept)], capture_output=True, text=True)
+                self.assertEqual(probed.stdout.strip(), "pcm_s16le")
+                decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
+                self.assertEqual(decoded.stderr.strip(), "")
 
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
