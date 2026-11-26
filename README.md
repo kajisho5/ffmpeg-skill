@@ -528,7 +528,7 @@ video codec (for an editing master also its profile and pixel format), dimension
 The written file stays available for diagnosis. When a platform preset specifies loudness, a failed loudness check
 marks the export unverified so the caller can decide whether to normalize or retry.
 
-`check.py --content` looks for black frames, freezes, flashes, silence and audio dropouts where
+`check.py --content` looks for black frames, freezes, flashes, dropped or repeated frames, silence and audio dropouts where
 the relevant stream exists. Review WARN rows for checks that could not measure a property.
 Delivery templates run these checks on the written file by default. A single-template render
 includes the rows in `check.checks` when it reaches the check stage. A dry run

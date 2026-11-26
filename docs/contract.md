@@ -282,7 +282,7 @@ The `audio` row FAILs (WARN when no loudness target applies) when the track is p
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
-video-only pass and a one-frame decode; without it the row set is unchanged.
+video-only pass and a one-frame decode, and `frame timing` (#574) from the packets' times, no decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference); with it, `--expect-changed
 SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
 the two files could not be compared, and WARNs when a declared span did not change. `--expect-audio-changed

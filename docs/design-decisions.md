@@ -75,6 +75,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
 - [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
+- [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3668,6 +3669,22 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   2026-11-26): no tolerance for a join, and the floors are phases 1 and 2's.
 - **Remaining in #442:** phase 4 (`render.py` deriving the declaration from two project files), the
   floor survey and `--change-grid`.
+
+## After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)
+
+- **Held to the file's own median step, not its stated rate.** A file with dropped frames states
+  an average rate that the gap has already lowered: an MP4 of 100 frames at 25 fps with 5 dropped
+  says `avg_frame_rate` 95/4, and `probe` then suspects a variable rate. Grading only constant-rate
+  files would skip exactly the files the row is for. The median step is the same 40 ms in both.
+  Code: `check.frame_timing_row()`. Test:
+  `test_check_content_frame_timing_finds_dropped_and_repeated_frames_574`.
+- **A gap is a WARN, a repeated time a FAIL.** A step over 1.5 median steps is round(step /
+  median) - 1 missing frames. A phone lowers its rate in low light on purpose and that reads the
+  same, so a gap never fails a delivery template's check. Two frames at one time are never right.
+- **From packets, no decode.** `presentation_times()` (the times `--expect-changed` uses) is one
+  ffprobe pass over the packets, so the row costs no decode of the picture.
+- **`batch.py`'s per-item table is not changed here.** #574 also asked for the row there; this
+  change adds it to `check.py` only.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 
