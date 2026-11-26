@@ -129,6 +129,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
 - [After 4.8.0 — where caption, overlay and graphics drew (#547)](#after-480--where-caption-overlay-and-graphics-drew-547)
 - [After 4.8.0 — a copy is verified against what its keyframes allow (#620)](#after-480--a-copy-is-verified-against-what-its-keyframes-allow-620)
+- [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 <!-- contents:end -->
 
 ## Time limits
@@ -6881,3 +6882,47 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   (tests/test_cut_copy.py): `test_a_copy_reports_where_it_landed_and_is_verified_against_that_span`,
   `test_a_segments_copy_is_judged_by_its_snapped_parts_not_by_the_tolerance`,
   `test_a_written_file_that_misses_the_snapped_span_is_not_verified`.
+## After 4.8.3 — word-timed cuts in cut.py (#449)
+
+Four items were asked; two already existed when this was built, so only the other two were added.
+`silence.py` has `--margin-lead`/`--margin-tail` (#451) and `--sentence-min-silence`/`--sentence-margin-tail`
+(#452); pause shortening to a stated length exists only through a pacing profile (`silence.py --profile`,
+#733). Not built: a direct `--shorten-pause-to` (item 3's second half) and a measured onset in `silence.py`.
+
+- **`cut.py --words FILE --word-segments 0-4,7-12` converts word indices to seconds and nothing more.**
+  The ranges become `--segments`, so the join, `--declick-ms`, `--snap`, the stream-copy or re-encode
+  choice and every check are the ones `--segments` has. It does not combine with `--segments`,
+  `--remove`, `--start`, `--end` or `--duration` (two ways to say the same ranges). Indices are 0-based,
+  inclusive, ascending, and share no word. A word with no timing is refused (`kind: input`) rather than
+  dropped, because dropping it would shift every later index.
+- **No editing policy is a default.** `--margin`, `--margin-lead` and `--margin-tail` default to 0 and
+  `--onset-search` to off: a bare `--word-segments` cuts the transcript's own times. The numbers a caller
+  might want (0.1 s before the onset, 0.5 s of tail) are arguments.
+- **A cut is on the source's frame grid: the start rounded down, the end up**, so a snap never takes a
+  word's first or last sound. A source with no grid (audio-only output, variable frame rate) keeps the
+  seconds as computed. Two ranges that the margins make overlap meet at the grid point nearest the middle
+  of the overlap, so no sound is kept twice; the result's `cut` shows where.
+- **The onset is measured, and looked for both ways.** Measured on `demos/footage/ai_talk_en.mp4` (#449's
+  comment), words after a pause were timed 0.45-0.53 s EARLY, so the issue's "look back up to 0.25 s"
+  would have found nothing. `--onset-search S` looks `S` seconds either side of the transcript start,
+  never earlier than the previous word's midpoint (a rise inside the previous word is not this word's).
+  The window is decoded at 8 kHz mono; its levels are 5 ms RMS blocks; the floor is the 10th percentile of
+  the window, the threshold a third of the way from the floor to the peak, and a rise counts when the window
+  spans at least 15 dB and 4 of the next 6 blocks stay above the threshold. Of the rises that qualify the one
+  nearest the transcript time is taken. With none, `onset.measured` is `null`, `onset.reason` says why and
+  the transcript time stands: never a guessed value. The 5 ms, 15 dB and 30 ms are the measurement, not an
+  editing choice; the window `S` is the caller's, because one clip and one engine is not a rule.
+- **Where the onset lives: `_common/words.py` (`measure_onset`)**, next to the word-file reader that moved
+  there from `silence.py` (`silence.py` imports it; its `--filler` and sentence flags are unchanged), so a
+  later `silence.py` or `speedramp.py` use calls the same measurement.
+- **The sentence boundary stays the transcript's punctuation** (`silence.py`, decided with #452): a pause's
+  length does not say where a sentence ends. `cut.py` has no sentence notion; a range is the caller's words.
+- **The dry-run document shows the measured times.** `--onset-search` decodes a window around each start,
+  which is analysis, so under `--dry-run` the audio is read and `word_segments` carries the real measured
+  onsets and the times that would be cut; nothing is written (`_contract.DRY_RUN_ANALYSIS["cut"]`).
+- Code: `_common/words.py` (`measure_onset`, `read_word_list`, `parse_word_ranges`, `plan_word_ranges`),
+  `cut.py main()`. Tests: `WordTimedCutTests` (tests/test_editing.py):
+  `test_the_start_is_measured_both_ways_and_the_cut_is_on_the_frame_grid`,
+  `test_a_start_with_no_rise_near_it_is_not_measured_and_keeps_the_transcript_time`,
+  `test_lead_and_tail_margins_and_the_shorthand`, `test_ranges_the_margins_make_overlap_meet_in_the_middle`,
+  `test_a_dry_run_measures_and_writes_nothing`, `test_refusals`.

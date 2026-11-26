@@ -6029,5 +6029,107 @@ class FitPictureTests(unittest.TestCase):
             _common.STATE.notes[:] = before
 
 
+class WordTimedCutTests(unittest.TestCase):
+    """#449: cut.py --words/--word-segments cut on a transcript's words, with the start measured
+    against the sound (--onset-search), margins of their own and the source's frame grid."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "word_cuts"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        # three tone bursts, the "words": 1.0-1.5, 2.2-2.7 and 4.0-4.6 s, at 25 fps
+        cls.src = cls.dir / "bursts.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=6", "-f", "lavfi", "-i",
+               "aevalsrc=0.5*sin(2*PI*220*t)*(between(t\\,1\\,1.5)+between(t\\,2.2\\,2.7)+between(t\\,4\\,4.6)):s=48000:d=6",
+               "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+        # transcript times deliberately wrong: the first word 0.4 s early, the second 0.1 s late, the third in silence
+        cls.words = cls.dir / "bursts.json"
+        cls.words.write_text(json.dumps({"words": [{"word": "one", "start": 0.6, "end": 1.4}, {"word": "two", "start": 2.3, "end": 2.6},
+                                                   {"word": "three.", "start": 3.7, "end": 4.5}, {"word": "end", "start": 5.2, "end": 5.5}]}))
+
+    def cut(self, ranges, *args, name="out.mp4", dry=False, fail=False):
+        out = self.dir / name
+        out.unlink(missing_ok=True)
+        proc = script("cut.py", self.src, "--words", self.words, "--word-segments", ranges, *args, "--accurate", "-o", out, "--json",
+                      *(["--dry-run"] if dry else []), expect_fail=fail)
+        return json.loads(proc.stdout), out
+
+    def sound_starts(self, path):
+        """Seconds at which a tone starts in the written file: a quiet-to-loud edge, read from its samples."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                             stdout=subprocess.PIPE).stdout
+        pcm = array.array("h")
+        pcm.frombytes(raw[:len(raw) // 2 * 2])
+        loud = [any(abs(v) > 3000 for v in pcm[i:i + 80]) for i in range(0, len(pcm), 80)]
+        return [i / 100 for i in range(1, len(loud)) if loud[i] and not loud[i - 1]]
+
+    def test_the_start_is_measured_both_ways_and_the_cut_is_on_the_frame_grid(self):
+        doc, out = self.cut("0,1", "--onset-search", "0.6", "--margin-lead", "0.05", "--margin-tail", "0.1")
+        one, two = doc["word_segments"]
+        self.assertEqual((one["words"], one["text"], one["transcript"]), ([0, 0], "one", [0.6, 1.4]))
+        # 0.4 s early in the transcript, 0.1 s late: both found, to the 5 ms the search measures in
+        self.assertAlmostEqual(one["onset"]["measured"], 1.0, delta=0.01)
+        self.assertAlmostEqual(two["onset"]["measured"], 2.2, delta=0.01)
+        self.assertEqual(one["onset"]["transcript"], 0.6)
+        for r in (one, two):
+            for t in r["cut"]:
+                self.assertAlmostEqual(t * 25, round(t * 25), delta=1e-4, msg=r)  # a frame of a 25 fps source
+        # the measured start less 0.05 s, rounded down to a frame; the transcript's end plus 0.1 s, up
+        self.assertEqual(one["cut"], [0.92, 1.52])
+        self.assertEqual(doc["requested_segments"], [one["cut"], two["cut"]])
+        # the written file: each burst begins where the margin says, not where the transcript did
+        starts = self.sound_starts(out)
+        self.assertEqual(len(starts), 2, starts)
+        self.assertAlmostEqual(starts[0], 1.0 - one["cut"][0], delta=0.03)
+        self.assertAlmostEqual(starts[1], (one["cut"][1] - one["cut"][0]) + (2.2 - two["cut"][0]), delta=0.03)
+        self.assertAlmostEqual(probe(str(out))["duration"], sum(b - a for a, b in (one["cut"], two["cut"])), delta=0.06)
+
+    def test_a_start_with_no_rise_near_it_is_not_measured_and_keeps_the_transcript_time(self):
+        doc, _ = self.cut("3", "--onset-search", "0.2")
+        word = doc["word_segments"][0]
+        self.assertIsNone(word["onset"]["measured"])
+        self.assertEqual(word["onset"]["transcript"], 5.2)
+        self.assertIn("no rise", word["onset"]["reason"])
+        self.assertEqual(word["cut"], [5.2, 5.52])  # the transcript's own times on the grid (5.5 is half a frame), never a guess
+
+    def test_lead_and_tail_margins_and_the_shorthand(self):
+        asked = lambda *a: self.cut("0", *a)[0]["word_segments"][0]
+        self.assertIsNone(asked("--margin-lead", "0.2")["onset"])  # no --onset-search: nothing measured, and it says so
+        # the transcript's 0.6-1.4 s: 0.2 s before, 0.4 s after, the end up to a frame (1.8 is frame 45)
+        self.assertEqual(asked("--margin-lead", "0.2", "--margin-tail", "0.4")["cut"], [0.4, 1.8])
+        self.assertEqual(asked("--margin", "0.2")["cut"], [0.4, 1.6])
+        self.assertEqual(asked("--margin", "0.2", "--margin-tail", "0.05")["cut"], [0.4, 1.48])
+        self.assertEqual(asked()["cut"], [0.6, 1.4])  # no editing policy by default
+
+    def test_ranges_the_margins_make_overlap_meet_in_the_middle(self):
+        doc, out = self.cut("0,1", "--margin", "0.5")
+        one, two = doc["word_segments"]
+        self.assertEqual(one["cut"][1], two["cut"][0])
+        self.assertAlmostEqual(one["cut"][1], (1.4 + 0.5 + 2.3 - 0.5) / 2, delta=0.04)
+        self.assertAlmostEqual(probe(str(out))["duration"], two["cut"][1] - one["cut"][0], delta=0.06)
+
+    def test_a_dry_run_measures_and_writes_nothing(self):
+        doc, out = self.cut("0", "--onset-search", "0.6", dry=True)
+        self.assertTrue(doc["dry_run"])
+        self.assertFalse(out.exists())
+        self.assertAlmostEqual(doc["word_segments"][0]["onset"]["measured"], 1.0, delta=0.01)
+
+    def test_refusals(self):
+        for args in (("--word-segments", "0"), ("--words", str(self.words))):
+            with self.subTest(args=args):
+                proc = script("cut.py", self.src, *args, "-o", self.dir / "no.mp4", "--json", expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        for ranges in ("4", "2-1", "0-2,2-3", "a"):
+            with self.subTest(ranges=ranges):
+                self.assertEqual(self.cut(ranges, fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--segments", "0-1", fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--margin-tail", "-1", fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--onset-search", "0", fail=True)[0]["error"]["kind"], "input")
+        self.assertFalse((self.dir / "out.mp4").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
