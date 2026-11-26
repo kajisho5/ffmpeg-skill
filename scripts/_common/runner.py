@@ -2252,12 +2252,12 @@ def _install_checked(tmp: str, final: str, expected: Any) -> None:
 
     A target the check recorded absent is installed with os.link(), which fails when anything is
     there: a file another process creates between the comparison and this install is refused
-    instead of replaced. A checked target is replaced (os.replace) as before: a writer that
-    ignores the output lock can still write it between the comparison and the replace, as
-    docs/design-decisions.md says. A filesystem without hard links, and a path no check covers,
-    keep the old replace.
+    instead of replaced, unless --overwrite consented to replacing whatever is at the path. A
+    checked target is replaced (os.replace) as before: a writer that ignores the output lock can
+    still write it between the comparison and the replace, as docs/design-decisions.md says. A
+    filesystem without hard links, and a path no check covers, keep the old replace.
     """
-    if expected is None:
+    if expected is None and not STATE.overwrite:
         try:
             os.link(tmp, final)
         except FileExistsError:

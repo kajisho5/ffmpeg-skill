@@ -10283,6 +10283,26 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), b"theirs")
         self.assertEqual(self.temps(), [], "the staged copy is removed")
 
+    def test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite(self):
+        """#743 review: --overwrite consents to replacing whatever is at the path, so the link
+        install must not refuse a file another process created after the comparison when it is
+        given; without --overwrite the same gap is still refused (the test above)."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        real = self.runner._install_checked
+
+        def create_then_install(tmp, final, expected):
+            if not os.path.lexists(final):
+                Path(final).write_bytes(b"theirs")  # another process, after the comparison
+            real(tmp, final, expected)
+
+        _common.STATE.overwrite = True
+        with mock.patch.object(self.runner, "_install_checked", create_then_install):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(self.temps(), [], "the staged copy was installed, not left behind")
+
     def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
         """#743 review: write_sidecar() read the path back after the install, so a file another
         process put there in that gap was recorded as this run's and the next write replaced it."""

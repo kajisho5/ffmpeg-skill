@@ -508,8 +508,9 @@ exists. When a decision changes, edit the entry in the same PR.
   list, a project, a report) goes through `write_sidecar()`, which stages it and puts it in place by
   `replace_checked()`, so the same comparison runs under the path's lock (#696); a target the check
   recorded absent is installed with `os.link()`, which fails if another process created one in the
-  gap (a filesystem without hard links keeps the old replace), an existing target keeps its permission
-  bits and the identity recorded is the staged file's,
+  gap unless `--overwrite` consented (it replaces that path whatever is there; a filesystem
+  without hard links keeps the old replace), an existing target keeps its permission bits and the
+  identity recorded is the staged file's,
   not one read back after the install, while the concat lists, work files and manifests a tool
   makes for itself stay plain `open()`. Code:
   `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
@@ -522,6 +523,7 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
   `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
   `test_a_side_file_created_between_the_comparison_and_the_install_is_refused`,
+  `test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite`,
   `test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one`,
   `test_every_side_file_a_tool_writes_itself_goes_through_the_rechecked_helper`, `test_a_link_created_at_an_absent_target_is_refused`,
   `test_files_committed_together_are_both_kept_back_when_one_is_refused`, `test_a_refused_lock_removes_the_staged_file`,
