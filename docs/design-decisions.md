@@ -6780,6 +6780,7 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_a_timed_text_overlay_is_measured_while_it_is_on_screen`, `test_a_caption_reports_the_union_of_its_cues`,
   `test_a_caption_that_runs_off_the_frame_touches_its_edges`, `test_a_graphics_text_layer_reports_where_it_drew`,
   `test_where_nothing_was_measured_the_property_stays_unverified`.
+
 ## After 4.8.0 — a copy is verified against what its keyframes allow (#620)
 
 - **A stream copy's length is judged against the span the source's keyframes allow, not against a
