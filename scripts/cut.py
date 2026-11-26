@@ -750,6 +750,35 @@ def open_join_key(packets, plans):
     return None
 
 
+# How far a copied in or out may sit from the request before --accurate is suggested: half of the
+# default --tolerance, so a copy that was kept (within --tolerance) but moved a quarter second warns
+COPY_DRIFT_WARN = 0.25
+# The sound of a copy ends up to one audio packet past its picture; judged by the container (no
+# stream length of its own, Matroska), the written length may be this much longer
+COPY_AUDIO_SLACK = 0.05
+
+
+def copy_landing(src: str, segments, outcomes, plans, packets, fps, vend):
+    """Where each stream-copied video segment can land, from the source's own keyframes (#620):
+    ([(in, out), ...], slack), or None when it cannot be known (no picture, packets unreadable).
+    in is the keyframe the copy begins at (plan_part's start, or seek_keyframe's landing), or the
+    first picture at or after the start when the MP4 edit list hides the pre-roll; out is plan_part's
+    end bound for a --segments join, and the requested end for a single copy (-t counts from the
+    requested start). slack is what one part's written length may differ from out - in by: a frame,
+    and the source's reorder depth (ffmpeg's -t compares decode times)."""
+    if plans:
+        spans = [(p["start_pts"], vend if p["end_bound"] is None else p["end_bound"]) for p in plans]
+    else:
+        s, e = segments[0]
+        key = seek_keyframe(src, s)
+        hidden = key and outcomes[0].get("edit_list") and key[0] <= s + 1e-6
+        spans = [(key[2] if hidden else key[0], e)] if key else []
+        packets = _read_packets(src, packet_windows([(s, s + 2.0)], 0))
+    if not fps or not spans or None in [x for span in spans for x in span]:
+        return None
+    return spans, 1.0 / fps + max([p - d for p, d, _ in packets or () if p is not None and d is not None] + [0.0])
+
+
 def stream_packet_times(path: str, stream: str, entry: str, limit: int = None) -> list:
     """One timestamp field (pts_time, duration_time) of every packet of the first `stream` ("v" or
     "a") in `path`, or of its first `limit` packets; a missing value is None. [] when there is no
@@ -1786,6 +1815,7 @@ def main() -> int:
     outcomes: List[dict] = []
     join_reencoded = False
     join_check = None
+    plans = packets = None
     smart_doc = None
     if args.smart:
         smart_doc = run_smart(args, segments, output, meta, forced, hold_needed, total)
@@ -1988,6 +2018,36 @@ def main() -> int:
                        f"(tolerance {tolerance:.3f}s); use --accurate to re-encode the cut")
             notes.append(message)
             info(message)
+    # where a stream copy of video can land, from the source's keyframes (#620): the written picture is
+    # held to the length those spans make, not to a tolerance, and the spans are reported
+    land = (None if STATE.dry_run or mode != "copy" or not result.get("video")
+            else copy_landing(args.input, segments, outcomes, plans, packets, fps, video_end(args.input, meta)))
+    snapped = [[round(i, 6), round(o, 6)] for i, o in land[0]] if land else None
+    if not land and mode == "copy" and not STATE.dry_run and result.get("video"):
+        notes.append("the keyframes this copy could land on could not be read, so its length was not checked against them")
+    if land:
+        # the picture's own length where the container states it, else the container's, whose sound may
+        # run an audio packet past it; one slack per part (each part's end and the join's step)
+        measured, want = result["video"].get("duration"), sum(o - i for i, o in land[0])
+        tolerance = len(land[0]) * land[1] + (0 if measured else COPY_AUDIO_SLACK)
+        measured = measured or got
+        delta = None if measured is None else measured - want
+        ok = delta is not None and abs(delta) <= tolerance + 1e-6
+        verification.append({"step": "copy_span", "property": "output_duration", "expected": round(want, 6),
+                             "measured": None if measured is None else round(measured, 6),
+                             "delta": None if delta is None else round(delta, 6), "tolerance": round(tolerance, 6),
+                             "provenance": "input_premeasurement", "ok": ok})
+        if not ok:
+            message = (f"the stream copy's picture is {fmt_secs(measured)} where its keyframes allow {want:.3f}s "
+                       f"(tolerance {tolerance:.3f}s); use --accurate to re-encode the cut")
+            notes.append(message)
+            info(message)
+    drift = max([max(abs(i - s), abs(o - e)) for (i, o), (s, e) in zip(land[0], requested)] if land else [0.0])
+    if drift > COPY_DRIFT_WARN:
+        message = (f"the stream copy lands up to {drift:.3f}s from the requested cut (snapped_segments against "
+                   "requested_*); --accurate re-encodes it on the frame")
+        notes.append(message)
+        warn(message, "copy_drift_large", seconds=round(drift, 6), threshold=COPY_DRIFT_WARN)
     possible = possible_reencode_reason(mode, outcomes, len(segments))
     if possible:
         notes.append(possible_reencode_note(mode, possible, args.tolerance))
@@ -2051,6 +2111,7 @@ def main() -> int:
          requested_start=round(requested[0][0], 6) if len(requested) == 1 else None,
          requested_end=round(requested[0][1], 6) if len(requested) == 1 else None,
          requested_segments=[[round(s, 6), round(e, 6)] for s, e in requested] if len(requested) > 1 else None,
+         snapped_segments=snapped,
          requested_duration=round(expected, 6), output_duration=round(got, 6) if got is not None and not STATE.dry_run else None,
          duration_delta_seconds=round(error_ms / 1000, 6) if error_ms is not None else None,
          mode=mode, possible_reencode_reason=possible, keyframe_snapped=report["keyframe_snapped"], start_snapped=report["start_snapped"],
