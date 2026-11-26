@@ -34,11 +34,11 @@ from typing import List, Optional
 
 from _common.runner import absent_word, carried_stream_maps, fail_if_classified
 from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
-from _common.emit import note, warn
+from _common.emit import note, refuse, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            matrix_label, report as alpha_report, rgb_line, rgb_to_bt709_line, source_alpha, tag_args,
-                           video_line)
+                           unpremultiply_leg, video_line)
 from _common.decision import keeps_source_tags
 from _common.color import bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402,F401
 
@@ -498,6 +498,8 @@ def main() -> int:
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_alpha_args(ap)
+    ap.add_argument("--source-alpha-mode", choices=["straight", "premultiplied"], default=None,
+                    help="--keep-alpha: premultiplied grades the straight colour (default straight)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
@@ -543,6 +545,11 @@ def main() -> int:
         die("--drop-alpha applies to the re-encodes (--correct, --lut, --to-sdr); --retag and --strip-dovi copy the stream, "
             "alpha included", kind="input")
     alpha_codec = check_alpha_args(args, args.output)
+    if args.source_alpha_mode and not alpha_codec:
+        refuse("input", "source_alpha_mode_needs_keep_alpha", "--source-alpha-mode applies with --keep-alpha: without it the "
+               "alpha is not kept and there is no colour to divide it from", hint="add --keep-alpha")
+    if args.source_alpha_mode == "premultiplied" and not args.alpha_mode:
+        args.alpha_mode = "premultiplied"  # premultiplied in, premultiplied out, unless --alpha-mode straight asks otherwise
     src_alpha = source_alpha(args, meta, args.input) if (args.correct or args.lut or args.to_sdr) else None
     # an alpha line is graded at 4:4:4: its master would otherwise come back with 4:2:0 chroma
     out_fmt = "yuv444p" if alpha_codec else "yuv420p"
@@ -646,8 +653,15 @@ def main() -> int:
         # source's colour tags are kept, as --codec prores keeps them (no BT.709 conversion). An
         # RGB source has none: its YUV line is BT.709 and tagged so (working_matrix). An RGB line
         # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
-        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{vf}{matrix_label(meta)}[ka_g];[ka_a]alphaextract[ka_m];"
-              f"[ka_g][ka_m]alphamerge,{finish_chain(alpha_codec, args.alpha_mode, meta)}[ka_v]")
+        un = unpremultiply_leg(meta) if args.source_alpha_mode == "premultiplied" else ""
+        # alphamerge negotiates an 8-bit mask. Keep the source mask at 16 bits
+        # through the RGB multiply on a premultiplied ProRes master.
+        merge = "[ka_a]alphaextract[ka_m];[ka_g][ka_m]alphamerge"
+        if un and alpha_codec == "prores4444":
+            merge = ("[ka_g]format=gbrp16le[ka_rgb];[ka_a]alphaextract,format=gray16le[ka_m];"
+                     "[ka_rgb][ka_m]mergeplanes=map1p=1:map2p=2:map3s=1:format=gbrap16le")
+        fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{un}{vf}{matrix_label(meta)}[ka_g];"
+              f"{merge},{finish_chain(alpha_codec, args.alpha_mode, meta, wide=bool(un))}[ka_v]")
         fc = cfr_at_input(fc, meta)  # the conform of a VFR source: the fps filter (#512)
         cmd = ffmpeg_base() + decoder_args_for(meta, args.input) + ["-i", args.input, "-filter_complex", fc,
                                                                      "-map", "[ka_v]", "-map", f"0:a:{args.audio_stream}?"]

@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from _common.decision import (av_trim, conform_output_t, conform_to_length, frame_durations, frame_rate, frame_window,
                               grid_at_or_after, on_frame, silence_filter, stream_starts, window_expr, windowed_overlay_x)
-from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, label_chain, matrix_chain, overlay_format, range_chain, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
+from _common import STATE, add_common, aac_args, apply_common, cfr_args, cfr_at_input, as_limited, default_output, die, draws_chroma, drawn_chain, emit, ffmpeg_base, info, time_arg, mix_color_chains, overlay_format, probe, run, validate_color, video_args, X264_PRESETS, fmt_secs
 from _common.emit import note, record_fallback
 from _common.probe import display_size, is_still_input, square_pixels, square_pixels_note, still_loop_args
 from _common.emit import input_length
@@ -157,14 +157,8 @@ def main() -> int:
     # A shows through unchanged, so A's timeline is never touched.
     parts: List[str] = []
     cur = "[0:v]"
-    # every clip is converted by its own colour tags to the BT.709 the output is tagged with; beside
-    # a converted clip (or under a --pad-color with chroma) an untagged one gets its BT.709 label,
-    # tags only, so 7.1+'s overlay and pad have nothing to convert or misread
-    convert = [matrix_chain(m, meta_a) for m in [meta_a] + [c["meta"] for c in cutaways]]
-    if any(convert) or draws_chroma([args.pad_color], meta_a):
-        convert = [cv or label_chain(m, meta_a) for cv, m in zip(convert, [meta_a] + [c["meta"] for c in cutaways])]
-    # overlay mixes samples: a full-range clip over or under a limited one is taken to limited range (#410)
-    convert = [cv + range_chain(m, meta_a) for cv, m in zip(convert, [meta_a] + [c["meta"] for c in cutaways])]
+    metas = [meta_a] + [c["meta"] for c in cutaways]
+    convert = mix_color_chains(metas, meta_a, draws_colour=draws_chroma([args.pad_color], meta_a))
     if convert[0] or a_chain:
         parts.append(f"[0:v]{convert[0]}{a_chain or 'null'}[a709]")
         cur = "[a709]"

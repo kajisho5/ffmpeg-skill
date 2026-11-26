@@ -464,7 +464,7 @@ def main() -> int:
     fades.add_argument("--fade-out", type=float, default=0.0, help="seconds; fades the whole final mix (voice included)")
     music.add_argument("--music-fade-out", type=float, default=0.0, help="seconds; fades only the music bed at the end, voice untouched")
     channels = fades.add_mutually_exclusive_group()
-    channels.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is duplicated to both sides)")
+    channels.add_argument("--stereo", action="store_true", help="force 2-channel output (mono is mixed into both sides at about -3.01 dB each, including after --channel)")
     channels.add_argument("--mono", action="store_true", help="force 1-channel output")
     fades.add_argument("--stereo-widen", type=float, default=None, metavar="AMOUNT",
                        help="widen the stereo image, 0..1 (0 = untouched, 1 = maximum); needs a real stereo source: a mono input is "

@@ -195,9 +195,15 @@ def main() -> int:
     ap.add_argument("--duration", "--seconds", dest="seconds", type=float, default=6.0, help="length of the test cut taken from each file (default 6)")
     ap.add_argument("--timeout", type=float, default=600.0, help="per-step timeout in seconds (default 600; 0 = no limit, as everywhere else)")
     ap.add_argument("--report", help="write a Markdown report here")
+    ap.add_argument("--profile", help="pacing-profile@1 JSON path or sns-short, youtube-talk, podcast-natural")
+    ap.add_argument("--protect-ranges", help="JSON intervals in source milliseconds to preserve")
+    ap.add_argument("--source", help="original media for the independent pacing gate")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.profile or args.protect_ranges or args.source:
+        from _common.pacing_edit import cli
+        return cli(args, checking=True)
     if STATE.plan:
         die("verify.py does not support --plan: its steps run for real (it ignores --dry-run too)")
     ignored_dry_run = STATE.dry_run
