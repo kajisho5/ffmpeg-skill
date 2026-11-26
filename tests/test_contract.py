@@ -10334,7 +10334,50 @@ class OutputChangedDuringRunTests(unittest.TestCase):
                 self.runner.replace_checked_together([(str(staged_first), str(first)),
                                                       (str(staged_second), str(second))])
         self.assertEqual(first.read_bytes(), b"theirs", "the file that was at the path is put back")
-        self.assertEqual(self.temps(), [], "the staged files are removed")
+        self.assertFalse(staged_first.exists(), "the staged file the install consumed is removed")
+        self.assertFalse(staged_second.exists(), "the staged file of the failed install is removed")
+        self.assertEqual(self.temps(), [], "a hidden sibling or backup is removed")
+
+    @unittest.skipIf(os.name == "nt", "group ownership is not kept on Windows")
+    def test_a_side_file_keeps_the_group_of_the_file_it_replaces(self):
+        """#743 review: write_sidecar() installs the staged inode with os.replace(), so a side
+        file restricted to a group (alice:editors) was replaced by one in the writer's group,
+        which keeps the mode and moves the file out of the group that restricted it. The
+        target's group is set on the staged file before chmod (chown clears setgid), and a
+        writer that may not set it is refused instead of replacing the file."""
+        from unittest import mock
+        path = self.work / "edl.txt"
+        path.write_text("theirs", encoding="utf-8")
+        gid = os.stat(path).st_gid
+        staged = self.work / "staged.tmp"
+        staged.write_text("ours", encoding="utf-8")
+        other = gid + 1  # the staged file landed in the writer's group, not the target's
+        calls = []
+        with mock.patch.object(self.runner.os, "chown", lambda *a: calls.append(a)):
+            self.runner._keep_group(str(staged), str(path), gid, other)
+        self.assertEqual(calls, [(str(staged), -1, gid)], "the target's group is set on the staged file")
+        # a writer that may not set that group refuses: the file is not replaced with one of
+        # another group
+        with mock.patch.object(self.runner.os, "chown",
+                               side_effect=PermissionError(1, "Operation not permitted")):
+            self.assertEqual(self.call(self.runner._keep_group, str(staged), str(path), gid, other),
+                             ("input", "output_group_not_settable"))
+        # the staged file already in the target's group needs no change
+        with mock.patch.object(self.runner.os, "chown", side_effect=AssertionError("no chown needed")):
+            self.runner._keep_group(str(staged), str(path), gid, gid)
+        # write_sidecar() applies it to the target's group, and not to a new file it creates
+        seen = []
+        real = self.runner._keep_group
+
+        def record(tmp, final, target_gid, staged_gid):
+            seen.append((str(final), target_gid, staged_gid))
+            real(tmp, final, target_gid, staged_gid)
+
+        _common.STATE.overwrite = True  # consent to replace the existing file
+        with mock.patch.object(self.runner, "_keep_group", record):
+            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual([(final, target) for final, target, _staged in seen], [(str(path), gid)],
+                         "the replaced target's group is kept")
 
     def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
         """#743 review: write_sidecar() read the path back after the install, so a file another

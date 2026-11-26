@@ -2215,26 +2215,54 @@ def replace_checked(tmp: str, final: str) -> None:
     replace_checked_together([(tmp, final)])
 
 
+def _keep_group(tmp: str, final: str, gid: int, staged_gid: int) -> None:
+    """Give the staged file the group of the file it replaces (#743 review).
+
+    os.replace() installs the staged inode, which keeps the writer's group (or the directory's
+    under setgid): replacing a target restricted to alice:editors with a file in staff keeps the
+    mode but hands staff what that group restricted. The target's group is set here, before
+    write_sidecar's chmod (chown clears setgid). A writer that may not set that group is refused
+    instead of replacing the file with one of another group; the owner is not restored (that
+    needs privilege) and is a separate decision.
+    """
+    if not hasattr(os, "chown") or staged_gid == gid:
+        return  # no group ownership to keep (Windows), or the staged file already has it
+    try:
+        os.chown(tmp, -1, gid)
+    except OSError as exc:
+        refuse("input", "output_group_not_settable",
+               f"refusing to replace {final!r}: it belongs to group {gid}, and this run may not give the new "
+               f"file that group ({exc.strerror or exc}); write elsewhere, or let the file's owner replace it",
+               path=final, group=gid, staged_group=staged_gid)
+
+
 def write_sidecar(path: str, text: str, encoding: str = "utf-8") -> None:
     """Write a side file a tool produces itself (an EDL, an SRT, a chapter or project list).
 
     Staged as a hidden sibling temp and put in place by replace_checked(), so the replace runs
     under the path's output lock after refuse_changed_output(): a file another process put there
     after the output check is refused instead of overwritten, and a full disk or an interrupted
-    write leaves the previous file whole (#696). The mode is what open() would have given it: an
-    existing target keeps its permission bits, a new one gets the umask's.
+    write leaves the previous file whole (#696). The mode and group are what open() would have
+    given it: an existing target keeps its permission bits and its group (a writer that may not
+    set that group is refused), a new one gets the umask's.
     """
     directory = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(prefix=".ffskill-side", suffix=".tmp", dir=directory)
     try:
+        staged_gid = os.fstat(fd).st_gid  # the group the staged file landed in
         with os.fdopen(fd, "w", encoding=encoding) as fh:
             fh.write(text)
         try:
-            mode = os.stat(path).st_mode & 0o7777  # an existing file keeps open()'s mode
+            existing = os.stat(path)  # an existing file keeps open()'s mode and group
         except OSError:
+            existing = None
+        if existing is None:
             mask = os.umask(0)  # mkstemp makes the file 0600; a new file gets open()'s mode
             os.umask(mask)
             mode = 0o666 & ~mask
+        else:
+            mode = existing.st_mode & 0o7777
+            _keep_group(tmp, path, existing.st_gid, staged_gid)  # before chmod: chown clears setgid
         os.chmod(tmp, mode)
         # the identity the file will have at path, captured before the install: reading it back
         # afterwards could record one another process put there in the gap as this run's

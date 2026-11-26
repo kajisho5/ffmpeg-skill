@@ -510,8 +510,11 @@ exists. When a decision changes, edit the entry in the same PR.
   `replace_checked()`, so the same comparison runs under the path's lock (#696); a target the check
   recorded absent is installed with `os.link()`, which fails if another process created one in the
   gap unless `--overwrite` consented (it replaces that path whatever is there; a filesystem
-  without hard links keeps the old replace), an existing target keeps its permission bits and the
-  identity recorded is the staged file's,
+  without hard links keeps the old replace), an existing target keeps its permission bits and its
+  group (the staged file takes the target's group before its mode, and a writer that may not give
+  it that group is refused with `output_group_not_settable` instead of replacing the file with one
+  in another group; the owner is not restored, which needs privilege), and the identity recorded
+  is the staged file's,
   not one read back after the install, while the concat lists, work files and manifests a tool
   makes for itself stay plain `open()`. Code:
   `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
@@ -523,6 +526,7 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_side_file_a_tool_replaces_itself_is_rechecked`,
   `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
   `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
+  `test_a_side_file_keeps_the_group_of_the_file_it_replaces`,
   `test_a_side_file_created_between_the_comparison_and_the_install_is_refused`,
   `test_an_absent_side_file_that_appears_before_the_install_is_replaced_under_overwrite`,
   `test_an_overwrite_pair_puts_back_a_file_that_appeared_at_a_checked_absent_target`,
