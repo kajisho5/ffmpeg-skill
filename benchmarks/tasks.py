@@ -378,7 +378,8 @@ TASKS = [
          reference=["-i", "long.mp4", "-t", "15", "-vf", "crop=404:720,scale=1080:1920,setsar=1", "-preset", "ultrafast"]),
     dict(id="silence", request="Cut out the pauses in talk.mp4 and save it as out.mp4.", inputs=["talk.mp4"], output="out.mp4",
          check=lambda o, w: check_pauses(o),
-         reference=["-i", "talk.mp4", "-vf", "select='lt(mod(t,5),3)',setpts=N/FRAME_RATE/TB", "-af", "aselect='lt(mod(t,5),3)',asetpts=N/SR/TB"]),
+         # the four 3 s spans of tone, cut and joined by name: select= with setpts kept a 20 s length on FFmpeg 8
+         reference=["-i", "talk.mp4", "-filter_complex", "[0:v]trim=0:3,setpts=PTS-STARTPTS[v0];[0:a]atrim=0:3,asetpts=PTS-STARTPTS[a0];[0:v]trim=5:8,setpts=PTS-STARTPTS[v1];[0:a]atrim=5:8,asetpts=PTS-STARTPTS[a1];[0:v]trim=10:13,setpts=PTS-STARTPTS[v2];[0:a]atrim=10:13,asetpts=PTS-STARTPTS[a2];[0:v]trim=15:18,setpts=PTS-STARTPTS[v3];[0:a]atrim=15:18,asetpts=PTS-STARTPTS[a3];[v0][a0][v1][a1][v2][a2][v3][a3]concat=n=4:v=1:a=1[v][a]", "-map", "[v]", "-map", "[a]"]),
     dict(id="speed", request="Make clip.mp4 play twice as fast, sound included, and save it as out.mp4.", inputs=["clip.mp4"],
          output="out.mp4", check=lambda o, w: check_speed(o),
          reference=["-i", "clip.mp4", "-vf", "setpts=PTS/2", "-af", "atempo=2"]),
