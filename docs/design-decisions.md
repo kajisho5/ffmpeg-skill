@@ -7334,18 +7334,25 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   settings), the one for 96 above libaom-av1 realtime's 42, the largest at that grid. The real
   edits stay above both: a caption at 72 and 103, a 60x60 logo at 103 and 117. A 24x24 logo
   scored 6 to 19 on the default grid (missed), 24 to 73 at 64 (found when it does not straddle
-  four tiles) and 54 or more at 96: a change that small needs 96 at 1080p. `--change-floor` still
+  four tiles) and 54 or more at 96 (20 px tiles, which are now refused, below): a change that
+  small needs 64 at 1080p, where it is found when it falls inside one tile, or 96 on a 2880 px picture. `--change-floor` still
   replaces the grid's floor. The grid is in the row ("floor 32 on 64x36 tiles") and in
   `change_scope.tile`. Code: `probe.CHANGE_FLOORS`, `check.change_scope_row()`. Tests:
   `test_check_change_grid_finds_a_logo_smaller_than_a_tile_442`,
   `test_check_change_floor_holds_for_every_available_encoder_442` (each surveyed encoder this build
-  has, at a common setting, testsrc2 with a 60x60 logo: 720p at 32 and 64, 1080p at 96, no
-  undeclared change; an encoder the build lacks is skipped).
-- **A finer grid is refused where its tiles are under 20 px** (64 needs 1280x720, 96 needs
-  1920x1080; the narrower tile side counts, so a 1080x1920 picture, 17 px across at 64, has
-  neither). Under 20 px a
-  re-encode alone passed the floors (above), and a floor high enough for it would miss the edits
-  the grid is for. The 32x18 default keeps its behaviour on every size. Three choices and not any
+  has, at a common setting, testsrc2 with a 60x60 logo: 720p at 32, 1080p at 64, 2880x1620 at 96,
+  no undeclared change; an encoder the build lacks is skipped).
+- **A finer grid is refused where its tiles are under 30 px** (64 needs 1920x1080, 96 needs
+  2880x1620; the narrower tile side counts, so a 1080x1920 picture, 17 px across at 64, has
+  neither). Under 20 px a re-encode alone passed the floors (above). The survey allowed 20 px
+  (64 at 720p, 96 at 1080p), and CI on macOS (FFmpeg 9.0.2, a libsvtav1 newer than the survey's
+  1.7.0) found what that costs: libsvtav1 crf 35 preset 10, testsrc2 at 720p on 64x36 tiles, the
+  untouched and the logo encode differed by 143 on one 20 px tile at (100, 80) for 2 frames, far
+  from the logo (quiet peak 31); 1.7.0 gives 15 there. 143 is above every real edit's score, so no
+  floor separates it: an encoder that moves bits to fine moving detail when an edit takes some
+  changes a tile that small for real. On 30 px tiles and more the same encoder passed. The owner's
+  decision (2026-11-27): the finer grids need 30 px tiles, and lose 1080p at 96, rather than keep a
+  grid that can call an untouched tile changed. The 32x18 default keeps its behaviour on every size. Three choices and not any
   number: each is a floor that was measured.
 - **The grid and the floor need `--expect-changed`.** Without it neither is used, so either is
   refused, as is a grid outside the three.

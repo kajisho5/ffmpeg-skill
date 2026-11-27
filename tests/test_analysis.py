@@ -908,8 +908,8 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual((code, row), (0, None), doc)
 
     def test_check_change_grid_finds_a_logo_smaller_than_a_tile_442(self):
-        """#442: --change-grid 64 or 96 (30 or 20 px tiles at 1080p) finds a 24x24 logo that the
-        default 32x18 grid dilutes under its floor, places it to the finer tile, and uses that
+        """#442: --change-grid 64 (30 px tiles at 1080p) or 96 (30 px at 2880x1620) finds a 24x24 logo
+        that the default 32x18 grid dilutes under its floor, places it to the finer tile, and uses that
         grid's own floor; the grid is in the row and the document, and a value outside the
         surveyed ones, a grid without --expect-changed and tiles too small to have a floor are refused."""
         x264 = ["-c:v", "libx264", "-crf", "18", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-an"]
@@ -917,9 +917,13 @@ class AnalysisTests(MediaFixtures):
         logo = ("drawbox=x=1083:y=543:w=24:h=24:color=white:t=fill:enable='between(t,0.5,1.5)',"
                 "drawbox=x=1089:y=549:w=12:h=12:color=0x2050c0:t=fill:enable='between(t,0.5,1.5)'")
         old, new, small = (OUT / n for n in ("grid_old.mp4", "grid_new.mp4", "grid_small.mp4"))
+        big_old, big_new = OUT / "grid_old_2880.mp4", OUT / "grid_new_2880.mp4"
         lavfi = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]
         sh(*lavfi, src, "-t", "2", *x264, old)
         sh(*lavfi, src + "," + logo, "-t", "2", *x264, new)
+        big = src.replace("1920x1080", "2880x1620")  # 96 tiles of 30 px; the logo sits in the same 30 px tile
+        sh(*lavfi, big, "-t", "2", *x264, big_old)
+        sh(*lavfi, big + "," + logo, "-t", "2", *x264, big_new)
 
         def check(path, ref, *extra):
             proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
@@ -931,26 +935,26 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(row["status"], "PASS", row)  # the default grid misses it: 16 % of a 60x60 tile
         self.assertEqual((doc["change_scope"]["tile"], doc["change_scope"]["floor"]), ([32, 18], 24))
         self.assertIn("on 32x18 tiles", row["value"])
-        for grid, tile in ((64, 30), (96, 20)):
+        for grid, tile, (new_, old_) in ((64, 30, (new, old)), (96, 30, (big_new, big_old))):
             with self.subTest(grid=grid):
-                doc, row = check(new, old, "--expect-changed", "none", "--change-grid", str(grid))
+                doc, row = check(new_, old_, "--expect-changed", "none", "--change-grid", str(grid))
                 self.assertEqual(row["status"], "FAIL", row)
                 scope = doc["change_scope"]
                 self.assertEqual((scope["tile"], scope["floor"]), ([grid, grid * 9 // 16], content_probe.CHANGE_FLOORS[grid]))
                 self.assertIn(f"on {grid}x{grid * 9 // 16} tiles", row["value"])
-                # placed to the finer tile: one 30 px tile at 64, one or two 20 px tiles at 96 (the logo is 24 px)
+                # placed to the finer tile: one 30 px tile (the logo is 24 px)
                 (seen,) = scope["observed"]
-                self.assertEqual((seen["start"], seen["frames"], seen["rect"][:2]), (0.5, 11, [1080, 540]), seen)
-                self.assertIn(seen["rect"][2], (tile, 2 * tile) if grid == 96 else (tile,), seen)
-                doc, row = check(new, old, "--expect-changed", "0.5-1.5@1080,540,30,30", "--change-grid", str(grid))
+                self.assertEqual((seen["start"], seen["frames"], seen["rect"][:3]), (0.5, 11, [1080, 540, tile]), seen)
+                doc, row = check(new_, old_, "--expect-changed", "0.5-1.5@1080,540,30,30", "--change-grid", str(grid))
                 self.assertEqual(row["status"], "PASS", row)
         # an explicit floor still wins over the grid's
         self.assertEqual(check(new, old, "--expect-changed", "none", "--change-grid", "64", "--change-floor", "200")[1]["status"], "PASS")
-        # a 20 px tile needs 1920 px across: a 960x540 picture has no surveyed floor at 96 tiles
+        # a finer grid needs 30 px tiles: 96 needs 2880 px across, so a 1080p or a 960x540 picture is refused
         sh(*lavfi, "testsrc2=size=960x540:rate=10", "-t", "1", *x264, small)
-        doc, _ = check(small, small, "--expect-changed", "none", "--change-grid", "96")
-        self.assertEqual(doc["error"]["kind"], "input", doc)
-        self.assertIn("10 px", doc["error"]["message"])
+        for path, px in ((small, "10 px"), (new, "20 px")):
+            doc, _ = check(path, path, "--expect-changed", "none", "--change-grid", "96")
+            self.assertEqual(doc["error"]["kind"], "input", doc)
+            self.assertIn(px, doc["error"]["message"])
         for bad, say in ((["--expect-changed", "none", "--change-grid", "48"], "32, 64, 96"),
                          (["--expect-changed", "none", "--change-grid", "0"], "32, 64, 96"),
                          (["--change-grid", "64"], "need --expect-changed"),
@@ -975,8 +979,8 @@ class AnalysisTests(MediaFixtures):
             "libvpx-vp9": ["-c:v", "libvpx-vp9", "-crf", "33", "-b:v", "0", "-deadline", "realtime", "-cpu-used", "8"],
             "prores": ["-c:v", "prores", "-profile:v", "0"],
         }
-        # 20 px tiles, the smallest a finer grid is allowed, are the worst case of each grid: 64 at 720p, 96 at 1080p
-        cases = {(1280, 720): (32, 64), (1920, 1080): (96,)}
+        # 30 px tiles, the smallest a finer grid is allowed, are the worst case of each grid: 64 at 1080p, 96 at 2880x1620
+        cases = {(1280, 720): (32,), (1920, 1080): (64,), (2880, 1620): (96,)}
         tried = []
         for name, args in settings.items():
             if not re.search(rf"^ V\S* {re.escape(name)} ", encoders, re.M):

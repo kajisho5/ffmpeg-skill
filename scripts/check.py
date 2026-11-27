@@ -304,10 +304,10 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         return not_compared("%dx%d against %dx%d (as displayed)" % (size + shown_size(rv)),
                             "compare two renders of the same frame size")
     grid = getattr(args, "grid", CHANGE_GRID)
-    if grid != CHANGE_GRID and min(size[0] / grid[0], size[1] / grid[1]) < 20:
-        # the survey's floors hold for tiles of 20 px and more; under that a re-encode alone passed them
+    if grid != CHANGE_GRID and min(size[0] / grid[0], size[1] / grid[1]) < 30:
+        # under 30 px a re-encode alone passed the floors (newer libsvtav1: 143 on one 20 px tile)
         die(f"--change-grid {grid[0]}: the {size[0]}x{size[1]} picture in {grid[0]}x{grid[1]} tiles is "
-            f"{min(size[0] / grid[0], size[1] / grid[1]):.0f} px a tile, and the floors hold from 20 px: use a coarser grid")
+            f"{min(size[0] / grid[0], size[1] / grid[1]):.0f} px a tile, and the floors hold from 30 px: use a coarser grid")
     for d in declared:
         if d["rect"] and (d["rect"][0] + d["rect"][2] > size[0] or d["rect"][1] + d["rect"][3] > size[1]):
             # a rectangle that runs past the edge is a wrong size or a wrong file, and clipping it
@@ -518,8 +518,8 @@ def main() -> int:
     ap.add_argument("--expect-removed", action="append", metavar="SPAN",
                     help="a span START-END of REFERENCE's time the edit cut out (repeatable), taken out before comparing")
     ap.add_argument("--change-grid", type=int, metavar="N",
-                    help="--expect-changed: the frame in N tiles across and N*9/16 down, %s (60, 30 or 20 px at "
-                         "1080p; default 32): a finer grid finds a smaller change" % ", ".join(map(str, CHANGE_FLOORS)))
+                    help="--expect-changed: the frame in N tiles across and N*9/16 down, %s (default 32; 64 needs "
+                         "1920 px across, 96 needs 2880): a finer grid finds a smaller change" % ", ".join(map(str, CHANGE_FLOORS)))
     ap.add_argument("--change-floor", type=int, metavar="N",
                     help="--expect-changed: a tile counts as changed when its largest channel difference is above N "
                          "of 255 (default per --change-grid: %s)" % ", ".join(f"{k}: {v}" for k, v in CHANGE_FLOORS.items()))
