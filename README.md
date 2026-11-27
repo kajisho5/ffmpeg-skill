@@ -13,6 +13,7 @@ No cloud · No API keys · Python standard library<br>
 <p align="center">
   <a href="https://kajisho5.github.io/ffmpeg-skill/"><b>Website</b></a> ·
   <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="docs/use-cases/README.md"><b>Use cases</b></a> ·
   <a href="docs/demos.md">Demos</a> ·
   <a href="#tools">Tools</a> ·
   <a href="#mcp">MCP</a> ·
@@ -45,7 +46,9 @@ No cloud · No API keys · Python standard library<br>
   <a href="https://www.star-history.com/kajisho5/ffmpeg-skill"><img src="https://api.star-history.com/badge?repo=kajisho5/ffmpeg-skill&type=rank" alt="Star History: global rank among GitHub repositories" height="55"></a>
 </p>
 
-<p align="center"><b>English</b> · <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja">日本語（サイト）</a></p>
+<p align="center"><b>English</b> · <a href="README.ja.md">日本語</a> · <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja">日本語（サイト）</a></p>
+
+<p align="center"><b>Use cases, end to end:</b> <a href="docs/use-cases/vertical-short.md">a vertical short with captions</a> · <a href="docs/use-cases/audiogram.md">a podcast as an audiogram</a> · <a href="docs/use-cases/phone-clip.md">cleaning a phone clip</a> · <a href="docs/use-cases/cut-down.md">a cut-down of a long recording</a> · <a href="docs/use-cases/platforms.md">one master, several platforms</a> · <a href="docs/use-cases/two-cameras.md">a talk from two cameras</a></p>
 
 ```bash
 npx ffmpeg-skill
@@ -890,6 +893,8 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | | |
 |---|---|
+| [docs/use-cases/](docs/use-cases/README.md) | six requests end to end: what you say, the commands, the result, what to check |
+| [README.ja.md](README.ja.md) | this README in Japanese |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
 | [docs/roadmap.md](docs/roadmap.md) | the release history from 1.8.0, one theme per minor, each marked shipped + evaluated, shipped with eval pending, or planned; and what 2.0.0 then removes |
 | [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
