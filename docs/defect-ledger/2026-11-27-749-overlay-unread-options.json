@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-27",
+  "issue": 749,
+  "class": "ignored_flag",
+  "what": "overlay.py declared --emoji-assets, --emoji-scale and --emoji-max (added with caption.py's and graphics.py's in 1.15) and never read them: it draws --text with drawtext and refuses --emoji png|color, so `overlay.py IN --text 'Hi' --emoji-scale 2` ran and the value did nothing, with nothing said. The MCP schema published them as overlay arguments too. overlay is a beta tool, so the options are deprecated rather than removed (docs/contract.md's beta rule): each now warns deprecated_option, and they go in 4.22.0.",
+  "escaped": "No check compared a parser's dests with the code that reads them: the contract and MCP tests derive the surface from the parser, so a declared option is published and documented whether or not anything reads it, and the emoji tests ran overlay.py only with --emoji. The help of --emoji-assets even said overlay.py had no PNG route.",
+  "mechanism": "tests/test_guards.py's IgnoredFlagGuard.test_every_declared_option_of_every_tool_is_read (registered for the class in docs/defect-guards.json) captures every tool's parser and fails on a dest that nothing reads by name (no `<name>.<dest>` or \"<dest>\" in the tool, no `args.<dest>` or getattr(args, \"<dest>\") in the shared modules) unless _contract.DEPRECATED lists it as \"<tool>.py --flag\": an option that does nothing is either read, or announced as going. overlay.py's three are listed (since 4.20.2, removed_in 4.22.0) and warn deprecated_option when given. The one dest kept on purpose (cut.py --keep-hevc, the 3.0.0 default accepted for 2.x command lines and refused beside --no-keep-hevc by argparse) is listed with its reason in UNREAD_BY_DESIGN."
+}

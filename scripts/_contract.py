@@ -544,6 +544,7 @@ DIAGNOSTIC_CODES = {
     "emoji_monochrome": ("warnings", "caption.py / graphics.py: emoji drawn monochrome through libass (no colour path here). overlay.py --text: emoji left to the one font drawtext loads, which has no fallback, so a font without the glyph draws an empty box"),
     "words_outside_input": ("warnings", "silence.py --filler --words: word timings that start at or after the end of the input (a transcript of another file, or times in milliseconds); {count, words, duration}"),
     "emoji_stripped": ("warnings", "overlay.py --emoji none: emoji removed from the drawn text; {mode}"),
+    "deprecated_option": ("warnings", "an option listed in contract --json `deprecated` was given; the run goes on as before (overlay.py --emoji-assets, --emoji-scale and --emoji-max never had an effect); {option}"),
     "emoji_assets_missing": ("warnings", "--emoji-assets has no PNG for these clusters; they stay in the text for libass, and the message says whether libass draws an emoji glyph on this build; {missing}"),
     "drawtext_newline_glyph": ("warnings", "graphics.py --text-render drawtext on FFmpeg 8.0-8.0.1/8.1.0: a box is drawn at each line break of a multi-line label; {text_render}"),
     "timeline_parse_failed": ("warnings", "render.py --export-timeline: the written file does not read back as its format (the parse step is ok: false); {path, format, error}"),
@@ -1970,6 +1971,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
+        **({"alias_of": ALIASES[name]} if name in ALIASES else {}),
         # 4.0.0: what the 4.x promise covers for this tool (docs/contract.md, Stability guarantee (4.x))
         "stability": "stable" if name in STABLE_TOOLS else "beta",
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
@@ -2013,7 +2015,10 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # step 1 (this list, --help text and the CHANGELOG) in a minor, step 2 keeps it working, step 3
 # removes it in the major. `where` says which surface a caller sees it on. Empty at 2.0.0 and at
 # 3.0.0: every deprecation announced in 1.x and 2.x was settled by its major (REMOVED below).
-DEPRECATED: List[Dict[str, str]] = []
+# A beta tool's argument goes in the minor release after the one that lists it (4.x's beta rule).
+DEPRECATED: List[Dict[str, str]] = [
+    {"what": f"overlay.py {flag}", "since": "4.20.2", "replacement": "none (the option has no effect)", "removed_in": "4.22.0", "where": "cli"}
+    for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max")]
 
 # What each major removed or changed, with the version that deprecated each: the "Removed" half of
 # the policy's step 3, kept in the contract so a caller migrating can diff it instead of reading a
@@ -2064,11 +2069,14 @@ READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
 # evals/agent_prompts*.json (render/look/caption/export/check each >=10 hits; fit/cut/audio/
 # loudness/graphics/silence/probe each >=6) -- not a hand-picked "starter" set. `tools/list`
-# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 42; the
-# other 30 stay reachable by name through tools/call either way, and `contract --json` always
-# describes all 42.
+# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 41; the
+# other 29 stay reachable by name through tools/call either way, and `contract --json` always
+# describes all 41 and the aliases.
 MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
-# 4.0.0: the tools whose surface 4.x promises not to break; the other 30 are "beta" (docs/contract.md).
+# 4.19 (#683): a tool folded into another keeps its script, MCP name and schema (callable by name, the 1.x
+# snapshot) and leaves what is advertised: the tool count, SKILL.md's table and tools/list, full or not
+ALIASES = {"crop": "fit"}
+# 4.0.0: the tools whose surface 4.x promises not to break; the other 29 are "beta" (docs/contract.md).
 STABLE_TOOLS = MCP_CORE_TOOLS
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
