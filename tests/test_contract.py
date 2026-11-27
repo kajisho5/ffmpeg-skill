@@ -34,13 +34,14 @@ sys.path.insert(0, str(ROOT / "mcp"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
+ENCODE_ENV = "FFMPEG_SKILL_ENCODE"  # EncodePolicyTests pins it to the runner's name
 from _fixtures import OUT, SHARED_OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
 # opt in with an explicit env. The names come from the runner, so this scrub and the one in
 # tests/_fixtures.py cannot drift from what the tools read.
-for _k in (HW_ENV, HW_FORCED_ENV):
+for _k in (HW_ENV, HW_FORCED_ENV, ENCODE_ENV):  # and the house encoder settings (#576)
     os.environ.pop(_k, None)
 
 for _k in ("FFMPEG_SKILL_MCP_FULL", "FFMPEG_SKILL_MCP_TOOLS"):
@@ -2461,8 +2462,8 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_000),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_600),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured)
+            ({}, 12, 75_300),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_900),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
@@ -14249,6 +14250,98 @@ class TestOutIsolationTests(unittest.TestCase):
                 proc = subprocess.run([sys.executable, "-m", "unittest", *target],
                                       cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
                 self.assertEqual(proc.returncode, 0, f"{target}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+
+
+class EncodePolicyTests(unittest.TestCase):
+    """#576: $FFMPEG_SKILL_ENCODE sets the encoder flags' defaults and, `locked`, refuses a call that
+    asks for something else before ffmpeg runs; every re-encoding result records the settings it
+    ran with (`encode`) and a --fast one says it is a preview."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "ep_source.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-i", "sine=d=1.2", "-t", "1.2",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+
+    def run_tool(self, name, *args, policy=None, ok=True):
+        env = {k: v for k, v in os.environ.items() if k != ENCODE_ENV}
+        if policy is not None:
+            env[ENCODE_ENV] = policy
+        out = OUT / f"ep_{name}_{abs(hash((args, policy)))}.mp4"
+        proc = tool(name, *args, "-o", out, "--overwrite", "--json", env=env, check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "completed" if ok else "failed", proc.stderr)
+        return doc
+
+    def refused(self, doc, key):
+        self.assertEqual((doc["error"]["kind"], doc["error"]["reason"], doc["error"]["details"].get("key")), ("input", "encode_policy", key))
+        self.assertEqual(doc["commands"], [], "refused before any ffmpeg command")
+
+    def test_unset_changes_nothing_and_every_encode_is_recorded(self):
+        self.assertEqual(getattr(sys.modules["_common.runner"], "ENCODE_ENV", None), ENCODE_ENV)
+        doc = self.run_tool("denoise", self.src, "--dry-run")
+        self.assertEqual(doc["encode"], {"codec": "h264", "crf": 18, "preset": "medium", "hw": False, "policy": None})
+        self.assertNotIn("preview", doc)
+        real = self.run_tool("denoise", self.src, "--quality", "30")
+        self.assertEqual((real["encode"]["crf"], real["encode"]["preset"]), (30, "medium"))
+        self.assertIn("-crf 30", real["commands"][-1])
+
+    def test_the_house_settings_are_the_defaults_and_a_flag_still_wins_unlocked(self):
+        house = "codec=hevc, quality=26 ,preset=fast"
+        doc = self.run_tool("denoise", self.src, "--dry-run", policy=house)
+        self.assertEqual(doc["encode"], {"codec": "hevc", "crf": 26, "preset": "fast", "hw": False,
+                                         "policy": {"locked": False, "applied": ["codec", "quality", "preset"]}})
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--quality", "20", "--codec", "h264", policy=house)
+        self.assertEqual((doc["encode"]["codec"], doc["encode"]["crf"], doc["encode"]["preset"]), ("h264", 20, "fast"))
+        self.assertEqual(doc["encode"]["policy"]["applied"], ["preset"])
+        # --fast is a preview, and it says so
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--fast", policy=house)
+        self.assertEqual((doc["preview"], doc["encode"]["preset"]), (True, "veryfast"))
+
+    def test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included(self):
+        house = "codec=h264,quality=20,preset=slow,hw=0,locked"
+        for argv, key in ((["--quality", "18"], "quality"), (["--qual=18"], "quality"), (["--codec", "hevc"], "codec"),
+                          (["--preset", "medium"], "preset"), (["--fast"], "fast"), (["--hw"], "hw")):
+            for dry in (["--dry-run"], []):
+                with self.subTest(argv=argv, dry=dry):
+                    self.refused(self.run_tool("denoise", self.src, *argv, *dry, policy=house, ok=False), key)
+        # the same value, spelled out, is not another choice
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--quality", "20", "--no-hw", policy=house)
+        self.assertEqual(doc["encode"]["policy"], {"locked": True, "applied": ["codec", "preset"]})
+        # without a pinned preset a locked policy leaves --fast previews alone
+        self.assertTrue(self.run_tool("denoise", self.src, "--dry-run", "--fast", policy="quality=20,locked")["preview"])
+
+    def test_an_entry_that_does_not_read_is_refused_where_the_policy_applies(self):
+        for bad in ("quality=high", "codec=vp9", "crf=18", "locked=yes"):
+            with self.subTest(bad=bad):
+                doc = self.run_tool("denoise", self.src, "--dry-run", policy=bad, ok=False)
+                self.assertEqual((doc["error"]["reason"], doc["error"]["details"]["entry"]), ("encode_policy", bad))
+        # a tool with no encoder flag never reads it
+        proc = tool("probe", self.src, env=dict(os.environ, **{ENCODE_ENV: "quality=high"}))
+        self.assertEqual(json.loads(proc.stdout)["file"], str(self.src))
+
+    def test_batch_rows_carry_their_encode_and_the_cache_key_its_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "in"
+            folder.mkdir()
+            shutil.copy(self.src, folder / "a.mp4")
+            recipe = Path(tmp) / "recipe.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(Path(tmp) / "out"),
+                                          "steps": [["denoise.py", "{in}", "-o", "{out}"]]}), encoding="utf-8")
+            env = dict(os.environ, **{ENCODE_ENV: "quality=27"})
+            doc = json.loads(tool("batch", folder, "--recipe", recipe, "--json", env=env).stdout)
+        self.assertEqual(doc["results"][0]["encode"]["crf"], 27)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("batch_576", SCRIPTS / "batch.py")
+        batch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(batch)
+        with unittest.mock.patch.dict(os.environ, {ENCODE_ENV: "quality=27"}):
+            self.assertEqual(batch.gpu_key(), ":encode=quality=27")
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENCODE_ENV, None)
+            self.assertEqual(batch.gpu_key(), "")
 
 
 if __name__ == "__main__":

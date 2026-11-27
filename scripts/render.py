@@ -76,7 +76,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import refuse_outside_roots, absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
+from _common.runner import refuse_outside_roots, absent_word, path_denied, ENCODE_ENV, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
 from _common.probe import AUDIO_MEDIA_EXT
@@ -1049,6 +1049,8 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
+    if os.environ.get(ENCODE_ENV, "").strip():
+        payload["encode_policy"] = os.environ[ENCODE_ENV].strip()  # the house settings a stage's flags default to (#576)
     named = _brand_files_key(argv)
     if named:
         payload["brand_files"] = named  # only with --brand: every other stage's key is unchanged
@@ -1863,7 +1865,8 @@ def main() -> int:
     # "no encoding export", never a traceback before that refusal
     ex_preset = str(ex_cfg.get("preset") or "") if isinstance(ex_cfg, dict) else ""
     if (ex_preset and "copy" not in PRESETS.get(ex_preset, {}).get("video", [])
-            and args.stop_after in (None, "export") and args.intermediate_preset != "medium" and not STATE.fast):
+            and args.stop_after in (None, "export") and args.intermediate_preset != "medium" and not STATE.fast
+            and "preset" not in STATE.encode_policy):  # a house preset ($FFMPEG_SKILL_ENCODE) is every stage's (#576)
         INTERMEDIATE["preset"] = args.intermediate_preset
     stages_done: List[str] = []
     captioned_srt: Optional[Dict[str, Any]] = None

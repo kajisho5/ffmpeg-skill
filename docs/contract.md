@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.17.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.19.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.17.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.19.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -381,6 +381,18 @@ machine without the variable, with one exception: on a build whose `ffmpeg -enco
 asks for the CPU and gets what ffmpeg says about it. What ran is in the result's `encoder` and `hw`
 (see the keys added after 2.2.2, and `doctor`'s `gpu_encoders` and `covered_by` below).
 
+`FFMPEG_SKILL_ENCODE` (unreleased, #576) holds a project's house encoder settings, comma-separated:
+`codec=h264|hevc|av1|prores`, `quality=N`, `preset=<x264 preset>`, `hw=0|1`, and a bare `locked`
+(`FFMPEG_SKILL_ENCODE=codec=h264,quality=18,preset=medium,locked`). A flag the call leaves out takes
+the house value: `--codec`, `--quality`, an x264 `--preset`, and `--hw`/`--no-hw` as
+`FFMPEG_SKILL_HW` would (so not on `export.py`'s delivery presets, which keep their own codec and
+CRF; `render.py` passes no `--intermediate-preset` to its stages when a preset is pinned). Unlocked,
+a flag the call gives still wins. With `locked`, a flag given with another value, and `--fast`
+where a preset is pinned, is refused before ffmpeg runs, dry runs included (`kind: input`,
+`error.reason: encode_policy`, `details: {key, asked, policy}`). An entry that does not read is
+refused the same way (`details: {entry}`) by every tool the variable applies to: a house setting is
+never skipped. Unset, nothing changes. `render.py`'s and `batch.py`'s cache keys include it when set.
+
 `--plan FILE` (1.6) is a dry run that also writes a plan document: `{"plan_version": 1,
 "tool", "argv", "cwd", "inputs": [{"path", "size", "sha256_head_tail"}], "commands",
 "unbound_inputs", "output", "verify": [{"tool": "probe"}, {"tool": "check", "platform"}], "notes"}`. It
@@ -410,6 +422,30 @@ leaves the speed unchanged. A dry run without a usable input length reports a nu
 duration, factor and retime decision for `speed`. Saving a plan checks that its input still
 matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
 the output duration separately.
+
+With `fit.py --fit crop` and a source whose size is known, dry-run JSON, saved plans and completed
+results also include a `crop` object (#581): the window kept, `{x, y, width, height}` in the
+source's displayed pixels (rounded), `source_width`, `source_height`, and `scaled` (`x`, `y`,
+`width`, `height`, `frame_width`, `frame_height`: the offset and size in the scaled frame the crop
+filter cuts from). It is computed from the numbers the crop filter is built from, not measured;
+`picture`, after a real run, is the measurement. A dry run whose input is not there yet has none.
+
+`silence.py --audition DIR` (#581) writes, per join between two kept ranges, a short clip of the
+cut as it sounds there and `DIR/index.json` listing them; the result's `audition` is the same
+document (`dir`, `index`, `seconds`, `height`, `count`, `cuts`). Each entry of `cuts` has
+`cut_index`, `source_out`, `source_in`, `output_t` (the join's time in the cut), `clip`,
+`clip_source` (the two source ranges joined), `join_at` (seconds into the clip) and `duration` and
+`audio`, measured on the written clip (`null` under `--dry-run`). A clip holds at most
+`--audition-seconds` (2 by default, 0.5..10) of each side, never more than that side's own range,
+joined the way the cut is (no fade), at most 360 lines high and never enlarged, in the default
+codec whatever `--codec` says, `.mp4` (`.m4a`
+for a sound-only cut). A range removed at the file's start or end joins nothing and has no clip.
+`DIR` must exist (`output_dir_missing`); an existing clip or index is `output_exists` without
+`--overwrite`, and so is an existing `-o`, before the first clip. Under `--list` the clips are rendered and nothing else is; otherwise they are
+written before the cut, which they do not need. `--max-cuts` bounds the number of clips, under `--list` too. A dry run
+writes nothing. `--audition-seconds` without `--audition`, and
+`--audition` with `--filler-list`, `--profile`, `--protect-ranges` or `--extract-profile`, are
+refused.
 
 New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
 in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
@@ -916,6 +952,7 @@ Per-tool keys added after 2.2.2, all additive:
 | `silent` | `join.py` (every run) | `[{index, path, peak_db, at, end}]`: inputs whose whole-file audio peak (volumedetect) is at or below `--silence-threshold` (default -50 dBFS) and that `--on-silent warn` (default) joined anyway, with a `notes` line; `at`/`end` are where the input sits in the output, in seconds (a transition overlaps its neighbours). An input named by `--allow-silent N[,N]` (1-based) is a planned pause: always joined, listed with `intended: true`, no warning or note, whatever `--on-silent` says. `[]` otherwise. `--on-silent fail` names them in the `kind: input` refusal's `problems` (reason `silent (peak -91.0 dBFS)`), `skip` lists them under `skipped`. An input with no audio stream is never silent; `verified` is unaffected |
 | `short_segments`, `duplicates` | `join.py` (every run) | warnings, never refusals, and the join command is unchanged: `short_segments: [{index, path, duration}]` names each measured input shorter than 2 frames at the join's fps (an audio-only join: shorter than 0.05 s); `duplicates: [{path, indices}]` names a path (compared resolved) listed more than once — repeating a clip can be intended. `[]` when none; each non-empty one adds a `notes` line |
 | `silent` | `waveform.py` (video mode) | `true` when the input audio's whole-file peak is at or below `--silence-threshold` (default -50 dBFS), which draws a flat line; `--on-silent warn` (default) renders it anyway with a `notes` line, `fail` refuses (`kind: input`) before ffmpeg runs. `false` when audible, `null` under `--dry-run` (nothing measured). `verified` is unaffected |
+| `encode`, `preview` (unreleased, #576) | every re-encoding tool, `export.py`, `render.py`, `batch.py`'s rows | `encode`: the settings the last video encode ran with, read off its command line as `encoder` is (absent when nothing encoded video): `{codec, crf, preset, hw, policy}`, `crf` and `preset` `null` where the encoder takes none (ProRes, VideoToolbox, whose `-q:v` is in `commands`), `policy` `{locked, applied}` (the keys `FFMPEG_SKILL_ENCODE` set for this tool's own flags, the call not giving them) or `null` when the variable is unset. Two runs whose `encode` differs drifted. `preview: true` when `--fast` made the output a preview (absent otherwise): it is not a final |
 | `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it), on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it, and when an encode ran on VideoToolbox because the build has no `libx264`/`libx265`: `{requested, source: flag\|env\|auto, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export, and for `source: "auto"`, where nobody asked: `notes` names the missing CPU encoder and the one that ran, and `--no-hw` is not offered as a remedy since there is no CPU encoder to go back to; a job VideoToolbox refuses there is a plain `kind: ffmpeg` failure, not retried), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
 | `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the language the engine was told -- the one named (`--language`, `--filler-lang`), else the one auto's detector named -- and, when nothing was named, the language the engine decoded where it reports one (whisper.cpp's word-timing JSON, faster-whisper, openai-whisper's word-timing JSON), else `null`; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine), ending `, no Parakeet engine transcribed it` when auto chose Parakeet and a Whisper engine made the transcript after every Parakeet engine failed |
 | `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost` (the copy wrote no video or no audio: an MPEG-TS copy whose window holds no video keyframe, #367), `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. Since 3.0.0 `precision` is the least exact segment's, equal to `least_exact_precision`, and `keyframe_snapped` equals `start_snapped` (2.x: `precision` was the whole run's, `packet` only when nothing re-encoded, and `keyframe_snapped` was `precision == "packet"`, a stream copy end to end; see "What 3.0 changed"). `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start (or its start could not be measured: an unknown start is never claimed exact), `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |

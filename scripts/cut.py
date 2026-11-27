@@ -1207,7 +1207,7 @@ def _fraction_rate(text: str) -> float:
 
 def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str,
                 has_v: bool, intermediate: bool = False, vend=None, hold=frozenset(), first: int = 0,
-                total=None) -> List[str]:
+                total=None, low: Optional[int] = None) -> List[str]:
     """Re-cut `segments` from the source into one file through the concat filter, returning the codec
     arguments it encoded with. Each segment is
     its own seeked input, so both of its streams start at the segment's origin (0); neither is
@@ -1278,6 +1278,8 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     # a VFR source is conformed by the fps filter after the concat, at the rate cfr_args() delivers
     # (#512); a constant-rate source's graph is unchanged
     fc, vpad = graph_with_cfr(";".join(graph), "[v]", meta) if has_v else (";".join(graph), None)
+    if low and has_v:  # silence.py --audition: the picture at this height, after the join and any conform
+        fc, vpad = f"{fc};{vpad}scale=-2:{low}[vlow]", "[vlow]"
     cmd += ["-filter_complex", fc]
     for pad in (vpad, "[a]" if has_a else None):
         if pad:
@@ -1299,7 +1301,8 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     return codec
 
 
-def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str, tmp: str) -> None:
+def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, meta: dict, crf: int, preset: str, tmp: str,
+                     low: Optional[int] = None) -> None:
     """The join fallback: every segment re-cut from the source and encoded once. The parts are not
     reused -- a copied part carries keyframe pre-roll and an audio tail the concat filter would
     turn into a gap, and a re-encode keeps nothing lossless anyway."""
@@ -1312,7 +1315,7 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
     # (by position: a repeat of a held segment in last place is still the last one)
     hold = frozenset(k for k, (_, e) in enumerate(segments[:-1]) if vend is not None and e > vend + 1e-6)
     if len(segments) <= JOIN_CHUNK:
-        _join_chunk(src, segments, dst, meta, crf, preset, has_v, vend=vend, hold=hold)
+        _join_chunk(src, segments, dst, meta, crf, preset, has_v, vend=vend, hold=hold, low=low)
         return
     ext = os.path.splitext(dst)[1].lower() or ".mp4"  # IMG_0001.MOV is a .mov
     # Matroska chunks with PCM audio: no edit lists and no AAC priming to carry into the join (MP4

@@ -1107,6 +1107,8 @@
   "name": "silence",
   "properties": [
    "argv",
+   "audition",
+   "audition_seconds",
    "codec",
    "dry_run",
    "edl",
