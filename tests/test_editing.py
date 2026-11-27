@@ -4961,6 +4961,23 @@ class OneClockTests(MediaFixtures):
             self.assertInSync(offsets, msg=f"loop {name}")
             self.assertEqual(stream_spans(out)["video"][2], 360)
 
+    def test_loop_of_an_mpeg_ps_whose_sound_starts_late_keeps_every_frame_787(self):
+        """The concat demuxer gives an MPEG-PS's video no start time, so the first frame was taken to
+        sit at 0 and av_trim cut the sound's lead off the first repeat: 393 frames for 400, 15.72 s
+        for 16 s, verified False. The first frame's own time stands in for the missing start."""
+        src = OUT / "clock_loop_alate.mpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self._fx("alate_ps", audio_late=0.3),
+           "-c:v", "mpeg2video", "-q:v", "3", "-c:a", "mp2", src)
+        out = OUT / "clock_loop_alate_ps.mp4"
+        doc = json.loads(script("loop.py", src, "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite", "--json").stdout)
+        self.assertTrue(doc["verified"], doc.get("wrote"))
+        # each repeat is the file's length (#409), and the MPEG-PS's sound ends 12 ms after its picture
+        length = float(json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src).stdout)["format"]["duration"])
+        self.assertEqual(stream_spans(out)["video"][2], round(3 * length * 30))
+        # a 4.012 s repeat is not a whole number of 30 fps frames, so each repeat's pictures land on the
+        # frame grid up to half a frame from their sound (+1, -11, +10 ms), never further
+        self.assertInSync(av_offsets_ms(out), tol=1000 / 30 / 2, msg="loop mpeg-ps")
+
     def test_multicam_audio_from_a_camera_whose_sound_starts_late(self):
         """The camera's sound was measured from its first sample, not its file's start (+1.274 s for
         a camera 1.0 s in whose sound starts 0.3 s late, so its picture was cut 274 ms late), and
