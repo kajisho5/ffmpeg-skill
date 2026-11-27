@@ -289,7 +289,9 @@ the two files could not be compared, and WARNs when a declared span did not chan
 SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
 decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
 `--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
-then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
+then compared with those spans removed; both documents gain `removed`. `--change-grid 32|64|96`
+(#442) sets the tiles across (60, 30 or 20 px at 1080p; down is 9/16 of it), each with its own surveyed floor,
+and is refused where a tile would be under 20 px; `change_scope`'s `tile` names the grid used. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
