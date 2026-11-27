@@ -608,6 +608,10 @@ def main() -> int:
     if not args.input or not args.preset:
         die("input and --preset are required (or use --list)")
     validate_color(args.pad_color, "--pad-color")
+    if args.pad_blur <= 0:
+        die(f"--pad-blur must be > 0, got {args.pad_blur}")
+    if args.duration is not None and args.duration <= 0:
+        die("target duration must be > 0")
     if (args.normalize or args.no_normalize) and args.preset not in PLATFORM_OF:
         flag = "--normalize" if args.normalize else "--no-normalize"
         die(f"{flag} applies to the platform presets ({', '.join(sorted(PLATFORM_OF))}); --preset {args.preset} has no loudness spec to meet",

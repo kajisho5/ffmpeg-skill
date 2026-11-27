@@ -1015,6 +1015,20 @@ raise SystemExit(export.main())
             self.assertEqual(err["kind"], "input", err)
             self.assertIn("--max-mb", err["message"])
 
+    def test_export_zero_duration_and_pad_blur_refuse(self):
+        """#749: --duration 0 and --pad-blur 0 are refused rather than quietly overridden."""
+        p_dur = script("export.py", self.src, "--preset", "youtube", "--duration", "0",
+                       "-o", OUT / "exp_zero_dur.mp4", "--json", expect_fail=True)
+        err_dur = json.loads(p_dur.stdout)["error"]
+        self.assertEqual(err_dur["kind"], "input", err_dur)
+        self.assertIn("target duration must be > 0", err_dur["message"])
+
+        p_blur = script("export.py", self.src, "--preset", "tiktok", "--pad-fill", "blur", "--pad-blur", "0",
+                        "-o", OUT / "exp_zero_blur.mp4", "--json", expect_fail=True)
+        err_blur = json.loads(p_blur.stdout)["error"]
+        self.assertEqual(err_blur["kind"], "input", err_blur)
+        self.assertIn("--pad-blur must be > 0", err_blur["message"])
+
     def test_export_repair_classifies_damage_lines(self):
         """2.24.1: "Packet corrupt (stream = 0, dts = N)" names a dts but is damage, and "Last message
         repeated N times" hid N lines and was itself counted as a decode error; repeat+warning

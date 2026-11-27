@@ -1258,7 +1258,7 @@ def main() -> int:
     sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
     sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
     sty.add_argument("--fonts-dir", help="directory with extra .ttf/.otf files")
-    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
+    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points, 1..2000 (relative to a 288p script height, scales automatically)")
     sty.add_argument("--color", default=None, help="text colour RRGGBB (default FFFFFF or brand text colour)")
     sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
     sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")
@@ -1320,6 +1320,10 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args(_glue_negative_offset(sys.argv[1:]))
     apply_common(args)
+    if args.emoji_scale <= 0:
+        die(f"--emoji-scale must be > 0, got {args.emoji_scale:g}")
+    if args.size is not None and args.size <= 0:
+        die(f"--font-size must be > 0, got {args.size}")
 
     brand = load_brand(args.brand)
     bc, bcap = brand["colors"], brand_caption_style(brand)

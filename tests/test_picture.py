@@ -3379,6 +3379,27 @@ class PictureTests(MediaFixtures):
         self.assertIn("--min-size", data["error"]["message"])
         self.assertFalse(out.exists())
 
+    def test_caption_zero_font_size_and_emoji_scale_refuse(self):
+        """#749: --font-size 0 and --emoji-scale 0 are refused rather than quietly overridden."""
+        vert, cues = self._vertical(), self._fit_cues()
+        r_size = script("caption.py", vert, "--text", cues, "--font-size", "0",
+                        "-o", OUT / "cap_zero_size.mp4", "--json", expect_fail=True)
+        data_size = json.loads(r_size.stdout)
+        self.assertEqual(data_size["error"]["kind"], "input")
+        self.assertIn("outside what this option takes, 1..2000", data_size["error"]["message"])
+
+        r_emoji = script("caption.py", vert, "--text", cues, "--emoji-scale", "0",
+                         "-o", OUT / "cap_zero_emoji.mp4", "--json", expect_fail=True)
+        data_emoji = json.loads(r_emoji.stdout)
+        self.assertEqual(data_emoji["error"]["kind"], "input")
+        self.assertIn("--emoji-scale must be > 0", data_emoji["error"]["message"])
+
+        r_gfx = script("graphics.py", vert, "--template", "lower-third", "--name", "Test",
+                       "--emoji-scale", "0", "-o", OUT / "gfx_zero_emoji.mp4", "--json", expect_fail=True)
+        data_gfx = json.loads(r_gfx.stdout)
+        self.assertEqual(data_gfx["error"]["kind"], "input")
+        self.assertIn("--emoji-scale must be > 0", data_gfx["error"]["message"])
+
     def test_caption_mux_is_unaffected_by_the_fitter(self):
         """Soft subtitles carry no size, so --mode mux writes the SRT 1.16 wrote."""
         vert, cues = self._vertical(), self._fit_cues()

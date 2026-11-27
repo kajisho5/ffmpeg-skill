@@ -368,6 +368,33 @@ def judged_without_a_file(node, path=""):
     return found
 
 
+class NumericGuard(unittest.TestCase):
+    """The numeric class (#630, #645, #749): numeric options given out-of-bounds or edge values
+    (negative numbers, huge numbers past bounds, or explicit zeros where positive values are required)
+    must be refused before processing rather than quietly overridden, clamped, or accepted."""
+
+    def test_numeric_edge_values_outside_valid_bounds_are_refused(self):
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        srt = str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            cases = (
+                ("export", (clip, "--preset", "youtube", "--duration", "0", "-o", out), "target duration must be > 0"),
+                ("export", (clip, "--preset", "tiktok", "--pad-fill", "blur", "--pad-blur", "0", "-o", out), "--pad-blur must be > 0"),
+                ("caption", (clip, "--srt", srt, "--font-size", "0", "-o", out), "is outside what this option takes"),
+                ("caption", (clip, "--srt", srt, "--emoji-scale", "0", "-o", out), "--emoji-scale must be > 0"),
+                ("graphics", (clip, "--template", "lower-third", "--title", "T", "--emoji-scale", "0", "-o", out), "--emoji-scale must be > 0"),
+                ("cropdetect", (clip, "--samples", "1000000000", "--dry-run"), "is outside what this option takes"),
+                ("caption", (clip, "--srt", srt, "--size", "-1", "-o", out, "--dry-run"), "is outside what this option takes"),
+            )
+            for tool, argv, expect_msg in cases:
+                with self.subTest(tool=tool, argv=argv):
+                    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), *argv],
+                                          capture_output=True, text=True, timeout=30)
+                    self.assertEqual(proc.returncode, 1, f"{tool} with {argv} unexpectedly ran or succeeded: stderr={proc.stderr}")
+                    self.assertIn(expect_msg, proc.stderr)
+
+
 class GuardRegistryTests(unittest.TestCase):
     def test_every_class_with_three_entries_has_a_guard_or_a_pending_issue(self):
         """A class the ledger records three times is registered in docs/defect-guards.json, with

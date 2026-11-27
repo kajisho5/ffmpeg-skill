@@ -148,6 +148,8 @@ def main(force_route: Optional[str] = None) -> int:
     # graph and --scale 0 or below a 0-px or negative box, both refused by ffmpeg (kind ffmpeg)
     if args.scale <= 0:
         die(f"--scale must be more than 0 (a size multiplier; 1 is the template's own size), got {args.scale:g}")
+    if args.emoji_scale <= 0:
+        die(f"--emoji-scale must be > 0, got {args.emoji_scale:g}")
     # 2.2.6: whitespace-only text is no text -- stripped before the "needs --title" checks, which
     # used to pass on "  " and burn an empty bar
     for _attr in ("name", "title", "subtitle", "text", "top", "bottom"):

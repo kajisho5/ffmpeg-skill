@@ -29,6 +29,11 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "numeric": {
+      "test": "test_guards.NumericGuard.test_numeric_edge_values_outside_valid_bounds_are_refused",
+      "also": "test_contract.StumbleLedgerTests.test_a_number_outside_what_its_option_takes_is_refused_on_every_tool",
+      "how": "numeric options passed out-of-bounds values or explicit zeros where positive values are required (export duration/pad-blur, caption font-size/emoji-scale, graphics emoji-scale) are refused before processing"
     }
   }
 }
