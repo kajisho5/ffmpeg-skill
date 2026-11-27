@@ -3059,13 +3059,42 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   the encoders are still not switched to VP9/Opus for a WebM name. A stream copy is still left to
   the muxer, since what it copies is not in the command. The same check refuses an `.mxf` output of
   the tools' libx264/AAC encode (#736): MXF takes PCM sound only ("not supported by the bitstream
-  filter 'pcm_rechunk'"), and with PCM the H.264 of the default B-frame line still wrote dts the
-  muxer rejects on a read-back, so the encoders are not switched to PCM for an `.mxf` name (nothing
+  filter 'pcm_rechunk'"), and with PCM the write succeeds but stores the default line's B-frame
+  H.264 without its reorder (ffprobe reads the frame pts as `0,3,2,4,1,...`, a decode of a 38-frame
+  file warns of non monotonic dts and gives 37 frames; #754 corrected the wording, which said the
+  muxer rejected the dts), so the encoders are not switched to PCM for an `.mxf` name (nothing
   here writes MPEG-2 or DNxHD); the hint names `.mov` (`--codec prores`) and `.mkv`. A stream copy
-  (`cut.py` without `--accurate`, `metadata.py`) still writes MXF. metadata.py and `export.py --preset
-  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Tests:
+  (`cut.py` without `--accurate`, `metadata.py`) still writes MXF. Not done, and the way to do it
+  if MXF from a re-encode is wanted: one entry in the container table that encodes PCM at 48 kHz,
+  passes `-bf 0` to libx264 and refuses HEVC/AV1 and the frame rates MXF does not list, with a test
+  that reads the file back and checks the frame count and monotonic pts, not only the codec.
+  The same check refuses an `.avi`, `.wmv` or `.asf` output of the H.264/HEVC encoders (#754):
+  those containers store no presentation time, so the B-frame line reads back with none (ffprobe's
+  pts is N/A for every frame). The write succeeds and a straight decode gives every frame in order,
+  but a reader that seeks gets nothing: `ffmpeg -ss 0` of a 320x240 clip decodes no picture from
+  the AVI and the ASF alike (from a 160x90 ASF it decodes all of them; an AVI's HEVC decodes none
+  even without a seek, ProRes in ASF none either). That is what the decode step of `cut --accurate`
+  and `export` reported as undecodable: not a false negative, a file a seeking reader cannot play;
+  the other tools' AVIs had the same video and said verified: true (`cut`, `loop` and `loudness`
+  false for other steps), because their checks do not decode after a seek. A stream copy
+  of B-frame video from another container is refused there too (`loudness.py` copied an MP4's
+  H.264 into `.avi`, whose header then gave the sound 3.093 s for 3.0), by its `has_b_frames`;
+  a copy from the same container keeps what it had. `-bf 0` for an AVI name would make the
+  encode right, as for MXF above, and is not done for the same reason: the encoder line is not
+  switched by the output's name. FLV keeps its pts but writes no seek index, so the same B-frame
+  line there also decodes nothing after `-ss 0`; it has its own cause and is not refused here.
+  An `.avi`/`.wmv` source keeps its extension in a default output name (`NO_DEFAULT_ENCODE_EXT`
+  holds `.webm` only), so a re-encode of one with no `-o` is refused with the hint rather than
+  renamed: a stream copy of WMV video into an `.mp4` default would fail in the muxer instead.
+  An `.mpg`/`.mpeg` output of the tools' AAC line is refused by the same table (#754's sweep): the
+  MPEG-PS muxer takes MP1/MP2/MP3, AC-3, DTS and DVD PCM sound only ("Unsupported audio codec"),
+  so every re-encoding tool failed `kind: ffmpeg` after the encode started and a dry run said
+  completed. A stream copy of AAC into it is left to the muxer, as for the others. metadata.py and `export.py --preset
+  copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`,
+  `_common.runner._CONTAINER_ENCODERS`, `_copies_reordered_video()`. Tests:
   `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`,
-  `test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs`.
+  `test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs`,
+  `test_an_avi_or_asf_output_of_b_frame_video_is_refused_before_ffmpeg_runs`.
 - **`waveform.py --title/--srt/--text --dry-run` says its text sizes are placeholders.** The title
   and captions are drawn by graphics.py and caption.py on the visualisation render, which a dry run
   does not write, so their planned font size and motion offset are 0 (the real run's are measured

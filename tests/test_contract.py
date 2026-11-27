@@ -10956,6 +10956,65 @@ class Issue415Tests(unittest.TestCase):
                 decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
                 self.assertEqual(decoded.stderr.strip(), "")
 
+    def test_an_avi_or_asf_output_of_b_frame_video_is_refused_before_ffmpeg_runs(self):
+        """#754: AVI and ASF store no presentation time, so the tools' B-frame H.264 written there
+        read back with none: the files completed, and `ffmpeg -ss 0` of them decoded no picture
+        (cut --accurate and export said verified: false, undecodable; audio, color, crop and the
+        rest said verified: true). loudness.py's copy of an MP4's H.264 into .avi did the same.
+        Refused now, real and dry run alike; a source without B-frames, and a copy of an AVI into
+        AVI, are still written, and read back with every frame. The sweep's .mpg rows (MPEG-PS
+        takes no AAC: kind ffmpeg after the encode started) are refused by the same table."""
+        d = self.dir("avi_out")
+        src, flat = d / "in.mp4", d / "flat.mp4"
+        for path, bf in ((src, "3"), (flat, "0")):
+            # 320x240: an ASF of a 160x90 clip reads back after a seek (the AVI does not either way)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=2", "-f", "lavfi", "-i", "sine=r=48000:d=2",
+                   "-c:v", "libx264", "-bf", bf, "-pix_fmt", "yuv420p", "-c:a", "aac", path)
+
+        def frames_after_seek(path):
+            out = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", "0", "-i", str(path), "-map", "0:V:0",
+                                  "-f", "framecrc", "-"], capture_output=True, text=True).stdout
+            return sum(1 for ln in out.splitlines() if ln and not ln.startswith("#"))
+        # the premise, measured: the encoder line with B-frames reads back nothing, without them all 50
+        for ext in (".avi", ".wmv"):
+            for bf, want in (("3", 0), ("0", 50)):
+                plain = d / f"plain{bf}{ext}"
+                ffmpeg("-i", src, "-c:v", "libx264", "-bf", bf, "-c:a", "aac", plain)
+                self.assertEqual(frames_after_seek(plain), want, (ext, bf))
+        cases = [("cut", ["--start", "0.2", "--end", "1.5", "--accurate"]), ("loudness", []),
+                 ("export", ["--preset", "youtube"]), ("audio", ["--voice", "light"]), ("metadata", ["--title", "t"])]
+        for ext in (".avi", ".wmv", ".asf"):
+            # every tool for AVI; for ASF, one encode and one copy (the table entry is shared)
+            for name, argv in cases if ext == ".avi" else cases[:2]:
+                for dry in ((), ("--dry-run",)):
+                    with self.subTest(ext=ext, tool=name, dry=bool(dry)):
+                        out = d / f"{name}{ext}"
+                        doc = json.loads(tool(name, src, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                        self.assertEqual(doc["status"], "failed", doc.get("verification"))
+                        err = doc["error"]
+                        self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                        self.assertIn("presentation time", err["message"])
+                        self.assertFalse(out.exists())
+        # MPEG-PS takes no AAC: every re-encoding tool failed in the muxer after the encode started
+        for name, argv in cases[:3]:
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(ext=".mpg", tool=name, dry=bool(dry)):
+                    doc = json.loads(tool(name, src, *argv, *dry, "-o", d / f"{name}.mpg", "--json", check=False).stdout)
+                    self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_container_codecs"), doc.get("error"))
+                    self.assertEqual(doc["error"]["details"]["encoders"], ["aac"])
+                    self.assertFalse((d / f"{name}.mpg").exists())
+        # still written: a copy of a source without B-frames, which reads back whole after a seek,
+        # and a copy of a B-frame AVI into AVI, which keeps what it had (its 50 frames read from
+        # the start, none after a seek, as the source's)
+        doc = json.loads(tool("loudness", flat, "-o", d / "flat.avi", "--json").stdout)
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc.get("verification"))
+        self.assertEqual(frames_after_seek(d / "flat.avi"), 50)
+        doc = json.loads(tool("metadata", d / "plain3.avi", "--title", "t", "-o", d / "kept.avi", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        decoded = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(d / "kept.avi"), "-map", "0:V:0", "-f", "framecrc", "-"],
+                                 capture_output=True, text=True).stdout
+        self.assertEqual(sum(1 for ln in decoded.splitlines() if ln and not ln.startswith("#")), 50)
+
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
         54 in the real run, and nothing said so."""
