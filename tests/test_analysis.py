@@ -998,7 +998,7 @@ class AnalysisTests(MediaFixtures):
                                                "--change-grid", str(grid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                         doc = json.loads(proc.stdout)
                         row = {r["check"]: r for r in doc["checks"]}["change_scope"]
-                        self.assertEqual(row["status"], "PASS", row)
+                        self.assertEqual(row["status"], "PASS", {"row": row, "change_scope": doc["change_scope"]})  # the peaks, to set a floor from
                         self.assertEqual(doc["change_scope"]["undeclared"], [])
                         self.assertTrue(doc["change_scope"]["observed"], doc["change_scope"])
         if not tried:
