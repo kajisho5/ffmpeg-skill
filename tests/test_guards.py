@@ -394,7 +394,8 @@ class NumericGuard(unittest.TestCase):
                         ["0"] if span and span[0] == "> 0" else [f"{float(span[1]) - 1:g}", f"{float(span[2]) + 1:g}"] if span else [])
                     for value in values:
                         proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *[a.format(**facts) for a in base],
-                                               f"{flag}={value}", *out, "--dry-run", "--overwrite"], capture_output=True, text=True, timeout=60)
+                                               f"{flag}={value}", *out, "--dry-run", "--overwrite"], capture_output=True, text=True,
+                                              encoding="utf-8", errors="replace", timeout=60)
                         if proc.returncode == 0 or not (f"{flag} {float(value):g} is outside what this option takes" in proc.stderr or "invalid choice" in proc.stderr):
                             taken[f"{tool} {flag}={value}"] = next((l for l in proc.stderr.splitlines() if l.startswith("error:")), "ran")[:160]
         self.assertEqual(taken, {})
