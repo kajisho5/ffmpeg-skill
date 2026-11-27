@@ -1046,8 +1046,11 @@ def engine_wav(ffmpeg: str, video: str, audio_stream: int, wav: str) -> None:
     --dry-run gate, not recorded); it keeps the time limit and reports an unreadable input as
     kind ffmpeg instead of a CalledProcessError traceback."""
     from _common import run_analysis
-    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                  "-map", f"0:a:{audio_stream}", "-vn", "-af", "aresample=async=1:first_pts=0",
+    from _common.probe import probe as probe_meta, sound_clock
+    # -copyts and the shift: on an MPEG-TS/PS a sound-only decode would count from the sound's own
+    # first sample instead of the file's start (#787)
+    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-i", video,
+                  "-map", f"0:a:{audio_stream}", "-vn", "-af", sound_clock(probe_meta(video, required=False)),
                   "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
 
 

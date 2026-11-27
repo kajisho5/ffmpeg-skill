@@ -36,6 +36,7 @@ from _common.runner import fail_if_classified, refuse_output_is_input
 from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
 from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
+from _common.probe import sound_clock
 from _common.timeline import output_timecode_args
 from _common.runner import default_selection_maps
 from _common.emit import input_length
@@ -384,12 +385,20 @@ def main() -> int:
         # file's start keeps that 0.3 s instead of being delayed from its first sample (#409).
         # Only then, so the command for an ordinary file is the one it always was.
         on_clock = ["aresample=async=1:first_pts=0"] if stream_starts(second_meta)[1] > 0.0005 else []
+        # --replace-audio reads the sound alone too, so a .ts whose timeline starts late is counted
+        # from its sound unless -copyts keeps the file's timestamps and the shift puts the samples
+        # back on the file's clock (#787, #409). -ss before -i preserves the timestamps too, so a
+        # negative offset's trimmed head is part of the shift: without it first_pts=0 padded the
+        # trimmed 2 s back and an event at 3 s stayed at 3 s
+        second_clock = [sound_clock(second_meta, head_trim)] if (second_meta.get("start_time") or 0) > 0 or on_clock else []
 
         if args.replace_audio:
-            cmd = ffmpeg_base() + ["-i", args.reference]
+            # -copyts is global, so it kept the reference's own start too: a .ts reference at
+            # 1.467 s wrote its picture there beside a sound at 0; -itsoffset puts it back on 0
+            cmd = ffmpeg_base() + (["-itsoffset", f"{-(probe(args.reference).get('start_time') or 0.0):.6f}"] if second_clock else []) + ["-i", args.reference]
             if head_trim > 0:
                 cmd += ["-ss", f"{head_trim:.4f}"]
-            cmd += ["-i", args.second, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
+            cmd += (["-copyts"] if second_clock else []) + ["-i", args.second, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
             if os.path.splitext(output)[1].lower() in (".mp4", ".mov", ".m4v"):
                 cmd += ["-movflags", "+faststart"]
             # the reference picture is the deliverable: pad the (possibly trimmed) second audio to
@@ -401,7 +410,7 @@ def main() -> int:
             # one it was; a finer step (0.25 ms: 0.23425 s) or a drift-adjusted offset (kept to
             # 0.1 ms) was rounded to `adelay=234` (silence_filter)
             lead = [silence_filter(sec_sr, lead=offset)] if offset > 0 and round(offset * sec_sr) else []
-            af_parts = on_clock + drift_af + lead + ["apad"]
+            af_parts = second_clock + drift_af + lead + ["apad"]
             cmd += ["-af", ",".join(af_parts)]
             # to the sample of the rate the second's sound is written at, not to the millisecond:
             # the endless apad is ended by this -t alone (length_output_t)

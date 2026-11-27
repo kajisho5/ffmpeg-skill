@@ -57,7 +57,7 @@ from _common.asr import ENGINE_CHOICES
 from _common.decision import ntsc_rate
 from _common.emit import note, warn
 from _common.placement import measure_placement, sample_cues
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import display_size, sound_clock, square_pixels, square_pixels_note
 from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
@@ -248,10 +248,12 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     if n_words <= 1:
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
+    # -copyts and the shift: an MPEG-TS/PS counts a sound-only decode from the sound's own start (#787)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts", "-ss", f"{start:.3f}", "-i", video,
            "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn",
            # a sound that starts late is padded to its place on the file's clock (#414)
-           "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+           "-af", sound_clock(probe(video, required=False), start),
+           "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)  # under --timeout like every other measurement
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:
@@ -369,7 +371,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
     # --- the PNG overlay route -------------------------------------------------------------
     if not play_w or not play_h:
         return cues, plan
-    scale = float(getattr(args, "emoji_scale", 1.0) or 1.0)
+    scale = float(getattr(args, "emoji_scale", 1.0))
     # --animate moves the TEXT (\fad/\fscx in the ASS); the PNG has to move with it, or the emoji
     # pops in against a line that is still fading up. These match the \fad values below.
     fade_in, fade_out = (ms / 1000.0 for ms in ANIMATE_FADE_MS.get(getattr(args, "animate", None) or "none", (0, 0)))
@@ -1258,7 +1260,7 @@ def main() -> int:
     sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
     sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
     sty.add_argument("--fonts-dir", help="directory with extra .ttf/.otf files")
-    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
+    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points, 1..2000 (relative to a 288p script height, scales automatically)")
     sty.add_argument("--color", default=None, help="text colour RRGGBB (default FFFFFF or brand text colour)")
     sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
     sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")
@@ -1281,7 +1283,7 @@ def main() -> int:
                           "Twemoji's assets/72x72 or Noto Emoji's png/128. Nothing is ever downloaded; "
                           "also read from brand.json styles.caption.emoji_assets and FFMPEG_SKILL_EMOJI_ASSETS")
     emo.add_argument("--emoji-scale", type=float, default=1.0,
-                     help="emoji box as a multiple of the line's font size (default 1.0)")
+                     help="emoji box as a multiple of the line's font size, > 0 (default 1.0)")
     emo.add_argument("--emoji-max", type=int, default=60,
                      help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")

@@ -498,11 +498,16 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
             tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
-            fix[flag] = (near + said)[0] if len(near + said) == 1 else None
+            # an answer is one option spelt like a flag no tool takes (in its own file or a shared one): another tool's flag, an
+            # option sharing a word or one the help mentions mean something else (speedramp --ramp 3:6:0.5 is not --segment 3:6:0.5)
+            taken = tools or [n for n in os.listdir(os.path.join(here, "_common")) if n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, "_common", n), encoding="utf-8", errors="replace").read()]
+            fix[flag] = (near + said)[0] if len(near + said) == 1 and not taken and difflib.get_close_matches(flag, near, 1, 0.85) else None
     # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
     wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
     if wrong:
-        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
+        # the other word only when it is a choice: strong is high, never the platform nearest to 'high' (ig); Python 3.13 drops the quotes
+        choices = [c.strip(" '") for c in wrong[2].split(",")]
+        fix[wrong[1]] = _OTHER_WORDS[wrong[1].lower()] if _OTHER_WORDS.get(wrong[1].lower()) in choices else (difflib.get_close_matches(wrong[1], choices, 1, 0.6) or [None])[0]
     words: List[str] = []
     for a in ([] if None in fix.values() else sys.argv[1:]):
         name, eq, rest = a.partition("=")
@@ -659,13 +664,14 @@ def apply_common(args: "argparse.Namespace") -> None:
         env_limit, env_problem = _read_env_timeout()
         if env_problem:
             warn(env_problem, "timeout_env_invalid", value=os.environ.get("FFMPEG_SKILL_TIMEOUT"), timeout=env_limit)
-    # one step for every number a tool takes (#645): the range its help states as a..b is the range it
-    # takes, a negative needs a help that names one, and nothing but a sample count is past a million
+    # one step for every number a tool takes (#645): the range its help states as a..b or "> 0" (#749)
+    # is the range it takes, a negative needs a help that names one, and nothing but a sample count is past a million
     for a in getattr(getattr(STATE, "parser", None), "_actions", ()):
         v, text = getattr(args, a.dest, None), a.help or ""
-        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", text)
+        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
         if a.type in (int, float) and isinstance(v, (int, float)) and v != a.default and a.dest not in ("timeout", "length_samples") and (
-                not float(span[1]) <= v <= float(span[2]) if span else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
+                (not 0 < v <= 1e6 if span[0] == "> 0" else not float(span[1]) <= v <= float(span[2])) if span
+                else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
             die(f"{next((o for o in a.option_strings if o in [x.split('=')[0] for x in sys.argv[1:]]), a.option_strings[0])} {v:g} is outside what this option takes" + (f", {span[0]}" if span else ""), hint=text.replace("%%", "%") or None)
     STATE.encode_policy = _apply_encode_policy(args)
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:

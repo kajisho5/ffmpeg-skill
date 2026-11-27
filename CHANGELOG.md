@@ -6,6 +6,57 @@
 
 (nothing yet)
 
+## 4.21.1
+
+_Automated release: version and notes generated from pull requests merged since 4.21.0._
+
+### Fixed
+
+- A sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start, as the picture does since #766: `decode_pcm_mono` (so `sync.py`, `scenes.py`, `multicam.py`), silencedetect times (`silence.py`'s cut levels, `metadata.py --auto-chapters`), `waveform.py`'s stills, `caption.py`'s karaoke energy split and the WAV an ASR engine transcribes all read the file's clock now (#787).
+- `sync.py --replace-audio` counts the second file's sound from the file's start too, and `-copyts` no longer drags the reference's own start into the written picture: a `.ts` reference at 1.467 s kept its picture there beside a sound at 0, and a trimmed head was padded back (#787).
+- fix: a sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start (#787) (#792)
+
+## 4.21.0
+
+_Automated release: version and notes generated from pull requests merged since 4.20.3._
+
+### Changed
+
+- `crop.py` is folded into `fit.py` (#683): `fit.py --rect W:H:X:Y` cuts an exact pixel box with no scaling (`--rect W:H` is centred) and writes the file `crop.py` writes. `crop.py` stays as an alias (`alias_of: fit` in the contract): every command, its MCP name and its arguments keep working, and it leaves the tool count (now 41), SKILL.md's table and `tools/list`. `crop.py` also takes `--rect W:H:X:Y`, and `--width W --height H` without `--x/--y` (or with `--center`) is a centred box (#676). `cropdetect.py` now hands its rectangle on as `fit.py --rect`.
+- feat: fold crop.py into fit.py as fit.py --rect, crop an alias (#683) (#769)
+
+## 4.20.3
+
+_Automated release: version and notes generated from pull requests merged since 4.20.2._
+
+### Fixed
+
+- `render.py --export-timeline` no longer names FCPXML formats like `FFVideoFormat1080p` (a name with no frame rate, which Final Cut Pro 13 warned about on import). Each format states its source's colour space instead: Rec. 2020 PQ or HLG from the transfer, Rec. 709 otherwise (#731).
+- fix: FCPXML formats carry no name without a frame rate (#731) (#732)
+
+## 4.20.2
+
+_Automated release: version and notes generated from pull requests merged since 4.20.1._
+
+### Fixed
+
+- `overlay.py` no longer takes `--emoji-assets`, `--emoji-scale` or `--emoji-max` silently: it draws text with drawtext and never read them, so a value given there did nothing and nothing said so. Each now prints one warning and adds `deprecated_option` to the result's `diagnostics.warnings`. A guard test (tests/test_guards.py) reads every tool's parser and fails on an option nothing reads that `deprecated` does not list (#749).
+- A usage error's `try:` line is a command the tool accepts. `speedramp.py IN --ramp 3:6:0.5` suggested `--segment 3:6:0.5`, which speedramp refuses (`START-END:FACTOR`): an option whose help only mentions the word, one that only shares a word with the flag, and one spelt like a flag another tool takes (`export.py --alpha-codec png` became `--alpha-mode png`, `pad.py --smart` became `--start` with no value) are named in the hint and no longer printed as the answer. A common other word for a choice is used only when it is a choice (`check.py --platform strong` suggested `ig`, the platform nearest to "high").
+
+### Changed
+
+- deprecated: `overlay.py --emoji-assets`, `--emoji-scale` and `--emoji-max`, which have no effect (`caption.py` and `graphics.py` keep theirs). They are listed in `contract --json` `deprecated` and go in 4.22.0 under the beta rule; remove them from overlay command lines (#749).
+- fix: overlay.py's emoji options say they do nothing, and a try: line is a command the tool accepts (#749) (#764)
+
+## 4.20.1
+
+_Automated release: version and notes generated from pull requests merged since 4.20.0._
+
+### Fixed
+
+- A 0 that `export.py --duration`, `--pad-blur`, `caption.py --font-size` and `--emoji-scale` (also in `graphics.py`) cannot take is refused as outside the option's range, instead of being read as the whole clip, radius 1, the default size or scale 1.0 (#749).
+- fix: a zero an option cannot take is refused (#749) (#767)
+
 ## 4.20.0
 
 _Automated release: version and notes generated from pull requests merged since 4.19.0._
