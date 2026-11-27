@@ -351,6 +351,7 @@ or per clip) to this flag and reports what came back.
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
+             [--zoom in|out [--zoom-amount 1.3] [--zoom-start S] [--zoom-duration S] [--crop-x X] [--crop-y Y]]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`). For
 factors above 1.15 or below 1/1.15, choose an explicit `--method speed`
@@ -393,6 +394,17 @@ Use `look.py OUTPUT --at TIME` for each `crop_check.review_points[].output_time_
 that is available. To compare a trimmed or retimed output with its input, extract the
 source frame separately using the point's `source_time`.
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
+`--zoom in|out` (#647) is a timed push-in or pull-out of the delivered frame (after the
+reframe, before the fades): linear from 1 to `--zoom-amount` (in; out goes back), between
+`--zoom-start` (output seconds, default 0) and `--zoom-start + --zoom-duration` (default: the
+end), the start zoom before and the end zoom held after, toward `--crop-x`/`--crop-y` (with
+`--fit crop` the same anchor places the crop). Each frame is scaled (lanczos) and cropped back,
+so every frame keeps its timestamp; the zoomed frame is the delivered one upscaled, with no
+added detail. An amount of 1 or less (or one that scales the frame past 16384 px), a start at
+or past the output's end, a move past it, and
+`--zoom` on a still (`insert.py --zoom` animates one) are refused. The result's `zoom` reports
+the move, and `zoom.check` compares the output's frame count, timestamps, duration and rate with
+the source's packets; it is `measured: false` when the run also trims, retimes or regrids.
 
 ### crop.py — crop to an exact pixel rectangle
 ```

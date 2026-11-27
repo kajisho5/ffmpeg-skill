@@ -1021,6 +1021,12 @@ the last frame's start), `signal` (`motion` or `detail`),
 are review positions for `look.py --at`. A sampling timeout counts as `unmeasured`.
 `subject_framing` remains in `unverified`.
 
+Keys added after 4.14.0, additive (#647):
+
+| key | tool | what it holds |
+|---|---|---|
+| `zoom` | `fit.py --zoom in\|out` | the timed move as run: `{direction, from, to, start, end, anchor {x, y}, frame {width, height}}`, times in output seconds. After a real run, `check` compares the output's packets with the source's: `{measured: true, source_frames, output_frames, max_timestamp_drift, source_duration, output_duration, source_fps, output_fps, frames_match, timestamps_match, duration_match, fps_match}`, or `{measured: false, reason}` when the frame times could not be read or the run also trims, retimes or regrids the picture (`--duration` that changes the length, `--fps`, a variable-rate conform) |
+
 Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on an alpha source without `--keep-alpha` is the one change to an existing run, see below):
 
 | key | tool | what it holds |
