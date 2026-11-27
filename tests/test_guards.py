@@ -47,6 +47,33 @@ class TimeGuard(unittest.TestCase):
     (emit.source_carry, runner.declare_time_map); this runs every tool on a chaptered clip and
     fails on any tool that says it."""
 
+    def test_a_late_sounds_place_is_the_same_in_every_sound_only_read(self):
+        """#787's class on a sound-only read: the demuxer rewrites an MPEG-TS/PS timeline to start
+        at the earliest stream it reads, so every read of a file's sound without its picture counted
+        from the sound's own first sample. The guard remuxes a take whose sound starts 0.3 s late to
+        .ts and fails wherever a tool reads that sound elsewhere than the .mp4 does: the sweep rows
+        of the tools that read sound only, and sync.py --replace-audio's written sound."""
+        from _fixtures import make_tones_take, sh
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = make_tones_take(Path(tmp) / "late.mp4", start=0.0, audio_late=0.3, dur=7)
+            ts = Path(tmp) / "late.ts"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp4), "-c", "copy", "-f", "mpegts", str(ts))
+            differs = {}
+            a, b = sweep.facts_for(str(mp4), tmp), sweep.facts_for(str(ts), tmp)
+            for tool in ("silence", "scenes", "waveform", "cut", "loop", "caption"):
+                if tool not in sweep.TABLE:
+                    continue
+                rm, rt = sweep.row_for(tool, str(mp4), a, tmp), sweep.row_for(tool, str(ts), b, tmp)
+                if {k: v for k, v in rm.items() if k not in ("tool",)} != {k: v for k, v in rt.items() if k not in ("tool",)}:
+                    differs[tool] = (rm, rt)
+            ref = make_tones_take(Path(tmp) / "ref.mp4", dur=8)
+            out = Path(tmp) / "replaced.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(ts), "--replace-audio", "-o", str(out))
+            again = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(out), "--json").stdout)
+            if abs(again["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio"] = again["offset_seconds"]
+            self.assertEqual(differs, {}, "these sound-only reads counted the .ts from its sound's first sample")
+
     def test_no_tool_leaves_chapters_at_the_source_times(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, sil = Path(tmp) / "chaptered.mkv", Path(tmp) / "chaptered_pause.mkv"
