@@ -7243,11 +7243,18 @@ upload. It exists so a user can attach something concrete to a report.
   too: it is the use the record exists to count, and the user asked for the file; "a dry run writes
   nothing" is about the run's artifacts and side files, which it still does not write.
 - **The log path is guarded like an output, and never fails the run.** Not absolute, outside
-  `FFMPEG_SKILL_ROOTS` when that is set (the same `runner.outside_roots` the refusals use), one of
-  the run's inputs or outputs, or not a regular file: nothing is written and stderr says why. Any
-  write error is the same warning. The run's document and exit code never change, because a record
-  of a run must not alter the run; it is a stderr line, not a `diagnostics` entry, since the
-  document has already been printed when the hook runs.
+  `FFMPEG_SKILL_ROOTS` when that is set (the same `runner.outside_roots` the refusals use), a path
+  the command line names (any argument or `-o` target, existing or not), or not a regular file:
+  all of these are known before the run, so `start_usage_record()` (from `add_common()`) checks
+  them, records `usage_record_refused` with `warn()` and registers no exit hook, and the warning is
+  in the document's `diagnostics.warnings` like every other. The message names the variable and the
+  reason, not the path, as `doctor --usage` keeps the path out of its document. The run's document
+  and exit code never change, because a record of a run must not alter the run.
+- **A late failure is the one stderr-only line.** An OS error while appending, or a file the run
+  itself read or wrote (one no argument names) that turns out to be the log, can only be found in
+  the exit hook, after the document has been printed, so it cannot reach `diagnostics`: it is one
+  stderr line that starts `usage record:`, not `warning:`, since a `warning:` line is a promise that
+  the document carries it (`test_no_stderr_only_warning_is_left_in_the_sources`).
 - **The audit log is a different file and is unchanged.** It records events a later reader must
   reconstruct, beside the files they concern; the usage record is the user's, in one place.
 - **`doctor --usage` prints counts as JSON and the path only on stderr**, so the document a user
@@ -7258,4 +7265,5 @@ upload. It exists so a user can attach something concrete to a report.
   `test_usage_record_is_off_unless_the_variable_turns_it_on`,
   `test_usage_record_holds_option_names_never_a_value_a_path_or_text`,
   `test_usage_record_of_a_failed_run_has_its_kind_and_reason`,
-  `test_usage_record_that_cannot_be_written_never_fails_the_tool`.
+  `test_usage_record_that_cannot_be_written_never_fails_the_tool`,
+  `test_usage_record_path_the_run_cannot_use_is_a_warning_in_the_document`.

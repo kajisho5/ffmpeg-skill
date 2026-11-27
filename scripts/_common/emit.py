@@ -402,17 +402,34 @@ def usage_log_path() -> Optional[str]:
 
 
 def start_usage_record() -> None:
-    # add_common(): unset, nothing is registered and nothing is written anywhere
-    if usage_log_path() and "start" not in USAGE:
-        import atexit
-        import time
-        USAGE["start"] = time.monotonic()
-        atexit.register(_usage_at_exit)
+    # add_common(): unset, nothing is registered and nothing is written anywhere. A path the run must not use is known
+    # before the run starts, so it is a warning in the document (usage_record_refused) and no exit hook is registered.
+    path = usage_log_path()
+    if not path or "start" in USAGE or "refused" in USAGE:
+        return
+    from _common import runner
+    real = os.path.normcase(os.path.realpath(path))
+    named = {os.path.normcase(os.path.realpath(v)) for a in sys.argv[1:] for v in (a, a.partition("=")[2]) if v and v != "-"}
+    why = (("not_absolute", "it is not an absolute path") if not os.path.isabs(path)
+           else ("outside_roots", "it is outside the directories FFMPEG_SKILL_ROOTS allows") if runner.outside_roots(path, "output")
+           else ("named_on_command_line", "it is a path this command line names") if real in named
+           else ("not_a_regular_file", "it is not a regular file") if os.path.exists(real) and not os.path.isfile(real) else None)
+    if why:
+        USAGE["refused"] = why[0]
+        warn(f"{USAGE_ENV} names a file this run does not append to: {why[1]}; no usage record is written, and the run is unaffected",
+             "usage_record_refused", why=why[0])
+        return
+    import atexit
+    import time
+    USAGE["start"] = time.monotonic()
+    atexit.register(_usage_at_exit)
 
 
 def _usage_at_exit() -> None:
-    """One JSON line per run: names and codes the skill defines, never a value, a path or text. A log it cannot or
-    must not write is a warning on stderr; the run's result and exit code stand (docs/design-decisions.md, #689)."""
+    """One JSON line per run: names and codes the skill defines, never a value, a path or text. start_usage_record()
+    refused every path it could judge before the run; what is left here, after the document is printed, is an OS
+    error or a file the run itself wrote or read turning out to be the log: one `usage record:` line on stderr, and
+    the run's result and exit code stand (docs/design-decisions.md, #689)."""
     import re
     import time
     from _common import runner
@@ -420,13 +437,8 @@ def _usage_at_exit() -> None:
     code = lambda v: v if isinstance(v, str) and re.fullmatch(r"[a-z0-9_]+", v) else None  # noqa: E731
     try:
         real = os.path.normcase(os.path.realpath(path))
-        named = [v for a in sys.argv[1:] for v in (a, a.partition("=")[2]) if v and os.path.exists(v)]
-        taken = {os.path.normcase(os.path.realpath(p)) for p in [*named, *ctx.written, *ctx.checked, *ctx.video_inputs, *ctx.audio_inputs]}
-        why = ("it is not an absolute path" if not os.path.isabs(path) else "it is outside the directories FFMPEG_SKILL_ROOTS allows"
-               if runner.outside_roots(path, "output") else "it is one of this run's inputs or outputs" if real in taken
-               else "it is not a regular file" if os.path.exists(real) and not os.path.isfile(real) else None)
-        if why:
-            raise OSError(why)
+        if real in {os.path.normcase(os.path.realpath(p)) for p in [*ctx.written, *ctx.checked, *ctx.video_inputs, *ctx.audio_inputs]}:
+            raise OSError("it is one of this run's inputs or outputs")
         acts = getattr(getattr(ctx, "parser", None) or getattr(STATE, "parser", None), "_option_string_actions", {})
         given = [a.split("=", 1)[0] for a in sys.argv[1:sys.argv.index("--") if "--" in sys.argv else None] if a.startswith("-")]
         long = lambda f: [o for o in acts if f.startswith("--") and len(f) > 2 and o.startswith(f)]  # noqa: E731  argparse's abbreviations
@@ -443,7 +455,7 @@ def _usage_at_exit() -> None:
         with os.fdopen(os.open(real, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8") as f:  # the user's own, as its directory
             f.write(json.dumps(rec, sort_keys=True) + "\n")
     except Exception as exc:  # the record never fails the run it describes
-        sys.stderr.write(f"warning: no usage record was appended to {path!r} ({exc}); the run is unaffected\n")
+        sys.stderr.write(f"usage record: not appended to {shown(path)} ({shown(exc)}); the run is unaffected\n")
 
 
 def info(msg: str, ctx: "Optional[Context]" = None) -> None:

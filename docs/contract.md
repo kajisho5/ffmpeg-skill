@@ -1347,9 +1347,11 @@ exactly `{tool, version, status, kind, reason, flags, seconds, ffmpeg_major}`: `
 names given as the tool defines them (an abbreviation as the option it stands for, an unknown
 option left out), sorted, and `ffmpeg_major` the FFmpeg major the run read (`null` when it read
 none). No value, positional, path, file name or text is ever in it. A log path that is not
-absolute, is outside `FFMPEG_SKILL_ROOTS` when that is set, is one of the run's inputs or outputs, or
-is not a regular file is not written: a warning on stderr, and the run's document and exit code
-are unchanged. `python3 scripts/_contract.py doctor --usage` prints the counts as JSON (the file's
+absolute, is outside `FFMPEG_SKILL_ROOTS` when that is set, is a path the command line names, or
+is not a regular file is judged before the run and not written: a `diagnostics.warnings` entry
+(`usage_record_refused`, `why` the code). An append that fails at exit, or a log that turns out to
+be a file the run read or wrote, is one stderr line starting `usage record:`, since the document
+is already printed. Either way the run's document and exit code are unchanged. `python3 scripts/_contract.py doctor --usage` prints the counts as JSON (the file's
 path on stderr only). Nothing is sent anywhere. The audit log above is a different file and is
 unchanged.
 

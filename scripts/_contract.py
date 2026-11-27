@@ -510,6 +510,7 @@ DIAGNOSTIC_CODES = {
     "output_unlocked": ("warnings", "no output lock could be created and the run went on without one; {lock, output, error}"),
     "lock_deadline_unset": ("warnings", "the lock's deadline (its mtime) could not be set; {lock, error}"),
     "audit_log_unwritable": ("warnings", "an audit record could not be appended; never fails the run; {path, event, error}"),
+    "usage_record_refused": ("warnings", "FFMPEG_SKILL_USAGE_LOG names a file this run does not append to, known before the run: not absolute, outside FFMPEG_SKILL_ROOTS, a path the command line names, or not a regular file; no record is written and the run is unaffected; {why: not_absolute | outside_roots | named_on_command_line | not_a_regular_file}"),
     "plan_unbound_inputs": ("warnings", "render.py PLAN: inputs that did not exist when the plan was made, so were not checked; {paths}"),
     "plan_sequence_unbound": ("warnings", "render.py PLAN: an older sequence plan does not bind the ordered frame list"),
     # the runner
@@ -2327,7 +2328,7 @@ def build(detect: bool = True) -> Dict[str, Any]:
                 "enabled_by": "FFMPEG_SKILL_USAGE_LOG: unset, empty or 0 = off (the default; nothing is written anywhere); 1 = ffmpeg-skill/usage.jsonl under $XDG_STATE_HOME (default ~/.local/state; %LOCALAPPDATA% on Windows); an absolute path = that file",
                 "format": "one JSON line appended per tool run, dry runs and refusals included: {tool, version, status (completed | failed), kind (error.kind; usage for a command line argparse refused; internal for a traceback), reason (error.reason), flags (the option names given, sorted, as the tool defines them), seconds, ffmpeg_major}",
                 "never": "an option's value, a positional, a path, a file name, a message or any text the caller gave; nothing leaves the machine",
-                "refused": "a log path that is not absolute, is outside FFMPEG_SKILL_ROOTS (when set), is one of the run's inputs or outputs, or is not a regular file: a warning on stderr, never a change to the run's result or exit code",
+                "refused": "a log path that is not absolute, is outside FFMPEG_SKILL_ROOTS (when set), is a path the command line names, or is not a regular file: judged before the run, a diagnostics.warnings entry (usage_record_refused) and no record; an append that fails at exit, or a log that turns out to be a file the run read or wrote, is one stderr line starting 'usage record:', since the document is already printed; never a change to the run's result or exit code",
                 "read": "python3 scripts/_contract.py doctor --usage (counts, JSON)",
             },
         },

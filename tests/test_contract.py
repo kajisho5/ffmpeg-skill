@@ -14263,15 +14263,46 @@ class UsageRecordTests(unittest.TestCase):
         proc = tool("probe", inside / "clip.mp4", env=roots)
         self.assertIn("video", json.loads(proc.stdout))
         self.assertIn("outside the directories FFMPEG_SKILL_ROOTS allows", proc.stderr)
-        for name, env in (("in a file", self.env(home, blocker / "log.jsonl")), ("relative", self.env(home, "usage.jsonl")),
-                          ("the input", self.env(home, self.src)), ("a directory", self.env(home, self.work))):
+        # known before the run: a warning in the document; found only at exit (an OS error): the one `usage record:` line
+        for name, env, late in (("in a file", self.env(home, blocker / "log.jsonl"), True), ("relative", self.env(home, "usage.jsonl"), False),
+                                ("the input", self.env(home, self.src), False), ("a directory", self.env(home, self.work), False)):
             with self.subTest(log=name):
                 proc = tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.work / "w.mp4", "--overwrite", "--json", env=env)
-                self.assertEqual(json.loads(proc.stdout)["status"], "completed")
-                self.assertIn("warning: no usage record was appended", proc.stderr)
+                doc = json.loads(proc.stdout)
+                self.assertEqual(doc["status"], "completed")
+                codes = [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])]
+                self.assertEqual("usage_record_refused" in codes, not late)
+                self.assertEqual("usage record: not appended" in proc.stderr, late)
+                self.assertNotIn("warning: no usage record", proc.stderr)
         self.assertEqual(self.src.read_bytes(), before, "the log was appended to the input")
         self.assertFalse((home / "outside.jsonl").exists())
         self.assertFalse((Path.cwd() / "usage.jsonl").exists())
+
+    def test_usage_record_path_the_run_cannot_use_is_a_warning_in_the_document(self):
+        """A log path judged before the run (relative, or the -o output, existing or not) is a
+        usage_record_refused warning in --json diagnostics; no record is written and the exit code
+        is the run's own, success or failure."""
+        home = self.work / "home_refused"
+        shutil.rmtree(home, ignore_errors=True); home.mkdir()
+        out = self.work / "refused_out.mp4"
+        for name, value, why in (("relative", "usage.jsonl", "not_absolute"), ("the -o output", out, "named_on_command_line")):
+            for fails in (False, True):
+                with self.subTest(log=name, fails=fails):
+                    out.unlink(missing_ok=True)
+                    args = ["--start", "zq_not_a_time"] if fails else ["--start", "0", "--end", "1"]
+                    proc = tool("cut", self.src, *args, "-o", out, "--json", check=False, env=self.env(home, value), cwd=home)
+                    plain = tool("cut", self.src, *args, "-o", self.work / "refused_plain.mp4", "--overwrite", "--json",
+                                 check=False, env=self.env(home))
+                    self.assertEqual(proc.returncode, plain.returncode)
+                    doc = json.loads(proc.stdout)
+                    self.assertEqual(doc["status"], "failed" if fails else "completed")
+                    [warning] = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "usage_record_refused"]
+                    self.assertEqual(warning["why"], why)
+                    self.assertIn("FFMPEG_SKILL_USAGE_LOG", warning["message"])
+                    self.assertNotIn("usage record:", proc.stderr)
+                    self.assertEqual([p for p in home.rglob("*")], [], "a refused log path wrote a record")
+                    if not fails:
+                        self.assertNotIn(b'"tool"', out.read_bytes()[-400:], "the record was appended to the output")
 
 
 class TestOutIsolationTests(unittest.TestCase):
