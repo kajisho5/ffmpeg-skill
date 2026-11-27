@@ -498,11 +498,15 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
             tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
-            fix[flag] = (near + said)[0] if len(near + said) == 1 else None
+            # an answer is one option spelt like a flag no tool takes (in its own file or a shared one): another tool's flag, an
+            # option sharing a word or one the help mentions mean something else (speedramp --ramp 3:6:0.5 is not --segment 3:6:0.5)
+            taken = tools or [n for n in os.listdir(os.path.join(here, "_common")) if n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, "_common", n), encoding="utf-8", errors="replace").read()]
+            fix[flag] = (near + said)[0] if len(near + said) == 1 and not taken and difflib.get_close_matches(flag, near, 1, 0.85) else None
     # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
     wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
     if wrong:
-        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
+        # the other word only when it is a choice: strong is high, never the platform nearest to 'high' (ig)
+        fix[wrong[1]] = _OTHER_WORDS[wrong[1].lower()] if f"'{_OTHER_WORDS.get(wrong[1].lower())}'" in wrong[2] else (difflib.get_close_matches(wrong[1], [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
     words: List[str] = []
     for a in ([] if None in fix.values() else sys.argv[1:]):
         name, eq, rest = a.partition("=")

@@ -14063,6 +14063,78 @@ class StumbleLedgerTests(unittest.TestCase):
             with self.subTest(tool=tool, argv=argv):
                 self.assertNotIn("try:", run(tool, *argv))
 
+    def test_a_try_line_is_a_command_the_tool_accepts(self):
+        """`speedramp.py IN --ramp 3:6:0.5` ended with `try: ... --segment 3:6:0.5`, which speedramp
+        refuses (START-END:FACTOR): --segment was the one option whose help mentions 'ramp', and the
+        value went with it. Every rule that writes a `try:` is run on every tool of tests/sweep.py's
+        table, and each command it prints is run with --dry-run: a misspelt option of the tool (with
+        the value it was given), a choice misspelt or given a common other word, a number with its
+        unit. A flag that another tool takes, or one that only shares a word or a mention in the
+        help, has no single answer here: the hint names the options and no command follows."""
+        import argparse
+        import concurrent.futures
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        from _common import runner
+
+        def taught(tool, argv):
+            parser, saved, err = parsers[tool], sys.argv, io.StringIO()
+            sys.argv = [str(SCRIPTS / f"{tool}.py"), *argv]
+            try:
+                with contextlib.redirect_stderr(err):
+                    parser.parse_args(argv)
+            except SystemExit:
+                pass
+            finally:
+                sys.argv = saved
+            return err.getvalue()
+
+        with tempfile.TemporaryDirectory() as work:
+            clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+            facts = sweep.facts_for(clip, work)
+            parsers = {p.stem: _contract._capture_parser(p) for p in sorted(SCRIPTS.glob("[!_]*.py"))}
+            self.assertNotIn("\ntry:", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            self.assertIn("--segment", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            commands, foreign = {}, []
+            for name, (base, ext) in sweep.TABLE.items():
+                tool = name.split()[0]
+                if tool == "verify":  # it runs its steps for real and ignores --dry-run
+                    continue
+                base, out = [b.format(**facts) for b in base], (["-o", str(Path(work) / f"o{ext}")] if ext else [])
+                acts = {o: a for a in parsers[tool]._actions for o in a.option_strings if o.startswith("--")}
+                cases = []
+                for i, word in enumerate(base):
+                    action = acts.get(word)
+                    if action and len(word) > 5:
+                        cases.append(("option", base[:i] + [word[:3] + word[4] + word[3] + word[5:]] + base[i + 1:]))
+                    if action and action.choices:
+                        cases += [("choice", base[:i + 1] + [w] + base[i + 2:]) for w in (base[i + 1][:-1], *runner._OTHER_WORDS)]
+                    if re.fullmatch(r"\d+(\.\d+)?", word):
+                        cases += [("unit", base[:i] + [word + unit] + base[i + 1:]) for unit in ("s", "px")]
+                for other, parser in parsers.items():
+                    for flag, action in {o: a for a in parser._actions for o in a.option_strings if o.startswith("--")}.items():
+                        if other != tool and not any(o.startswith(flag) for o in acts) and flag not in runner.SHARED:
+                            said = taught(tool, [clip, *base, flag, *([] if action.nargs == 0 else ["2"]), *out])
+                            foreign += [f"{name}: {flag} ({other}.py)"] if "\ntry:" in said else []
+                for rule, argv in cases:
+                    line = re.search(r"\ntry: (.*)", taught(tool, [clip, *argv, *out]))
+                    if line:
+                        commands[line[1]] = rule
+            self.assertEqual(foreign, [], "another tool's option was answered with a command")
+            self.assertEqual(sorted(set(commands.values())), ["choice", "option", "unit"], "every rule was run")
+
+            def refused(line):
+                cmd = shlex.split(line)
+                proc = subprocess.run([sys.executable, *cmd[1:], "--dry-run", "--json", "--overwrite"], capture_output=True,
+                                      text=True, encoding="utf-8", timeout=300, cwd=work)
+                try:
+                    # check.py runs the command and fails a check of the clip (kind verification): accepted
+                    return None if proc.returncode == 0 or json.loads(proc.stdout)["error"]["kind"] == "verification" else line
+                except ValueError:
+                    return line + " :: " + proc.stderr[-200:]
+            with concurrent.futures.ThreadPoolExecutor(4) as pool:
+                self.assertEqual([r for r in pool.map(refused, commands) if r], [])
+
     def test_three_things_most_models_asked_for_are_options_now(self):
         """Nine models were given the same blind tasks; these three shapes came from most of them and
         no tool took them: a proxy by its height, a redaction rectangle in one value, and chapters
