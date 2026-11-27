@@ -6,6 +6,16 @@
 
 (nothing yet)
 
+## 4.16.1
+
+_Automated release: version and notes generated from pull requests merged since 4.16.0._
+
+### Fixed
+
+- `color.py --keep-alpha --source-alpha-mode premultiplied` on a BT.709-tagged ProRes 4444 master reads the graded colour with BT.709, where it used BT.601 and shifted every opaque pixel (#740). Contributed by @pinewhite in #741.
+- fix(color): the wide ProRes 4444 merge reads the graded YUV with its matrix (#740) (#756)
+- ci: a fix's PR says what was swept in its Siblings section (#755)
+
 ## 4.16.0
 
 _Automated release: version and notes generated from pull requests merged since 4.15.0._
