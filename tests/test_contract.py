@@ -14013,7 +14013,9 @@ class StumbleLedgerTests(unittest.TestCase):
                 with self.subTest(tool=row["tool"], argv=row["argv"]):
                     again = subprocess.run([sys.executable, *shlex.split(line[len("try: "):])[1:]], capture_output=True, text=True, encoding="utf-8", timeout=120)
                     self.assertNotEqual(again.returncode, 2, again.stderr[-300:])
-        self.assertGreaterEqual(printed, 10)
+        # #764 narrowed which stumbles get a try: line (one option spelt like the flag, none for a help
+        # mention or another tool's flag), so few taught lines print one; each that does is checked above
+        self.assertGreaterEqual(printed, 1)
 
     def test_speedramp_takes_one_span_as_speed_start_end(self):
         """#676: `--speed 2 --start 3 --end 4` is the shape the probe table lists for one sped-up span.

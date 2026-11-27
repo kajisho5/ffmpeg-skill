@@ -7304,14 +7304,19 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   requires. `runner._parses` parses the corrected line before it is printed. It checks names,
   arity, types, choices and required options; a value the tool refuses after parsing
   (`look.py --tiles 4`, `speedramp.py --segment 3:6:0.5`) can still be printed, and the refusal
-  that follows says the shape.
+  that follows says the shape. Main's rule ('`try:` is printed only when it is known', #764) is
+  narrower and comes first: an option whose help only mentions the word is named, not printed as a
+  command, so `fit.py --background blur` is answered "--fit mention 'background'" and
+  `color.py --grade` "--correct mention 'grade'", with no `try:`.
 - **A help string does not say a word another option owns.** `color.py --peak` said "peak
   brightness", so `--brightness 0.1` was answered with `--peak 0.1`, a `--to-sdr` setting, and that
   command ran; `--source-alpha-mode` said "grades", so `--grade` was answered with it. `--peak` now
   says luminance, `--exposure` and `--gamma` say brightness (two answers, so no `try:`), `--correct`
   says grade. `batch.py --recipe`, `--jobs` and `--force` use config, parallel/workers and no cache.
-- **Not done here:** `crop.py --size WxH` and a centred crop without `--x/--y` are #683's (crop
-  folded into fit) and wait for it; `multicam.py`'s misses were already taught; the probe for
+- **#676's crop items came with #683** (crop folded into fit): `fit.py --rect W:H` is a centred
+  box, and `crop.py --width/--height` without `--x/--y` (or with `--center`) is one too.
+  `crop.py --size WxH` is not added; the help of `--width` says a size WxH is `--width`/`--height`.
+- **Not done here:** `multicam.py`'s misses were already taught; the probe for
   `color.py` and `batch.py` was not re-run, so their new ledger lines say they were written by an
   agent that had read the tool.
 - Code: `scripts/speedramp.py`, `scripts/_common/runner.py` (`_parses`), the help of
