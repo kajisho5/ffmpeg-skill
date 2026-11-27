@@ -175,7 +175,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut to the product shot", "B-roll over this bit", "cutaway", "cut-in", "reaction cut" | `broll.py talk.mp4 --insert product.mp4 --at 12 --end 16 --audio b\|mix` |
 | "add chapters", "set the title / artist" | `metadata.py ep.mp4 --chapters chapters.txt` (`--title`, `--auto-chapters`) |
 | "a 4x2 grid of these videos" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
-| "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 --transition fade --duration 0.5` |
+| "stitch these clips", "put b after a" (end to end, summed length) / "add a crossfade" | `join.py a.mp4 b.mp4` / `join.py a.mp4 b.mp4 --transition fade --duration 0.5` |
 | "join them without re-encoding", "smash cut" (a plain cut, no transition) | `join.py a.mp4 b.mp4 --copy --transition none` |
 | "J-cut" (next sound starts early), "L-cut" (last sound runs late) | `join.py a.mp4 b.mp4 --transition none --audio-lead 0.5` (`--audio-lag 0.5`; each costs 0.5 s of a clip) |
 | "several changes to one edit", 3+ steps, "I changed one stage, don't redo the rest" | `render.py project.json` (`--init` writes one; `--cache DIR` reuses unchanged stages) |

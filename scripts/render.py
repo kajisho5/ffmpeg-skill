@@ -2215,7 +2215,9 @@ def main() -> int:
     join_crop_size = None
     if len(parts) > 1:
         current = str(work / f"joined{mid}")
-        argv = list(parts) + ["-o", current, "--transition", trans.get("type", "fade"), "--duration", str(trans.get("duration", 0.5))]
+        # the project's transition is fade unless it says otherwise; join.py's own default is none (#681)
+        t_type = str(trans.get("type", "fade"))
+        argv = list(parts) + ["-o", current, "--transition", t_type] + (["--duration", str(trans.get("duration", 0.5))] if t_type != "none" else [])
         own_fit = proj.get("fit") if isinstance(proj.get("fit"), dict) else {}
         geometry = {**frame, **{k: v for k, v in own_fit.items() if v is not None}}
         jw, jh = frame.get("width"), frame.get("height")

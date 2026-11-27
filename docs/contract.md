@@ -71,6 +71,12 @@ become beta before 5.0.
 | MCP `tools/list` names and `inputSchema` property names | derived from the above, so covered by the same promise |
 | Behaviour of a tool for the same input and arguments | may change only to fix a defect or to track an FFmpeg change, and every such change gets a CHANGELOG line |
 
+One behaviour change in 4.x is the owner's decision rather than a defect fix (2026-11-27, #681):
+`join.py` (a `beta` tool) joins end to end when no `--transition` is given, the clips' summed
+length; up to 4.17.0 its default was a 0.5 s `fade`. `--transition fade` writes what the old default
+wrote, and `--duration` without a transition is refused (`kind: input`) instead of ignored.
+`render.py` projects keep their 0.5 s fade default and render as before.
+
 Not covered: the exact wording of `--help` text, descriptions, stderr messages, and the
 `details`/`notes` free-text fields of JSON output; the internals under `scripts/_*.py`;
 the evals harness; the development skills under `.claude/`.
