@@ -14126,7 +14126,8 @@ class StumbleLedgerTests(unittest.TestCase):
             self.assertEqual(sorted(set(commands.values())), ["choice", "option", "unit"], "every rule was run")
 
             def refused(line):
-                cmd = shlex.split(line)
+                # the try: line is quoted for the shell it is printed on: list2cmdline on Windows, shlex.join elsewhere
+                cmd = [w.strip('"') for w in shlex.split(line, posix=False)] if os.name == "nt" else shlex.split(line)
                 proc = subprocess.run([sys.executable, *cmd[1:], "--dry-run", "--json", "--overwrite"], capture_output=True,
                                       text=True, encoding="utf-8", timeout=300, cwd=work)
                 try:
