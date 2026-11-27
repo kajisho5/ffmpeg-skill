@@ -7352,8 +7352,9 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_the_social_card_says_the_contracts_tool_count` compares the chunk in both copies and
   README's alt text with the contract, so a change of the count fails until the card is drawn
   again. Pixels are not compared: they depend on the font files and the FFmpeg build.
-- **The hand-drawn card stays until the count changes.** Its pixels were not redrawn; the line it
-  shows was recorded in it (`og.write_text`, which leaves the image data as it is). The first change
-  of the count replaces it with the drawn one, which follows its layout.
+- **The hand-drawn card stayed until the count changed.** Its pixels were not redrawn; the line it
+  showed was recorded in it (`og.write_text`, which leaves the image data as it is). The first change
+  of the count, 42 to 41 when crop became an alias of fit (#683), replaced it with the drawn one,
+  which follows its layout.
 - Code: `brand/og.py`. Tests: `test_the_social_card_says_the_contracts_tool_count`,
   `test_the_social_card_generator_draws_the_line_it_records` (tests/test_contract.py).
