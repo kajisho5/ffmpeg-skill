@@ -176,7 +176,7 @@ def render(results=RESULTS):
         "",
         "`--dry-run` prints the tasks and the request each would send, with no endpoint and no network. "
         "`--only cut,mute` runs part of the set; `--budget 5` stops starting runs after five dollars. "
-        "Each run's transcript is kept under `--out`. After a release, the `benchmark` workflow "
+        "Each run's transcript is kept under `--out`. The model's commands run in bash, so a run needs Linux or macOS (WSL on Windows); `--dry-run` works anywhere. After a release, the `benchmark` workflow "
         "(Actions, run by hand) does the same on a runner and attaches the results file; committing it updates this page. "
         "The checkers are tested with a known-good and a known-bad output for every task (`tests/test_benchmarks.py`).",
         "",

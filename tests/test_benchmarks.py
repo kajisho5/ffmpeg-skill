@@ -145,6 +145,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(none.returncode, 2)
         self.assertIn("BENCH_API_URL and BENCH_API_KEY", none.stderr)
 
+    @unittest.skipIf(os.name == "nt", "run.py runs the model's commands in bash and refuses on Windows (the next test)")
     def test_a_run_against_a_local_endpoint_is_graded_by_measurement(self):
         """An endpoint on 127.0.0.1 answers the first request with one bash call that does the cut and
         the second with a claim. The results file counts the call, grades the file it measured, keeps
@@ -200,6 +201,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual({auth for auth, _ in seen}, {"Bearer test-key"})
         self.assertEqual(len(seen), 2)
 
+    @unittest.skipIf(os.name == "nt", "run.py runs the model's commands in bash and refuses on Windows (the next test)")
     def test_an_endpoint_that_refuses_every_call_writes_no_results(self):
         """A wrong key is not 0 of N correct: nothing was measured, so no results file is written."""
         class Refuse(http.server.BaseHTTPRequestHandler):
@@ -227,6 +229,19 @@ class RunnerTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+    @unittest.skipUnless(os.name == "nt", "the refusal is Windows only")
+    def test_a_run_on_windows_is_refused_before_any_request(self):
+        """`bash` on a Windows runner is the WSL launcher, so a model's command did not run and a
+        correct answer was graded 0: run.py refuses there before any request is sent."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(env_without_endpoint(), BENCH_API_URL="http://127.0.0.1:9/v1", BENCH_API_KEY="k")
+            proc = subprocess.run(self.RUN + ["m", "--arm", "raw", "--runs", "1", "--only", "cut", "--results", tmp, "--out", tmp],
+                                  capture_output=True, text=True, env=env, timeout=120)
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertIn("WSL", proc.stderr)
+            self.assertEqual(list(Path(tmp).glob("*.json")), [])
 
 
 if __name__ == "__main__":
