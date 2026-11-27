@@ -1078,11 +1078,33 @@ render.py project.json --cache DIR [--from STAGE]    # reuse identical stages fr
 render.py plan.json [--audit-log FILE]       # execute a plan written by <tool> --plan plan.json
 render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the cut for an editor, nothing rendered
 render.py project.json --intermediate-preset medium   # the stages' own encoder preset instead of superfast
+render.py v2.json --compare-project v1.json   # check the render changed only what the project edit changed
 ```
 A real render first runs its own dry run; when that is refused because a stage needs a filter or an
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
 title or captions does the same).
+`--compare-project OLD.json` (#442 phase 4) takes the expected change from the edit instruction,
+not from what the agent says it did: the difference between OLD.json and this project becomes
+`check.py --compare OLD's-output` with `--expect-changed`, `--expect-audio-changed` and
+`--expect-removed`, run after the last stage. Keep the previous project and its render (copy
+`project.json` to `v1.json` before editing, and give the new one another `output`). What maps: a
+caption cue whose text or times changed is its own span (every cue when a style key changed or
+the cues are an ASS file); an overlay or graphic entry added, removed or changed is its old and new
+window (no end: to the end); `brand`/`template` are the whole picture, `audio`/`loudness` the whole
+sound, `export` both; a later `in` on the first clip and an earlier `out` on the last are removed
+spans in the previous render's time, and the cues and layers that moved with the head keep their
+content (a video layer, a graphic running to the end, a fading whole-clip overlay and, under an
+audio block, a loudness stage or a normalising export, the sound do not). Anything else on the
+timeline (a clip added, removed or re-timed otherwise, `transition`, `silence`, `fit`, `frame`,
+`audiogram`, `snap`) is refused before the first stage, `--dry-run` included
+(`project_diff_not_derivable`, each reason in `details.not_derivable`), since the check would rest
+on a guess. The result's `compare_project` holds the derived values, the `differences` they came
+from, check.py's document and `ok`: its `change_scope` and `audio_change_scope` rows; `ok: false`
+fails the render (`kind: verification`, the file kept). Spans are the window as written, ends
+included (an overlay `"end": 2` draws on the frame at 2.000 s, so a 2 s head trim leaves that frame
+changed); the floors and limits are check.py's (below). Not with `--stop-after`,
+`--export-timeline`, `--write-project`, a pack or a plan.
 The optional `stage_pictures` object keeps the fit and export stages' frame geometry under
 their stage names. Each report measures its own stage's frame and counts cropped pixels
 from that stage's input. `picture` carries the last sizing stage's report when available.
