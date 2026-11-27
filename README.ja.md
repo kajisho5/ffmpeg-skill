@@ -31,7 +31,7 @@ Claude Code、Cursor、Codex など MCP クライアントが、手元の FFmpeg
 </p>
 
 <p align="center">
-  <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: 編集し、測り、届ける。ローカルの FFmpeg ツール 42 個、うち 12 個が安定版。作業はエージェントが行います。final.mp4 の測定結果のカード: 59.98 秒、1080x1920、30 fps、-14.0 LUFS、確認済み。"></a>
+  <a href="https://kajisho5.github.io/ffmpeg-skill/?lang=ja"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: 編集し、測り、届ける。ローカルの FFmpeg ツール 41 個、うち 12 個が安定版。作業はエージェントが行います。final.mp4 の測定結果のカード: 59.98 秒、1080x1920、30 fps、-14.0 LUFS、確認済み。"></a>
 </p>
 
 <p align="center">
@@ -79,7 +79,7 @@ npx ffmpeg-skill
 
 左半分が入力、右半分がコマンドの出力です。**[すべてのビフォー・アフターのデモと、それぞれの実際のコマンド →](docs/demos.md)**。どれも `python3 demos/build.py` で作っているので、すべてのフレームを自分で作り直せます。映像は [demos/footage/](demos/footage/README.md) のもので、Google Veo による AI 生成のクリップ（人物も場所も実在しません）と、スマホで撮った数本です。音は合成したもので、いくつかのデモ（HDR10、パノラマ）は合成した映像を使っています。
 
-`ffmpeg-skill` は、Claude Code、Cursor、Codex など `SKILL.md` を読むエージェントのための [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) です。エージェントに決まった手順（調べる → できるだけ劣化なしで編集する → 検査する → 確かめる）を教え、実際の作業を `ffmpeg` / `ffprobe` で行う **42 個のツール** を同梱しています。カット、結合、無音の削除、尺と縦横比の調整、字幕とカラオケ、重ね合わせとモーショングラフィックス、HDR → SDR と LUT、音声のクリーンアップと型つきのダイナミクス処理、ズレ補正つきの同期、マルチカム、ラウドネス、納品チェック、編集全体をプロジェクトとして書き出す処理、フォルダの一括処理です。どのツールも MCP のツールとして呼べます（クライアントに渡す情報を小さくするため、`tools/list` はふだんコアの 12 個だけを示し、`FFMPEG_SKILL_MCP_FULL=1` で 42 個すべてを示します。どちらでも、すべてのツールが `tools/call` で名前を指定して呼べます）。全体は機械が読める契約で記述されています。
+`ffmpeg-skill` は、Claude Code、Cursor、Codex など `SKILL.md` を読むエージェントのための [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) です。エージェントに決まった手順（調べる → できるだけ劣化なしで編集する → 検査する → 確かめる）を教え、実際の作業を `ffmpeg` / `ffprobe` で行う **41 個のツール** を同梱しています。カット、結合、無音の削除、尺と縦横比の調整、字幕とカラオケ、重ね合わせとモーショングラフィックス、HDR → SDR と LUT、音声のクリーンアップと型つきのダイナミクス処理、ズレ補正つきの同期、マルチカム、ラウドネス、納品チェック、編集全体をプロジェクトとして書き出す処理、フォルダの一括処理です。どのツールも MCP のツールとして呼べます（クライアントに渡す情報を小さくするため、`tools/list` はふだんコアの 12 個だけを示し、`FFMPEG_SKILL_MCP_FULL=1` で 41 個すべてを示します。どちらでも、すべてのツールが `tools/call` で名前を指定して呼べます）。全体は機械が読める契約で記述されています。
 
 `ffmpeg` と `python3` が PATH にあれば動きます。オフラインで、アップロードしたくない映像にも使えます。
 
@@ -240,7 +240,7 @@ flowchart LR
 1. **まず調べる。** ファイル名から判断するツールはありません。何かを切る前に、`probe.py` が長さ、fps（可変フレームレートの検出つき）、解像度、回転、ビット深度、Dolby Vision を含む HDR の形式、色のタグ、すべての音声ストリームを測ります。
 2. **できるだけ劣化なしで。** `cut.py` と `loudness.py` は、触る必要のないものをストリームコピーします（`join.py` はクロスフェードと、合わないクリップをそろえるために再エンコードします。`--copy --transition none` は、すでに合っているクリップをストリームコピーでつなぎます）。再エンコードは必要なときだけです。フレーム単位で正確なカット、フィルター、形式の変更、許容範囲より遠いキーフレーム。
 3. **書き出す前に計画する。** どのツールも `--dry-run`（ffmpeg のコマンドを表示し、何も書かない。`verify` は無視します）、`--plan FILE`（ドライランを、入力の指紋つきの計画として保存し、あとで `render.py FILE` が実行する。入力が変わっていれば断る。`render` と `verify` は受け付けません）、`--json`（出力を調べた結果つきの構造化された結果）、`--fast`（プレビュー品質）、`--progress`（進み具合と残り時間）、`--timeout`（止まった ffmpeg を終了させて報告し、いつまでも待たない。Ctrl-C や SIGTERM も同じく実行中の ffmpeg を止め、途中までの出力を消し、`kind: interrupted` を報告します）、`--overwrite`（既存の出力を置き換える前の明示的な同意）を受け取ります。あるテストは、契約がドライランで ffmpeg を動かさないとしているすべてのツール（`ffmpeg_execution: none` と、測定のフラグを付けない `cut` と `metadata`）を、偽の ffmpeg の後ろで `--dry-run` で動かし、ffmpeg が呼ばれず、ファイルもできなかったことを確かめます。別のテストは、契約が `--dry-run` に対応するとしているすべてのツール（`verify` 以外）を、デコードのたびに記録する ffmpeg の後ろで動かし、ファイルができなかったこと、デコードしたツールがすべて契約で `analysis_only` とされているものだったことを確かめます。
-4. **機械が読める契約。** `contract --json` は 42 個のツールすべてを記述します。パーサーから作った入力スキーマ、出力スキーマ、役割、常に必要な FFmpeg の機能と条件つきで必要な機能、ドライランへの対応、あとで実行する検証のツール、目での確認が必要か、`mutates_input: false`。`provides` は、[`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS) の `CapabilityContract.provides` のために、42 個すべてをリポジトリをまたぐ Capability の id（`ffmpeg-skill.cut`、`ffmpeg-skill.loudness` など）で並べます。`docs/contract.md` を見てください。
+4. **機械が読める契約。** `contract --json` は 41 個のツールすべて（と、4.19 から `fit --rect` の別名で `alias_of` の印が付いた `crop`）を記述します。パーサーから作った入力スキーマ、出力スキーマ、役割、常に必要な FFmpeg の機能と条件つきで必要な機能、ドライランへの対応、あとで実行する検証のツール、目での確認が必要か、`mutates_input: false`。`provides` は、[`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS) の `CapabilityContract.provides` のために、それらをリポジトリをまたぐ Capability の id（`ffmpeg-skill.cut`、`ffmpeg-skill.loudness` など）で並べます。`docs/contract.md` を見てください。
 5. **契約から作る MCP。** `mcp/server.py` は `tools/list` を契約から作ります。ツールの名前、順番、`inputSchema` がスクリプトとずれることはなく、テストが両者をバイト単位で同じに保ちます。
 6. **機能の検出。** `doctor` は `ffmpeg -encoders / -decoders / -filters / -bsfs` を読み、ツールが必要とする部品（libx264、libass、zscale、loudnorm、xfade など）のどれがこのビルドにあるかを、作業が ffmpeg の中で失敗する前に報告します。
 7. **わからないことは、無いことではない。** 一覧が読めないとき（パーサーの知らない並び、ffmpeg が 0 以外で終わった）、影響を受ける機能は `unknown` になります。`missing` にはせず、黙って `available` にもしません。入っているフィルターを無いと報告せず、検出の失敗を合格にもしません。
@@ -252,7 +252,7 @@ flowchart LR
 
 ## ツール
 
-公開ツールは 42 個で、すべて Python 3.10 以上の標準ライブラリだけで書かれ、どれも `--help`、`--dry-run`、`--json`、`--plan FILE`（あとで `render.py` が実行する計画として書いたドライラン）を持ち、失敗すると 0 以外で終わって stderr に理由を書きます。`--json-brief`（1.11.0）は同じ結果の文書を、呼び出し側が使う部分だけに絞って出します。status、output、`verified`、出力を調べた結果の短い `summary`、ツール自身のキー、そしてコマンドの行の代わりにコマンドの数で、バイト数はおよそ 3 分の 1 です。`--json` 自体は変わりません。`export.py`、`render.py`、`batch.py`（プリセットかプロジェクトが決める）以外の再エンコードするツールはすべて `--codec h264|hevc|av1|prores` と `--quality N`（1.8）を受け取り、`export.py` と同じく `--hw`/`--no-hw`（Apple Silicon の Apple VideoToolbox、明示したときだけ。下の `doctor` を参照）も受け取ります。時間を受け取るフラグはすべて、秒、`mm:ss`、`hh:mm:ss.fff`、SMPTE の `hh:mm:ss:ff` を受け付け、`@fps` を付けられます（1.9）。
+公開ツールは 41 個で、すべて Python 3.10 以上の標準ライブラリだけで書かれ、どれも `--help`、`--dry-run`、`--json`、`--plan FILE`（あとで `render.py` が実行する計画として書いたドライラン）を持ち、失敗すると 0 以外で終わって stderr に理由を書きます。`--json-brief`（1.11.0）は同じ結果の文書を、呼び出し側が使う部分だけに絞って出します。status、output、`verified`、出力を調べた結果の短い `summary`、ツール自身のキー、そしてコマンドの行の代わりにコマンドの数で、バイト数はおよそ 3 分の 1 です。`--json` 自体は変わりません。`export.py`、`render.py`、`batch.py`（プリセットかプロジェクトが決める）以外の再エンコードするツールはすべて `--codec h264|hevc|av1|prores` と `--quality N`（1.8）を受け取り、`export.py` と同じく `--hw`/`--no-hw`（Apple Silicon の Apple VideoToolbox、明示したときだけ。下の `doctor` を参照）も受け取ります。時間を受け取るフラグはすべて、秒、`mm:ss`、`hh:mm:ss.fff`、SMPTE の `hh:mm:ss:ff` を受け付け、`@fps` を付けられます（1.9）。
 
 **Analysis and inspection**（分析と確認）
 
@@ -269,9 +269,8 @@ flowchart LR
 | `cut.py` | イン/アウトや複数区間のカット。まず劣化なしの `-c copy`、だめなら再エンコード。`--accurate` で映像はフレーム単位、音声はサンプル単位で正確に切ります。`--smart` は H.264 をフレーム単位で正確に切り、カット点の途中の GOP だけを再エンコードし（素材に合わせ、そのパケットとフレームで確かめます）残りはコピーします。SDR の HEVC の素材は HEVC で再エンコードし（x264 にするなら `--no-keep-hevc`）、`.mp4`/`.mov` 1 本のコピーはエディットリストを残すので、キーフレームがあとにずれない限り映像は `--start` から始まります（ずれたときは `start_snapped` がそう言います。2.x と同じずれた始まりにするなら `--no-edit-list`）。`snapped_segments` はコピーがどこに着地しうるかを、切り出したキーフレームと照らして示します（`copy_drift_large` は `--accurate` を勧めます）。VFR の確かめ方は `--vfr-guard` で選びます（既定は `sampled`）。`precision` を報告します。`--snap beats` はイン/アウト点を測ったビートに動かし、測れる拍が無ければ断ります。`--remove A-B,...` は区間を落として残りを残します |
 | `join.py` | xfade のトランジションでクリップをつなぎ、サイズ、fps、サンプルレート、チャンネルのレイアウトをそろえます（いちばん広いクリップのもの、または `--channels`）。音声だけの入力は音声としてつなぎます。`--list parts.txt` は生成した部品（TTS の行など）を読み、まずすべてを確かめます。無い、空、読めない部品は 1 回の断りですべて名指しするか、`--on-missing skip` で飛ばして報告します。`--copy --transition none` はストリームが合うクリップをストリームコピーでつなぎ、あとで測り、合わなければ名指しして断ります。`--transition none --audio-lead S` / `--audio-lag S` は J カット / L カットを作ります（次の音が映像より S 秒早く始まる / 最後の音が映像の切り替わりのあと S 秒続く。同期は保たれます） |
 | `silence.py` | 無音（デッドエア）を見つけて取り除きます（ジャンプカット）。話し声の前後に余白を残し（`--margin`、前後に 0.2 秒）、カットリストを表示・書き出すか、素材から出力への時刻の対応を書きます（`--timemap`、JSON か CSV）。すべてのカット点のレベルを報告し、息や語尾にかかりそうなところに警告を出します。`--filler` はフィラー（言いよどみ）も取り除きますが、音声認識エンジンが時刻を付けたところだけです。`--speech-aware` は文の中の息つぎを残し、文の切れ目の間だけを切ります。`--filler` とは同じ `keep_ranges()` で組み合わさります。`--margin-lead` / `--margin-tail` は話し声の前と後に残す量を変え、単語の時刻があれば `--sentence-min-silence` / `--sentence-margin-tail` で、文の終わり（文字起こしの句読点）のあとの間に独自の下限と余白を与えます |
-| `fit.py` | 尺（大きな速度変化には方法を選ぶ）、縦横比（パッド、クロップ、ぼかしの塗り）、正確なサイズに合わせます。`picture` は書き出したフレームを測ります。`crop_check` は捨てた部分の動きや細部に印を付け、`--crop-x`/`--crop-y` を提案できます。90/180/270 度の回転、上下左右の反転、固定 fps への変換も。 |
-| `crop.py` | 正確なピクセルの矩形でクロップします（`--x --y --width --height`）。自分で計算した縦横比でクロップする `fit.py --fit crop` とは別のものです |
-| `cropdetect.py` | すでにある黒い帯（レターボックス/ピラーボックス）を測り、それを取り除く `crop.py` 用の矩形を報告します。分析だけで、ファイルは書きません。`--motion-centre` は代わりに秒ごとの動きの中心を報告します。9:16 への組み直し用で、報告だけです。クロップを選ぶのは呼び出したエージェントで、自動の組み直しはしません |
+| `fit.py` | 尺（大きな速度変化には方法を選ぶ）、縦横比（パッド、クロップ、ぼかしの塗り）、正確なサイズに合わせます。`--rect W:H:X:Y` は正確なピクセルの箱を拡大縮小なしで切ります（`W:H` だけなら中央。`crop.py --x --y --width --height` は同じコードを動かす別名です）。`picture` は書き出したフレームを測ります。`crop_check` は捨てた部分の動きや細部に印を付け、`--crop-x`/`--crop-y` を提案できます。90/180/270 度の回転、上下左右の反転、固定 fps への変換も。 |
+| `cropdetect.py` | すでにある黒い帯（レターボックス/ピラーボックス）を測り、それを取り除く `fit.py --rect` 用の矩形を報告します。分析だけで、ファイルは書きません。`--motion-centre` は代わりに秒ごとの動きの中心を報告します。9:16 への組み直し用で、報告だけです。クロップを選ぶのは呼び出したエージェントで、自動の組み直しはしません |
 | `deinterlace.py` | インターレースの素材をデインターレースします（`yadif`）。`--mode frame`/`field`、`--parity` |
 | `denoise.py` | 映像のノイズや粒子を減らします（`hqdn3d`）。`--strength low/medium/high` か、空間/時間方向の値を個別に |
 | `redact.py` | 正確なピクセルの矩形を、クリップ全体にわたってぼかす、モザイクにする、または（`--mode delogo`）周りから補間して消します。矩形は与えられたものです。顔、ナンバープレート、ロゴを見つけるものはここにはなく、`delogo` は縁を混ぜるもので、インペインティングではありません |
@@ -373,7 +372,7 @@ npx ffmpeg-skill contract --json --static   # 環境の検出なしで
 npx ffmpeg-skill contract --json --tool cut # `tools` の下の 1 ツール分だけ（繰り返し可）: 約 950 KB ではなく約 60 KB
 ```
 
-契約は動くコードから作られ、その横で保守されるものではありません。42 個のツールそれぞれ（`ffmpeg-skill/<name>`）について、次のことを記述します。
+契約は動くコードから作られ、その横で保守されるものではありません。41 個のツールそれぞれ（`ffmpeg-skill/<name>`、と別名の `crop`）について、次のことを記述します。
 
 | フィールド | 意味 |
 |---|---|
@@ -386,7 +385,7 @@ npx ffmpeg-skill contract --json --tool cut # `tools` の下の 1 ツール分�
 | `requires_visual_verification` | 映像が変わった。コンタクトシートを見ること |
 | `audio_only`, `video_required` | 音声だけの入力を受け付けるか断るか |
 | `mutates_input` | 常に `false` |
-| `stability` | コアの 12 個は `stable`、残りの 30 個は `beta`（4.0.0 から） |
+| `stability` | コアの 12 個は `stable`、残りの 29 個は `beta`（4.0.0 から） |
 | `idempotency_hint` | `bit_exact`、`content_equivalent`、`cached`、`environment_dependent` |
 
 ツールの一覧の隣に、文書はトップレベルの `deprecated` の一覧を持ちます（1.10 から）。次のメジャーで消すもの、いつからか、代わりのもの、それがどの面にあるか。3.0.0 では空です。2.x の 2 つの項目、Python 3.9 と FFmpeg 5.x は、2.0 で消したものと一緒に `removed` に移り、`docs/contract.md` の「What 2.0 changed」と「What 3.0 changed」はそこから書かれています。
@@ -406,7 +405,7 @@ npx ffmpeg-skill contract --json --tool cut # `tools` の下の 1 ツール分�
 
 Windows では、Python を Microsoft Store から入れた場合にだけ `python3` が PATH にあります。python.org から入れた場合は `python`（または `py` ランチャー）です。MCP クライアントがサーバーの起動に失敗したと報告したら、上の `"command"` を `"python"`（または `where python` のフルパス）に変えてください。
 
-`mcp/server.py` は自分のツールの表を持たない stdio の JSON-RPC の通信路です。`tools/list` は起動時に契約から、契約の順番で作られ、`inputSchema` は各ツールの `input_schema` から変換されます。既定ではコアの 12 個（`render`、`look`、`caption`、`export`、`check`、`fit`、`cut`、`audio`、`loudness`、`graphics`、`silence`、`probe`）だけを並べるので、クライアントはめったに直接呼ばない 30 個のスキーマのためにコンテキストを払わずに済みます。42 個すべてを並べるには `FFMPEG_SKILL_MCP_FULL=1` を設定します。並んでいてもいなくても、どのツールも `tools/call` で呼べます。これは構造化された引数を argv に対応させ、名指ししたスクリプトを実行します。生の `argv` の形も互換のために受け付け、正式ではないものとして印を付けます。`python3 mcp/server.py --list` はツールを表示し、`--call probe '{"inputs": ["a.mp4"]}'` はシェルから 1 つ実行します。
+`mcp/server.py` は自分のツールの表を持たない stdio の JSON-RPC の通信路です。`tools/list` は起動時に契約から、契約の順番で作られ、`inputSchema` は各ツールの `input_schema` から変換されます。既定ではコアの 12 個（`render`、`look`、`caption`、`export`、`check`、`fit`、`cut`、`audio`、`loudness`、`graphics`、`silence`、`probe`）だけを並べるので、クライアントはめったに直接呼ばない 29 個のスキーマのためにコンテキストを払わずに済みます。41 個すべてを並べるには `FFMPEG_SKILL_MCP_FULL=1` を設定します（`crop` のような別名は呼べますが、並びません）。並んでいてもいなくても、どのツールも `tools/call` で呼べます。これは構造化された引数を argv に対応させ、名指ししたスクリプトを実行します。生の `argv` の形も互換のために受け付け、正式ではないものとして印を付けます。`python3 mcp/server.py --list` はツールを表示し、`--call probe '{"inputs": ["a.mp4"]}'` はシェルから 1 つ実行します。
 
 `json` や `progress` を並べる `inputSchema` はありません。これらはサーバーが自分で付ける通信路のフラグで、ツールの引数ではありません（2.0。1.x では `FFMPEG_SKILL_MCP_LEAN=1` でなければ並べていました）。まだ送ってくるクライアントも断りません。
 
@@ -418,13 +417,13 @@ Windows では、Python を Microsoft Store から入れた場合にだけ `pyth
 
 小さな編集の作業には、サーバーの `env` を
 `{"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}`
-にします。クリップを調べ、切り、組み直し、書き出し、検査するツールが並びます。字幕には `caption` を足すか、`prompts/list` のレシピを使います。ツールの名前はカンマで区切り、応答は契約の順番を保ちます。`FFMPEG_SKILL_MCP_FULL=1` が優先され、すべてのツールを並べます。並んでいないツールも名前で呼べます。[名前のリストの契約](docs/contract.md#default-toolslist-surface-core-12-opt-in-for-all-42) を見てください。
+にします。クリップを調べ、切り、組み直し、書き出し、検査するツールが並びます。字幕には `caption` を足すか、`prompts/list` のレシピを使います。ツールの名前はカンマで区切り、応答は契約の順番を保ちます。`FFMPEG_SKILL_MCP_FULL=1` が優先され、すべてのツールを並べます。並んでいないツールも名前で呼べます。[名前のリストの契約](docs/contract.md#default-toolslist-surface-core-12-opt-in-for-all-41) を見てください。
 
 | `tools/list` の設定 | 測った JSON-RPC の応答 | 1 トークン 4 バイトとしたおよそのトークン数 |
 | --- | ---: | ---: |
-| 既定の 12 個 | 71.0 kB | 18,000 |
-| 全 42 個 | 190.9 kB | 48,000 |
-| 上の 5 つのツールの編集用リスト | 24.0 kB | 6,000 |
+| 既定の 12 個 | 75.4 kB | 19,000 |
+| 全 41 個 | 193.8 kB | 48,000 |
+| 上の 5 つのツールの編集用リスト | 26.4 kB | 6,600 |
 
 バイト数は JSON-RPC の外側と最後の改行を含みます。トークン数はクライアントとトークナイザーによります。
 
@@ -492,25 +491,25 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 
 すぐに使うなら、スキルの外で FFmpeg を直接動かしてください。スキルでの対応を頼むなら、FFmpeg のオプション、それを使う映像の種類、必要な結果を書いて issue を開いてください。新しいオプションはテストつきの型のあるフラグとして足され、同じ契約を通して CLI と MCP のスキーマに現れます。
 
-<a id="why-42-tools-isnt-that-overkill"></a>
+<a id="why-41-tools-isnt-that-overkill"></a>
 
-### ツールが 42 個は多すぎませんか？
+### ツールが 41 個は多すぎませんか？
 
 作業ごとに約束が違うので、作業ごとに 1 つのツールにし、ツールは実行後にその約束を測ります。`loudness.py` は統合ラウドネスとトゥルーピークを測り直します。`cut.py` はカットがキーフレームにどれだけ寄ったかを報告します。`silence.py` は残した区間を返します。`export.py` はプリセットの最大の長さを確かめます。ツールが読めなかった値は、その手順を `not_measured` として失敗にし、合格にはしません。モードのフラグを持つ 1 つのツールでも同じくらい大きなスキーマが必要になり、検査はもっとあいまいになります。
 
-エージェントが 42 個のスキーマを読むわけではありません。MCP では `tools/list` がコアの 12 個（下の太字）を示します。残りの 30 個は作業に必要なときに `tools/call` で名前を指定して呼ばれ、`FFMPEG_SKILL_MCP_FULL=1` で 42 個すべてが並びます。グループは [ツール](#tools) のものです。
+エージェントが 41 個のスキーマを読むわけではありません。MCP では `tools/list` がコアの 12 個（下の太字）を示します。残りの 29 個は作業に必要なときに `tools/call` で名前を指定して呼ばれ、`FFMPEG_SKILL_MCP_FULL=1` で 41 個すべてが並びます。グループは [ツール](#tools) のものです。
 
 | グループ | MCP の既定 / すべて | ツール |
 |---|---|---|
 | Analysis and inspection | 2 / 3 | **probe**, **look**, scenes |
-| Editing | 3 / 24 | **cut**, **fit**, **silence**, join, crop, cropdetect, deinterlace, denoise, redact, sphere, straighten, insert, background, reverse, stabilize, sequence, waveform, freeze, pad, speedramp, loop, broll, metadata, grid |
+| Editing | 3 / 23 | **cut**, **fit**, **silence**, join, cropdetect, deinterlace, denoise, redact, sphere, straighten, insert, background, reverse, stabilize, sequence, waveform, freeze, pad, speedramp, loop, broll, metadata, grid |
 | Audio | 2 / 3 | **audio**, **loudness**, sync |
 | Picture | 2 / 4 | **caption**, **graphics**, overlay, color |
 | Delivery | 2 / 4 | **export**, **check**, proxy, report |
 | Orchestration | 1 / 4 | **render**, batch, multicam, verify |
-| **Total** | **12 / 42** | |
+| **Total** | **12 / 41** | |
 
-残りの 30 個が無ければ、エージェントはそうした作業に生の ffmpeg を書くことになり、そこでの間違いは 0 で終わることがよくあります。
+残りの 29 個が無ければ、エージェントはそうした作業に生の ffmpeg を書くことになり、そこでの間違いは 0 で終わることがよくあります。
 
 - `stabilize.py` は vidstab を 2 パスで動かし、2 パス目は 1 パス目の変換のファイルを必要とします。
 - `color.py` は HDR から SDR への連鎖を組みます。色のタグが間違っていても実行は終わり、映像は白っぽくなります。
@@ -620,7 +619,7 @@ ffmpeg-skill は、手元にある映像を、このマシンで、フラグが�
 
 追いません。`fit.py --fit crop` は固定の窓を 1 つ残し、`--crop-x` と
 `--crop-y` を渡さなければ中央です。顔や被写体を追うものはありません。動く被写体を追うには、動くところでクリップを分け（`cut.py`）、区間ごとに `--crop-x` を与え、`join.py` でつなぎます。輝度の動きや輪郭の細部が残す窓の外に出た、サンプルした瞬間は `crop_check.review_points` で確かめます。1 つを見るには、示された
-`output_time_estimate` で `look.py OUTPUT --at TIME` を使います。`crop.py` は渡した矩形を切ります。
+`output_time_estimate` で `look.py OUTPUT --at TIME` を使います。`fit.py --rect` は渡した矩形を切ります。
 `cropdetect.py --motion-centre` は秒ごとに動きがどこにあったかを報告します。`sphere.py` は
 360 度の視野をあなたが向けたところに向けます。被写体の収まりは、やはり目で確かめる必要があります。
 
@@ -840,7 +839,7 @@ Codex CLI 0.167.0 で、マーケットプレイスは最新なのにキャッ�
 
 ## 安定性
 
-4.x はツールごとに約束を分けます。コアの 12 個（`contract --json` の `stability: stable`）は、3.x ですべてのツールがそうだったように、ツールの名前、CLI の引数、JSON の出力のキー、終了コードを 5.0 まで動くまま保ちます。残りの 30 個（`beta`）は、`deprecated` で 1 マイナーの予告のあと、マイナーリリースで引数や出力のキーを落としたり名前を変えたりすることがあります。何を約束し何を約束しないかの全体と、3 段階の非推奨の方針は [docs/contract.md](docs/contract.md#stability-guarantee-4x) にあります。すべてのツールの引数の名前をスナップショットに固定するテストがこれを守らせるので、壊す変更はパッチにまぎれ込まずに CI を失敗させます。リリースはまとめて出します。関係する修正と機能は、マージしたプルリクエストごとに 1 バージョンではなく、1 つのバージョンとして一緒に出すので、依存するプロジェクトから見ると段の数が少なく、1 段が大きくなります。`main` ではなく、タグの付いたバージョンに固定してください。2.0.0 は 1.10.0 から予告していた 5 つの変更を行いました。`--crf` を消して `--quality` に（プリセットがエンコーダーを選ぶ `export.py` を除く）、`--overwrite` なしでは既存の出力を断る、`probe` の `hdr` を本物の HDR の信号に絞る、`json`/`progress` を MCP のスキーマから外す、`result_v2` のプレビューの取り下げ。何を変えればよいかとともに [docs/contract.md](docs/contract.md#what-20-changed) と `contract --json` の `removed` に並んでいます。3.0.0 は 2 回目の破壊的な変更です。FFmpeg 5.x と Python 3.9 の対応をやめ（2.14.0 と 2.10.9 で予告）、`cut.py` が `.mp4`/`.mov` のコピーのエディットリストを残し、SDR の HEVC の素材を HEVC のままにし、既定で `--vfr-guard sampled` を使うようにし（`--no-edit-list`、`--no-keep-hevc`、`--vfr-guard average` で 2.x に戻ります）、`cut.py` の `precision`（今はいちばん不正確な区間のもの）と `keyframe_snapped`（今は `start_snapped` と同じ）の意味を変えました（`contract_version` 2.0）。[docs/contract.md](docs/contract.md#what-30-changed) を見てください。4.0.0 は 3 回目です。約束をツールごとに分け（上記）、動画の納品が必要な性質を満たさないとき `export.py` が 0 以外で終わるようにし、`fit.py --duration` が 1.15 倍を超える時間の変更の前に `--method` を求めるようにし、納品テンプレートで内容の検査を有効にし、使えない入力にそれぞれの `error.reason` を与えました。[docs/contract.md](docs/contract.md#what-40-changed) を見てください。
+4.x はツールごとに約束を分けます。コアの 12 個（`contract --json` の `stability: stable`）は、3.x ですべてのツールがそうだったように、ツールの名前、CLI の引数、JSON の出力のキー、終了コードを 5.0 まで動くまま保ちます。残りの 29 個（`beta`）は、`deprecated` で 1 マイナーの予告のあと、マイナーリリースで引数や出力のキーを落としたり名前を変えたりすることがあります。何を約束し何を約束しないかの全体と、3 段階の非推奨の方針は [docs/contract.md](docs/contract.md#stability-guarantee-4x) にあります。すべてのツールの引数の名前をスナップショットに固定するテストがこれを守らせるので、壊す変更はパッチにまぎれ込まずに CI を失敗させます。リリースはまとめて出します。関係する修正と機能は、マージしたプルリクエストごとに 1 バージョンではなく、1 つのバージョンとして一緒に出すので、依存するプロジェクトから見ると段の数が少なく、1 段が大きくなります。`main` ではなく、タグの付いたバージョンに固定してください。2.0.0 は 1.10.0 から予告していた 5 つの変更を行いました。`--crf` を消して `--quality` に（プリセットがエンコーダーを選ぶ `export.py` を除く）、`--overwrite` なしでは既存の出力を断る、`probe` の `hdr` を本物の HDR の信号に絞る、`json`/`progress` を MCP のスキーマから外す、`result_v2` のプレビューの取り下げ。何を変えればよいかとともに [docs/contract.md](docs/contract.md#what-20-changed) と `contract --json` の `removed` に並んでいます。3.0.0 は 2 回目の破壊的な変更です。FFmpeg 5.x と Python 3.9 の対応をやめ（2.14.0 と 2.10.9 で予告）、`cut.py` が `.mp4`/`.mov` のコピーのエディットリストを残し、SDR の HEVC の素材を HEVC のままにし、既定で `--vfr-guard sampled` を使うようにし（`--no-edit-list`、`--no-keep-hevc`、`--vfr-guard average` で 2.x に戻ります）、`cut.py` の `precision`（今はいちばん不正確な区間のもの）と `keyframe_snapped`（今は `start_snapped` と同じ）の意味を変えました（`contract_version` 2.0）。[docs/contract.md](docs/contract.md#what-30-changed) を見てください。4.0.0 は 3 回目です。約束をツールごとに分け（上記）、動画の納品が必要な性質を満たさないとき `export.py` が 0 以外で終わるようにし、`fit.py --duration` が 1.15 倍を超える時間の変更の前に `--method` を求めるようにし、納品テンプレートで内容の検査を有効にし、使えない入力にそれぞれの `error.reason` を与えました。[docs/contract.md](docs/contract.md#what-40-changed) を見てください。
 
 <a id="docs"></a>
 

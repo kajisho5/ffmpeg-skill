@@ -1119,7 +1119,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(commands(ja), commands(en) - commands(dev), "README.ja.md's command blocks differ from README.md's")
         self.assertEqual(spans(ja) - spans(en), set(), "inline code in README.ja.md that README.md does not have")
         counts = {int(n) for n in re.findall(r"(\d+)\s*個のツール", ja)}
-        self.assertEqual(counts, {len(self.contract["tools"])})
+        # an alias (#683: crop, folded into fit) is described but not counted, as in README.md
+        self.assertEqual(counts, {len([t for t in self.contract["tools"] if "alias_of" not in t])})
         self.assertIn('href="README.ja.md"', en[:en.index("\n### Review page\n")])
         self.assertIn('href="README.md"', ja[:ja.index('<a id="review-page">')])
 
