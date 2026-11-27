@@ -317,6 +317,8 @@ input that exists), and `verify` does not support dry-run (its steps run, and it
 behind an ffmpeg that logs each decode and asserts that every tool that decoded is in
 `DRY_RUN_ANALYSIS`. `SKILL.md`, `README.md`, `references/scripts.md` and `references/flags.md`
 repeat the same list (a test checks each names every tool in it); the contract is the authority.
+"No file" leaves out one file the user asked for: with `FFMPEG_SKILL_USAGE_LOG` set, a dry run
+appends its line to the usage record like any run ([JSON output](#json-output)).
 
 A dry run and a real run report the same missing filter or encoder. `render.py`, and `waveform.py`
 with `--title`, `--srt` or `--text`, run their work as stages, and a stage finds a component the
@@ -1333,6 +1335,23 @@ event's `.ffskill-audit.jsonl` in the cache directory or the batch's `output_dir
 is appended under `--dry-run`. A record that cannot be written is a `diagnostics.warnings` entry
 (`audit_log_unwritable`) and never fails or blocks the run; the refusal's `details.audit_log`
 says `{path, written}` either way.
+
+**Usage record (#689).** A separate, local, opt-in record of how the tools are used
+(`execution.usage_record`). `FFMPEG_SKILL_USAGE_LOG` unset, empty or `0` (the default) writes
+nothing anywhere; `1` appends to `ffmpeg-skill/usage.jsonl` under `$XDG_STATE_HOME` (default
+`~/.local/state`; `%LOCALAPPDATA%` on Windows); an absolute path appends to that file. Every run of
+every tool appends one JSON line at exit, dry runs, refusals and argument errors included, with
+exactly `{tool, version, status, kind, reason, flags, seconds, ffmpeg_major}`: `status` is
+`completed` or `failed`, `kind` and `reason` are the failure's `error.kind` and `error.reason`
+(`kind: usage` for a command line argparse refused, `internal` for a traceback), `flags` the option
+names given as the tool defines them (an abbreviation as the option it stands for, an unknown
+option left out), sorted, and `ffmpeg_major` the FFmpeg major the run read (`null` when it read
+none). No value, positional, path, file name or text is ever in it. A log path that is not
+absolute, is outside `FFMPEG_SKILL_ROOTS` when that is set, is one of the run's inputs or outputs, or
+is not a regular file is not written: a warning on stderr, and the run's document and exit code
+are unchanged. `python3 scripts/_contract.py doctor --usage` prints the counts as JSON (the file's
+path on stderr only). Nothing is sent anywhere. The audit log above is a different file and is
+unchanged.
 
 ## MCP relationship
 

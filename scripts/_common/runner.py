@@ -537,10 +537,12 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         if "is not a finite number" in message and {"--json", "--json-brief"} & set(sys.argv[1:]):
             STATE.json = True
             die(message.replace("argument ", "", 1))
+        USAGE["end"] = ("usage", None)  # argparse's own refusal (exit 2), for the usage record
         usage_error(message + _teach(ap, message))
 
     ap.error = error  # type: ignore[method-assign]
     STATE.parser = ap
+    start_usage_record()
     g = ap.add_argument_group("agent options")
     g.add_argument("--dry-run", action="store_true", help="print the ffmpeg commands that would run, run nothing")
     g.add_argument("--json", action="store_true", help="print a JSON result (output, probe, commands) on stdout instead of the path")
@@ -1191,22 +1193,32 @@ def _under(real: str, root: str) -> bool:
     return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def refuse_outside_roots(path: Any, what: str = "input") -> None:
-    """With FFMPEG_SKILL_ROOTS set (os.pathsep-separated absolute directories), refuse a path that
-    does not resolve (symlinks followed) under one of them (#572). The system temp directory, where
-    the tools write their intermediates and pass them between processes, is always allowed, and so
-    is reading the skill's own templates. An entry that is not absolute allows nothing."""
+def outside_roots(path: Any, what: str = "input") -> "Optional[Tuple[str, List[str], List[str]]]":
+    """With FFMPEG_SKILL_ROOTS set (os.pathsep-separated absolute directories), (resolved path,
+    roots, entries) for a path that does not resolve (symlinks followed) under one of them (#572),
+    else None. The system temp directory, where the tools write their intermediates and pass them
+    between processes, is always allowed, and so is reading the skill's own templates. An entry
+    that is not absolute allows nothing."""
     raw = os.environ.get(ROOTS_ENV, "")
     p = str(path)
     if not raw.strip() or p in ("-", os.devnull) or p.startswith("pipe:"):
-        return
+        return None
     import tempfile
     entries = [e for e in raw.split(os.pathsep) if e.strip()]
     roots = [os.path.normcase(os.path.realpath(e)) for e in entries if os.path.isabs(e)]
     real = os.path.normcase(os.path.realpath(p))
     allowed = roots + [os.path.normcase(os.path.realpath(tempfile.gettempdir()))]
     if any(_under(real, r) for r in allowed + ([os.path.normcase(os.path.realpath(_TEMPLATES))] if what == "input" else [])):
+        return None
+    return real, roots, entries
+
+
+def refuse_outside_roots(path: Any, what: str = "input") -> None:
+    """outside_roots(), refused: kind input, error.reason path_outside_roots."""
+    hit, p = outside_roots(path, what), str(path)
+    if not hit:
         return
+    real, roots, entries = hit
     refuse("input", "path_outside_roots",
            f"{what} {p!r} resolves to {real!r}, outside the directories {ROOTS_ENV} allows ({os.pathsep.join(roots) or 'none'}); "
            "move the file under one of them or add its directory to the variable",
@@ -4155,4 +4167,4 @@ def read_json(path: "os.PathLike[str] | str") -> Any:
 # emit needs runner's Context/STATE/ERROR_CODE, so the two form a cycle that has to be cut
 # somewhere: by the time this line runs every name emit reads from runner above is defined, and
 # every name runner reads from emit is only ever read inside a function body, never at import.
-from _common.emit import _plan_at_exit, audit, die, hw_report, info, record_fallback, record_skip, refuse, warn  # noqa: E402
+from _common.emit import _plan_at_exit, audit, die, hw_report, info, record_fallback, record_skip, refuse, start_usage_record, USAGE, warn  # noqa: E402

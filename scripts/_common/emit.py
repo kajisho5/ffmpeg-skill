@@ -90,6 +90,7 @@ def die(msg: str, code: int = 1, kind: str = "input", *, ctx: "Optional[Context]
     ctx.plan = None  # a failed run plans nothing (the exit hook must not write a plan for it)
     STATE.plan = None  # the hook falls back to STATE when nothing passed a ctx; a failed run plans nothing there either
     sys.stderr.write(f"error: {msg}\n" + (f"hint: {hint}\n" if hint else ""))
+    USAGE["end"] = (kind, (error_extra or {}).get("reason"))  # emit() clears it: a die() caught on the way (verify's probe) did not end the run
     if kind == "ffmpeg" and "hw" not in extra and (ctx.hw or ctx.hw_stages or ctx.hw_env_ignored or ctx.hw_auto):
         # a tool's own ffmpeg failure (cut.py runs run(check=False) and dies itself; render.py
         # re-raises a stage's) carries `encoder` and `hw` as run()'s _fail() does: under --hw /
@@ -385,6 +386,64 @@ def audit(event: str, details: Dict[str, Any], *, default_path: Optional[str] = 
              "audit_log_unwritable", ctx=ctx, path=path, event=event, error=str(exc))
         return {"path": path, "written": False, "reason": "unwritable", "error": str(exc)}
     return {"path": path, "written": True}
+
+
+USAGE_ENV = "FFMPEG_SKILL_USAGE_LOG"
+USAGE: Dict[str, Any] = {}  # this run's usage record while it runs: start time, and how it ended (die() and argparse set `end`)
+
+
+def usage_log_path() -> Optional[str]:
+    """FFMPEG_SKILL_USAGE_LOG (#689): unset, empty or 0 = None (off); 1 = the user's state directory; else the file it names."""
+    raw = os.environ.get(USAGE_ENV, "").strip()
+    if raw != "1":
+        return raw if raw not in ("", "0") else None
+    base = os.environ.get("LOCALAPPDATA") if os.name == "nt" else os.environ.get("XDG_STATE_HOME")
+    return os.path.join(base or os.path.join(os.path.expanduser("~"), ".local", "state"), "ffmpeg-skill", "usage.jsonl")
+
+
+def start_usage_record() -> None:
+    # add_common(): unset, nothing is registered and nothing is written anywhere
+    if usage_log_path() and "start" not in USAGE:
+        import atexit
+        import time
+        USAGE["start"] = time.monotonic()
+        atexit.register(_usage_at_exit)
+
+
+def _usage_at_exit() -> None:
+    """One JSON line per run: names and codes the skill defines, never a value, a path or text. A log it cannot or
+    must not write is a warning on stderr; the run's result and exit code stand (docs/design-decisions.md, #689)."""
+    import re
+    import time
+    from _common import runner
+    path, ctx = usage_log_path() or "", _CURRENT_CTX or STATE
+    code = lambda v: v if isinstance(v, str) and re.fullmatch(r"[a-z0-9_]+", v) else None  # noqa: E731
+    try:
+        real = os.path.normcase(os.path.realpath(path))
+        named = [v for a in sys.argv[1:] for v in (a, a.partition("=")[2]) if v and os.path.exists(v)]
+        taken = {os.path.normcase(os.path.realpath(p)) for p in [*named, *ctx.written, *ctx.checked, *ctx.video_inputs, *ctx.audio_inputs]}
+        why = ("it is not an absolute path" if not os.path.isabs(path) else "it is outside the directories FFMPEG_SKILL_ROOTS allows"
+               if runner.outside_roots(path, "output") else "it is one of this run's inputs or outputs" if real in taken
+               else "it is not a regular file" if os.path.exists(real) and not os.path.isfile(real) else None)
+        if why:
+            raise OSError(why)
+        acts = getattr(getattr(ctx, "parser", None) or getattr(STATE, "parser", None), "_option_string_actions", {})
+        given = [a.split("=", 1)[0] for a in sys.argv[1:sys.argv.index("--") if "--" in sys.argv else None] if a.startswith("-")]
+        long = lambda f: [o for o in acts if f.startswith("--") and len(f) > 2 and o.startswith(f)]  # noqa: E731  argparse's abbreviations
+        crashed, end = getattr(sys, "last_value", None) is not None, USAGE.get("end") or (None, None)
+        with open(os.path.join(runner._TEMPLATES, os.pardir, "package.json"), encoding="utf-8") as f:
+            version = str(json.load(f).get("version"))
+        rec = {"tool": code(os.path.splitext(os.path.basename(sys.argv[0] or ""))[0]),
+               "version": version if re.fullmatch(r"[0-9A-Za-z.+-]+", version) else None,
+               "status": "failed" if crashed or end[0] else "completed", "kind": "internal" if crashed else code(end[0]),
+               "reason": None if crashed else code(end[1]), "seconds": round(time.monotonic() - USAGE["start"], 2),
+               "flags": sorted({f if f in acts else long(f)[0] for f in given if f in acts or len(long(f)) == 1}),
+               "ffmpeg_major": (runner._FFMPEG_VERSION or (0, 0))[0] or None}
+        os.makedirs(os.path.dirname(real), mode=0o700, exist_ok=True)
+        with os.fdopen(os.open(real, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8") as f:  # the user's own, as its directory
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+    except Exception as exc:  # the record never fails the run it describes
+        sys.stderr.write(f"warning: no usage record was appended to {path!r} ({exc}); the run is unaffected\n")
 
 
 def info(msg: str, ctx: "Optional[Context]" = None) -> None:
@@ -938,6 +997,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
     single output can name the files its verification steps concern in verification_paths."""
     ctx = ctx or STATE
     _set_current_ctx(ctx)  # so the atexit hook writes (or skips) this ctx's plan, not STATE's
+    USAGE.pop("end", None)
     meta: Dict[str, Any] = {}
     if output and not ctx.dry_run:
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable

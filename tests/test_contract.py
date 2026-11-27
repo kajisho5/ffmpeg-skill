@@ -14166,6 +14166,114 @@ class StumbleLedgerTests(unittest.TestCase):
         self.assertNotIn("is not an option", proc.stderr)
 
 
+class UsageRecordTests(unittest.TestCase):
+    """#689: FFMPEG_SKILL_USAGE_LOG turns on a local record of how the tools are used, one JSON line
+    per run holding names and codes only. Off by default, and a log it cannot write never fails a run."""
+
+    FIELDS = {"tool", "version", "status", "kind", "reason", "flags", "seconds", "ffmpeg_major"}
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        cls.work = Path(OUT) / "usage_record"
+        shutil.rmtree(cls.work, ignore_errors=True)
+        cls.work.mkdir(parents=True)
+        cls.src = cls.work / "clip.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25", "-f", "lavfi", "-i", "sine=d=2", "-t", "2",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+
+    def env(self, home, value=None):
+        env = {k: v for k, v in os.environ.items() if k not in ("FFMPEG_SKILL_USAGE_LOG", "FFMPEG_SKILL_ROOTS")}
+        env.update(HOME=str(home), USERPROFILE=str(home), XDG_STATE_HOME=str(home / "state"), LOCALAPPDATA=str(home / "local"))
+        if value is not None:
+            env["FFMPEG_SKILL_USAGE_LOG"] = str(value)
+        return env
+
+    def lines(self, log):
+        return [json.loads(line) for line in Path(log).read_text(encoding="utf-8").splitlines()]
+
+    def test_usage_record_is_off_unless_the_variable_turns_it_on(self):
+        home = self.work / "home_off"
+        shutil.rmtree(home, ignore_errors=True); home.mkdir()
+        for value in (None, "", "0"):
+            with self.subTest(value=value):
+                tool("probe", self.src, env=self.env(home, value))
+                tool("cut", self.src, "--start", "0", "--end", "1", "-o", home.parent / "off.mp4", "--overwrite", "--json",
+                     env=self.env(home, value), cwd=home)
+                self.assertEqual([p for p in home.rglob("*")], [], "a run with the record off wrote under the user's directories")
+        tool("probe", self.src, env=self.env(home, "1"))
+        log = home / ("local" if os.name == "nt" else "state") / "ffmpeg-skill" / "usage.jsonl"
+        self.assertEqual([p for p in home.rglob("*") if p.is_file()], [log])
+        [rec] = self.lines(log)
+        self.assertEqual(set(rec), self.FIELDS)
+        self.assertEqual((rec["tool"], rec["status"], rec["flags"], rec["version"]), ("probe", "completed", [], _contract.skill_version()))
+
+    def test_usage_record_holds_option_names_never_a_value_a_path_or_text(self):
+        home, log = self.work / "home_names", self.work / "names.jsonl"
+        shutil.rmtree(home, ignore_errors=True); home.mkdir(); log.unlink(missing_ok=True)
+        folder = self.work / "zq_private_folder"; folder.mkdir(exist_ok=True)
+        src = folder / "zq_private_name.mp4"; shutil.copy(self.src, src)
+        tool("cut", src, "--start=0.137", "--end", "1.379", "-o", folder / "zq_secret_out.mp4", "--tol", "0.5", "--json", env=self.env(home, log))
+        tool("graphics", "--template", "lower-third", "--name", "Zq Person Name", "--title=zq words typed",
+             "-o", folder / "zq_g.mp4", "--dry-run", "--json", "--", src, env=self.env(home, log))
+        text = log.read_text(encoding="utf-8")
+        for value in ("zq", "0.137", "1.379", "lower-third", "Person", str(self.work), "private"):
+            self.assertNotIn(value, text)
+        cut, graphics = self.lines(log)
+        for rec in (cut, graphics):
+            self.assertEqual(set(rec), self.FIELDS)
+            self.assertIsInstance(rec["seconds"], float)
+            self.assertEqual(rec["ffmpeg_major"], _common.runner.ffmpeg_version()[0])
+        # the spellings the tool defines, sorted; an abbreviation is recorded as the option it meant
+        self.assertEqual(cut["flags"], ["--end", "--json", "--start", "--tolerance", "-o"])
+        self.assertEqual(graphics["flags"], ["--dry-run", "--json", "--name", "--template", "--title", "-o"])
+        # doctor --usage counts it, and the document a user pastes holds no path
+        proc = sh(sys.executable, SCRIPTS / "_contract.py", "doctor", "--usage", env=self.env(home, log))
+        summary = json.loads(proc.stdout)
+        self.assertEqual((summary["records"], summary["runs"]), (2, {"cut": {"completed": 1}, "graphics": {"completed": 1}}))
+        self.assertEqual(summary["flags"]["cut --start"], 1)
+        self.assertNotIn(str(self.work), proc.stdout)
+        self.assertIn(str(log), proc.stderr)
+
+    def test_usage_record_of_a_failed_run_has_its_kind_and_reason(self):
+        home, log = self.work / "home_failed", self.work / "failed.jsonl"
+        shutil.rmtree(home, ignore_errors=True); home.mkdir(); log.unlink(missing_ok=True)
+        taken = self.work / "taken.mp4"; taken.write_bytes(b"theirs")
+        tool("cut", self.src, "--start", "0", "--end", "1", "-o", taken, "--json", check=False, env=self.env(home, log))
+        tool("cut", self.src, "--start", "zq_not_a_time", "--json", check=False, env=self.env(home, log))
+        tool("cut", self.src, "--zq-unknown", check=False, env=self.env(home, log))
+        exists, bad_time, usage = self.lines(log)
+        self.assertEqual((exists["status"], exists["kind"], exists["reason"]), ("failed", "input", "output_exists"))
+        self.assertEqual((bad_time["status"], bad_time["kind"]), ("failed", "input"))
+        self.assertEqual((usage["status"], usage["kind"], usage["reason"], usage["flags"]), ("failed", "usage", None, []))
+        self.assertNotIn("zq", log.read_text(encoding="utf-8"))
+        self.assertEqual(taken.read_bytes(), b"theirs")
+
+    def test_usage_record_that_cannot_be_written_never_fails_the_tool(self):
+        home = self.work / "home_unwritable"
+        shutil.rmtree(home, ignore_errors=True); home.mkdir()
+        blocker = self.work / "a_file"; blocker.write_text("x", encoding="utf-8")
+        before = self.src.read_bytes()
+        # the temp directory is always allowed, so it is one of this test's own, beside the roots
+        inside, tmp = self.work / "roots_in", self.work / "roots_tmp"
+        for d in (inside, tmp):
+            d.mkdir(exist_ok=True)
+        roots = dict(self.env(home, home / "outside.jsonl"), FFMPEG_SKILL_ROOTS=str(inside), TMPDIR=str(tmp), TEMP=str(tmp), TMP=str(tmp))
+        shutil.copy(self.src, inside / "clip.mp4")
+        proc = tool("probe", inside / "clip.mp4", env=roots)
+        self.assertIn("video", json.loads(proc.stdout))
+        self.assertIn("outside the directories FFMPEG_SKILL_ROOTS allows", proc.stderr)
+        for name, env in (("in a file", self.env(home, blocker / "log.jsonl")), ("relative", self.env(home, "usage.jsonl")),
+                          ("the input", self.env(home, self.src)), ("a directory", self.env(home, self.work))):
+            with self.subTest(log=name):
+                proc = tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.work / "w.mp4", "--overwrite", "--json", env=env)
+                self.assertEqual(json.loads(proc.stdout)["status"], "completed")
+                self.assertIn("warning: no usage record was appended", proc.stderr)
+        self.assertEqual(self.src.read_bytes(), before, "the log was appended to the input")
+        self.assertFalse((home / "outside.jsonl").exists())
+        self.assertFalse((Path.cwd() / "usage.jsonl").exists())
+
+
 class TestOutIsolationTests(unittest.TestCase):
     """#685: tests that write into OUT/DIR get a per-test directory so filtered -k runs, reverse
     module order and repeated runs against the same tests/out never collide."""

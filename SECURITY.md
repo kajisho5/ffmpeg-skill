@@ -31,7 +31,9 @@ supported. There's no LTS branch -- please upgrade before reporting if you're on
 - **What a tool reads and writes.** The input files you name and the outputs you name; the side
   files it is asked for or says it writes (a `--plan`, `caption.py`'s `.srt`/`.ass` beside its
   output, `verify.py --out`); temporary files in the system temp directory, and a hidden
-  `.<name>.ffskill-<pid>` file beside an output it replaces. It starts `ffmpeg` and `ffprobe`,
+  `.<name>.ffskill-<pid>` file beside an output it replaces; and, only when you set
+  `FFMPEG_SKILL_USAGE_LOG`, one line appended to a local usage record of option names and outcome
+  codes, never a value or a path ([PRIVACY.md](PRIVACY.md)). It starts `ffmpeg` and `ffprobe`,
   and a few local helpers (fontconfig's `fc-match`/`fc-scan` for fonts, a speech-to-text engine for
   `--transcribe`), never through a shell.
 - **What it refuses.** An input or output that FFmpeg would open as a URL (`http:`, `tcp:`,

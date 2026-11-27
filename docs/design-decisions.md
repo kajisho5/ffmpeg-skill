@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.17.0 — a local, opt-in usage record (#689)](#after-4170--a-local-opt-in-usage-record-689)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,44 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.17.0 — a local, opt-in usage record (#689)
+
+The owner's decision of 2026-11-27 on #689: option 1, a record that stays on the machine, and no
+upload. It exists so a user can attach something concrete to a report.
+
+- **Off unless the user turns it on, and then local only.** `FFMPEG_SKILL_USAGE_LOG` unset, empty
+  or `0` registers nothing and writes nothing anywhere; `1` is `ffmpeg-skill/usage.jsonl` under the
+  user's state directory, an absolute path is that file. There is no command that sends it and no
+  network code to send it with (`test_the_skill_never_fetches_an_emoji_asset` still finds no
+  network import in any `_common` module, where the record is written). Turning it on is the user's act: an MCP server's `env` or a shell, never the skill.
+- **Names and codes, never values.** A line is exactly `{tool, version, status, kind, reason, flags,
+  seconds, ffmpeg_major}`. `flags` are taken from the tool's own parser: an argument is recorded
+  only when it is an option string the tool defines (an abbreviation as the option it stands for),
+  so an option the tool does not know, a value, a positional or anything after `--` never reaches
+  the file, whatever it looks like. `kind` and `reason` are kept only as snake_case codes. A time of
+  day is not recorded: the counts need none, and it would say when someone works.
+- **One line per process, at exit, dry runs included.** The line is written by an exit hook that
+  `add_common()` registers, so it covers the tools that print their own document, a refusal, an
+  argparse error (`kind: usage`, exit 2) and a traceback (`kind: internal`). `die()` sets how the
+  run ended and `emit()` clears it, because a `die()` caught on the way (verify's in-process probe)
+  did not end the run. A tool another tool runs writes its own line. A dry run writes its line
+  too: it is the use the record exists to count, and the user asked for the file; "a dry run writes
+  nothing" is about the run's artifacts and side files, which it still does not write.
+- **The log path is guarded like an output, and never fails the run.** Not absolute, outside
+  `FFMPEG_SKILL_ROOTS` when that is set (the same `runner.outside_roots` the refusals use), one of
+  the run's inputs or outputs, or not a regular file: nothing is written and stderr says why. Any
+  write error is the same warning. The run's document and exit code never change, because a record
+  of a run must not alter the run; it is a stderr line, not a `diagnostics` entry, since the
+  document has already been printed when the hook runs.
+- **The audit log is a different file and is unchanged.** It records events a later reader must
+  reconstruct, beside the files they concern; the usage record is the user's, in one place.
+- **`doctor --usage` prints counts as JSON and the path only on stderr**, so the document a user
+  pastes into an issue holds no directory name.
+- Code: `_common/emit.py` (`usage_log_path`, `start_usage_record`, `_usage_at_exit`),
+  `_common/runner.py` (`add_common`, `outside_roots`), `_contract.py` (`usage_summary`,
+  `doctor --usage`). Tests: `UsageRecordTests` (tests/test_contract.py):
+  `test_usage_record_is_off_unless_the_variable_turns_it_on`,
+  `test_usage_record_holds_option_names_never_a_value_a_path_or_text`,
+  `test_usage_record_of_a_failed_run_has_its_kind_and_reason`,
+  `test_usage_record_that_cannot_be_written_never_fails_the_tool`.

@@ -2323,6 +2323,13 @@ def build(detect: bool = True) -> Dict[str, Any]:
                 "offline": "HF_HUB_OFFLINE=1 keeps faster-whisper and parakeet-mlx on the cached copy",
             },
             "input_mutation": False,
+            "usage_record": {
+                "enabled_by": "FFMPEG_SKILL_USAGE_LOG: unset, empty or 0 = off (the default; nothing is written anywhere); 1 = ffmpeg-skill/usage.jsonl under $XDG_STATE_HOME (default ~/.local/state; %LOCALAPPDATA% on Windows); an absolute path = that file",
+                "format": "one JSON line appended per tool run, dry runs and refusals included: {tool, version, status (completed | failed), kind (error.kind; usage for a command line argparse refused; internal for a traceback), reason (error.reason), flags (the option names given, sorted, as the tool defines them), seconds, ffmpeg_major}",
+                "never": "an option's value, a positional, a path, a file name, a message or any text the caller gave; nothing leaves the machine",
+                "refused": "a log path that is not absolute, is outside FFMPEG_SKILL_ROOTS (when set), is one of the run's inputs or outputs, or is not a regular file: a warning on stderr, never a change to the run's result or exit code",
+                "read": "python3 scripts/_contract.py doctor --usage (counts, JSON)",
+            },
         },
         "invocation": {
             "structured": {
@@ -2377,11 +2384,43 @@ def build(detect: bool = True) -> Dict[str, Any]:
     }
 
 
+def usage_summary() -> Dict[str, Any]:
+    """doctor --usage (#689): the local usage record, counted, for a user to paste into an issue. It reads the file
+    FFMPEG_SKILL_USAGE_LOG names and nothing else; the path goes to stderr only, so the document holds no directory."""
+    from _common.emit import USAGE_ENV, usage_log_path
+    path, bump = usage_log_path(), lambda d, k: d.__setitem__(k, d.get(k, 0) + 1)  # noqa: E731
+    out: Dict[str, Any] = {"enabled": bool(path), "records": 0, "unreadable": 0, "runs": {}, "failures": {}, "flags": {}, "versions": {}, "ffmpeg_major": {}}
+    if not path:
+        out["how"] = f"off: set {USAGE_ENV}=1 (or an absolute file) to record each run; PRIVACY.md lists what a line holds"
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines() if path else []
+    except (OSError, ValueError):
+        lines = []
+    for line in lines:
+        try:
+            r = json.loads(line)
+            tool, status = str(r["tool"]), str(r.get("status"))
+        except (ValueError, KeyError, TypeError):
+            out["unreadable"] += 1
+            continue
+        out["records"] += 1
+        bump(out["runs"].setdefault(tool, {}), status)
+        counted = [("versions", str(r.get("version"))), ("ffmpeg_major", str(r.get("ffmpeg_major") or "unknown"))]
+        counted += [("flags", f"{tool} {f}") for f in r.get("flags") or []]
+        if status != "completed":
+            counted.append(("failures", f"{tool} {r.get('kind') or '-'} {r.get('reason') or '-'}"))
+        for key, value in counted:
+            bump(out[key], value)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", nargs="?", choices=["contract", "doctor"], default="contract")
     ap.add_argument("--json", action="store_true", help="JSON on stdout (the contract is always JSON)")
     ap.add_argument("--static", action="store_true", help="omit environment detection (available / missing capabilities)")
+    ap.add_argument("--usage", action="store_true",
+                    help="doctor only: counts from the local usage record FFMPEG_SKILL_USAGE_LOG turns on (#689), as JSON")
     ap.add_argument("--tool", action="append", metavar="NAME",
                     help="only this tool's entry under `tools` (repeatable; `cut` or `cut.py`); every other key is "
                          "unchanged. The whole contract is about 950 KB; with one tool, 55-85 KB")
@@ -2395,6 +2434,14 @@ def main() -> int:
             wanted.append(name)
     if wanted and args.command == "doctor":
         ap.error("--tool selects from the contract; doctor --json lists every tool under `tools`")
+    if args.usage and args.command != "doctor":
+        ap.error("--usage is a doctor option: doctor --usage")
+    if args.usage:
+        from _common.emit import usage_log_path
+        if usage_log_path():
+            print(f"usage record: {usage_log_path()} (delete the file to remove it)", file=sys.stderr)
+        print(json.dumps(usage_summary(), indent=2, sort_keys=True))
+        return 0
     if args.command == "doctor":
         d = doctor()
         # On stderr in both modes, so `doctor --json`'s stdout stays one JSON document: an
