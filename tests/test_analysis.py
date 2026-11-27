@@ -1113,7 +1113,7 @@ class AnalysisTests(MediaFixtures):
             path = OUT / name
             if not path.exists():
                 sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x64:r=10:d=6",
-                   "-f", "lavfi", "-i", "sine=f=440:d=6", "-f", "lavfi", "-i", "anoisesrc=a=0.001:d=6",
+                   "-f", "lavfi", "-i", "sine=f=440:d=6", "-f", "lavfi", "-i", "anoisesrc=a=0.001:d=6:seed=1",
                    "-filter_complex", audio_graph, "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-c:a", "aac", "-t", "6", path)
             return path
         gap = "volume='if(between(t,2,2.2),0,1)':eval=frame"
@@ -1948,7 +1948,7 @@ class AnalysisTests(MediaFixtures):
         expr = (TONES + "+0.25*sin(2*PI*(165+30*sin(2*PI*0.031*t))*t)*gt(sin(2*PI*0.113*t+0.4)\\,0.55)"
                 "+0.3*sin(2*PI*(520+80*sin(2*PI*0.017*t+1))*t)*gt(sin(2*PI*0.29*t+2.1)*sin(2*PI*0.073*t)\\,0.35)")
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{expr}':s=48000",
-           "-f", "lavfi", "-i", "anoisesrc=a=0.02:c=pink:r=48000", "-t", "200", "-filter_complex", "amix=inputs=2:duration=first:normalize=0", "-c:a", "pcm_s16le", loop)
+           "-f", "lavfi", "-i", "anoisesrc=a=0.02:c=pink:r=48000:seed=1", "-t", "200", "-filter_complex", "amix=inputs=2:duration=first:normalize=0", "-c:a", "pcm_s16le", loop)
         ref = OUT / "loop_ref.wav"
         sec = OUT / "loop_sec.wav"
         # 28 s offset inside a 120 s analysis window (the documented rule: window >= 4x max offset)
@@ -2720,6 +2720,67 @@ class BeatGridTests(unittest.TestCase):
             g = beat_grid(self._clicks(0.5), self.STEP)
             self.assertAlmostEqual(g["tempo_bpm"], 120.0, delta=1.0)
             self.assertEqual(len(snap_points([1.0], g["beats"], 0.1)), 1)
+
+
+class TimestampSeekTests(unittest.TestCase):
+    """#696: MPEG-TS (.ts, .m2ts, .mts) and MPEG-PS (.mpg) are seeked by timestamp onto whatever
+    packet is there, not back to a keyframe, so an input -ss lands inside a GOP and nothing decodes
+    before the next keyframe. `look.py --at` on a TS with one keyframe wrote nothing (kind output),
+    and on a TS with a keyframe every 2 s showed the next keyframe's picture; `cut.py --accurate`
+    lost the picture or started on the wrong frame. Every seek that decodes from a time starts
+    decision.seek_margin() early on such a demuxer. The fixture has one keyframe, at 0; MP4 is
+    the control."""
+
+    @classmethod
+    def setUpClass(cls):
+        OUT.mkdir(exist_ok=True)
+        cls.mp4 = OUT / "tsseek.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
+           "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=4", "-c:v", "libx264", "-preset", "ultrafast", "-g", "250",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.mp4)
+        cls.files = {".mp4": cls.mp4}
+        for ext, opts in ((".ts", []), (".m2ts", ["-mpegts_m2ts_mode", "1"]), (".mts", ["-mpegts_m2ts_mode", "1"])):
+            cls.files[ext] = OUT / f"tsseek{ext}"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.mp4, "-c", "copy", *opts, "-f", "mpegts", cls.files[ext])
+        cls.files[".mpg"] = OUT / "tsseek.mpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.mp4, "-c:v", "mpeg2video", "-g", "250", "-q:v", "2",
+           "-c:a", "mp2", cls.files[".mpg"])
+
+    @staticmethod
+    def _rgb(path, at=None):
+        """The frame at `at` decoded from the start (or a PNG's one picture), as RGB bytes."""
+        pick = ["-vf", f"select=gte(t\\,{at - 0.001}),setparams=colorspace=bt709:range=tv"] if at is not None else []
+        return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:V:0", *pick, "-frames:v", "1",
+                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+
+    def test_a_frame_grab_and_a_cut_start_on_the_frame_asked_for(self):
+        self.assertGreater(probe(str(self.files[".ts"]))["start_time"], 1.0, "fixture: the TS starts after 0")
+        keys = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=flags", "-of", "csv=p=0",
+                               str(self.files[".ts"])], capture_output=True, text=True, encoding="utf-8").stdout.count("K")
+        self.assertEqual(keys, 1, "fixture: one keyframe")
+        for ext, src in self.files.items():
+            for at in (1.3, 2.5):
+                with self.subTest(ext=ext, at=at, tool="look --at"):
+                    out = OUT / f"tsseek_{ext[1:]}_{at}.png"
+                    doc = json.loads(script("look.py", src, "--at", str(at), "--no-timecode", "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    want, got = self._rgb(src, at), self._rgb(out)
+                    self.assertEqual(len(want), len(got))
+                    self.assertLess(sum(abs(a - b) for a, b in zip(want, got)) / len(want), 2.0, "the frame at --at")
+            with self.subTest(ext=ext, tool="look --compare and the sheet"):
+                script("look.py", src, "--at", "2.5", "--compare", self.mp4, "-o", OUT / f"tsseek_cmp_{ext[1:]}.png")
+                script("look.py", src, "--tiles", "3x1", "-o", OUT / f"tsseek_sheet_{ext[1:]}.png")
+            with self.subTest(ext=ext, tool="cut --accurate"):
+                out = OUT / f"tsseek_cut_{ext[1:]}.mp4"
+                doc = json.loads(script("cut.py", src, "--start", "2.5", "--end", "3.5", "--accurate", "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], [s for s in doc["verification"] if not s.get("ok")])
+                # the source's frame at 2.5 s from the file's start (its own timestamps: FFmpeg
+                # counts a video-only decode from the picture's start, 21 ms after the sound's here)
+                at = probe(str(src))["start_time"] + 2.499
+                psnr = subprocess.run(["ffmpeg", "-hide_banner", "-copyts", "-i", str(out), "-i", str(src), "-filter_complex",
+                                       f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS[a];[1:v]select=gte(t\\,{at:.6f}),setpts=PTS-STARTPTS,"
+                                       "trim=end_frame=1[b];[a][b]psnr", "-f", "null", "-"], capture_output=True, text=True, encoding="utf-8").stderr
+                self.assertGreater(float(re.search(r"average:([0-9.]+|inf)", psnr).group(1)), 30.0, "the cut starts on the frame at 2.5 s")
 
 
 class GeometryAuditAnalysisTests(unittest.TestCase):

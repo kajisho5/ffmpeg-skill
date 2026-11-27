@@ -849,6 +849,23 @@ class AudioTests(MediaFixtures):
         crossings = sum(1 for a, b in zip(part, part[1:]) if (a < 0) != (b < 0))
         return crossings / 2 / ((hi - lo) / rate)
 
+    def test_audio_tempo_under_a_music_bed_ends_on_the_sample(self):
+        """#470/#696: atempo followed by conform_to_length (apad=whole_len, atrim=end_sample,
+        atrim=end) is the chain that never ended on FFmpeg 8.0.1 in fit.py's -af form (#514).
+        audio.py runs it inside -filter_complex after amix, which returned on 8.0.1 when measured
+        (rayw-lab, 2026-11-22); this pins it in CI, whose ubuntu-latest job is FFmpeg 8.0.1."""
+        tone, bed = OUT / "tempo_bed_tone.wav", OUT / "tempo_bed_music.wav"
+        for path, f in ((tone, 440), (bed, 660)):
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=f={f}:sample_rate=48000:d=3", path)
+        for factor, samples in ((1.25, 115200), (0.5, 288000), (2.0, 72000)):
+            with self.subTest(tempo=factor):
+                out = OUT / "tempo_bed_out.wav"
+                doc = json.loads(script("audio.py", tone, "--tempo", str(factor), "--music", bed, "-o", out, "--json").stdout)
+                self.assertIn("atempo=", doc["commands"][-1])
+                self.assertIn(f"apad=whole_len={samples},atrim=end_sample={samples},atrim=end=", doc["commands"][-1])
+                self.assertTrue(doc["verified"], doc["verification"])
+                self.assertEqual(len(self._pcm(out)), samples)
+
     def test_audio_tempo_keeps_the_pitch_and_length_samples_is_exact(self):
         """#486: --tempo changes the tempo with atempo, chained in 0.5..2.0 stages outside that
         range, and --length-samples pads or trims to an exact sample count. The output has the

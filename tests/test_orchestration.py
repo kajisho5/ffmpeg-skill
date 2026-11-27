@@ -4113,7 +4113,7 @@ class Issue429DecidedTests(unittest.TestCase):
                 before = (batch.side_inputs_key(literal), batch.item_side_inputs_key(literal, src),
                           batch.item_side_inputs_key(per_item, src))
                 time.sleep(0.01)
-                (folder / asset).write_bytes(os.urandom(8))
+                (folder / asset).write_bytes(f"changed {asset}".encode())  # not b"1", and the same every run
                 after = (batch.side_inputs_key(literal), batch.item_side_inputs_key(literal, src),
                          batch.item_side_inputs_key(per_item, src))
                 self.assertNotEqual(before[0], after[0], "the literal brand's asset")

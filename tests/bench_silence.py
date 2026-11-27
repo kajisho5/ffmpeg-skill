@@ -68,7 +68,7 @@ def main() -> int:
                 n += 1
                 if k < len(gaps):
                     g = gaps[k]
-                    fc.append(f"anoisesrc=a=0.0005:c=white:r=48000:d={g:.3f},aformat=channel_layouts=mono[g{k}]")
+                    fc.append(f"anoisesrc=a=0.0005:c=white:r=48000:d={g:.3f}:seed={k},aformat=channel_layouts=mono[g{k}]")
                     parts.append(f"[g{k}]")
                     timeline.append(("gap", cur, cur + g))
                     cur += g

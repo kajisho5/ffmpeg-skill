@@ -67,7 +67,7 @@ def main() -> int:
                 filters += [f"asetrate=48000*{1 + ppm / 1e6:.9f}", "aresample=48000"]
             af = ",".join(filters)
             if noise:
-                sh("ffmpeg", "-y", "-loglevel", "error", "-ss", f"{sec_start:.3f}", "-i", args.source, "-f", "lavfi", "-i", f"anoisesrc=a={noise}:c=pink:r=48000",
+                sh("ffmpeg", "-y", "-loglevel", "error", "-ss", f"{sec_start:.3f}", "-i", args.source, "-f", "lavfi", "-i", f"anoisesrc=a={noise}:c=pink:r=48000:seed=7",
                    "-t", f"{window:.3f}", "-filter_complex", f"[0:a]{af}[a];[a][1:a]amix=inputs=2:duration=first:normalize=0[out]", "-map", "[out]", "-ac", "1", "-ar", "48000", sec)
             else:
                 sh("ffmpeg", "-y", "-loglevel", "error", "-ss", f"{sec_start:.3f}", "-i", args.source, "-t", f"{window:.3f}", "-vn", "-af", af, "-ac", "1", "-ar", "48000", sec)

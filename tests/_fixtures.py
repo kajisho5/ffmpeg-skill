@@ -685,6 +685,8 @@ class MediaFixtures(unittest.TestCase):
 
         # --- "real world" material: VFR, rotated phone clip, 5.1 audio, 10-bit HDR10 HEVC, long drifting pair
         cls.vfr = SHARED_OUT / "vfr.mp4"
+        # random(1) is seeded: FFmpeg's expression random() is a linear congruential generator whose
+        # state (variable 1) starts at 0, so the same frames are kept on every run (#696)
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",
@@ -754,7 +756,7 @@ class MediaFixtures(unittest.TestCase):
         clip = SHARED_OUT / "no_beats.mp4"
         if not clip.exists():
             sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-               "-f", "lavfi", "-i", "anoisesrc=amplitude=0.002:r=48000",
+               "-f", "lavfi", "-i", "anoisesrc=amplitude=0.002:r=48000:seed=1",
                "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
                "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                "-c:a", "aac", clip)
