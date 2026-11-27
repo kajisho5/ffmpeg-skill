@@ -11,7 +11,7 @@ appears on.
 | `scripts/*.py` + `scripts/_contract.py` | the behaviour and the tool/flag schema | the generator |
 | `python3 scripts/_contract.py --json` | canonical tool names, flags, dry-run semantics, error kinds | `tests/test_contract.py` |
 | `README.md` | tool table, contract table, gotchas | tested against the contract |
-| `SKILL.md` | runtime guidance for the calling agent | tested against the contract; < 30,000 bytes |
+| `SKILL.md` | runtime guidance for the calling agent | tested against the contract; < 16,000 bytes, ≤ 180 lines |
 | `references/scripts.md` | per-tool detail | docs consistency tests |
 | `docs/contract.md` | the contract restated for humans | `tests/test_contract.py` |
 | `changelog.d/<slug>.md` (folded into `CHANGELOG.md` by the release) | the entry for the change | `test_changelog_mentions_every_closed_issue_since_last_tag` |
@@ -30,8 +30,9 @@ appears on.
 - **A `feat` PR** updates `README.md`, `SKILL.md`, `references/scripts.md`,
   `docs/contract.md` and a changelog fragment. A feature only `SKILL.md` knows about is
   half shipped — the README is read by people who never open `SKILL.md`.
-- **`SKILL.md` under 30,000 bytes** is a test
-  (`test_skill_md_stays_under_the_30kb_budget`). Adding a line means trimming one;
+- **`SKILL.md` under 16,000 bytes and 180 lines** is a test
+  (`test_skill_md_stays_under_its_byte_budget`, `test_skill_md_stays_within_the_agent_reading_budget`);
+  its request table keeps only the rows whose command is not the obvious one (#687). Adding a line means trimming one;
   the PR says which.
 - **A release PR moves `docs/roadmap.md`'s "the released version today is …" line
   in the same PR as the version bump**, so the roadmap never describes a shipped

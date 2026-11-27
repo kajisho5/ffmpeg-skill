@@ -208,7 +208,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | Field | Meaning |
 |---|---|
 | `id`, `name`, `version`, `executable` | `ffmpeg-skill/cut`, `cut`, skill version, `scripts/cut.py` |
-| `examples[]` | `{prompts[], command}` (1.21.0): SKILL.md's own "User says" / "Do" table rows for this tool, machine-readable — `prompts` is the row's phrasing(s), `command` the row's `Do` text with the markdown backticks stripped. Every tool has at least one; parsed from SKILL.md at read time, so it never drifts from the table a person reads |
+| `examples[]` | `{prompts[], command}` (1.21.0): SKILL.md's own "User says" / "Do" table rows for this tool (for a tool that table does not name, `references/requests.md`'s, #687), machine-readable — `prompts` is the row's phrasing(s), `command` the row's `Do` text with the markdown backticks stripped. Every tool has at least one; parsed from SKILL.md at read time, so it never drifts from the table a person reads |
 | `role` | `analysis`, `analysis_and_execution`, `execution` or `verification` (see below) |
 | `capabilities.required` | ffmpeg components the tool always needs |
 | `capabilities.optional[]` | `{capability, when}`: needed only for that flag or input |

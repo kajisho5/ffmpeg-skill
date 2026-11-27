@@ -2312,11 +2312,14 @@ class OrchestrationTests(MediaFixtures):
         """1.11.0: SKILL.md is the file every session loads, so its size is a real per-run cost.
         The two-tier split (long-form prose in references/gotchas.md, one line plus an anchor
         here) brought it from 362 lines / 37.8 KB to under this ceiling; a new rule belongs in a
-        references/ file with a one-line pointer, not in an ever-growing SKILL.md."""
+        references/ file with a one-line pointer, not in an ever-growing SKILL.md. #687: the ceiling
+        was 220 lines and 30,000 bytes until the table kept only the rows whose command is not the
+        obvious one (the rest are in references/requests.md); it came down to 175 lines / 14.8 KB, and
+        the ceiling came down with it so the table cannot grow back."""
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         lines, size = len(text.splitlines()), len(text.encode("utf-8"))
-        self.assertLessEqual(lines, 220, f"SKILL.md is {lines} lines; move detail to references/")
-        self.assertLessEqual(size, 30000, f"SKILL.md is {size} bytes; move detail to references/")
+        self.assertLessEqual(lines, 180, f"SKILL.md is {lines} lines; move detail to references/")
+        self.assertLessEqual(size, 16_000, f"SKILL.md is {size} bytes; move detail to references/")
         gotchas = (ROOT / "references" / "gotchas.md").read_text(encoding="utf-8")
         # every "details:" pointer resolves to a real heading in the file it names
         for anchor in re.findall(r"references/gotchas\.md#([a-z0-9-]+)", text):
