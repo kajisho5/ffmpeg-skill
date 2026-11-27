@@ -122,12 +122,13 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))
 from _common import escape_filter_path  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
+ENCODE_ENV = "FFMPEG_SKILL_ENCODE"  # the runner's name (tests/test_contract.py EncodePolicyTests pins it)
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
 # opt in with an explicit env. The names come from the runner, so this scrub and the one in
 # test_contract.py cannot drift from what the tools read.
-for _k in (HW_ENV, HW_FORCED_ENV):
+for _k in (HW_ENV, HW_FORCED_ENV, ENCODE_ENV):  # and the house encoder settings (#576)
     os.environ.pop(_k, None)
 
 TONES = ("0.6*sin(2*PI*440*t)*gt(sin(2*PI*0.37*t)\\,0.3)+0.4*sin(2*PI*880*t)*gt(sin(2*PI*0.53*t+1)\\,0.6)"

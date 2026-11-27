@@ -400,7 +400,7 @@ class Context:
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "time_mapped", "watched", "temp_dirs", "side_deliveries",
                  "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
-                 "sequence_frames_sha256")
+                 "sequence_frames_sha256", "encode_policy")
 
     def __init__(self) -> None:
         self.reset()
@@ -437,6 +437,7 @@ class Context:
         self.plan_generated_inputs: set[str] = set()  # temporary inputs reconstructed by the tool
         self.sequence_frames_sha256: Optional[str] = None
         self.measured_plan_inputs: Dict[str, Dict[str, Any]] = {}  # fingerprints taken before plan measurements
+        self.encode_policy: Dict[str, Any] = {}      # $FFMPEG_SKILL_ENCODE as read, plus `applied` (#576); {} when unset or not for this tool
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
         self.alpha_line: Optional[str] = None        # --keep-alpha / --transparent: the alpha line written (_common.alpha.ALPHA_CODECS)
         self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply
@@ -651,6 +652,7 @@ def apply_common(args: "argparse.Namespace") -> None:
         if a.type in (int, float) and isinstance(v, (int, float)) and v != a.default and a.dest not in ("timeout", "length_samples") and (
                 not float(span[1]) <= v <= float(span[2]) if span else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
             die(f"{next((o for o in a.option_strings if o in [x.split('=')[0] for x in sys.argv[1:]]), a.option_strings[0])} {v:g} is outside what this option takes" + (f", {span[0]}" if span else ""), hint=text.replace("%%", "%") or None)
+    STATE.encode_policy = _apply_encode_policy(args)
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
     STATE.codec = getattr(args, "codec", None) or None
@@ -694,6 +696,60 @@ def apply_common(args: "argparse.Namespace") -> None:
     if crf is not None and not 0 <= int(crf) <= top:
         die(f"--crf must be between 0 and {top} ({'SVT-AV1' if STATE.codec == 'av1' else 'x264/x265'} scale; 18 is visually lossless), got {crf}")
     install_signal_handlers()
+
+
+ENCODE_ENV = "FFMPEG_SKILL_ENCODE"
+_ON, _OFF = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
+
+
+def _apply_encode_policy(args: "argparse.Namespace") -> Dict[str, Any]:
+    """$FFMPEG_SKILL_ENCODE (#576), the house settings for the encoder flags, e.g.
+    `codec=h264,quality=18,preset=medium,hw=0,locked`: a flag this call did not give takes the house
+    value (--codec, --quality, an x264 --preset, --hw/--no-hw as $FFMPEG_SKILL_HW would); with `locked`,
+    one given with another value, and --fast where a preset is pinned, is refused before anything runs.
+    Only on a tool with one of those flags; an entry that does not read is refused, never skipped."""
+    acts = {a.dest: a for a in getattr(STATE.parser, "_actions", ()) if a.dest in ("codec", "quality", "hw")
+            or a.dest == "preset" and tuple(a.choices or ()) == X264_PRESETS}
+    text = os.environ.get(ENCODE_ENV, "").strip()
+    if not acts or not text:
+        return {}
+    policy: Dict[str, Any] = {}
+    for item in [s.strip() for s in text.split(",") if s.strip()]:
+        key, _, value = (p.strip().lower() for p in item.partition("="))
+        if (key, value) == ("locked", ""):
+            policy["locked"] = True
+        elif key in ("codec", "preset") and value in (CODECS if key == "codec" else X264_PRESETS):
+            policy[key] = value
+        elif key == "quality" and value.isdigit():
+            policy[key] = int(value)
+        elif key == "hw" and value in _ON + _OFF:
+            policy[key] = value in _ON
+        else:
+            refuse("input", "encode_policy", f"${ENCODE_ENV}: {item!r} is not codec=h264|hevc|av1|prores, quality=N, "
+                   "preset=<x264 preset>, hw=0|1 or locked", hint=f"fix or unset ${ENCODE_ENV}", entry=item)
+    opts = STATE.parser._option_string_actions
+    given = {hit[0].dest for a in sys.argv[1:(sys.argv + ["--"]).index("--")] if a.startswith("--") for name in [a.split("=")[0]]
+             for hit in [[opts[name]] if name in opts else [v for o, v in opts.items() if o.startswith(name)]] if len(hit) == 1}
+    asked = {"codec": getattr(args, "codec", None), "quality": getattr(args, "quality", None),
+             "preset": getattr(args, "preset", None), "hw": hw_flag(args)}
+    for key in [k for k in ("codec", "quality", "preset", "hw") if k in policy and k in acts]:
+        if key in given or (key == "hw" and "no_hw" in given):
+            if policy.get("locked") and asked[key] != policy[key]:
+                flag = ("--hw" if asked[key] else "--no-hw") if key == "hw" else f"--{key} {asked[key]}"
+                refuse("input", "encode_policy", f"{flag} is not the house setting {key}={int(policy[key]) if key == 'hw' else policy[key]} "
+                       f"(${ENCODE_ENV} is locked)", hint=f"leave the flag out, or change ${ENCODE_ENV}", key=key, asked=asked[key], policy=policy[key])
+        elif key == "hw":
+            if os.environ.get(HW_FORCED_ENV) != "1":  # render.py/batch.py --hw|--no-hw chose for their stages
+                os.environ[HW_ENV] = "1" if policy["hw"] else "0"
+        else:
+            setattr(args, key, policy[key])
+    if policy.get("locked") and "preset" in policy and STATE.fast:
+        refuse("input", "encode_policy", f"--fast replaces the house preset {policy['preset']} (${ENCODE_ENV} is locked)",
+               hint=f"leave --fast out, or take preset out of ${ENCODE_ENV}", key="fast", asked=True, policy=policy["preset"])
+    # the keys whose default the house set here (hw: where $FFMPEG_SKILL_HW applies; export.py's presets keep theirs)
+    policy["applied"] = [k for k in ("codec", "quality", "preset", "hw") if k in policy and k in acts and not {k, "no_" + k} & given
+                         and (k != "hw" or getattr(args, "_hw_env", False))]
+    return policy
 
 
 # The child processes this tool is waiting on right now (an ffmpeg, or a sibling script under

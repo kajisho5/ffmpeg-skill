@@ -136,6 +136,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.0 — a copy is verified against what its keyframes allow (#620)](#after-480--a-copy-is-verified-against-what-its-keyframes-allow-620)
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
+- [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
 <!-- contents:end -->
 
 ## Time limits
@@ -7130,3 +7131,39 @@ of tools that exist; no tool and no MCP tool. Not built: a low-resolution previe
 - Code: `scripts/silence.py` (`audition_plan`, `write_auditions`), `scripts/cut.py` (`_join_chunk`'s `low`),
   `scripts/fit.py`. Tests (tests/test_editing.py): `test_silence_audition_writes_a_clip_of_each_join_as_the_cut_sounds`,
   `test_fit_crop_states_its_window_before_anything_runs`.
+
+## After 4.16.0 — house encoder settings (#576)
+
+Nothing of this existed before: `encoder` (the last video encoder's name) and `hw` were the only
+encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
+
+- **One variable, `FFMPEG_SKILL_ENCODE=codec=h264,quality=18,preset=medium,hw=0,locked`, read in
+  `apply_common()`**, so every tool takes it the same way and none reads it on its own. It sets the
+  default of the flags a tool already has: `--codec`, `--quality`, an x264 `--preset` (not
+  `export.py`'s delivery `--preset`, not `render.py`'s `--intermediate-preset`), and `--hw`/`--no-hw`
+  through `FFMPEG_SKILL_HW`, so it reaches exactly where that variable reaches. No key is a new
+  encoder option, and a tool without those flags never reads it (`probe.py` with a broken value runs).
+- **`export.py`'s delivery presets keep their own codec and CRF under a policy.** A preset is a
+  platform's spec, and the policy cannot make an `.mp4` for a platform that asks for another CRF honest;
+  the result's `encode` shows what ran and `encode.policy.applied` which keys the house set (none there).
+- **Unlocked, a flag the call gives wins; `locked` refuses it** when its value is not the house one,
+  `kind: input`, `error.reason: encode_policy`, before any ffmpeg command, dry runs included. The same
+  value spelled out is not refused. `--fast` is refused under `locked` only when a preset is pinned, its
+  one effect being to replace the preset; a policy that pins codec and quality alone leaves previews open.
+- **An entry that does not read is refused, never skipped**: a house setting read wrongly would let the
+  drift it exists to stop through without a word. `quality` is range-checked by `--quality`'s own check.
+- **`encode` is read off the command line of the last video encode** (`emit.encode_record`), as `encoder`
+  is, so it is what ran after a GPU fallback and what a dry run planned, not what the flags asked.
+  `crf`/`preset` are `null` for an encoder that takes none. `render.py` reports its last stage's; its own
+  `policy.applied` names only its own flags (each stage applies the variable itself). `batch.py`'s rows
+  carry their item's.
+- **`preview: true` on any `--fast` result, absent otherwise**, so an unchanged run's document is unchanged.
+- **The cache keys of `render.py` and `batch.py` include the variable only when it is set**, so a cache
+  written without it still hits, and a stage made under one house setting is never served under another.
+- Code: `runner._apply_encode_policy`, `emit.encode_record`, `emit.steps_encoder_report`,
+  `render.cache_key`, `batch.gpu_key`. Tests: `EncodePolicyTests` (tests/test_contract.py):
+  `test_unset_changes_nothing_and_every_encode_is_recorded`,
+  `test_the_house_settings_are_the_defaults_and_a_flag_still_wins_unlocked`,
+  `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
+  `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
+  `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
