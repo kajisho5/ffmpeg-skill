@@ -14000,7 +14000,7 @@ class StumbleLedgerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = str(Path(tmp) / "o.mp4")
             run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", out, "--dry-run", "--json"],
-                                                     capture_output=True, text=True, timeout=60)
+                                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
             rows = ((("export", "--preset", "youtube"), "--duration", "2", "> 0"),
                     (("export", "--preset", "tiktok", "--pad-fill", "blur"), "--pad-blur", "5", "> 0"),
                     (("fit", "--aspect", "9:16", "--fit", "blur"), "--pad-blur", "5", "> 0"),
