@@ -336,10 +336,11 @@ def main() -> int:
                      help="how emoji in --text are drawn. overlay.py draws through drawtext, which cannot load "
                           "a colour emoji font at all, so only 'mono'/'none' render here -- 'png'/'color' name "
                           "caption.py/graphics.py instead")
-    emo.add_argument("--emoji-assets", metavar="DIR", help="directory of emoji PNGs named by code point "
-                                                           "(used by caption.py/graphics.py; overlay.py has no PNG route)")
-    emo.add_argument("--emoji-scale", type=float, default=1.0, help="emoji box as a multiple of the font size")
-    emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build")
+    # #749: never read; deprecated (contract --json `deprecated`), removed in the minor after (the beta rule)
+    gone = "(deprecated: has no effect; overlay.py draws text with drawtext \u2014 remove it)"
+    emo.add_argument("--emoji-assets", metavar="DIR", help=gone)
+    emo.add_argument("--emoji-scale", type=float, help=gone)
+    emo.add_argument("--emoji-max", type=int, help=gone)
     txt.add_argument("--box-color", default="black@0.5", help="colour of the --box behind the text, optionally @alpha (default black@0.5)")
     enc = ap.add_argument_group("encoding")
     enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
@@ -348,6 +349,9 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max"):
+        if getattr(args, flag[2:].replace("-", "_")) is not None:
+            warn(f"{flag} does nothing in overlay.py (it draws text with drawtext) and is deprecated: remove it", "deprecated_option", option=flag)
 
     brand = load_brand(args.brand)
     if args.logo:

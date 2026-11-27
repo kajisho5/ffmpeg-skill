@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.18.0 — crop.py folded into fit.py (#683)](#after-4180--croppy-folded-into-fitpy-683)
 - [After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)](#after-4190--the-change-floor-surveyed-across-encoders-and-a-finer-grid---change-grid-442)
 <!-- contents:end -->
 
@@ -6694,10 +6695,15 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   tighter ceiling states its range.
 - **A value equal to the default is not checked**, so a default outside its own stated range would
   hide; the test reads every stated range against its default instead.
-- Zero is not decided here. On most options it is a real setting; the ones where it is not keep
-  their own check.
-- Code: `scripts/_common/runner.py` (`apply_common`). Test:
-  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
+- **Zero is decided by the help too (#749).** On most options 0 is a real setting and is taken. An
+  option where it is not states `> 0` (`export --duration`, `--pad-blur`, `--emoji-scale`), read as
+  above 0 and at most a million, or a range from 1 (`caption --font-size 1..2000`). fit.py's own
+  `--pad-blur` check went with it, so one option is not refused in one tool and read as another
+  value in the next.
+- Code: `scripts/_common/runner.py` (`apply_common`). Tests:
+  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` and
+  `test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749` (tests/test_contract.py);
+  the class guard `NumericGuard` (tests/test_guards.py) gives every stated range's edges to every tool.
 
 ## After 4.2.1 — one file per `-o` (#562)
 
@@ -6721,11 +6727,16 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 ## After 4.2.2 — the answer is a command, and three options by request
 
 - **`try:` is printed only when it is known.** A usage error ends with the corrected command when
-  every mistake on the line has exactly one answer: one near option, one choice near the word given
-  (or a common other word for it: strong is high, light is low), a number written with its unit
-  (`-30dB`, `0.8s`, `1080px`). If any mistake has two candidates or none, no command is printed: a
-  caller that copies would run a guess as if it were the answer. The command is one the tool
-  takes, and the test runs each.
+  every mistake on the line has exactly one answer: one option spelt like the flag, one choice near
+  the word given (or a common other word for it when that word is a choice: strong is high, light is
+  low), a number written with its unit (`-30dB`, `0.8s`, `1080px`). If any mistake has two
+  candidates or none, no command is printed: a caller that copies would run a guess as if it were
+  the answer. A flag another tool takes, and an option that only shares a word with the flag or
+  whose help mentions it, are named in the hint and are not an answer: they mean something else
+  and take another value (`speedramp.py --ramp 3:6:0.5` is not `--segment 3:6:0.5`, which
+  speedramp refuses). The command corrects the mistakes it names and nothing else, so a value the
+  right option refuses is refused under its right name too; the test runs every rule on every tool
+  of `tests/sweep.py`'s table with a value the option takes, and each command it prints.
 - **A number after an option is joined with `=`.** argparse reads `--threshold -30dB` as two
   options. The corrected form is `--threshold=-30`.
 - **Three options were added during the freeze, by name.** `proxy --height`, `redact --rect` and
@@ -6737,7 +6748,8 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   would be a second code path through that. `cut.py` then `reverse.py` does it, and the usage
   error names `cut.py`.
 - Code: `scripts/_common/runner.py` (`_teach`), `scripts/proxy.py`, `scripts/redact.py`,
-  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py).
+  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py),
+  `test_a_try_line_is_a_command_the_tool_accepts` among them.
 
 ## After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)
 
@@ -7218,6 +7230,58 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.18.0 — crop.py folded into fit.py (#683)
+
+- **`fit.py --rect W:H:X:Y` is crop.py's job, and crop.py is an alias.** The exact box (no scaling,
+  in the displayed frame, width and height even and refused if odd, an odd X/Y taken as given with
+  `exact=1`) is one function, `fit.crop_rect`; `crop.py` keeps its file and its options, turns them
+  into that call, and writes the same file byte for byte (the dry-run command line is the same, the
+  output name aside). `--rect W:H` without X:Y is a centred box, x = (width - W) / 2 rounded down.
+- **The order is FFmpeg's `crop=W:H:X:Y`**, the order `cropdetect.py` prints (`detected crop=...`)
+  and now hands on as `fit.py IN --rect W:H:X:Y`. `redact.py --rect` keeps `X:Y:W:H` (4.3.0): one
+  option name with two orders is a trap, and it is answered by the box having to fit the frame (most
+  swapped values do not) rather than by renaming either: W:H:X:Y is the shape #676's probe table lists for crop.py,
+  and redact's X:Y:W:H is what a model wrote for redact (`docs/stumbles.jsonl`). A wrong-way box that fits is not caught.
+- **`--rect` takes no other reframe in the same run.** `--duration`, `--aspect`, `--fit` (other than
+  crop), `--width/--height`, `--crop-x/-y`, `--zoom`, fades, `--rotate/--flip` and `--audio-stream`
+  are refused with the box, naming the option to run as a second `fit.py` step. The box is cut from
+  the source's displayed frame, so a rotate before it would change which pixels X:Y names.
+- **`fit.py --width W --height H --fit crop` keeps its meaning: scale to cover, then a centred W x H
+  window.** #683 proposed it as the centred box, but on a source larger than the box on both axes it
+  scales down today (a 3840x2160 clip to `--width 1080 --height 1920 --fit crop` keeps the full
+  height), and the centred box would keep a 1080x1920 piece of the middle: the same command would
+  write another picture. Where the box already fills one axis (a 1920x1080 clip to 1080x1080) the two
+  are the same window. The unscaled centred box is `--rect W:H`.
+- **An alias is described, callable and not advertised** (`_contract.ALIASES`, `alias_of` on its
+  ToolSpec). It stays in `contract --json`, in `provides` (a cross-repository id is not withdrawn), in
+  `tools/call` and in the 1.x snapshot (`tests/fixtures/mcp_tools.json`, read from every contract tool,
+  not from `tools/list`), and leaves the tool count (41), README's Tools section and the "Why 41"
+  table, SKILL.md's request table and `tools/list`, default or `FFMPEG_SKILL_MCP_FULL=1`.
+  `crop.py --x/--y/--width/--height` are no longer required one by one: `--rect`, or a size with no
+  corner (`--center` says so) is the centred box (#676's crop items).
+- **The other candidates of #683, looked at one by one; none is folded:**
+  - `straighten.py` beside `fit.py --rotate`: **keep.** `--rotate` is an exact 90-degree turn
+    (transpose, the frame's sides swap, nothing is lost); straighten is the `rotate` filter by any
+    angle, with its own covering scale (`|cos| + max(W/H, H/W) |sin|`, A235) and its own
+    `--fit crop|pad` and `--fill-color`. Folded, `fit.py --fit crop` would mean two different crops
+    by which other option is present.
+  - `pad.py` beside `insert.py` / `background.py`: **keep.** pad.py adds time (black and silence)
+    to a clip; insert.py and background.py make a new clip from a still or a colour. No shared
+    option or code path.
+  - `proxy.py` beside `export.py --preset`: **keep, for now.** A proxy is preset-like, but
+    export.py's presets fix the frame and the encoder, normalise loudness and fail a delivery that
+    misses a property, while a proxy's width or scale is the caller's, is never upscaled, keeps the
+    source's dynamic range and is not a delivery. A `proxy` preset would need `--width/--scale`
+    and an exemption from export's verification: more code and a second meaning of a preset, not
+    one job under two names. `capability_map`'s `media.proxy` resolves to proxy.py.
+  - `cropdetect.py`, `scenes.py`, `probe.py`, `look.py`: analysis; each measures something the
+    others do not. Left as they are.
+- Code: `fit.crop_rect()`, `fit.main()`, `crop.main()`, `_contract.ALIASES`, `tool_spec()`
+  (`alias_of`), `mcp/server.py tool_list()`. Tests:
+  `test_fit_rect_writes_crops_file_and_a_box_without_a_corner_is_centred` (tests/test_editing.py),
+  `test_docs_tool_count_matches_the_real_tool_list`, `test_mcp_tools_match_contract`,
+  `test_mcp_tool_surface_matches_the_frozen_1x_snapshot` (tests/test_contract.py).
 
 ## After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)
 
