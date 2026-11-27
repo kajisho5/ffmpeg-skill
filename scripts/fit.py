@@ -702,6 +702,20 @@ def main() -> int:
         else:
             vf.append(pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur, meta=meta))
             geometry = ([pad_filters(out_w, out_h, args.pad_fill, args.pad_color, args.pad_blur, meta=meta, blank=True)], None, None)
+        if args.fit != "crop" and sw and sh:
+            # where the picture lands (#581), from the rules of the filters above: scale's
+            # force_original_aspect_ratio=decrease rounds half away from zero; pad runs in the line
+            # written (4:2:0, ProRes 4:2:2) and floors the picture's size and offset to its chroma grid;
+            # the blur graph's overlay runs in the source's format and floors only the offset
+            over = args.fit == "blur" or args.pad_fill == "blur"
+            pf = meta["video"].get("pix_fmt") or "" if over else "yuv422" if STATE.codec == "prores" else "yuv420"
+            hs, vs = (int(any(k in pf for k in keys)) for keys in (("420", "422", "411", "nv", "p01"), ("420", "nv12", "nv21", "p01")))
+            pw, ph = min(out_w, (2 * out_h * sw + sh) // (2 * sh)), min(out_h, (2 * out_w * sh + sw) // (2 * sw))
+            if not over:
+                pw, ph = pw >> hs << hs, ph >> vs << vs
+            extra["placed"] = {"x": (out_w - pw) // 2 >> hs << hs, "y": (out_h - ph) // 2 >> vs << vs, "width": pw, "height": ph,
+                               "frame_width": out_w, "frame_height": out_h, "scale": round(pw / sw, 6),
+                               "source_width": sw, "source_height": sh}
         vf.append("setsar=1")
         # a non-square-pixel source is made square at its display aspect before anything else
         # (the size above is computed in that frame), so the fitted picture is not squashed

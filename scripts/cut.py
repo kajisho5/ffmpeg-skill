@@ -65,10 +65,10 @@ from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, seve
 from _common.runner import subtitle_codec_for, subtitle_container_holds, declare_time_map, segments_map, with_mapped_chapters
 from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
-from _common.emit import refuse_still
+from _common.emit import refuse, refuse_still
 from _common.words import parse_word_ranges, plan_word_ranges, read_word_list
 from _common.decision import UNWRITTEN_AUDIO_EXT
-from _common import refuse_unwritten_output
+from _common import guard_sidecar, refuse_unwritten_output
 from _common import warn, record_fallback, refuse_existing_outputs, sibling_temp, source_codec_video_args, STATE, add_common, apply_common, audio_codec_for, emit, aac_args, cfr_args, cfr_filter, graph_with_cfr, default_output, die, ffmpeg_base, info, is_audio_output, time_arg, probe, run, X264_PRESETS, keyframes_near, concat_list_line, place_output, refuse_output_is_input, fmt_secs, measure_frame_timing, dry_run_input_pending
 
 # outputs whose re-encode dropped a subtitle/data stream (reported as dropped_non_av_streams)
@@ -1638,6 +1638,11 @@ def main() -> int:
     wd.add_argument("--margin", type=float, metavar="SECONDS", help="--word-segments: kept before and after the words (default 0)")
     wd.add_argument("--margin-lead", type=float, metavar="SECONDS", help="--word-segments: kept before (default --margin)")
     wd.add_argument("--margin-tail", type=float, metavar="SECONDS", help="--word-segments: kept after (default --margin)")
+    ap.add_argument("--audition", metavar="DIR",
+                    help="--segments, --remove or --word-segments: also write a small clip of each join, cut from the "
+                         "written cut, and DIR/index.json (DIR must exist)")
+    ap.add_argument("--audition-seconds", type=float, default=None, metavar="SECONDS",
+                    help="--audition: seconds on each side of a join, 0.5..10 (default 2)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset when re-encoding")
     add_common(ap)
@@ -1777,6 +1782,20 @@ def main() -> int:
     # --snap-source is read for its beat grid and is never an -i of the cut (#522's sweep)
     refuse_output_is_input(output, args.input, *[p for p in (args.snap_source, args.words) if p])
     ext = os.path.splitext(output)[1].lower() or ".mp4"  # an upper-case .MP4 is still faststart
+    if args.audition_seconds is not None and not args.audition:
+        die("--audition-seconds sizes the --audition clips: pass --audition DIR as well", kind="input")
+    if args.audition:
+        if len(segments) < 2:
+            die("--audition writes a clip of each join, and one range has none: keep two or more with --segments, "
+                "--remove or --word-segments", kind="input")
+        if not os.path.isdir(args.audition):
+            refuse("input", "output_dir_missing", f"--audition {args.audition!r} is not an existing directory; create it "
+                   "first (this tool never creates directories)", output=args.audition, directory=args.audition)
+        index = os.path.join(args.audition, "index.json")
+        clips = [os.path.join(args.audition, f"cut_{k:03d}{'.mp4' if video and not is_audio_output(output) else '.m4a'}")
+                 for k in range(len(segments) - 1)]
+        for path in [index] + clips:  # before the cut: a clip the guard refuses costs no cut
+            guard_sidecar(path, args.input, *[p for p in (args.snap_source, args.words) if p], siblings=(output, getattr(args, "plan", None)))
 
     # A segment that runs past the end of the video, with a join after it: whatever joins it (the
     # concat demuxer or the concat filter) starts the next segment after its LONGER stream, so the
@@ -2083,6 +2102,31 @@ def main() -> int:
                    "requested_*); --accurate re-encodes it on the frame")
         notes.append(message)
         warn(message, "copy_drift_large", seconds=round(drift, 6), threshold=COPY_DRIFT_WARN)
+    audition = None
+    if args.audition:
+        # cut from the file the cut wrote, so a clip is the join as it was made: a stream copy's at the
+        # keyframes it landed on (snapped_segments), a re-encode's on the frame, its fades included
+        from silence import AUDITION_HEIGHT, write_auditions
+        spans, seconds = (land[0] if land else segments), args.audition_seconds or 2.0
+        rate = frame_rate(meta if STATE.dry_run else result) if clips[0].endswith(".mp4") else 0.0
+        audition = {"dir": args.audition, "index": index, "seconds": seconds, "path": mode, "made_from": output,
+                    "height": (min(AUDITION_HEIGHT, (result.get("video") or video).get("height") or 0) // 2 * 2 or None)
+                    if clips[0].endswith(".mp4") else None, "count": len(clips), "cuts": []}
+        at = 0.0
+        for k, clip in enumerate(clips):
+            at += spans[k][1] - spans[k][0]
+            lead, tail = (min(seconds, b - a) for a, b in spans[k:k + 2])
+            if rate:
+                lead, tail = (math.floor(x * rate + 1e-6) / rate for x in (lead, tail))
+            audition["cuts"].append({"cut_index": k, "source_out": round(spans[k][1], 3), "source_in": round(spans[k + 1][0], 3),
+                                     "output_t": round(at, 3), "clip": clip, "clip_source": [[at - lead, at + tail]],
+                                     "join_at": round(lead, 3), "duration": None, "audio": None})
+        if not STATE.dry_run:
+            first = len(STATE.commands)
+            write_auditions(output, audition["cuts"], index, result, audition["height"],
+                            {"source": output, **{k: v for k, v in audition.items() if k != "index"}})
+            # the result's commands and encoder are the cut's; the clips' own are the audition's
+            audition["commands"], STATE.commands[first:] = STATE.commands[first:], []
     possible = possible_reencode_reason(mode, outcomes, len(segments))
     if possible:
         notes.append(possible_reencode_note(mode, possible, args.tolerance))
@@ -2165,7 +2209,7 @@ def main() -> int:
                                f"stream copy with no re-encode, {abs(min(NEAREST_KEYFRAMES, key=lambda k: abs(k - segments[0][0])) - segments[0][0]):.2f}s off the requested start")
          if mode == "hybrid" and NEAREST_KEYFRAMES and len(segments) == 1 else None,
          snap=snap_result, **({"smart": smart_doc} if smart_doc is not None else {}),
-         verification=verification)
+         verification=verification, audition=audition)
     return 0
 
 

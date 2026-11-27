@@ -340,6 +340,8 @@
   "properties": [
    "accurate",
    "argv",
+   "audition",
+   "audition_seconds",
    "codec",
    "declick_ms",
    "dry_run",
@@ -994,6 +996,7 @@
    "output",
    "overwrite",
    "plan",
+   "preview",
    "project",
    "srt",
    "stop_after",
