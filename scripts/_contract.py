@@ -544,6 +544,7 @@ DIAGNOSTIC_CODES = {
     "emoji_monochrome": ("warnings", "caption.py / graphics.py: emoji drawn monochrome through libass (no colour path here). overlay.py --text: emoji left to the one font drawtext loads, which has no fallback, so a font without the glyph draws an empty box"),
     "words_outside_input": ("warnings", "silence.py --filler --words: word timings that start at or after the end of the input (a transcript of another file, or times in milliseconds); {count, words, duration}"),
     "emoji_stripped": ("warnings", "overlay.py --emoji none: emoji removed from the drawn text; {mode}"),
+    "deprecated_option": ("warnings", "an option listed in contract --json `deprecated` was given; the run goes on as before (overlay.py --emoji-assets, --emoji-scale and --emoji-max never had an effect); {option}"),
     "emoji_assets_missing": ("warnings", "--emoji-assets has no PNG for these clusters; they stay in the text for libass, and the message says whether libass draws an emoji glyph on this build; {missing}"),
     "drawtext_newline_glyph": ("warnings", "graphics.py --text-render drawtext on FFmpeg 8.0-8.0.1/8.1.0: a box is drawn at each line break of a multi-line label; {text_render}"),
     "timeline_parse_failed": ("warnings", "render.py --export-timeline: the written file does not read back as its format (the parse step is ok: false); {path, format, error}"),
@@ -2013,7 +2014,10 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # step 1 (this list, --help text and the CHANGELOG) in a minor, step 2 keeps it working, step 3
 # removes it in the major. `where` says which surface a caller sees it on. Empty at 2.0.0 and at
 # 3.0.0: every deprecation announced in 1.x and 2.x was settled by its major (REMOVED below).
-DEPRECATED: List[Dict[str, str]] = []
+# A beta tool's argument goes in the minor release after the one that lists it (4.x's beta rule).
+DEPRECATED: List[Dict[str, str]] = [
+    {"what": f"overlay.py {flag}", "since": "4.20.2", "replacement": "none (the option has no effect)", "removed_in": "4.22.0", "where": "cli"}
+    for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max")]
 
 # What each major removed or changed, with the version that deprecated each: the "Removed" half of
 # the policy's step 3, kept in the contract so a caller migrating can diff it instead of reading a

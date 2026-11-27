@@ -99,11 +99,13 @@ CHANGELOG line, and if the old behaviour was something a caller could reasonably
 on, the line says so.
 
 `contract --json` carries a top-level `deprecated` list, next to `contract_version`: one entry per
-thing the next major removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where`
+thing the next major removes (or, for a beta tool's argument, the next minor), `{"what", "since", "replacement", "removed_in", "where"}` with `where`
 naming the surface (`cli`, `json`, `mcp`, `behaviour`). It was empty in 2.0.0, and it is empty again
 in 3.0.0: its two 2.x entries, **running on Python 3.9** (`since: 2.10.9`) and **running on
 FFmpeg 5.x** (`since: 2.14.0`), were settled by 3.0.0 and moved to `removed`
-(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. 3.0.0 requires Python 3.10+ and
+(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. Since 4.20.2 it lists `overlay.py --emoji-assets`,
+`--emoji-scale` and `--emoji-max` (`removed_in: 4.22.0`, the beta rule): overlay draws text with drawtext
+and never read them, so each still parses, does nothing, and says so with the warning `deprecated_option` (#749). 3.0.0 requires Python 3.10+ and
 FFmpeg 6.1+: every tool refuses an `ffmpeg`/`ffprobe` whose version it can read as older than 6.1
 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git or vendor build whose version is
 unreadable is not refused), `doctor` names an unsupported Python or FFmpeg in `unsupported` and
@@ -800,7 +802,8 @@ and says so (warning `emoji_not_drawn`). A `--fonts-dir` is searched by the prob
 it never moves `ok` or any tool's `usable`.
 
 `caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,
-`--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15; `graphics.py` also gained
+`--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15 (`overlay.py` never read the last
+three: they are deprecated since 4.20.2 and go in 4.22.0, #749); `graphics.py` also gained
 `--text-render auto|ass|drawtext` and `--write-ass PATH`. New success keys: `emoji`
 (`{"mode", "count", "clusters", "assets", "missing", "overlays"}`) on `caption.py` and
 `graphics.py`, and `text_renderer` (`"ass"`|`"drawtext"`), `script` and `ass` (the generated file,
