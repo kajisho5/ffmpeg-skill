@@ -4971,11 +4971,13 @@ class OneClockTests(MediaFixtures):
         out = OUT / "clock_loop_alate_ps.mp4"
         doc = json.loads(script("loop.py", src, "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite", "--json").stdout)
         self.assertTrue(doc["verified"], doc.get("wrote"))
-        # each repeat is the file's length (#409), which on an MPEG-PS is not a whole number of frames
-        # (its sound ends ~12 ms after its picture): within a frame of three lengths, where the cut lead
-        # lost 8 frames (352 of 360)
+        # every frame of every repeat is there (the cut lead lost 8: 352 of 360), and no more than three
+        # of the file's lengths hold: an MPEG-PS's sound ends after its picture, and how much of that
+        # each repeat keeps differs between FFmpeg builds (361 on 6.1, 360 on 7.1)
         length = float(json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src).stdout)["format"]["duration"])
-        self.assertAlmostEqual(stream_spans(out)["video"][2], 3 * length * 30, delta=1)
+        frames = stream_spans(out)["video"][2]
+        self.assertGreaterEqual(frames, 3 * stream_spans(src)["video"][2])
+        self.assertLessEqual(frames, math.ceil(3 * length * 30))
         # a 4.012 s repeat is not a whole number of 30 fps frames, so each repeat's pictures land on the
         # frame grid up to half a frame from their sound (+1, -11, +10 ms), never further
         self.assertInSync(av_offsets_ms(out), tol=1000 / 30 / 2, msg="loop mpeg-ps")
