@@ -73,6 +73,11 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.2.3 — two reports from outside (#436, #437)](#after-323--two-reports-from-outside-436-437)
 - [After 3.2.3 — what a plugin install copies, and what it leaves out](#after-323--what-a-plugin-install-copies-and-what-it-leaves-out)
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
+- [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
+- [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
+- [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
+- [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
+- [After 4.14.0 — a timed zoom on video (#647)](#after-4140--a-timed-zoom-on-video-647)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -126,6 +131,9 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.5.2 — J-cut and L-cut in join.py](#after-452--j-cut-and-l-cut-in-joinpy)
 - [After 4.6.1 — an HDR RGB source gets the matrix its line tags (#559)](#after-461--an-hdr-rgb-source-gets-the-matrix-its-line-tags-559)
 - [After 4.6.5 — several audio tracks in one file (#420)](#after-465--several-audio-tracks-in-one-file-420)
+- [After 4.8.0 — where caption, overlay and graphics drew (#547)](#after-480--where-caption-overlay-and-graphics-drew-547)
+- [After 4.8.0 — a copy is verified against what its keyframes allow (#620)](#after-480--a-copy-is-verified-against-what-its-keyframes-allow-620)
+- [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 <!-- contents:end -->
 
 ## Time limits
@@ -3045,7 +3053,12 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   anything runs, dry runs included (`kind: input`, reason `output_container_codecs`, the encoders
   named in `details`), by the one check every ffmpeg command passes (`runner._check_container_codecs`);
   the encoders are still not switched to VP9/Opus for a WebM name. A stream copy is still left to
-  the muxer, since what it copies is not in the command. metadata.py and `export.py --preset
+  the muxer, since what it copies is not in the command. The same check refuses an `.mxf` output of
+  the tools' libx264/AAC encode (#736): MXF takes PCM sound only ("not supported by the bitstream
+  filter 'pcm_rechunk'"), and with PCM the H.264 of the default B-frame line still wrote dts the
+  muxer rejects on a read-back, so the encoders are not switched to PCM for an `.mxf` name (nothing
+  here writes MPEG-2 or DNxHD); the hint names `.mov` (`--codec prores`) and `.mkv`. A stream copy
+  (`cut.py` without `--accurate`, `metadata.py`) still writes MXF. metadata.py and `export.py --preset
   copy`, stream copies, keep the source's extension. Code: `_common.decision.default_output()`, `NO_DEFAULT_ENCODE_EXT`. Tests:
   `Issue415Tests.test_a_webm_source_gets_an_mp4_default_output_that_the_run_writes`,
   `test_a_webm_output_of_an_h264_encode_is_refused_before_ffmpeg_runs`.
@@ -3437,9 +3450,11 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `sync --trim-second` (a padded head counts back before the source's start) and so a
   `render.py` clip with an `in`. A join of several ranges writes none: a timecode counts on from
   its first frame, so after the first join every label would name the wrong source frame, and a
-  conform by timecode would land there. A stream copy out of MXF writes none either: its demuxer
-  lands a seek on another keyframe than `cut.seek_keyframe` reads. `source_carry` then lists the
-  timecode as dropped (an MXF, which always writes one, reads 00:00:00:00). The label is read at
+  conform by timecode would land there. A stream copy out of MXF writes the label of the keyframe
+  it lands on like any other (#696: its demuxer seeks by pts, as MOV's, so `cut.seek_shift` asks
+  for no earlier time; `-ss 1.5` lands on the 1.44 s keyframe, 01:00:01:11 from 01:00:00:00); where
+  no label is written `source_carry` lists the timecode as dropped (an MXF, which always writes
+  one, reads 00:00:00:00). The label is read at
   the source's rate and written at the rate the output is delivered at (`fit --fps`, a VFR source
   conformed): 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and a fit that changes the rate writes
   it even without a trim, leaving the source's tmcd track behind. A start before a picture that
@@ -3447,7 +3462,8 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   Code: `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Tests:
   `test_a_tool_that_moves_the_start_moves_the_start_timecode`,
   `test_the_start_timecode_is_counted_at_the_rate_fit_delivers`,
-  `test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame`.
+  `test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame`,
+  `test_a_stream_copy_cut_of_an_mxf_keeps_the_start_timecode_of_the_keyframe_it_lands_on`.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
   `test_source_carry_says_what_the_output_lost_from_its_source`.
 
@@ -3569,6 +3585,173 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   full-contrast change needs about a tenth of a tile); a faint shift over the whole picture stays
   under the floor in every tile, and `similarity` is the row for that; picture only. Measured on
   FFmpeg 6.1.1 locally; the test runs on every FFmpeg in CI.
+
+## After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)
+
+- **The same contract as `--expect-changed`, for sound.** The caller declares where the sound may
+  differ (`SPAN|none`, the span spelled as phase 1's, no rectangle), the tool only measures, "not
+  compared" is FAIL (another length, a missing track, a failed pass), a declared span that did not
+  change is WARN, and files that are not encoded alike (codec, sample rate, channels) are a WARN
+  and a note on an otherwise passing row. Spans are closed at both ends and placed on whole
+  windows (`times[n] <= end and times[n+1] > start`), as for frames. Same length only: a removed
+  span (phase 3) is a declaration, never detection. Code: `check.audio_change_row()`,
+  `_common.probe.audio_change_windows()`. Test:
+  `test_check_expect_audio_changed_finds_the_edited_windows_and_not_a_re_encode`.
+- **Windows of 0.1 s, the last partial one not compared.** The edits this is for are a word (a few
+  tenths of a second) or a level change over seconds; 0.1 s places both to a tenth. The stretch
+  under one window at the end is dropped: with it, a window of a few samples that a codec's
+  padding had made differ between two copies of the same sound read as a change (found in the
+  first test).
+- **Not a waveform floor alone.** AAC keeps little of a noise's waveform: re-encoded pink noise
+  differs from its source by -7.6 dB against the signal at 128 kbps (-5.1 at 64 kbps, -4.4 at 32),
+  while real recordings sit at -18 to -23 dB (128 kbps). A floor above -5 dB on the waveform would
+  also pass every gain change under 6 dB (a +3 dB change is -10.7 dB; a +6 dB one -6.0 dB). So a
+  window changed when either test says so, both in dB against the louder file's own level in that
+  window and per channel (stereo; mono is duplicated, 5.1 downmixed):
+  1. the difference's RMS is above **-3 dB** of the signal (and above -70 dBFS: a difference under
+     that is 16-bit noise, not an edit). Replaced, inserted or muted sound is 0 dB or above because
+     the level is the louder file's; a codec's error is a fraction of the signal.
+  2. the two levels are more than **2.5 dB** apart (both above -60 dBFS). This is the test for
+     a gain change: the level moves by what the gain was, a codec leaves it within 1.5 dB.
+- **The floors are from 78 re-encodes, not guessed.** Ten 8 s sources at 48 kHz stereo: a tone,
+  pink noise, speech-like noise (two levels, the quieter at -54 dBFS mean), a decaying chord and
+  five LibreOffice gallery sound effects (11 or 22 kHz mono, looped to 8 s: applause, drama, a
+  storm, a nature recording, a spoken clip), each through AAC at 32, 64, 96, 128 and 256 kbps, AAC
+  at 44.1 kHz, MP3 128 kbps and Opus 64 kbps, FFmpeg 6.1.1. Worst unchanged window, test 1 / test 2
+  (dB):
+
+  | encode | test 1 (floor -3) | test 2 (floor 2.5) |
+  |---|---|---|
+  | AAC 256 / 128 kbps, MP3 128, AAC 44.1 kHz | -13.1 / -7.6 (pink noise) | 0.7 |
+  | AAC 64 kbps | -5.1 (pink noise) | 1.5 |
+  | AAC 32 kbps | -1.1 (storm) | 3.2 (storm) |
+  | Opus 64 kbps | -2.8 (pink noise) | 2.8 (pink noise) |
+
+  At 64 kbps and above on every source and for the MP3, nothing is flagged; the margin to test 1
+  is 2.1 dB at its narrowest (64 kbps AAC on pink noise, the hardest source) and to test 2 is 1.0.
+  The two rates under that, and Opus on noise, are flagged: the file is then not the same sound
+  to the ear either, and the row prints the floor and the largest unchanged window (`quiet_peak`),
+  as phase 1's does. Edits through AAC 128 kbps on the same sources: a +6 dB or -3 dB gain over
+  2-3 s flagged windows 20-29 (2.0-3.0 s) on every source with sound in them (the speech-like ones
+  skip their own silent dips: a gain on silence is no change); +2 dB was found in one to three windows on four sources
+  and in none on the rest (under the floor by design); a word replaced by other sound and one muted were
+  found at their own windows on all of them.
+- **Sound that starts later is placed on the container's clock.** A window's time is its index
+  times 0.1 s plus the audio stream's lead over the container start, so a span means the same
+  second as for `--expect-changed`.
+- **No `--audio-change-floor`.** Phase 1 has `--change-floor` for footage the measurements did not
+  cover; this phase adds no option under the feature freeze (the owner's decision of 2026-11-26
+  covers `--expect-audio-changed` and its result fields, not a second flag). The constants are
+  `probe.AUDIO_REL_DB` and `probe.AUDIO_LEVEL_DB`; a source that needs another floor is a reason to
+  add the flag, with its measurements.
+- **Remaining in #442:** phase 3 shipped next (`--expect-removed`, below); phase 4 (`render.py`
+  deriving the declaration from two project files) is not started.
+
+## After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)
+
+- **Declared, never detected.** `--expect-removed START-END` names a span of the reference's time
+  that the edit cut out; the tool takes it out of the reference and pairs what is left as phases 1
+  and 2 do. It does not look for where the two files line up: an alignment search would find a
+  pairing for a wrong cut too, and the row exists to say the edit did what was asked. Code:
+  `check.change_scope_row()`, `check.audio_change_row()`, the `removed` argument of
+  `_common.probe.change_tiles()` and `audio_change_windows()`. Test:
+  `test_check_expect_removed_pairs_a_cut_with_the_reference_minus_its_spans`.
+- **The reference's time for what was removed, this file's time for what changed.** A removed span
+  is what the edit instruction said ("cut 30-35 of the original"); a changed span is where a caller
+  looks in the result. Converting either would make the caller do the arithmetic the flag saves.
+- **A frame is removed when its own time is in the span, start included, end not.** `cut.py
+  --remove 1-2` at 25 fps drops frames 25-49 and keeps frame 50 (2.00 s), so the same span
+  spelled the same way takes out the same frames. The sound is cut at the same instants after
+  resampling to 48 kHz and the parts are joined before the subtraction.
+- **A mismatch is a FAIL, of one of two kinds.** When the frame counts (or lengths, beyond one
+  0.1 s window) still disagree, the row is "not compared" and says how many frames or seconds were
+  left, so a caller sees which span is off. When they agree but a different part was cut, the
+  frames after the first join differ from the reference, and that is an undeclared change at its
+  own time.
+- **Not for stream-copy cuts of AAC sound.** A copy cut lands on packets: in the measurement
+  (`cut.py --remove 3-5` on 10 s of 25 fps H.264 and pink noise in AAC, FFmpeg 6.1.1) the picture
+  matched, but the sound came out one packet (21 ms) late, and on noise-like sound every window
+  then reads as changed. That is a true difference of the file, so it is reported, and the
+  reference says to check the sound of a `cut.py --accurate` cut.
+- **No new option beyond the flag** (the feature freeze; the owner approved #442 as an exception on
+  2026-11-26): no tolerance for a join, and the floors are phases 1 and 2's.
+- **Remaining in #442:** phase 4 (`render.py` deriving the declaration from two project files), the
+  floor survey and `--change-grid`.
+
+## After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)
+
+- **Held to the file's own median step, not its stated rate.** A file with dropped frames states
+  an average rate that the gap has already lowered: an MP4 of 100 frames at 25 fps with 5 dropped
+  says `avg_frame_rate` 95/4, and `probe` then suspects a variable rate. Grading only constant-rate
+  files would skip exactly the files the row is for. The median step is the same 40 ms in both.
+  Code: `check.frame_timing_row()`. Test:
+  `test_check_content_frame_timing_finds_dropped_and_repeated_frames_574`.
+- **A gap is a WARN, a repeated time a FAIL.** A step over 1.5 median steps is round(step /
+  median) - 1 missing frames. A phone lowers its rate in low light on purpose and that reads the
+  same, so a gap never fails a delivery template's check. Two frames at one time are never right.
+- **From packets, no decode.** `presentation_times()` (the times `--expect-changed` uses) is one
+  ffprobe pass over the packets, so the row costs no decode of the picture.
+- **`batch.py`'s per-item table is not changed here.** #574 also asked for the row there; this
+  change adds it to `check.py` only.
+
+## After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)
+
+- **Whole majors, 6 to 9.** `runner.TESTED_FFMPEG_MAJORS` is the range of majors CI installs (Ubuntu
+  apt 6.1, Debian 7.1, Homebrew 8.x, gyan.dev 9.0). Exact minors would warn on 8.0.2 against CI's
+  8.0.1, which the suite protects no less; the defects seen on one version so far were one major's
+  behaviour. A test reads the versions out of `.github/workflows/ci.yml` so the two cannot drift.
+  Test: `test_a_build_outside_the_tested_majors_is_said_once_and_the_run_goes_on_556`.
+- **A warning, once per run, at the first ffmpeg/ffprobe lookup.** `runner.require_tool()` already
+  reads the version there for the 6.1 floor; `_report_untested_build()` adds
+  `ffmpeg_version_untested` {version, build, tested} the first time and not again. Nothing is
+  refused: the build works as well as it did, the result only says the suite has not seen it.
+- **A git or vendor build is its own case (`build: git`).** Its libavutil major names the FFmpeg
+  major but not the release, so it is neither "tested" nor "untested"; it is reported as a build
+  the suite cannot be matched to. An unreadable version is `build: unknown`.
+- **doctor says the same** (`ffmpeg_tested`, and a warning line on stderr), from the same
+  `runner.tested_build()`.
+- **SKILL.md is not changed.** It is at its byte budget, and the warning reaches a caller in every
+  result; README names the doctor field.
+
+## After 4.14.0 — a timed zoom on video (#647)
+
+- **Options on `fit.py`, not a new tool.** The project is reducing its tool count (#633, #683),
+  and `fit.py` already shapes the delivered frame (reframe, rotate, fades) and has the anchor a
+  zoom needs. The flags take `insert.py`'s words (`--zoom in|out`, `--zoom-amount`, default 1.3)
+  plus `--zoom-start` and `--zoom-duration`; `--crop-x`/`--crop-y` are the anchor, with the
+  meaning they have for a crop (0 keeps the left/top edge, 0.5 the centre), and with `--fit crop`
+  the one anchor places both. Code: `fit.main()`. Test:
+  `FitZoomTests.test_fit_zoom_out_moves_toward_the_anchor_647`.
+- **A per-frame `scale` and a `crop` back, not `zoompan`.** Measured on a 6 s 30 fps clip of
+  180 frames (FFmpeg 6.1.1): `zoompan` with `d=1` wrote the 180 frames at its default 25 fps, a
+  7.2 s picture, and with `d=125` each input frame became 125 (stopped at 20 s, 500 frames for 4
+  of the source's); it makes its own frames and timestamps.
+  `scale=eval=frame:flags=lanczos` to the zoomed size and `crop` to the frame wrote 180 frames at
+  30 fps in 6.0 s, each at the source's timestamp. `crop` reads `in_w` once, from the first
+  frame, so the offsets are written as the same expression of `t` the scale uses; the zoomed
+  sides grow in steps of 4 px and the offset is kept even (4:2:0), so a centred move stays
+  centred. Code: `fit.zoom_filters()`. Test:
+  `FitZoomTests.test_fit_zoom_pushes_in_over_its_window_and_keeps_every_frame_647`.
+- **Linear, the start zoom before the move and the end zoom held after it**, in output seconds
+  (after a `--method trim` the graph's clock is offset by the output-side seek, which the
+  expression subtracts). No easing: the issue did not need one. It is drawn on the delivered
+  frame, after the reframe and before the fades; with no reframe a non-square-pixel source is
+  made square first, as for every tool that scales. Test:
+  `FitZoomTests.test_fit_zoom_after_a_trim_is_not_measured_against_the_source_647`.
+- **The zoom adds no detail.** The zoomed frame is the delivered frame upscaled once with
+  lanczos; scaling up further first (what `insert.py` does for `zoompan`, which samples whole
+  pixels) adds no information to a frame of video. Detail at 1.5x needs a source with 1.5x the
+  delivered frame's pixels, reframed by another run.
+- **`zoom.check` is measured, or says it is not.** It compares the output's packet times
+  (`presentation_times()`) with the source's: count, timestamps within half a frame, length
+  within a frame, and rate. When the run also trims, retimes, conforms a variable rate or takes
+  `--fps`, the source's frames are not the output's, and the check is `measured: false` with the
+  reason, never a pass. Code: `fit.check_zoom()`.
+- **Refused as kind input:** `--zoom-amount` of 1 or less, or one that scales the frame past
+  16384 px on a side (the whole zoomed frame is scaled), a start at or past the output's end,
+  a move that ends past it (half a frame of slack), a zero duration, `--zoom-*` without
+  `--zoom`, and `--zoom` on a still (`insert.py --zoom` animates one). Test:
+  `FitZoomTests.test_fit_zoom_refuses_a_move_it_cannot_make_647`.
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 
@@ -6551,8 +6734,8 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   length asked. A model reads the first lines and reports from them. `wrote` adds no measurement
   and changes no other field; the miss is shown above 40 ms (more than one frame at 25 fps) and
   written in capitals because that is the part a reader skims past. `verified` is unchanged: a
-  stream copy that ends on a packet is a valid file (#620 stays open for whether a miss should
-  fail a delivery). Pinned by
+  stream copy that ends on a packet is a valid file (#620, which asked whether a miss should
+  fail a delivery, is decided in "After 4.8.0 — a copy is verified against what its keyframes allow"). Pinned by
   `test_the_first_line_of_a_result_says_what_was_written_and_where_it_misses`.
 
 ## After 4.5.1 — a class that keeps coming back gets a guard
@@ -6731,3 +6914,132 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   `test_track_refusals_name_their_reason_and_run_under_a_dry_run`,
   `test_a_track_file_is_checked_and_the_output_may_not_be_one`,
   `test_a_dry_run_lists_the_tracks_and_writes_nothing`.
+
+## After 4.8.0 — where caption, overlay and graphics drew (#547)
+
+- **`caption.py` (burn), `overlay.py` and `graphics.py` report `placement`, the box of what they drew,
+  measured.** `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`.
+  The run's own filter graph (every input but the main one as the run has it, the main one replaced
+  by a colour source of the written size) is rendered over a black and a white frame at the instants
+  the layer is on screen, with one filter thread (#543). A pixel the layer did not touch has the
+  background value in both renders; the box is the rectangle of the pixels where either differs by more than 8
+  levels (about 3 % opacity), so the outline, a `--box` and a layer of any colour on any colour count,
+  and a layer that is black on black is still seen through the white render. The helper is
+  `_common/placement.py`; `fit.py`'s `picture` shares its `bbox()`. One filter graph, two small renders
+  of at most 12 frames each, whatever the length of the clip. A removed `rendered_placement` is the
+  consequence: it leaves `unverified` only where `placement.measured` is true (`emit()`), so a
+  `{measured: false, reason}` keeps it, as does `--mode mux` (nothing is drawn) and a dry run.
+  `legibility` stays: that the box is where it should be says nothing of whether it reads.
+- **The open questions of the issue.** *One box per run, the union of what the run drew*: the
+  union of the cues for a caption (a per-cue list can be a thousand rows), of a template's text, bars
+  and boxes for graphics; a tool draws one layer per run, so "per layer" is per run. *Time-varying
+  layers*: the instants are chosen where the layer is on screen -- each sampled cue's middle
+  (up to 12 cues, spread through the list, and always the one with the longest text, which is the one
+  that runs off the frame); the end of an overlay's fade-in (halfway through a shorter window), or its
+  first `--place` piece; four instants of a graphics template's own span (0.2, 0.5, 0.8, 0.97; the
+  hook's span is `--duration`) so a bar that fills or slides is measured at its widest. A moving or
+  keyed `--video` layer, and a karaoke or animated cue, are measured at those instants only; `samples`
+  says how many. *`clipped`*: the field is `touches_edge`, the list of frame edges the box reaches.
+  A layer cut by the frame and one that sits flush with it by design (`--margin 0`, a lower-third bar
+  that starts at the left edge, the full-width progress bar) are the same pixels, and `clipped`
+  would have said "cut" of a progress bar. Naming what the pixels show is the claim the code can
+  keep; a caption that reaches both side edges (its margins are never 0) is the signal the issue wanted.
+- **`render.py` does not pass the box on and keeps `rendered_placement` in `unverified`.** A stage's box
+  is on that stage's frame, and the stages after it (`export`'s presets, a later `fit`) can scale or
+  reframe it, so the box would describe a frame that is not delivered; a cache hit would have to replay
+  it too. A caller that needs the box of a rendered project runs the stage tool on the delivered file.
+- **Not done.** Text or a layer cut by the frame is not told apart from one placed on its edge (above);
+  a layer on an `--alpha-codec` canvas is measured over opaque black and white frames, which the
+  result's alpha step does not cover; a variable-frame-rate source's conform filter (`fps`) is taken out of the
+  measuring graph, whose main picture is a few frames at chosen instants (it would fill the gaps between
+  them with copies).
+- Code: `placement.measure_placement()`, `bbox()`, `sample_cues()`; `overlay.main()`, `graphics.main()`,
+  `caption.main()` call it after the write; `emit()` drops `rendered_placement`; `_contract.EMITTED_KEYS`.
+  Tests: `PlacementTests` (tests/test_picture.py): `test_an_image_overlay_reports_the_rectangle_it_wrote`,
+  `test_a_timed_text_overlay_is_measured_while_it_is_on_screen`, `test_a_caption_reports_the_union_of_its_cues`,
+  `test_a_caption_that_runs_off_the_frame_touches_its_edges`, `test_a_graphics_text_layer_reports_where_it_drew`,
+  `test_where_nothing_was_measured_the_property_stays_unverified`.
+
+## After 4.8.0 — a copy is verified against what its keyframes allow (#620)
+
+- **A stream copy's length is judged against the span the source's keyframes allow, not against a
+  tolerance.** The owner's decision of 2026-11-26 (a freeze exception, like every old open issue).
+  `--tolerance` says when a copy is re-encoded, and stays that; it cannot say whether the file that
+  was written is the file that was planned, because a copy that lands 0.4 s early passes a 0.5 s
+  tolerance and so does one that lost half its frames. the step `copy_span` holds the written
+  picture's length to `sum(out - in)` over `snapped_segments`: `in` is the keyframe the copy begins
+  at (the measured seek of `seek_keyframe`, `plan_part`'s start for a join), or the first picture at
+  or after the start where an MP4 edit list hides the pre-roll; `out` is the end keyframe of a join's
+  part on B-frame `.mp4`/`.mov`, else the requested end, because `-t` counts from the requested start
+  (measured on H.264 and HEVC, with and without `--no-edit-list`: a start between keyframes moves
+  `in` and leaves `out`). The slack is derived too: a frame, plus the source's reorder depth
+  (largest pts minus dts in the two seconds after the start, or in the join's packets), per part,
+  since ffmpeg's `-t` compares decode times and a 4-B-frame HEVC copy runs 0.2 s past its end. A
+  container with no stream length of its own (Matroska) is judged by the container, 0.05 s longer.
+- **A miss is `verified: false`, exit 0, the file kept.** The file is valid, `--accurate` is named in
+  a note, and `cut.py` is a core tool whose exit codes are promised until 5.0, so the exit
+  status of `export.py` and `join.py --copy` (exit 1, `kind: verification`, decided in 4.0) is not
+  copied. Whether a miss of a requested property is a failure is decided by who named it:
+  a property the caller named or the tool planned and can state fails; a file that is as planned but
+  moved from the request warns (the table is in `docs/contract.md`).
+- **`copy_drift_large` at 0.25 s.** A copy within `--tolerance` is kept, and a caller that reads
+  only `verified: true` never learns it moved 0.44 s. 0.25 s is half the default `--tolerance`, so
+  the warning covers the band where the copy is kept but visibly off; one or two frames, the
+  ordinary keyframe snap of a one-second GOP, stay quiet. It is a constant (`COPY_DRIFT_WARN`), not an
+  option, and a warning, not a refusal.
+- **Not done.** `export.py --preset copy --duration S` is not judged against S (the copy ends on a
+  packet at or after S, from 0); an audio-only copy is packet-exact and keeps its older check; a
+  `--smart` cut keeps its own packet and frame checks, and a re-encode reports no `snapped_segments`.
+- **`cut_total_duration` stays.** A `--segments` copy whose parts each snap within `--tolerance` can still
+  add up to three times the length asked for (three 0.04 s clips from a source with a keyframe every 0.2 s
+  write 0.37 s for 0.12 s asked), and the keyframes allow that; the older step bounds the total against the request, and the new one asks whether
+  the file is the one planned. Dropping it for the keyframe span would have let that cut through.
+- Code: `cut.copy_landing()`, the `copy_span` step in `cut.main()`. Tests: `CopySpanTests`
+  (tests/test_cut_copy.py): `test_a_copy_reports_where_it_landed_and_is_verified_against_that_span`,
+  `test_a_segments_copy_is_judged_by_its_snapped_parts_not_by_the_tolerance`,
+  `test_a_written_file_that_misses_the_snapped_span_is_not_verified`.
+
+## After 4.8.3 — word-timed cuts in cut.py (#449)
+
+Four items were asked; two already existed when this was built, so only the other two were added.
+`silence.py` has `--margin-lead`/`--margin-tail` (#451) and `--sentence-min-silence`/`--sentence-margin-tail`
+(#452); pause shortening to a stated length exists only through a pacing profile (`silence.py --profile`,
+#733). Not built: a direct `--shorten-pause-to` (item 3's second half) and a measured onset in `silence.py`.
+
+- **`cut.py --words FILE --word-segments 0-4,7-12` converts word indices to seconds and nothing more.**
+  The ranges become `--segments`, so the join, `--declick-ms`, `--snap`, the stream-copy or re-encode
+  choice and every check are the ones `--segments` has. It does not combine with `--segments`,
+  `--remove`, `--start`, `--end` or `--duration` (two ways to say the same ranges). Indices are 0-based,
+  inclusive, ascending, and share no word. A word with no timing is refused (`kind: input`) rather than
+  dropped, because dropping it would shift every later index.
+- **No editing policy is a default.** `--margin`, `--margin-lead` and `--margin-tail` default to 0 and
+  `--onset-search` to off: a bare `--word-segments` cuts the transcript's own times. The numbers a caller
+  might want (0.1 s before the onset, 0.5 s of tail) are arguments.
+- **A cut is on the source's frame grid: the start rounded down, the end up**, so a snap never takes a
+  word's first or last sound. A source with no grid (audio-only output, variable frame rate) keeps the
+  seconds as computed. Two ranges that the margins make overlap meet at the grid point nearest the middle
+  of the overlap, so no sound is kept twice; the result's `cut` shows where.
+- **The onset is measured, and looked for both ways.** Measured on `demos/footage/ai_talk_en.mp4` (#449's
+  comment), words after a pause were timed 0.45-0.53 s EARLY, so the issue's "look back up to 0.25 s"
+  would have found nothing. `--onset-search S` looks `S` seconds either side of the transcript start,
+  never earlier than the previous word's midpoint (a rise inside the previous word is not this word's).
+  The window is decoded at 8 kHz mono; its levels are 5 ms RMS blocks; the floor is the 10th percentile of
+  the window, the threshold a third of the way from the floor to the peak, and a rise counts when the window
+  spans at least 15 dB and 4 of the next 6 blocks stay above the threshold. Of the rises that qualify the one
+  nearest the transcript time is taken. With none, `onset.measured` is `null`, `onset.reason` says why and
+  the transcript time stands: never a guessed value. The 5 ms, 15 dB and 30 ms are the measurement, not an
+  editing choice; the window `S` is the caller's, because one clip and one engine is not a rule.
+- **Where the onset lives: `_common/words.py` (`measure_onset`)**, next to the word-file reader that moved
+  there from `silence.py` (`silence.py` imports it; its `--filler` and sentence flags are unchanged), so a
+  later `silence.py` or `speedramp.py` use calls the same measurement.
+- **The sentence boundary stays the transcript's punctuation** (`silence.py`, decided with #452): a pause's
+  length does not say where a sentence ends. `cut.py` has no sentence notion; a range is the caller's words.
+- **The dry-run document shows the measured times.** `--onset-search` decodes a window around each start,
+  which is analysis, so under `--dry-run` the audio is read and `word_segments` carries the real measured
+  onsets and the times that would be cut; nothing is written (`_contract.DRY_RUN_ANALYSIS["cut"]`).
+- Code: `_common/words.py` (`measure_onset`, `read_word_list`, `parse_word_ranges`, `plan_word_ranges`),
+  `cut.py main()`. Tests: `WordTimedCutTests` (tests/test_editing.py):
+  `test_the_start_is_measured_both_ways_and_the_cut_is_on_the_frame_grid`,
+  `test_a_start_with_no_rise_near_it_is_not_measured_and_keeps_the_transcript_time`,
+  `test_lead_and_tail_margins_and_the_shorthand`, `test_ranges_the_margins_make_overlap_meet_in_the_middle`,
+  `test_a_dry_run_measures_and_writes_nothing`, `test_refusals`.

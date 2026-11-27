@@ -333,6 +333,7 @@ def require_tool(name: str) -> str:
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
                    f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
                    code=127, version=f"{found[0]}.{found[1]}", required=floor)
+        _report_untested_build(found)
     if path:
         return path
     system = platform.system()
@@ -346,6 +347,33 @@ def require_tool(name: str) -> str:
 
 
 MIN_FFMPEG = (6, 1)   # requirements.ffmpeg since 3.0.0 (_contract.MIN_FFMPEG is the same floor)
+# the FFmpeg majors the test suite runs on (#556; .github/workflows/ci.yml: Ubuntu apt 6.1, Debian
+# 7.1, Homebrew 8.x, gyan.dev 9.0; a test keeps the two in step). Whole majors: a defect seen on
+# one version so far was one major's behaviour, and a minor outside the exact ones CI runs is no
+# less covered than the next patch release.
+TESTED_FFMPEG_MAJORS = (6, 9)
+
+
+def tested_build(found: "Tuple[int, int]", release: bool) -> "Tuple[str, Optional[str]]":
+    """("release" | "git" | "unknown", None when the build is one the suite covers, else why not)."""
+    lo, hi = TESTED_FFMPEG_MAJORS
+    if found == (0, 0):
+        return "unknown", "its version could not be read"
+    if not release:
+        return "git", f"a git or vendor build (FFmpeg {found[0]} from libavutil), so its release cannot be matched to the tested {lo}.x-{hi}.x"
+    return "release", None if lo <= found[0] <= hi else f"the test suite runs FFmpeg {lo}.x-{hi}.x"
+
+
+def _report_untested_build(found: "Tuple[int, int]") -> None:
+    """Once per run, a warning when the build on PATH is outside the tested majors, a git build or
+    unreadable (#556): the run goes on as before, but its results are not covered by the suite."""
+    build, why = tested_build(found, _FFMPEG_VERSION_IS_RELEASE)
+    if why is None or any(w.get("code") == "ffmpeg_version_untested" for w in STATE.warnings):
+        return
+    version = None if build == "unknown" else f"{found[0]}.{found[1]}" if build == "release" else f"{found[0]}"
+    warn(f"FFmpeg {version or '(version unknown)'} on PATH: {why}; the results are not covered by the test suite on this build",
+         "ffmpeg_version_untested", version=version, build=build,
+         tested=f"{TESTED_FFMPEG_MAJORS[0]}.x-{TESTED_FFMPEG_MAJORS[1]}.x")
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")
@@ -1374,6 +1402,15 @@ _WEBM_AUDIO_ENCODER_RE = re.compile(r"^(?:libopus|opus|libvorbis|vorbis)$")
 _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec$")
 
 
+# What each muxer takes, as (video encoders, sound encoders, what to say, the way out), by extension.
+_CONTAINER_ENCODERS = {
+    ".webm": (_WEBM_VIDEO_ENCODER_RE, _WEBM_AUDIO_ENCODER_RE, "WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound",
+              "name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha"),
+    ".mxf": (re.compile(r"^(?:mpeg2video|dnxhd)$"), re.compile(r"^pcm_\w+$"), "MXF, which holds MPEG-2/DNxHD video and PCM sound (H.264 writes dts it rejects)",
+             "name a .mov (--codec prores) or .mkv output; cut.py without --accurate keeps an MXF's own streams"),
+}
+
+
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
     """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a"/"s")
     stream, and no filter graph could make one. An encoder option for a stream the output will
@@ -1407,13 +1444,12 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
 
 
 def _check_container_codecs(cmd: Sequence[str]) -> None:
-    """A `.webm` output whose command encodes a picture or a sound WebM cannot hold (the tools'
-    H.264/HEVC and AAC lines) is refused before anything runs, dry runs included: the muxer
-    refused it only after the encode had started, as `kind: ffmpeg` with "Nothing was written
-    into output file", and a dry run said completed (#488). A stream copy is left to the muxer:
-    what it copies is not named in the command."""
+    """A `.webm` or `.mxf` output whose command encodes what the muxer cannot hold (the tools' H.264/HEVC
+    and AAC lines) is refused before anything runs, dry runs included, not after the encode started
+    (#488, MXF #736). A stream copy is left to the muxer: what it copies is not named in the command."""
     output = cmd[-1]
-    if os.path.splitext(output)[1].lower() != ".webm":
+    rule = _CONTAINER_ENCODERS.get(os.path.splitext(output)[1].lower())
+    if not rule:
         return
     refused: List[Any] = []
     for i, tok in enumerate(cmd[:-2]):
@@ -1421,20 +1457,14 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
         if not m:
             continue
         stream, value = m.group(1) or m.group(2), cmd[i + 1]
-        if value == "copy" or stream is None:
-            continue
-        allowed = _WEBM_VIDEO_ENCODER_RE if stream == "v" else _WEBM_AUDIO_ENCODER_RE
-        if not allowed.match(value):
+        if value != "copy" and stream and not rule[0 if stream == "v" else 1].match(value):
             refused.append((stream, value))
     # only for a stream the output will have: asked last, and only when something would be refused
     refused = [value for stream, value in dict.fromkeys(refused) if _an_input_has(cmd, stream)]
     if refused:
         refuse("input", "output_container_codecs",
-               f"output {output!r} is WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound; this tool "
-               f"encodes {' and '.join(refused)} for it",
-               hint="name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); "
-                    "a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha",
-               output=output, container="webm", encoders=refused)
+               f"output {output!r} is {rule[2]}; this tool encodes {' and '.join(refused)} for it",
+               hint=rule[3], output=output, container=output.rsplit(".", 1)[1].lower(), encoders=refused)
 
 
 def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:

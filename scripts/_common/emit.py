@@ -990,7 +990,8 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
         doc["verification"] = steps
         tool = os.path.splitext(os.path.basename(sys.argv[0] or ""))[0]
         if output and not ctx.dry_run and tool in UNVERIFIED and "unverified" not in extra:
-            doc["unverified"] = list(UNVERIFIED[tool])
+            measured = (extra.get("placement") or {}).get("measured")  # #547: the box of what was drawn
+            doc["unverified"] = [p for p in UNVERIFIED[tool] if not (measured and p == "rendered_placement")]
             if tool in ("export", "render") and (extra.get("picture") or extra.get("stage_pictures")):
                 doc["unverified"].append("subject_framing")
         doc.update(_encoder_report(ctx))

@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.8.2`) | any release |
+| `skill.version` | the npm / package.json version (`4.16.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -184,7 +184,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.8.2", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.16.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -282,10 +282,14 @@ The `audio` row FAILs (WARN when no loudness target applies) when the track is p
 the loudness pass or, when loudness is skipped, one volumedetect pass). `check --content`
 (opt-in; render.py `"check": {"content": true}`) adds `black`, `frozen` and `silence` rows
 from one decode pass, `dropouts` (2.17) from one audio-only pass, and `flashes` and `first frame` (2.23) from one
-video-only pass and a one-frame decode; without it the row set is unchanged.
+video-only pass and a one-frame decode, and `frame timing` (#574) from the packets' times, no decode; without it the row set is unchanged.
 `--compare REF` adds `similarity` (SSIM/PSNR against a reference); with it, `--expect-changed
 SPAN[@X,Y,W,H]|none` adds `change_scope`, which FAILs on a change outside the declared spans and when
-the two files could not be compared, and WARNs when a declared span did not change. `--expect-identity SIZE:MTIME_NS`
+the two files could not be compared, and WARNs when a declared span did not change. `--expect-audio-changed
+SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
+decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
+`--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
+then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
@@ -667,6 +671,11 @@ timeout. The field is an SPDX identifier for a recognized GPL or LGPL notice, `"
 FFmpeg's nonfree build notice, or `null` when the binary or its notice could not be read or
 recognized. The result is informational and leaves capability decisions and the exit code unchanged.
 
+`doctor`'s `ffmpeg_tested` field (#556) says whether the FFmpeg the tools run is one the test suite covers:
+`{tested: "6.x-9.x", build: release|git|unknown, covered, why?}`. When it is not (another major, a git
+or vendor build, an unreadable version), doctor prints a warning line and every tool adds one
+`ffmpeg_version_untested` warning to its result; nothing is refused and the run goes on as before.
+
 `doctor`'s `ffmpeg_security` field compares the `ffmpeg` and `ffprobe` versions with a small table of
 high-severity FFmpeg CVEs and the first upstream release on each branch that carries the fix. The table is
 hand-maintained in `scripts/_contract.py` (`FFMPEG_ADVISORIES`), copied from
@@ -895,6 +904,7 @@ Per-tool keys added after 2.2.2, all additive:
 | `encoder`, `hw`, `notes` | every re-encoding tool, `export.py`, `render.py`, `batch.py` (and its rows), `waveform.py` | `encoder`: the video encoder the last command ran (after any GPU→CPU fallback; under `--dry-run`, the planned one), `copy` for a stream copy; absent when no command encoded video. A tool that runs other tools reports its stages': `render.py` its stages and an executed plan's tool, `waveform.py` the title/caption stage that writes its file (its `commands` include that stage's). `hw` is present when VideoToolbox was asked for (`--hw`, `FFMPEG_SKILL_HW=1`, or a stage or `batch.py` item that reported it), on `export.py` when `FFMPEG_SKILL_HW=1` is set but its delivery preset does not take it, and when an encode ran on VideoToolbox because the build has no `libx264`/`libx265`: `{requested, source: flag\|env\|auto, used, fallback, notes}`. `requested` says whether this run's encodes were asked onto VideoToolbox (`false` for that export, and for `source: "auto"`, where nobody asked: `notes` names the missing CPU encoder and the one that ran, and `--no-hw` is not offered as a remedy since there is no CPU encoder to go back to; a job VideoToolbox refuses there is a plain `kind: ffmpeg` failure, not retried), `used` whether the encoder that ran last is VideoToolbox (`null` under `--dry-run`, which ran nothing, and when the tool encoded nothing itself: `batch.py`, whose top-level `hw` gathers its items' `requested`/`source`/`fallback`/`notes` while each `results` row carries the item's own `encoder`, and `hw`/`notes` when VideoToolbox was asked for), `fallback` whether a job VideoToolbox refused was re-encoded on the CPU, and `notes` why. Only a VideoToolbox failure (the encoder could not open, or its compression session failed) is retried on the CPU; any other failure is reported as it happened, once. Every VideoToolbox encode adds a top-level `notes` line: its quality is not CRF-equivalent (`--quality` / a preset's CRF maps to `-q:v` approximately), and `verified` stays what it is for every tool, the measured properties of the output. A `kind: ffmpeg` failure under `--hw` / `FFMPEG_SKILL_HW` carries `encoder` and `hw` for the command that ran last (a stage's, when `render.py`/`waveform.py` re-raise it); when the command itself failed inside the run (not a tool's own check afterwards, such as `cut.py`'s), its message also names that encoder |
 | `transcription` | `caption.py --transcribe` (every `--mode`); inside `filler` for `silence.py --filler --transcribe` | `{routing, detected_language?, engine, model, language}`: the engine and model that made the transcript; `language` is the language the engine was told -- the one named (`--language`, `--filler-lang`), else the one auto's detector named -- and, when nothing was named, the language the engine decoded where it reports one (whisper.cpp's word-timing JSON, faster-whisper, openai-whisper's word-timing JSON), else `null`; `detected_language` is present when auto's whisper.cpp detector named one; `routing` says why `--engine auto` chose the engine (`"requested"` for a named engine), ending `, no Parakeet engine transcribed it` when auto chose Parakeet and a Whisper engine made the transcript after every Parakeet engine failed |
 | `reencode_reason`, `segment_precision`, `least_exact_precision`, `start_snapped` | `cut.py` (every run) | `reencode_reason`: why anything was re-encoded, distinct values in first-seen order, `[]` for a clean copy: `requested` (`--accurate`), `codec` (`--codec`), `vfr`, `vfr_inconclusive`, `pcm_container`, `copy_failed`, `stream_lost` (the copy wrote no video or no audio: an MPEG-TS copy whose window holds no video keyframe, #367), `tolerance`, `concat_fallback` (a `--segments` join that could not stay a stream copy, which now also sets `reencoded: true` and `mode: hybrid`; it reported `copy` before). `segment_precision`: each `--segments` segment's precision (`null` for one segment); `least_exact_precision`: the least exact of them, on every run. Since 3.0.0 `precision` is the least exact segment's, equal to `least_exact_precision`, and `keyframe_snapped` equals `start_snapped` (2.x: `precision` was the whole run's, `packet` only when nothing re-encoded, and `keyframe_snapped` was `precision == "packet"`, a stream copy end to end; see "What 3.0 changed"). `start_snapped`: measured, `true` when a copied segment's picture starts more than one frame from its requested start (or its start could not be measured: an unknown start is never claimed exact), `false` when every start is where asked or everything re-encoded, `null` under `--dry-run`. `requested_segments`/`requested_duration` keep their meaning, the request clamped to the media's duration: a segment ended with the video (less than a frame of sound trimmed) shows in `duration_delta_seconds` and a `notes` line |
+| `snapped_segments`, `copy_drift_large`; step `copy_span` | `cut.py` (a stream copy of video) | `snapped_segments`: `[[in, out], ...]`, one pair per segment on the source's clock, where the copy can land, from the source's keyframes: `in` is the keyframe it begins at (the first picture at or after the start when an MP4 edit list hides the pre-roll, so `in` is then the start), `out` the end keyframe of a `--segments` part on B-frame `.mp4`/`.mov`, else the requested end; read it against `requested_start`/`requested_end`/`requested_segments`. `null` for a re-encode, an audio-only copy and `--dry-run`. `verification[]` step `copy_span` holds the written picture's length (the container's, plus 0.05 s, where the format states no stream length) to the sum of the spans, within one frame plus the source's reorder depth per part (`provenance: input_premeasurement`); a miss is `ok: false`, `verified: false`, exit 0, the file kept, with a note suggesting `--accurate`. A copy whose in or out sits more than 0.25 s from the request (half the default `--tolerance`) also adds the warning `copy_drift_large` `{seconds, threshold}`. The older step `cut_total_duration` (a `--segments`/`--remove` copy's total against the request, within `--tolerance`, `provenance: user_specified`) stays beside it, and an audio-only copy has only that one |
 | `caption_srt` | `render.py` | the SRT the captions stage generated from a `captions.text` cue file, delivered as `<output>.srt` beside the output and guarded with it before the first stage (an existing one is refused without `--overwrite`, an input is never replaced); the planned path under `--dry-run`; `null` with no such stage, captions from `srt`/`ass`, `--stop-after` before the export, or when it was not delivered: a `caption_srt_not_delivered` skip says why (`cached`: the stage came from `--cache`, which keeps its video only; `timeline_changed`: the export trimmed the delivery, so the cue times are not its own) (#510) |
 | `kept` | `batch.py` `results` rows | an item stopped by Ctrl-C/SIGTERM while its last step ran, when that step had already written a file at the final path that was not there when it started (`export.py --normalize` keeps its encode during the loudness pass): the path, on disk and unverified. `render.py` reports the same in its failure document's `output` and message: a stage that writes the delivery is watched (size, mtime, inode before it starts), and a file it left there is kept, while one it did not change is not claimed (#510) |
 | `possible_reencode_reason` | `cut.py` (every run) | under `--dry-run`, the `reencode_reason` values a real run may still add to a plan of `mode: copy` or `smart` (then `hybrid` or `accurate`), since the dry run does not write or measure the output cut (a `--segments` dry run does read the source's packets, and judges each part against `--tolerance` from them): `copy_failed` and `stream_lost` on every planned copy, `tolerance` when a copied part is judged by its written length (a single segment, video or audio-only; a `--segments` part of a source with no B-frames, a Matroska/MPEG-TS part or an audio-only part; not under `--tolerance -1`), `concat_fallback` on a `--segments` stream-copy join, `smart_fallback` for `--smart`; a `notes` line says the same. `[]` in a real run and for a plan that already re-encodes (#510) |
@@ -997,6 +1007,12 @@ point crosses the motion or detail threshold. The `crop_content_off_centre` warn
 includes the affected axis, suggested anchor and `review_points`. `kept.start` and
 `kept.end` are fractions of the displayed source along that axis.
 
+Keys added after 4.8.0, additive (#547):
+
+| key | tool | what it holds |
+|---|---|---|
+| `placement` | `caption.py --mode burn`, `overlay.py`, `graphics.py` (not under `--dry-run`) | where what the run drew landed in the frame it wrote, measured: `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`. The run's own filter graph is rendered over a black and a white frame of the written size at the instants the layer is on screen, and the box is the rectangle of the pixels the layer changed (outline, box and any opacity above a few percent included). One box per run: the union of the cues (`caption.py`, sampled at each cue's middle, at most 12 cues and always the longest) or of the template's four instants (`graphics.py`); the end of the fade-in for `overlay.py`. `touches_edge` lists the frame edges the box reaches: a layer cut by the frame and one flush with it look the same in the pixels, so it says where, not why. `{measured: false, reason}` and a note when no frame came back. A measured box removes `rendered_placement` from `unverified` (`legibility` stays); `render.py` does not pass it on and keeps `rendered_placement` |
+
 Each `review_points` entry has `source_time` (the sample seek time in seconds),
 `output_time_estimate` (the corresponding seek after trimming and retiming, or
 `null` when the output frame rate or length is uncertain or the seek would fall after
@@ -1004,6 +1020,12 @@ the last frame's start), `signal` (`motion` or `detail`),
 `motion_outside`, `detail_outside`, `centroid` and `suggested_anchor`. The times
 are review positions for `look.py --at`. A sampling timeout counts as `unmeasured`.
 `subject_framing` remains in `unverified`.
+
+Keys added after 4.14.0, additive (#647):
+
+| key | tool | what it holds |
+|---|---|---|
+| `zoom` | `fit.py --zoom in\|out` | the timed move as run: `{direction, from, to, start, end, anchor {x, y}, frame {width, height}}`, times in output seconds. After a real run, `check` compares the output's packets with the source's: `{measured: true, source_frames, output_frames, max_timestamp_drift, source_duration, output_duration, source_fps, output_fps, frames_match, timestamps_match, duration_match, fps_match}`, or `{measured: false, reason}` when the frame times could not be read or the run also trims, retimes or regrids the picture (`--duration` that changes the length, `--fps`, a variable-rate conform) |
 
 Keys added for the alpha path beyond `export.py` (additive; the `alpha` step on an alpha source without `--keep-alpha` is the one change to an existing run, see below):
 
@@ -1123,6 +1145,23 @@ preset fps, preset duration cap or `--max-mb` limit fails verification. The JSON
 reports the error on stderr. A failed loudness step is advisory for export and sets
 `verified: false` in JSON. Dry runs finish without post-export assertions.
 
+What a post-export check does when the written file does not match the request (#620), by
+property. A check fails (`verified: false`; `export.py` and `join.py --copy` also exit 1 with
+`kind: verification`, the file kept) when the property is one the caller named or the tool planned
+and it can state: the streams present, the video codec, a fixed frame rate, the frame size, a
+duration cap or `--max-mb`, a copy's length against the span its keyframes allow. It warns (a
+`notes` line or a `diagnostics.warnings` code, `verified` unchanged) when the file is what was
+planned but not what was asked: a copy's in or out moved more than 0.25 s from the request
+(`copy_drift_large`). A loudness miss is the one advisory step that still sets `verified: false`
+(`export.py`, exit 0).
+
+| Tool and mode | Duration is judged against | A miss |
+|---|---|---|
+| `cut.py` stream copy, one range or `--segments`/`--remove` of video | the sum of the keyframe-derived spans (`snapped_segments`), one frame plus the source's reorder depth per part (`copy_span`); a `--segments` total is also held to the request within `--tolerance` (`cut_total_duration`) | `verified: false`, exit 0, file kept (the file is valid and `--accurate` is named); a single copy past `--tolerance` of the request is still re-encoded before it is judged |
+| `cut.py` audio-only `--segments` copy | the requested length, within `--tolerance` (`cut_total_duration` only) | `verified: false`, exit 0, note |
+| `join.py --copy` | the clips' summed lengths, `0.05 s` per clip plus one frame, and every video packet counted | exit 1, `kind: verification`, `error.hint` drops `--copy` |
+| `export.py --preset copy` | the preset's own maximum only (a copy has no `--start`; `--duration S` ends on a packet at or after S and is not judged) | exit 1 only for a missing stream, codec or cap |
+
 `fit.py --duration` refuses an implicit speed factor above 1.15 or below 1/1.15
 with `error.reason: fit_method_required`. Choose `--method speed` to retime or
 `--method trim` to trim. For stretching, `--smooth blend` and `--smooth interpolate`
@@ -1135,7 +1174,7 @@ is checked when its duration can be read.
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
-`output_container_codecs` (a `.webm` output for an H.264/HEVC or AAC encode, which WebM cannot hold),
+`output_container_codecs` (a `.webm` or `.mxf` output for an H.264/HEVC or AAC encode, which those containers cannot hold),
 `media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_extension_missing` (a media output with no file extension, which leaves ffmpeg no container to choose), `output_extension_unknown` (a media output whose extension this ffmpeg build maps to no muxer, such as `out.xyz`, with no `-f`), `output_extension_unsupported` (a `.wma` output the run would encode into; `.wma` is written only as a stream copy of WMA sound), `output_extension_audio_only` (an audio-only extension such as `.wav` or `.m4a` for a run that writes a picture), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `input_is_directory`, `input_empty` (0 bytes), `input_not_media` (ffprobe cannot read it as media) and `input_permission_denied` (the file, or a directory on the way to it, is not readable by the user; a path that is not there stays "input not found"), `still_unreadable` (a file with an image name that ffmpeg cannot decode as one; for `sequence.py`, a frame of the sequence that does not decode, when its decode check completes; when the check cannot be made a note says so and the encode runs), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
 `render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and

@@ -907,6 +907,151 @@ class AnalysisTests(MediaFixtures):
         code, doc, row = check(OUT / "scope_not_written_yet.mp4", "--expect-changed", "none", "--dry-run")
         self.assertEqual((code, row), (0, None), doc)
 
+    def test_check_expect_audio_changed_finds_the_edited_windows_and_not_a_re_encode(self):
+        """#442 phase 2: --compare --expect-audio-changed SPAN|none. A gain change in 2-3 s and a
+        word-length segment replaced at 2.0-2.5 s are found at their own times (the windows are
+        0.1 s); an untouched copy re-encoded with AAC is not a change; a comparison that cannot
+        be made is a FAIL, never a pass."""
+        lavfi = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]
+        aac = lambda rate: ["-ac", "2", "-c:a", "aac", "-b:a", rate]
+        # pink noise is the hardest source for a codec: AAC keeps little of its waveform
+        noise = "anoisesrc=d=6:c=pink:r=48000:a=0.3:seed=%d"
+        tone = "sine=f=440:d=6:sample_rate=48000"
+        names = ("aud_tone", "aud_tone_gain", "aud_noise", "aud_noise_word", "aud_noise_copy", "aud_short", "aud_silent_video")
+        tone_old, tone_gain, noise_old, noise_word, noise_copy, short, mute = (OUT / (n + ".m4a") for n in names)
+        sh(*lavfi, tone, *aac("128k"), tone_old)
+        sh(*lavfi, tone, "-af", "volume=enable='between(t,2,3)':volume=6dB", *aac("128k"), tone_gain)
+        sh(*lavfi, noise % 1, *aac("128k"), noise_old)
+        sh(*lavfi, noise % 1, "-f", "lavfi", "-i", noise % 2, "-filter_complex",
+           "[0]asplit[x][y];[x]atrim=0:2,asetpts=PTS-STARTPTS[a];[1]atrim=2:2.5,asetpts=PTS-STARTPTS[b];[y]atrim=2.5:6,asetpts=PTS-STARTPTS[c];[a][b][c]concat=n=3:v=0:a=1",
+           *aac("128k"), noise_word)
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", noise_old, "-c:a", "aac", "-b:a", "64k", noise_copy)
+        sh(*lavfi, tone, "-t", "4", *aac("128k"), short)
+        sh(*lavfi, "testsrc2=size=160x90:rate=10", "-t", "6", "-c:v", "libx264", "-an", OUT / "aud_mute.mp4")
+
+        def check(path, ref, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(ref), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return proc.returncode, doc, {r["check"]: r for r in doc.get("checks", [])}.get("audio_change_scope")
+
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "2-3")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        seen = doc["audio_change_scope"]["observed"]
+        self.assertEqual([(o["start"], o["end"], o["windows"]) for o in seen], [(2.0, 3.0, 10)], seen)
+        self.assertEqual(doc["audio_change_scope"]["undeclared"], [])
+        self.assertLess(doc["audio_change_scope"]["quiet_peak"], doc["audio_change_scope"]["floor"]["relative_db"])
+        # declared somewhere else it is a FAIL at the edit's own time, and the declared span says nothing changed
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "4-5")
+        self.assertEqual((code, row["status"]), (1, "FAIL"), row)
+        self.assertIn("changed 2.00-3.00 (10 windows of 0.1 s): not declared", row["value"])
+        self.assertIn("declared 4.00-5.00 but nothing changed there", row["value"])
+        self.assertEqual(check(tone_gain, tone_old, "--expect-audio-changed", "none")[2]["status"], "FAIL")
+        # a span that is too short for the edit leaves its remainder undeclared
+        code, doc, row = check(tone_gain, tone_old, "--expect-audio-changed", "2-2.5")
+        self.assertEqual([(u["start"], u["end"]) for u in doc["audio_change_scope"]["undeclared"]], [(2.6, 3.0)])
+        # a word replaced by other sound of the same loudness
+        code, doc, row = check(noise_word, noise_old, "--expect-audio-changed", "2-2.5")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        self.assertEqual([(o["start"], o["end"]) for o in doc["audio_change_scope"]["observed"]], [(2.0, 2.5)])
+        # the floor: a re-encode at half the bitrate of pink noise is not a change
+        code, doc, row = check(noise_copy, noise_old, "--expect-audio-changed", "none")
+        self.assertEqual((code, row["status"]), (0, "PASS"), row)
+        self.assertEqual(doc["audio_change_scope"]["observed"], [])
+        self.assertLess(doc["audio_change_scope"]["quiet_peak"], doc["audio_change_scope"]["floor"]["relative_db"])
+        # a lossless master against its AAC delivery: no change, said as "not encoded alike"
+        master = OUT / "aud_noise_master.wav"
+        sh(*lavfi, noise % 1, "-ac", "2", master)
+        code, doc, row = check(noise_old, master, "--expect-audio-changed", "none")
+        self.assertEqual((code, row["status"]), (0, "WARN"), row)
+        self.assertEqual(doc["audio_change_scope"]["undeclared"], [])
+        self.assertTrue(any("not encoded alike (codec aac against pcm_s16le)" in n for n in doc["notes"]), doc.get("notes"))
+
+        # a comparison that cannot be made is a FAIL
+        for path, ref, why in ((short, tone_old, "4.0 s against the reference's 6.0 s"), (OUT / "aud_mute.mp4", tone_old, "one of the files has no sound")):
+            code, doc, row = check(path, ref, "--expect-audio-changed", "none")
+            self.assertEqual((code, row["status"]), (1, "FAIL"), row)
+            self.assertIn("not compared: " + why, row["value"])
+            self.assertNotIn("audio_change_scope", doc)
+        rows = []
+        with unittest.mock.patch.object(check_module, "audio_change_windows", return_value=None):
+            args = types.SimpleNamespace(input=str(tone_gain), compare=str(tone_old))
+            meta = check_module.probe(str(tone_gain))
+            out = check_module.audio_change_row(args, [], meta, meta["audio"], lambda *a, **k: rows.append(a))
+        self.assertEqual((out, rows[0][:2]), ({}, ("audio_change_scope", "FAIL")))
+        self.assertIn("the comparison pass failed", rows[0][2])
+
+        for bad, say in ((["--expect-audio-changed", "2-3", "--expect-audio-changed", "none"], "cannot be combined"),
+                         (["--expect-audio-changed", "3-2"], "ends at or after its start"),
+                         (["--expect-audio-changed", "2"], "START-END"),
+                         (["--expect-audio-changed", "2-3@0,0,10,10"], "only --expect-changed takes a rectangle")):
+            code, doc, row = check(tone_gain, tone_old, *bad)
+            self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
+            self.assertIn(say, doc["error"]["message"], bad)
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(tone_gain), "--platform", "custom", "--no-loudness",
+                               "--json", "--expect-audio-changed", "2-3"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIn("needs --compare", json.loads(proc.stdout)["error"]["message"])
+        code, doc, row = check(OUT / "aud_not_written_yet.m4a", tone_old, "--expect-audio-changed", "none", "--dry-run")
+        self.assertEqual((code, row), (0, None), doc)
+
+    def test_check_expect_removed_pairs_a_cut_with_the_reference_minus_its_spans(self):
+        """#442 phase 3: --expect-removed START-END (the reference's time) takes the cut spans out of
+        the reference before the picture and the sound are paired, so a cut is graded like a
+        same-length edit. A span that does not match the cut is a FAIL: as "not compared" when the
+        lengths disagree, and as an undeclared change when they agree but the wrong part went."""
+        src, cut, wrong = OUT / "rm_src.mkv", OUT / "rm_cut.mkv", OUT / "rm_wrong.mkv"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25",
+           "-f", "lavfi", "-i", "anoisesrc=c=pink:r=48000:a=0.3:seed=3", "-t", "6", "-ac", "2", "-c:v", "ffv1", "-c:a", "flac", src)
+
+        def remove(out, *spans):
+            # whole seconds, so the picture's frames and the sound's samples go at the same instants
+            drop = "+".join(f"gte(t,{a})*lt(t,{b})" for a, b in spans)
+            edges = [0] + [t for span in spans for t in span] + [6]
+            keep = list(zip(edges[::2], edges[1::2]))
+            parts = "".join(f"[s{i}]atrim={a}:{b},asetpts=PTS-STARTPTS[k{i}];" for i, (a, b) in enumerate(keep))
+            graph = (f"[0:v]select='not({drop})',setpts=N/25/TB[v];[0:a]asplit={len(keep)}" + "".join(f"[s{i}]" for i in range(len(keep)))
+                     + ";" + parts + "".join(f"[k{i}]" for i in range(len(keep))) + f"concat=n={len(keep)}:v=0:a=1[a]")
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
+               "-c:v", "ffv1", "-c:a", "flac", out)
+        remove(cut, (1, 2), (4, 5))
+        remove(wrong, (2, 3), (4, 5))
+
+        def check(path, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(src), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            rows = {r["check"]: r for r in doc.get("checks", [])}
+            return proc.returncode, doc, rows.get("change_scope"), rows.get("audio_change_scope")
+
+        both = ("--expect-changed", "none", "--expect-audio-changed", "none")
+        code, doc, pic, snd = check(cut, "--expect-removed", "4-5", "--expect-removed", "1-2", *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (0, "PASS", "PASS"), (pic, snd))
+        self.assertEqual(doc["change_scope"]["removed"], [{"start": 1.0, "end": 2.0}, {"start": 4.0, "end": 5.0}])
+        self.assertEqual(doc["audio_change_scope"]["removed"], doc["change_scope"]["removed"])
+        self.assertEqual((doc["change_scope"]["frames"], doc["audio_change_scope"]["windows"]), (100, 40))
+        # without the declaration the lengths differ, and the fix names the flag
+        code, doc, pic, snd = check(cut, *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (1, "FAIL", "FAIL"))
+        self.assertIn("not compared: 100 frames against the reference's 150", pic["value"])
+        self.assertIn("--expect-removed", pic["fix"])
+        # the right length but the wrong part cut: the picture after the first join differs
+        code, doc, pic, snd = check(wrong, "--expect-removed", "1-2", "--expect-removed", "4-5", *both)
+        self.assertEqual((code, pic["status"], snd["status"]), (1, "FAIL", "FAIL"), (pic, snd))
+        self.assertEqual([(u["start"], u["end"]) for u in doc["change_scope"]["undeclared"]], [(1.0, 2.0)])
+        self.assertEqual([(u["start"], u["end"]) for u in doc["audio_change_scope"]["undeclared"]], [(1.0, 2.0)])
+        code, doc, pic, snd = check(cut, "--expect-removed", "1-2.5", *both)
+        self.assertIn("not compared: 100 frames against the reference's 112 left after --expect-removed", pic["value"])
+        self.assertIn("(4.500 s left after --expect-removed)", snd["value"])
+
+        for bad, say in ((["--expect-removed", "1-2"], "needs --expect-changed or --expect-audio-changed"),
+                         (["--expect-removed", "none", *both], "leave it out when nothing was cut"),
+                         (["--expect-removed", "1-3", "--expect-removed", "2-4", *both], "overlap"),
+                         (["--expect-removed", "2-2", *both], "ends after its start"),
+                         (["--expect-removed", "1-2@0,0,8,8", *both], "only --expect-changed takes a rectangle")):
+            code, doc, pic, snd = check(cut, *bad)
+            self.assertEqual((code, doc["error"]["kind"]), (1, "input"), (bad, doc))
+            self.assertIn(say, doc["error"]["message"], bad)
+
     def test_change_scope_is_closed_at_both_ends_and_holds_the_rest_of_a_rectangle_frame(self):
         """#439: the pure grading step. A declared span covers every frame whose own interval
         touches it; with a rectangle, tiles it does not touch are still held to "unchanged"."""
@@ -985,6 +1130,27 @@ class AnalysisTests(MediaFixtures):
         self.assertEqual(self._rows(room, "--content")["dropouts"]["status"], "PASS")
         self.assertEqual(self._rows(edges, "--content")["dropouts"]["status"], "PASS")
         self.assertEqual(self._rows(short, "--content")["dropouts"]["status"], "PASS")
+
+    def test_check_content_frame_timing_finds_dropped_and_repeated_frames_574(self):
+        """#574: --content grades the frame times against the file's own median step. Five frames
+        dropped at 1.2 s are one gap of 5, also in an MP4 whose stated average rate the gap has
+        already lowered (95/4); a repeated time is a FAIL; an even file and a one-frame file PASS."""
+        def clip(name, *vf):
+            path = OUT / name
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25", "-t", "4",
+               *vf, "-fps_mode", "passthrough", "-c:v", "libx264", path)
+            return path
+        drop = "select='not(between(n,30,34))'"
+        cases = ((clip("timing_even.mp4"), "PASS", "0 missing in 0 gaps (100 frames, usual step 40.0 ms)"),
+                 (clip("timing_drop.mp4", "-vf", drop), "WARN", "5 missing in 1 gap: 1.16s (5 missing) (95 frames, usual step 40.0 ms)"),
+                 (clip("timing_drop.mkv", "-vf", drop), "WARN", "5 missing in 1 gap: 1.16s (5 missing)"),
+                 (clip("timing_repeat.mkv", "-vf", "setpts='if(eq(N,50),PREV_OUTPTS,PTS)'"), "FAIL", "1 repeated, 1 missing in 1 gap: 1.96s (repeated)"),
+                 (clip("timing_one.mp4", "-frames:v", "1"), "PASS", "1 frame: no step to compare"))
+        for path, status, value in cases:
+            r = self._rows(path, "--content", "--no-loudness")["frame timing"]
+            self.assertEqual(r["status"], status, (path.name, r))
+            self.assertTrue(r["value"].startswith(value), (path.name, r))
+        self.assertNotIn("frame timing", self._rows(cases[0][0], "--no-loudness"))
 
     def test_check_colour_row_reads_the_matrix_tag(self):
         """#325: the colour row decided "untagged" from primaries and transfer only, so a file whose

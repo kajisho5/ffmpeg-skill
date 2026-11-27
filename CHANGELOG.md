@@ -6,6 +6,123 @@
 
 (nothing yet)
 
+## 4.16.0
+
+_Automated release: version and notes generated from pull requests merged since 4.15.0._
+
+### Added
+
+- `fit.py --zoom in|out` makes a timed push-in or pull-out on a video clip: `--zoom-amount` (default 1.3), `--zoom-start` and `--zoom-duration` in output seconds, toward `--crop-x`/`--crop-y` (centre by default), the start zoom before the move and the end zoom held after it. Each frame is scaled and cropped back, so the zoom keeps every frame and its timestamp; the result's `zoom` reports the move and `zoom.check` compares the output's frame count, timestamps, duration and rate with the source's, or says it did not measure them (#647).
+- feat: a timed zoom on video (#647) (#753)
+
+## 4.15.0
+
+_Automated release: version and notes generated from pull requests merged since 4.14.0._
+
+### Added
+
+- An FFmpeg outside the majors the test suite runs (6.x-9.x), a git or vendor build, or one whose
+  version cannot be read now adds one `ffmpeg_version_untested` warning to every tool's result, and
+  `doctor` reports it as `ffmpeg_tested` (#556). Nothing is refused; the run goes on as before.
+- feat: say when the FFmpeg on PATH is not one the test suite runs (#556) (#752)
+
+## 4.14.0
+
+_Automated release: version and notes generated from pull requests merged since 4.13.0._
+
+### Added
+
+- `check.py --content` adds a `frame timing` row (#574): every frame's time, read from the packets,
+  against the file's median step. A gap WARNs with how many frames are missing and where; a repeated
+  time FAILs.
+- feat: check.py --content finds dropped and repeated frames (#574) (#751)
+
+## 4.13.0
+
+_Automated release: version and notes generated from pull requests merged since 4.12.0._
+
+### Added
+
+- `check.py --expect-removed START-END` (with `--expect-changed` or `--expect-audio-changed`): a cut
+  is checked against the reference with the declared spans taken out (#442, phase 3). Both
+  `change_scope` and `audio_change_scope` gain `removed`; spans that do not match the cut FAIL.
+- `check.py --expect-audio-changed` compares Matroska files too: they store no length per track,
+  and the container's now stands for it (before, the row FAILed as not compared).
+- feat: check.py --expect-removed, a cut checked against the reference minus its spans (#442) (#750)
+
+## 4.12.0
+
+_Automated release: version and notes generated from pull requests merged since 4.11.0._
+
+### Added
+
+- `cut.py --words FILE --word-segments 0-4,7-12`: cut on the words of a transcript, by index, joined with `--declick-ms`; `--margin`, `--margin-lead` and `--margin-tail` (no default), the cut on the source's frame grid, and `--onset-search SECONDS`, which moves a start to where the sound measurably rises (`measured: null` and the transcript time when it does not). The result's `word_segments` lists each range's words, transcript times, onset and the times cut (#449). `silence.py` already took `--margin-lead`, `--margin-tail` and the sentence flags.
+- feat: word-timed cuts in cut.py (#449) (#748)
+
+## 4.11.0
+
+_Automated release: version and notes generated from pull requests merged since 4.10.0._
+
+### Added
+
+- `check.py --expect-audio-changed SPAN|none` (with `--compare`): the sound's side of `--expect-changed` (#442, phase 2).
+  An `audio_change_scope` row and document say which 0.1 s windows of the two decoded tracks differ, graded against the
+  declared spans; an untouched AAC re-encode of the same sound at 64 kbps or more is not a change.
+- feat: check.py --expect-audio-changed, the sound's side of --expect-changed (#442) (#747)
+
+## 4.10.0
+
+_Automated release: version and notes generated from pull requests merged since 4.9.0._
+
+### Added
+
+- **A stream copy is verified against the span its keyframes allow, and says where it landed** (#620, the owner's decision of 2026-11-26 as a freeze exception).
+  `cut.py` reports `snapped_segments` (`[[in, out], ...]`, read against `requested_start`/`requested_end`/`requested_segments`),
+  holds the written length to the sum of those spans (the step `copy_span`: one frame plus the source's reorder depth per part,
+  instead of `--tolerance`; a miss is `verified: false`), and adds the warning `copy_drift_large` when a copy's in or out
+  sits more than 0.25 s from the request, naming `--accurate`. `docs/contract.md` states what a post-export mismatch does, tool by tool.
+- feat: a copy cut is verified against its keyframe-snapped span (#620) (#746)
+
+## 4.9.0
+
+_Automated release: version and notes generated from pull requests merged since 4.8.4._
+
+### Added
+
+- **`caption.py`, `overlay.py` and `graphics.py` report where what they drew landed: `placement`** (#547).
+  `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`, measured by rendering the run's own
+  filter graph over a black and a white frame of the written size; a caption is the union of its cues (sampled at each
+  cue's middle), a graphics template the union of four instants of its span. `touches_edge` names the frame edges the
+  box reaches, so a caption that runs off the frame says so. A measured box removes `rendered_placement` from
+  `unverified` (`legibility` stays); `render.py` keeps it.
+- feat: caption, overlay and graphics report the measured box of what they drew (#547) (#745)
+
+## 4.8.4
+
+_Automated release: version and notes generated from pull requests merged since 4.8.3._
+
+### Fixed
+
+- An `.mxf` output of a re-encode (`cut.py --accurate`/`--smart`, fit, color, audio, export and the rest) is refused
+  before ffmpeg runs, as `.webm` is, with `kind: input`, `reason: output_container_codecs` and a hint to `.mov` or `.mkv`. It
+  failed after the encode started with "Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'" (#736).
+
+### Changed
+
+- A change to the changelog is a file under `changelog.d/` instead of lines under `## Unreleased`, so two open PRs no longer conflict in `CHANGELOG.md`; the release folds the fragments into the new version's section (#678).
+- fix: an .mxf output of a re-encode is refused before ffmpeg runs (#736) (#744)
+- chore: changelog fragments instead of editing ## Unreleased (#678), and the README says the crop window is fixed (#570) (#742)
+
+## 4.8.3
+
+_Automated release: version and notes generated from pull requests merged since 4.8.2._
+
+### Fixed
+
+- A stream-copy `cut` of an MXF keeps its start timecode: the copy's keyframe was read 3/23 s early (0.96 s for
+  `--start 1.5`, where FFmpeg lands on 1.44 s), so the label was withheld and `source_carry` listed it as dropped (#696).
+- fix: a stream-copy cut of an MXF keeps its start timecode (#696) (#739)
+
 ## 4.8.2
 
 _Automated release: version and notes generated from pull requests merged since 4.8.1._

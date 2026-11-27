@@ -219,8 +219,10 @@
    "compare",
    "content",
    "dry_run",
+   "expect_audio_changed",
    "expect_changed",
    "expect_identity",
+   "expect_removed",
    "fast",
    "input",
    "json_brief",
@@ -349,11 +351,15 @@
    "input",
    "json_brief",
    "keep_hevc",
+   "margin",
+   "margin_lead",
+   "margin_tail",
    "min_confidence",
    "no_declick",
    "no_edit_list",
    "no_hw",
    "no_keep_hevc",
+   "onset_search",
    "output",
    "overwrite",
    "plan",
@@ -368,7 +374,9 @@
    "start",
    "timeout",
    "tolerance",
-   "vfr_guard"
+   "vfr_guard",
+   "word_segments",
+   "words"
   ],
   "required": []
  },
@@ -491,7 +499,11 @@
    "rotate",
    "smooth",
    "timeout",
-   "width"
+   "width",
+   "zoom",
+   "zoom_amount",
+   "zoom_duration",
+   "zoom_start"
   ],
   "required": []
  },
