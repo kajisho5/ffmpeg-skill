@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 4.20.3
+
+_Automated release: version and notes generated from pull requests merged since 4.20.2._
+
+### Fixed
+
+- `render.py --export-timeline` no longer names FCPXML formats like `FFVideoFormat1080p` (a name with no frame rate, which Final Cut Pro 13 warned about on import). Each format states its source's colour space instead: Rec. 2020 PQ or HLG from the transfer, Rec. 709 otherwise (#731).
+- fix: FCPXML formats carry no name without a frame rate (#731) (#732)
+
 ## 4.20.2
 
 _Automated release: version and notes generated from pull requests merged since 4.20.1._
