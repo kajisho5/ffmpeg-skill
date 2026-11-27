@@ -2108,7 +2108,11 @@ def main() -> int:
         # keyframes it landed on (snapped_segments), a re-encode's on the frame, its fades included
         from silence import AUDITION_HEIGHT, write_auditions
         spans, seconds = (land[0] if land else segments), args.audition_seconds or 2.0
-        rate = frame_rate(meta if STATE.dry_run else result) if clips[0].endswith(".mp4") else 0.0
+        # the sides are whole frames of the source's grid, which a copy's frames and a re-encode's are on:
+        # ffprobe's r_frame_rate of the written copy is a guess from its timestamps (240/1 on FFmpeg 6.1;
+        # on 9.0 one that made a 1 s side 0.984), and the dry run reads the source: the run's join_at is the plan's
+        rate = (frame_rate(meta) if clips[0].endswith(".mp4")
+                and not (meta.get("video") or {}).get("variable_frame_rate_suspected") else 0.0)
         audition = {"dir": args.audition, "index": index, "seconds": seconds, "path": mode, "made_from": output,
                     "height": (min(AUDITION_HEIGHT, (result.get("video") or video).get("height") or 0) // 2 * 2 or None)
                     if clips[0].endswith(".mp4") else None, "count": len(clips), "cuts": []}

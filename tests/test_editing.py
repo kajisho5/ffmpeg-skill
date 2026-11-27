@@ -4666,6 +4666,11 @@ class EditingTests(MediaFixtures):
                 self.assertEqual(list(adir.iterdir()), [], "a dry run wrote audition files")
             doc = json.loads(script("cut.py", *argv, "-o", OUT / f"cut_audition_{path}.mp4", "--json").stdout)
             au, c = doc["audition"], doc["audition"]["cuts"][0]
+            if not extra:
+                # the sides are whole frames of the source's 30 fps grid, the dry run's and the run's alike:
+                # not of ffprobe's r_frame_rate guess for the written copy (240/1 on 6.1, a 0.984 s side on 9.0)
+                self.assertEqual([p["join_at"] for p in plan["audition"]["cuts"]], [r["join_at"] for r in au["cuts"]],
+                                 (plan["audition"], au))
             self.assertEqual((doc["mode"], au["path"], doc["encoder"]), (path, path, "copy" if path == "copy" else "libx264"))
             self.assertEqual(json.loads((adir / "index.json").read_text(encoding="utf-8"))["cuts"], au["cuts"])
             self.assertEqual((c["source_in"], c["join_at"]), (6.0 if path == "copy" else 6.1, 1.0), c)
