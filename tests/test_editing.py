@@ -30,6 +30,28 @@ class EditingTests(MediaFixtures):
     """Cut, fit, crop, join, insert, broll, freeze, pad, speedramp, loop, reverse, sequence, silence, metadata, straighten and sphere."""
 
     # ---------------------------------------------------------------- cut
+    def test_a_deeper_picture_written_as_8_bit_says_so_696(self):
+        """#696 (from #558, item 8): a 10-bit source re-encoded to 8-bit said nothing (`notes: []`).
+        The reduction is decided; the result now says it, measured on the written file, and says
+        nothing when the depth is kept (a stream copy) or the source was 8-bit already."""
+        with tempfile.TemporaryDirectory(dir=OUT) as tmp:
+            ten = Path(tmp) / "ten.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=2", "-c:v", "libx265",
+               "-preset", "ultrafast", "-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error", "-tag:v", "hvc1", ten)
+            eight = Path(tmp) / "eight.mp4"
+            tiny_clip(eight, "testsrc2=s=160x90:r=25", seconds=2)
+            def notes(src, *args):
+                out = Path(tmp) / f"out_{len(os.listdir(tmp))}.mp4"
+                doc = json.loads(script("cut.py", src, "--start", "0.4", "--end", "1.6", *args, "-o", out, "--json").stdout)
+                return out, [n for n in doc["notes"] if "-bit" in n]
+            out, said = notes(ten, "--accurate")
+            self.assertEqual(probe(str(out))["video"]["bit_depth"], 8)
+            self.assertEqual(said, ["the source picture is 10-bit and this output is 8-bit: the encoder writes 8 bits "
+                                    "(a ProRes master, --codec prores where the tool offers it, keeps the depth)"])
+            out, said = notes(ten)  # a stream copy keeps the 10 bits
+            self.assertEqual((probe(str(out))["video"]["bit_depth"], said), (10, []))
+            self.assertEqual(notes(eight, "--accurate")[1], [])
+
     def test_cut_single_copy(self):
         out = OUT / "cut1.mp4"
         script("cut.py", self.src, "--start", "2", "--end", "6", "-o", out)
@@ -296,6 +318,22 @@ class EditingTests(MediaFixtures):
         m = probe(str(out))
         self.assertClose(m["duration"], 6.0, 0.15)
         self.assertEqual((m["video"]["width"], m["video"]["height"]), (540, 960))
+
+    def test_fit_notes_interlaced_input_without_deinterlacing(self):
+        for field_order, flags in (("tt", ("-vf", "tinterlace=interleave_top", "-flags", "+ilme+ildct")),
+                                   ("progressive", ("-vf", "fps=25",))):
+            with self.subTest(field_order=field_order):
+                src = OUT / f"fit_scan_{field_order}.mpg"
+                out = OUT / f"fit_scan_{field_order}.mp4"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                   "testsrc2=s=160x120:r=50:d=1", *flags, "-c:v", "mpeg2video", src)
+                fields = sh("ffprobe", "-v", "error", "-select_streams", "V:0", "-show_entries",
+                            "stream=field_order", "-of", "default=nw=1:nk=1", src).stdout.strip()
+                self.assertEqual(fields, field_order)
+                result = json.loads(script("fit.py", src, "--width", "80", "-o", out, "--json").stdout)
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(probe(str(out))["video"]["width"], 80)
+                self.assertEqual(any("deinterlace.py" in note for note in result.get("notes", [])), field_order == "tt")
 
     def test_broll_cutaway_shows_b_in_the_window_and_keeps_a_elsewhere(self):
         """#141: broll.py shows B's picture over A for a window and returns to A at A's own time;
@@ -5989,6 +6027,223 @@ class FitPictureTests(unittest.TestCase):
             self.assertEqual((pic["measured"], pic["y"], pic["height"]), (True, 218, 202))
         finally:
             _common.STATE.notes[:] = before
+
+
+class FitZoomTests(unittest.TestCase):
+    """#647: fit.py --zoom is a timed push-in on a video clip. Every frame keeps its timestamp (a
+    hand-written zoompan made its own frames at its own rate), the move happens in its window and
+    only there, toward the anchor, and a move outside the clip is refused as kind input."""
+
+    W, H, BOX = 640, 360, 40
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "fit_zoom"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        # a white 40x40 box centred on black, 4 s at 30 fps with sound
+        cls.src = cls.dir / "box_640x360.mp4"
+        x, y = (cls.W - cls.BOX) // 2, (cls.H - cls.BOX) // 2
+        tiny_clip(cls.src, f"color=c=black:s={cls.W}x{cls.H}:r=30,drawbox=x={x}:y={y}:w={cls.BOX}:h={cls.BOX}:c=white:t=fill",
+                  seconds=4, audio=True)
+
+    def box(self, path, t):
+        """(left, top, width, height) of the pixels at or above luma 128 in the frame shown at `t`."""
+        data = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t}", "-i", str(path), "-frames:v", "1",
+                               "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        self.assertEqual(len(data), self.W * self.H)
+        rows = [r for r in range(self.H) if max(data[r * self.W:(r + 1) * self.W]) >= 128]
+        cols = [c for c in range(self.W) if max(data[c::self.W]) >= 128]
+        return cols[0], rows[0], cols[-1] - cols[0] + 1, rows[-1] - rows[0] + 1
+
+    @staticmethod
+    def frames(path):
+        """The video stream's packet times, counted by ffprobe here, not by the tool."""
+        out = sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time",
+                 "-of", "csv=p=0", path).stdout.split()
+        return sorted(float(t) for t in out)
+
+    def test_fit_zoom_pushes_in_over_its_window_and_keeps_every_frame_647(self):
+        out = self.dir / "zoom_in.mp4"
+        doc = json.loads(script("fit.py", self.src, "--zoom", "in", "--zoom-amount", "1.5", "--zoom-start", "1",
+                                "--zoom-duration", "2", "-o", out, "--json").stdout)
+        src_t, out_t = self.frames(self.src), self.frames(out)
+        self.assertEqual(len(out_t), len(src_t), "a frame was added or dropped")
+        self.assertEqual(len(out_t), 120)
+        self.assertLessEqual(max(abs((o - out_t[0]) - (s - src_t[0])) for o, s in zip(out_t, src_t)), 0.5 / 30)
+        m, s = probe(str(out))["video"], probe(str(self.src))["video"]
+        self.assertEqual(m["fps"], s["fps"])
+        self.assertAlmostEqual(m["duration"], s["duration"], delta=1 / 30)
+        # before the start: zoom 1; in the window: between; after the end: the end zoom, held
+        before, middle, after, last = (self.box(out, t) for t in (0.5, 2.0, 3.2, 3.9))
+        self.assertEqual(before, self.box(self.src, 0.5))
+        self.assertAlmostEqual(before[2], self.BOX, delta=1)
+        self.assertAlmostEqual(after[2], self.BOX * 1.5, delta=2, msg=f"after the move: {after}")
+        self.assertAlmostEqual(after[3], self.BOX * 1.5, delta=2, msg=f"after the move: {after}")
+        self.assertEqual(after, last, "the end zoom is held")
+        self.assertTrue(before[2] + 4 < middle[2] < after[2] - 4, f"halfway: {middle}")
+        for b in (before, middle, after):  # toward the centre: the box stays centred
+            self.assertAlmostEqual(b[0] + b[2] / 2, self.W / 2, delta=1.5, msg=f"{b}")
+            self.assertAlmostEqual(b[1] + b[3] / 2, self.H / 2, delta=1.5, msg=f"{b}")
+        zoom = doc["zoom"]
+        self.assertEqual((zoom["direction"], zoom["from"], zoom["to"], zoom["start"], zoom["end"]), ("in", 1.0, 1.5, 1.0, 3.0))
+        self.assertEqual(zoom["anchor"], {"x": 0.5, "y": 0.5})
+        check = zoom["check"]
+        self.assertTrue(check["measured"], check)
+        self.assertEqual((check["source_frames"], check["output_frames"]), (120, 120))
+        self.assertTrue(all(check[k] for k in ("frames_match", "timestamps_match", "duration_match", "fps_match")), check)
+
+    def test_fit_zoom_out_moves_toward_the_anchor_647(self):
+        """--zoom out starts at the amount and ends at 1; --crop-x 0 --crop-y 0 keeps the top-left
+        corner fixed, so the centred box sits at 1.5x its distance from that corner at the start."""
+        out = self.dir / "zoom_out_tl.mp4"
+        doc = json.loads(script("fit.py", self.src, "--zoom", "out", "--zoom-amount", "1.5", "--crop-x", "0",
+                                "--crop-y", "0", "-o", out, "--json").stdout)
+        x, y = (self.W - self.BOX) // 2, (self.H - self.BOX) // 2
+        first = self.box(out, 0)
+        self.assertAlmostEqual(first[0], x * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(first[1], y * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(first[2], self.BOX * 1.5, delta=2, msg=f"{first}")
+        self.assertAlmostEqual(self.box(out, 3.95)[2], self.BOX, delta=2)
+        self.assertEqual((doc["zoom"]["from"], doc["zoom"]["to"], doc["zoom"]["end"]), (1.5, 1.0, 4.0))
+
+    def test_fit_zoom_after_a_trim_is_not_measured_against_the_source_647(self):
+        """A trim changes the frames by itself: the check says it did not compare, never a pass."""
+        out = self.dir / "zoom_trim.mp4"
+        doc = json.loads(script("fit.py", self.src, "--duration", "2", "--method", "trim", "--from-center",
+                                "--zoom", "in", "--zoom-start", "1", "--zoom-duration", "1", "-o", out, "--json").stdout)
+        self.assertFalse(doc["zoom"]["check"]["measured"])
+        self.assertIn("reason", doc["zoom"]["check"])
+        # the window is in output seconds: the trimmed output is unzoomed before 1 s, zoomed after 2 s
+        self.assertAlmostEqual(self.box(out, 0.5)[2], self.BOX, delta=1)
+        self.assertAlmostEqual(self.box(out, 1.95)[2], self.BOX * 1.3, delta=2)
+
+    def test_fit_zoom_refuses_a_move_it_cannot_make_647(self):
+        still = self.dir / "box.png"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64", "-frames:v", "1", "-update", "1", still)
+        for args, what in (
+                (["--zoom", "in", "--zoom-amount", "1"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "0.8"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "nan"], "--zoom-amount"),
+                (["--zoom", "in", "--zoom-amount", "30"], "past 16384 px"),
+                (["--zoom", "in", "--zoom-start", "4"], "--zoom-start"),
+                (["--zoom", "in", "--zoom-start", "3", "--zoom-duration", "2"], "past the output's end"),
+                (["--zoom", "in", "--zoom-duration", "0"], "--zoom-duration"),
+                (["--zoom", "in", "--zoom-start", "-1"], "--zoom-start"),
+                (["--zoom-start", "1", "--aspect", "1:1"], "needs --zoom"),
+                (["--zoom", "in"], "still picture")):
+            src = still if what == "still picture" else self.src
+            proc = script("fit.py", src, *args, "-o", self.dir / "r.mp4", "--json", expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            with self.subTest(args=args):
+                self.assertEqual(err["kind"], "input", err)
+                self.assertIn(what, err["message"])
+        self.assertFalse((self.dir / "r.mp4").exists())
+
+
+class WordTimedCutTests(unittest.TestCase):
+    """#449: cut.py --words/--word-segments cut on a transcript's words, with the start measured
+    against the sound (--onset-search), margins of their own and the source's frame grid."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = OUT / "word_cuts"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        # three tone bursts, the "words": 1.0-1.5, 2.2-2.7 and 4.0-4.6 s, at 25 fps
+        cls.src = cls.dir / "bursts.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:duration=6", "-f", "lavfi", "-i",
+               "aevalsrc=0.5*sin(2*PI*220*t)*(between(t\\,1\\,1.5)+between(t\\,2.2\\,2.7)+between(t\\,4\\,4.6)):s=48000:d=6",
+               "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+        # transcript times deliberately wrong: the first word 0.4 s early, the second 0.1 s late, the third in silence
+        cls.words = cls.dir / "bursts.json"
+        cls.words.write_text(json.dumps({"words": [{"word": "one", "start": 0.6, "end": 1.4}, {"word": "two", "start": 2.3, "end": 2.6},
+                                                   {"word": "three.", "start": 3.7, "end": 4.5}, {"word": "end", "start": 5.2, "end": 5.5}]}))
+
+    def cut(self, ranges, *args, name="out.mp4", dry=False, fail=False):
+        out = self.dir / name
+        out.unlink(missing_ok=True)
+        proc = script("cut.py", self.src, "--words", self.words, "--word-segments", ranges, *args, "--accurate", "-o", out, "--json",
+                      *(["--dry-run"] if dry else []), expect_fail=fail)
+        return json.loads(proc.stdout), out
+
+    def sound_starts(self, path):
+        """Seconds at which a tone starts in the written file: a quiet-to-loud edge, read from its samples."""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                             stdout=subprocess.PIPE).stdout
+        pcm = array.array("h")
+        pcm.frombytes(raw[:len(raw) // 2 * 2])
+        loud = [any(abs(v) > 3000 for v in pcm[i:i + 80]) for i in range(0, len(pcm), 80)]
+        return [i / 100 for i in range(1, len(loud)) if loud[i] and not loud[i - 1]]
+
+    def test_the_start_is_measured_both_ways_and_the_cut_is_on_the_frame_grid(self):
+        doc, out = self.cut("0,1", "--onset-search", "0.6", "--margin-lead", "0.05", "--margin-tail", "0.1")
+        one, two = doc["word_segments"]
+        self.assertEqual((one["words"], one["text"], one["transcript"]), ([0, 0], "one", [0.6, 1.4]))
+        # 0.4 s early in the transcript, 0.1 s late: both found, to the 5 ms the search measures in
+        self.assertAlmostEqual(one["onset"]["measured"], 1.0, delta=0.01)
+        self.assertAlmostEqual(two["onset"]["measured"], 2.2, delta=0.01)
+        self.assertEqual(one["onset"]["transcript"], 0.6)
+        for r in (one, two):
+            for t in r["cut"]:
+                self.assertAlmostEqual(t * 25, round(t * 25), delta=1e-4, msg=r)  # a frame of a 25 fps source
+        # the measured start less 0.05 s, rounded down to a frame; the transcript's end plus 0.1 s, up
+        self.assertEqual(one["cut"], [0.92, 1.52])
+        self.assertEqual(doc["requested_segments"], [one["cut"], two["cut"]])
+        # the written file: each burst begins where the margin says, not where the transcript did
+        starts = self.sound_starts(out)
+        self.assertEqual(len(starts), 2, starts)
+        self.assertAlmostEqual(starts[0], 1.0 - one["cut"][0], delta=0.03)
+        self.assertAlmostEqual(starts[1], (one["cut"][1] - one["cut"][0]) + (2.2 - two["cut"][0]), delta=0.03)
+        self.assertAlmostEqual(probe(str(out))["duration"], sum(b - a for a, b in (one["cut"], two["cut"])), delta=0.06)
+
+    def test_a_start_with_no_rise_near_it_is_not_measured_and_keeps_the_transcript_time(self):
+        doc, _ = self.cut("3", "--onset-search", "0.2")
+        word = doc["word_segments"][0]
+        self.assertIsNone(word["onset"]["measured"])
+        self.assertEqual(word["onset"]["transcript"], 5.2)
+        self.assertIn("no rise", word["onset"]["reason"])
+        self.assertEqual(word["cut"], [5.2, 5.52])  # the transcript's own times on the grid (5.5 is half a frame), never a guess
+
+    def test_lead_and_tail_margins_and_the_shorthand(self):
+        asked = lambda *a: self.cut("0", *a)[0]["word_segments"][0]
+        self.assertIsNone(asked("--margin-lead", "0.2")["onset"])  # no --onset-search: nothing measured, and it says so
+        # the transcript's 0.6-1.4 s: 0.2 s before, 0.4 s after, the end up to a frame (1.8 is frame 45)
+        self.assertEqual(asked("--margin-lead", "0.2", "--margin-tail", "0.4")["cut"], [0.4, 1.8])
+        self.assertEqual(asked("--margin", "0.2")["cut"], [0.4, 1.6])
+        self.assertEqual(asked("--margin", "0.2", "--margin-tail", "0.05")["cut"], [0.4, 1.48])
+        self.assertEqual(asked()["cut"], [0.6, 1.4])  # no editing policy by default
+
+    def test_ranges_the_margins_make_overlap_meet_in_the_middle(self):
+        doc, out = self.cut("0,1", "--margin", "0.5")
+        one, two = doc["word_segments"]
+        self.assertEqual(one["cut"][1], two["cut"][0])
+        self.assertAlmostEqual(one["cut"][1], (1.4 + 0.5 + 2.3 - 0.5) / 2, delta=0.04)
+        self.assertAlmostEqual(probe(str(out))["duration"], two["cut"][1] - one["cut"][0], delta=0.06)
+
+    def test_a_dry_run_measures_and_writes_nothing(self):
+        doc, out = self.cut("0", "--onset-search", "0.6", dry=True)
+        self.assertTrue(doc["dry_run"])
+        self.assertFalse(out.exists())
+        self.assertAlmostEqual(doc["word_segments"][0]["onset"]["measured"], 1.0, delta=0.01)
+
+    def test_refusals(self):
+        for args in (("--word-segments", "0"), ("--words", str(self.words))):
+            with self.subTest(args=args):
+                proc = script("cut.py", self.src, *args, "-o", self.dir / "no.mp4", "--json", expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+        for ranges in ("4", "2-1", "0-2,2-3", "a"):
+            with self.subTest(ranges=ranges):
+                self.assertEqual(self.cut(ranges, fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--segments", "0-1", fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--margin-tail", "-1", fail=True)[0]["error"]["kind"], "input")
+        self.assertEqual(self.cut("0", "--onset-search", "0", fail=True)[0]["error"]["kind"], "input")
+        self.assertFalse((self.dir / "out.mp4").exists())
 
 
 if __name__ == "__main__":

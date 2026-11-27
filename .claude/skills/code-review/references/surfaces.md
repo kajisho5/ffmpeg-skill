@@ -14,7 +14,7 @@ appears on.
 | `SKILL.md` | runtime guidance for the calling agent | tested against the contract; < 30,000 bytes |
 | `references/scripts.md` | per-tool detail | docs consistency tests |
 | `docs/contract.md` | the contract restated for humans | `tests/test_contract.py` |
-| `CHANGELOG.md` | the entry for the change | `test_changelog_mentions_every_closed_issue_since_last_tag` |
+| `changelog.d/<slug>.md` (folded into `CHANGELOG.md` by the release) | the entry for the change | `test_changelog_mentions_every_closed_issue_since_last_tag` |
 | `demos/build.py` → `docs/demos.md` | a before/after demo per feature | a test asserts every `scripts/*.py` appears in some demo |
 | `mcp/` | MCP tools derived from the contract | MCP derivation tests |
 | `bin/install.js` `PAYLOAD`, `package.json` `files` | what ships in npm | `tests/release_check.sh` |
@@ -28,7 +28,7 @@ appears on.
   table, JSON document or HTML file goes in `INSPECTION` in `demos/build.py`
   instead of a demo.
 - **A `feat` PR** updates `README.md`, `SKILL.md`, `references/scripts.md`,
-  `docs/contract.md` and `CHANGELOG.md`. A feature only `SKILL.md` knows about is
+  `docs/contract.md` and a changelog fragment. A feature only `SKILL.md` knows about is
   half shipped — the README is read by people who never open `SKILL.md`.
 - **`SKILL.md` under 30,000 bytes** is a test
   (`test_skill_md_stays_under_the_30kb_budget`). Adding a line means trimming one;

@@ -27,7 +27,13 @@ SHIPPED = ("scripts/", "mcp/")
 _spec = importlib.util.spec_from_file_location("resolve_version", pathlib.Path(__file__).with_name("resolve_version.py"))
 RESOLVER = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(RESOLVER)
-LEDGER = "docs/defect-ledger.jsonl"
+_spec = importlib.util.spec_from_file_location("defect_ledger", pathlib.Path(__file__).with_name("defect_ledger.py"))
+LEDGER_MOD = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(LEDGER_MOD)
+_spec = importlib.util.spec_from_file_location("changelog_fragments", pathlib.Path(__file__).with_name("changelog_fragments.py"))
+FRAGMENTS = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(FRAGMENTS)
+LEDGER = f"{LEDGER_MOD.DIR}/<date>-<issue>.json"
 EXEMPT_TITLE = re.compile(r"^(refactor|chore|docs|ci|test|build)\b", re.I)
 HUNK_TEST = re.compile(r"^@@ .* @@.*\bdef (test_\w+)")
 DEF_LINE = re.compile(r"^[ +](\s+)def (\w+)\(")
@@ -221,16 +227,15 @@ def main() -> int:
     if EXEMPT_TITLE.match(args.title):
         print(f"title {args.title!r} declares no behaviour change: not judged")
         return 0
-    fixes = re.match(r"fix\b", args.title, re.I) or any(
-        line.startswith("+- ") for line in git("diff", base, args.head, "--", "CHANGELOG.md").splitlines())
-    added_entries = [line for line in git("diff", base, args.head, "--", LEDGER).splitlines() if line.startswith("+{")]
+    fixes = re.match(r"fix\b", args.title, re.I) or FRAGMENTS.adds_fix(git, base, args.head)
+    added_entries = LEDGER_MOD.added(git, base, args.head)
     # a class the ledger keeps recording needs a guard that covers every tool (docs/defect-guards.json)
     guards_path = pathlib.Path("docs/defect-guards.json")
     if fixes and added_entries and guards_path.exists():
         guards = json.loads(guards_path.read_text(encoding="utf-8"))
-        ledger_rows = [json.loads(line) for line in pathlib.Path(LEDGER).read_text(encoding="utf-8").splitlines() if line.strip()]
+        ledger_rows = LEDGER_MOD.rows()
         for entry in added_entries:
-            cls = json.loads(entry[1:]).get("class")
+            cls = entry.get("class")
             count = sum(1 for r in ledger_rows if r.get("class") == cls)
             guard = guards["classes"].get(cls) or {}
             if count >= guards["threshold"] and not guard.get("test"):
@@ -239,17 +244,17 @@ def main() -> int:
                       "tests/test_guards.py, name it in docs/defect-guards.json, and land it with or before this fix")
                 return 1
     if fixes and not added_entries and not args.no_ledger:
-        print(f"a fix adds a line to {LEDGER}: the defect's class, why it got through, and the mechanism "
+        print(f"a fix adds an entry, {LEDGER}: the defect's class, why it got through, and the mechanism "
               "changed so the class cannot recur (#632)")
         return 1
     if fixes:
         net = sum(int(a) - int(r) for a, r, name in (line.split("\t") for line in git(
             "diff", "--numstat", base, args.head, "--", *SHIPPED).splitlines()) if name.endswith(".py") and a != "-")
         limit = budget.get("fix_max_net_lines")
-        reasons = [json.loads(line[1:]).get("size_reason") for line in added_entries]
+        reasons = [entry.get("size_reason") for entry in added_entries]
         if limit is not None and net > limit and not any(reasons) and not args.no_ledger:
             print(f"this fix adds {net} net lines to shipped code (limit {limit}): prefer a refusal or removing a mode, "
-                  f"or give the reason as size_reason in its {LEDGER} line")
+                  f"or give the reason as size_reason in its ledger entry ({LEDGER})")
             return 1
     tests = changed_tests(git("diff", "--function-context", base, args.head, "--", "tests"),
                           lambda module: git("show", f"{args.head}:tests/{module}.py"),

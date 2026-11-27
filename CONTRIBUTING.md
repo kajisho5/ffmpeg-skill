@@ -89,8 +89,12 @@ would have caught the original bug isn't done yet.
   future maintainers (human or agent) need most.
 - A `feat` PR updates every place the feature is stated: `README.md` (the tool
   table, the contract table, gotchas), `SKILL.md`, `references/scripts.md`,
-  `docs/contract.md` and `CHANGELOG.md`. The README is read by people who never
+  `docs/contract.md` and a changelog fragment. The README is read by people who never
   open SKILL.md, so a feature that only SKILL.md knows about is half shipped.
+- **A change adds a fragment file, not lines under `## Unreleased`** (#678): `changelog.d/<slug>.md`,
+  starting with `### Fixed`, `### Added` or `### Changed`, then its bullets (format in
+  `changelog.d/README.md`). Two open PRs then never conflict in `CHANGELOG.md`; the release folds
+  the fragments into the new version's section and deletes them.
 - `SKILL.md` must stay under **30,000 bytes** — it is loaded into every session.
   Since 1.15 this is a test
   (`tests/test_contract.py::test_skill_md_stays_under_the_30kb_budget`), not a

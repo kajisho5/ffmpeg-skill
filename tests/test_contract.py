@@ -349,13 +349,33 @@ class ContractTests(unittest.TestCase):
             self.assertTrue((ROOT / rel).is_file(), rel)
         pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json",
+                         ".codex-plugin/plugin.json", "gemini-extension.json"):
             doc = json.loads((ROOT / manifest).read_text(encoding="utf-8"))
             self.assertEqual((doc["name"], doc["version"]), ("ffmpeg-skill", pkg["version"]), manifest)
             self.assertTrue(doc.get("description"), manifest)
             self.assertGreaterEqual(release.count(manifest), 2, f"{manifest}: bumped and staged by release.yml")
         cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue((ROOT / cursor["logo"]).is_file(), "the logo is a committed, relative path")
+        codex = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        logo = codex["interface"]["logo"]
+        self.assertTrue((ROOT / (logo[2:] if logo.startswith("./") else logo)).is_file(),
+                        "the Codex logo is a committed, relative path inside the plugin")
+        agents_market = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        claude_market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        plugin_source = {
+            "source": "git-subdir",
+            "url": "https://github.com/kajisho5/ffmpeg-skill.git",
+            "path": "ffmpeg-skill",
+            "ref": "plugin",
+        }
+        self.assertEqual(agents_market["name"], "ffmpeg-skill")
+        self.assertEqual([p["name"] for p in agents_market["plugins"]], ["ffmpeg-skill"])
+        self.assertEqual(agents_market["plugins"][0]["source"], plugin_source)
+        self.assertEqual(agents_market["plugins"][0]["source"], claude_market["plugins"][0]["source"],
+                         ".agents marketplace must point at the same plugin-branch tree as .claude-plugin")
+        self.assertEqual(codex["skills"], "./skills/")
+        self.assertNotIn("mcpServers", codex)
         # the npm installer copies one skill directory: the plugin copy must not ride along, or an
         # agent's skills folder would hold the same skill twice
         self.assertNotIn("skills/", pkg["files"])
@@ -504,9 +524,25 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
             for needed in (".claude-plugin/plugin.json", ".claude-plugin/icon.png",
+                           ".codex-plugin/plugin.json", ".codex-plugin/icon.png",
                            "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
                            "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
                 self.assertIn(needed, names)
+            # Codex skills/ and logo paths resolve inside the shipped plugin-branch layout
+            codex_shipped = json.loads((tree / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            skills_rel = codex_shipped["skills"]
+            if skills_rel.startswith("./"):
+                skills_rel = skills_rel[2:]
+            self.assertTrue((tree / skills_rel).is_dir(),
+                            f"Codex skills path {codex_shipped['skills']!r} missing in plugin tree")
+            logo_rel = codex_shipped["interface"]["logo"]
+            if logo_rel.startswith("./"):
+                logo_rel = logo_rel[2:]
+            self.assertTrue((tree / logo_rel).is_file(),
+                            f"Codex logo path {codex_shipped['interface']['logo']!r} missing in plugin tree")
+            self.assertTrue((tree / skills_rel / "ffmpeg-skill" / "SKILL.md").is_file())
+            self.assertTrue((tree / "scripts").is_dir())
+            self.assertTrue((tree / "docs" / "contract.md").is_file())
             # bin/ is the npx installer: a plugin host installs, and the plugin directory flags it
             self.assertFalse([n for n in names if n.split("/")[0] in
                               ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
@@ -590,6 +626,8 @@ class ContractTests(unittest.TestCase):
             # under one directory, which is what a git-subdir marketplace source names
             self.assertTrue(all(n.startswith("ffmpeg-skill/") for n in listed if n), listed[:3])
             self.assertIn("ffmpeg-skill/.claude-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/icon.png", listed)
             self.assertIn("ffmpeg-skill/skills/ffmpeg-skill/SKILL.md", listed)
             again = publish(bare)                       # the branch holds this tree: nothing is pushed
             self.assertEqual(again.returncode, 0, again.stderr)
@@ -902,14 +940,11 @@ class ContractTests(unittest.TestCase):
         """4.0.1 was not published: 4.0.0 was bumped by hand, its section sat on top of
         CHANGELOG.md with no `## Unreleased` above it, and the bump step of the next release
         asserted on the missing heading. The step's own lines are run here on both shapes."""
-        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        start = release.index('          m = re.search(r"## Unreleased')
-        step = textwrap.dedent(release[start:release.index("          changelog_path.write_text(changelog", start)])
-        def bumped(changelog):
-            scope = {"re": re, "changelog": changelog, "old": "4.0.0",
-                     "section": "## 4.0.1\n\n_Automated release: since 4.0.0._\n\n- fix: one\n\n"}
-            exec(step, scope)
-            return scope["changelog"]
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        bumped = lambda changelog: frag.assemble(changelog, [], "4.0.1", "4.0.0", "- fix: one")
         head = "# Changelog\n\n> note\n\n"
         after_a_hand_bump = bumped(head + "## 4.0.0\n\nThe third break.\n\n## 3.15.1\n\nold\n")
         self.assertEqual(re.findall(r"(?m)^## (\S+)", after_a_hand_bump), ["Unreleased", "4.0.1", "4.0.0", "3.15.1"])
@@ -985,11 +1020,18 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(market["plugins"][0]["source"], {
             "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
         self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
-        # every `marketplace add` line in the README carries the flag, however many there are
-        self.assertEqual(readme_text.count("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
-                         readme_text.count("marketplace add kajisho5/ffmpeg-skill"))
-        for host in ("claude plugin marketplace add", "codex plugin marketplace add"):
-            self.assertIn(f"{host} kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        # Claude still sparse-checks out .claude-plugin; every Claude `marketplace add` keeps the flag.
+        # The documented Codex route keeps --sparse .claude-plugin (checked against Codex 0.167);
+        # the agent-agnostic .agents/plugins/marketplace.json route does not need it.
+        self.assertEqual(readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
+                         readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill"))
+        self.assertIn("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("checked against Codex CLI 0.167", readme_text)
+        self.assertIn("2.2 MB instead of 66 MB in Codex 0.167", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill\n", readme_text)
+        self.assertIn("codex plugin add ffmpeg-skill@ffmpeg-skill", readme_text)
+        self.assertIn(".agents/plugins/marketplace.json", readme_text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)
@@ -1485,8 +1527,8 @@ import fit
 replacement = sys.argv.pop(1)
 sys.argv[0] = "fit.py"
 real_probe = fit.probe
-def probe_then_replace(path, role="input"):
-    measured = real_probe(path, role)
+def probe_then_replace(path, role="input", **kwargs):
+    measured = real_probe(path, role, **kwargs)
     if role == "input":
         shutil.copyfile(replacement, path)
     return measured
@@ -1603,6 +1645,8 @@ sys.exit(fit.main())
         log = sh("git", "log", f"{last_tag}..HEAD", "--format=%B----COMMIT----", cwd=ROOT, check=False).stdout
         closed = sorted(set(int(n) for n in re.findall(r"(?im)^closes\s+#(\d+)\.?\s*$", log)))
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for fragment in sorted((ROOT / "changelog.d").glob("*.md")):  # not yet folded in by the release (#678)
+            changelog += fragment.read_text(encoding="utf-8")
         missing = [n for n in closed if f"#{n}" not in changelog]
         self.assertEqual(missing, [], f"issue(s) closed since {last_tag} but not mentioned in CHANGELOG.md: {missing}")
 
@@ -1977,6 +2021,26 @@ sys.exit(fit.main())
         # a direct push has no PR by SHA either, and keeps the title rules
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
+        # A PR merged with a merge commit is that one commit, not its branch's: the branch commit
+        # "... (#453)" named an issue, and asking for PR 453's labels stopped every release after
+        # 4.7.1. The real git log, on a throwaway repository.
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                       GIT_COMMITTER_EMAIL="t@t")
+            git = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "base")
+            git("tag", "v1.0.0")
+            git("checkout", "-q", "-b", "topic")
+            git("commit", "-q", "--allow-empty", "-m", "feat: x (#453)")
+            git("checkout", "-q", "main")
+            git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #715 from o/topic")
+            git("commit", "-q", "--allow-empty", "-m", "fix: y (#716)")
+            subjects = [s for _, s in rv._main_commits("v1.0.0..HEAD", cwd=repo)]
+        self.assertEqual(subjects, ["fix: y (#716)", "Merge pull request #715 from o/topic"])
+        self.assertIn('"--first-parent", rev_range', (ROOT / ".github" / "workflows" / "release.yml").read_text(),
+                      "the release notes list main's commits too, not a merged branch's")
 
     def test_release_version_resolver_does_not_depend_on_a_pr_title(self):
         """3.13.2 (2026-11-19): four PRs titled without a fix/feat prefix carried only `chore`
@@ -2143,6 +2207,17 @@ sys.exit(fit.main())
             self.assertEqual(_common.matrix_chain(meta(color_space="smpte170m"), meta()), "")
         finally:
             _common.STATE.codec, _common.STATE.hw = saved
+
+    def test_mix_color_chains_accepts_missing_metadata(self):
+        """An input that was not probed is accepted just as by matrix_chain."""
+        tagged = {"video": {"color_space": "bt709"}}
+        self.assertEqual(_common.mix_color_chains([None, {}], None), ["", ""])
+        self.assertEqual(_common.mix_color_chains([None, {}], None, draws_colour=True),
+                         [_common.label_chain(None, None), _common.label_chain({}, None)])
+        self.assertEqual(_common.mix_color_chains([tagged, None], None),
+                         [_common.matrix_chain(tagged, None), _common.label_chain(None, None)])
+        self.assertEqual(_common.mix_color_chains([None, tagged], None),
+                         [_common.label_chain(None, None), _common.matrix_chain(tagged, None)])
 
     def test_fold_bt709_matrix_into_the_tools_graph(self):
         """run() moves the encoder line's conversion -vf into the tool's own graph, first: with no
@@ -2386,9 +2461,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 73_500),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_000),  # +500 more for color.py --source-alpha-mode (#453)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
+            ({}, 12, 75_000),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_600),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -2903,6 +2978,20 @@ sys.exit(fit.main())
         proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--call", "not_a_tool")
         self.assertTrue(json.loads(proc.stdout)["isError"])
 
+    def test_pacing_profile_surface_and_mcp_repeated_references(self):
+        tool = self.tools["silence"]
+        schema = tool["output_schema"]["properties"]["profile"]
+        self.assertEqual(schema["properties"]["contract"]["const"], "pacing-profile@1")
+        self.assertIn("noise_floor_db", schema["properties"]["silence_detection"]["required"])
+        self.assertIn("source", self.tools["verify"]["input_schema"]["properties"])
+        args = {"input": str(self.wav), "extract_profile": True,
+                "references": [str(self.wav), str(self.wav)], "dry_run": True}
+        response = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "silence", "arguments": args}}])[0]["result"]
+        self.assertFalse(response.get("isError"), response)
+        profile = response["structuredContent"]["profile"]
+        self.assertEqual(profile["probe_meta"]["analysis_count"], 3)
+
     def test_mcp_round_trips_built_from_the_derived_schema(self):
         listed = {t["name"]: t["inputSchema"] for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]}
         project = self.out("mcp_project.json")
@@ -3245,6 +3334,41 @@ sys.exit(fit.main())
             else:
                 self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
 
+    def test_a_build_outside_the_tested_majors_is_said_once_and_the_run_goes_on_556(self):
+        """#556: an ffprobe that reports a future major, a git build or an unreadable version adds one
+        ffmpeg_version_untested warning (build release / git / unknown) and the run succeeds; a tested
+        major adds none. The tested range follows the FFmpeg versions the CI workflow installs."""
+        from _common import runner
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        majors = {6 if "Ubuntu 24.04 apt = 6.1" in ci else None, 7 if "ffmpeg 7.1 apt" in ci else None,
+                  8 if "Homebrew = 8.x" in ci else None, int(re.search(r"choco install ffmpeg --version (\d+)\.", ci).group(1))}
+        self.assertEqual((min(majors - {None}), max(majors - {None})), runner.TESTED_FFMPEG_MAJORS, majors)
+        if os.name == "nt":
+            self.skipTest("the ffprobe shim is a POSIX shell script")
+        src = self.out("tested_src.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:d=1", src)
+        real = shutil.which("ffprobe")
+        cases = (("ffprobe version 9.0.2 Copyright", None), ("ffprobe version 6.1.1-3ubuntu5 Copyright", None),
+                 ("ffprobe version 10.0 Copyright", ("10.0", "release")),
+                 ("ffprobe version N-12345-gabcdef Copyright\nlibavutil      60. 3.100 / 60. 3.100", ("8", "git")),
+                 ("ffprobe version N-12345-gabcdef Copyright", (None, "unknown")))
+        for n, (banner, want) in enumerate(cases):
+            shim = self.out(f"tested_shim_{n}")
+            shim.mkdir(exist_ok=True)
+            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then printf "{banner}\\n"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
+            (shim / "ffprobe").chmod(0o755)
+            env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), str(src), "--start", "0", "--end", "0.5", "--json",
+                                   "-o", str(self.out(f"tested_out_{n}.mp4"))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
+            found = [w for w in json.loads(proc.stdout).get("diagnostics", {}).get("warnings", []) if w["code"] == "ffmpeg_version_untested"]
+            if want is None:
+                self.assertEqual(found, [], banner)
+                continue
+            self.assertEqual(len(found), 1, (banner, found))
+            self.assertEqual((found[0]["version"], found[0]["build"], found[0]["tested"]), (*want, "6.x-9.x"), banner)
+            self.assertEqual(proc.stderr.count("not covered by the test suite"), 1, proc.stderr)
+
     def test_doctor_checks_ffprobe_against_the_floor_too(self):
         """requirements name ffprobe >= 6.1 as well: an old ffprobe beside a 6.1 ffmpeg is unsupported."""
         from unittest import mock
@@ -3305,13 +3429,13 @@ sys.exit(fit.main())
         text, a test over every tool). `mechanism: null` needs `why_none`, and a class gets that
         answer once: the second defect of a class with no mechanism behind it is the evidence
         that the mechanism is what has to change."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
         seen_without = {}
-        path = ROOT / "docs" / "defect-ledger.jsonl"
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            where = f"{path.name}:{n}"
+        for entry in ledger.rows(ROOT):
+            where = n = entry.pop("_where")
             for key in ("date", "issue", "class", "what", "escaped", "mechanism"):
                 self.assertIn(key, entry, where)
             self.assertIn(entry["class"], self.DEFECT_CLASSES, where)
@@ -3323,6 +3447,139 @@ sys.exit(fit.main())
                              f"{where}: class {entry['class']!r} already had a defect closed with no mechanism "
                              f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
             seen_without[entry["class"]] = n
+
+    def test_two_fixes_add_ledger_entries_without_a_conflict_678(self):
+        """#678: every fix appended a line to docs/defect-ledger.jsonl, so two open fixes always
+        conflicted in its last line, and external PRs (a fork's branch the maintainer cannot push
+        to) stalled each time main moved. An entry is a file under docs/defect-ledger/: two
+        branches that each add one merge with no conflict, and the ledger reader and revert_proof
+        find the entry a change adds, as a file or as a line a branch opened before the split
+        still adds to the .jsonl."""
+        import importlib.util
+        import tempfile
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        entry = lambda n: json.dumps({"date": "2026-11-26", "issue": n, "class": "claim", "what": "w", "escaped": "e", "mechanism": "m"})
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / ledger.LEGACY).write_text(entry(1) + "\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n in (2, 3):
+                run("checkout", "-q", "-b", f"fix{n}", "main")
+                (root / ledger.DIR).mkdir(exist_ok=True)  # git keeps no empty directory
+                (root / ledger.DIR / f"2026-11-26-{n}.json").write_text(entry(n) + "\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"fix: {n}")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "fix2")], [2])
+            run("checkout", "-q", "fix2")
+            run("merge", "-q", "--no-edit", "fix3")  # check=True: a conflict fails here
+            self.assertEqual([e["issue"] for e in ledger.rows(root)], [1, 2, 3])
+            # a branch opened before the split adds its line to the .jsonl: that is an entry too
+            run("checkout", "-q", "-b", "old", "main")
+            with open(root / ledger.LEGACY, "a", encoding="utf-8") as fh:
+                fh.write(entry(4) + "\n")
+            run("commit", "-q", "-am", "fix: 4")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "old")], [4])
+        self.assertTrue((ROOT / ledger.DIR).is_dir(), "the repository keeps its entries under docs/defect-ledger/")
+
+    def test_a_fix_pr_says_what_was_swept_in_its_siblings_section(self):
+        """AGENTS.md asks a fix's PR to say what was swept for the same defect elsewhere, and the
+        template has a `## Siblings` section for it, but nothing checked it, so a fix from inside or
+        outside could land with the sweep skipped. The section, with the template's comment
+        removed, is not empty and names the command that was run; a PR that is not a fix is not
+        judged."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("siblings_section", ROOT / ".github" / "scripts" / "siblings_section.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        template = (ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        self.assertIn("## Siblings", template)
+        self.assertEqual(mod.problem(template), "the `## Siblings` section is empty",
+                         "the template as it stands, its comment only, is an empty section")
+        self.assertIn("no `## Siblings` section", mod.problem("## Summary\n\nfixed it\n"))
+        self.assertIn("names no command", mod.problem("## Siblings\n\nI looked around, nothing else.\n## Notes\n"))
+        swept = ("## Summary\r\n\r\nx\r\n\r\n## Siblings\r\n\r\nClass: a zero replaced by a default. "
+                 "`python3 tests/edge_values.py --json`: 107 ran, none other.\r\n")
+        self.assertIsNone(mod.problem(swept))
+        # the command must sit in this section, not in a later one
+        self.assertIsNotNone(mod.problem("## Siblings\n\nnone\n\n## Test plan\n\n`python3 -m unittest`\n"))
+        script = ROOT / ".github" / "scripts" / "siblings_section.py"
+        def run(title, body):
+            env = {**os.environ, "PR_BODY": body}
+            return subprocess.run([sys.executable, str(script), "--title", title], env=env, capture_output=True, text=True).returncode
+        self.assertEqual(run("fix: something", template), 1)
+        self.assertEqual(run("fix(color): something", swept), 0)
+        self.assertEqual(run("docs: something", template), 0, "a PR that is not a fix is not judged")
+        workflow = (ROOT / ".github" / "workflows" / "siblings.yml").read_text(encoding="utf-8")
+        self.assertIn("edited", workflow, "an edit of the body runs the check again")
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
+        self.assertNotIn("$PR_BODY", workflow, "the body reaches the script through the environment, never a shell word")
+
+    def test_changelog_fragments_678(self):
+        """#678: every PR edited `## Unreleased`, so two open PRs always conflicted there. A change
+        is a file under changelog.d/ that starts with its section heading; the release folds them
+        into the new version's section (Fixed / Added / Changed, then the generated bullets), with
+        whatever a branch opened before the split still wrote under `## Unreleased`, and deletes
+        them. Two branches that each add one merge with no conflict, and revert_proof counts a
+        `### Fixed` fragment as a fix the way it counts a `+- ` line in CHANGELOG.md."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        # the shape of a real release: 4.8.0's section is the automated line, `### ` groups, then bullets
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        real = re.search(r"(?m)^## 4\.8\.0\n.*?(?=^## )", changelog, re.S).group(0)
+        self.assertRegex(real, r"(?s)^## 4\.8\.0\n\n_Automated release: .*?_\n\n### Fixed\n\n.*### Added\n\n.*\n- ci: ")
+        head = "# Changelog\n\n> note\n\n"
+        legacy = "### Changed\n\n- **Old branch.** Wrote under Unreleased (#1)."
+        out = frag.assemble(
+            head + "## Unreleased\n\n" + legacy + "\n\n## 4.8.0\n\nprev\n",
+            [("b.md", "### Added\n\n- **New flag** (#3).\n"), ("a.md", "### Fixed\n\n- Fix one (#2).\n  More.\n"),
+             ("c.md", "### Fixed\n- Fix two (#4).\n")],
+            "4.9.0", "4.8.0", "- fix: one (#2)\n- feat: two", "\n\nCloses: #2, #3")
+        self.assertEqual(out, head + "## Unreleased\n\n(nothing yet)\n\n## 4.9.0\n\n"
+                         "_Automated release: version and notes generated from pull requests merged since 4.8.0._\n\n"
+                         + legacy + "\n\n### Fixed\n\n- Fix one (#2).\n  More.\n- Fix two (#4).\n\n"
+                         "### Added\n\n- **New flag** (#3).\n- fix: one (#2)\n- feat: two\n\nCloses: #2, #3\n\n## 4.8.0\n\nprev\n")
+        self.assertEqual(re.findall(r"(?m)^### (\w+)", out.split("## 4.8.0")[0]), ["Changed", "Fixed", "Added"])
+        # no fragment, no legacy text: today's output; a headingless fragment is kept, under Changed
+        self.assertIn("since 4.8.0._\n\n- fix: one\n\n", frag.assemble(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n", [], "4.9.0", "4.8.0", "- fix: one"))
+        self.assertIn("### Changed\n\nloose note", frag.assemble(head + "## 4.8.0\n", [("x.md", "loose note\n")], "4.9.0", "4.8.0", "- b"))
+        # the shipped CHANGELOG.md and fragments: every fragment names its section
+        for path in (ROOT / "changelog.d").glob("*.md"):
+            if path.name != "README.md":
+                self.assertIn(frag.split_fragment(path.read_text(encoding="utf-8"))[0], frag.SECTIONS, path.name)
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / "changelog.d").mkdir()
+            (root / "CHANGELOG.md").write_text(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n\nprev\n", encoding="utf-8")
+            (root / "changelog.d" / "README.md").write_text("format\n", encoding="utf-8")
+            (root / "docs" / "defect-ledger" / "README.md").write_text("ledger\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n, section in ((2, "Fixed"), (3, "Added")):
+                run("checkout", "-q", "-b", f"b{n}", "main")
+                (root / "changelog.d" / f"{n}.md").write_text(f"### {section}\n\n- Change {n}.\n", encoding="utf-8")
+                (root / "docs" / "defect-ledger" / f"2026-11-26-{n}.json").write_text("{}\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"change {n}")
+            self.assertTrue(frag.adds_fix(run, "main", "b2"))
+            self.assertFalse(frag.adds_fix(run, "main", "b3"), "an Added fragment is not a fix")
+            run("checkout", "-q", "b2")
+            run("merge", "-q", "--no-edit", "b3")  # check=True: a conflict fails here
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").glob("[0-9]*.md")), ["2.md", "3.md"])
+            # the release step's own call, on this copy: the fragments move into the section and are deleted
+            got = frag.assemble((root / "CHANGELOG.md").read_text(encoding="utf-8"), frag.take_fragments(root / "changelog.d"),
+                                "4.9.0", "4.8.0", "- chore: x")
+            self.assertIn("### Fixed\n\n- Change 2.\n\n### Added\n\n- Change 3.\n- chore: x\n\n## 4.8.0", got)
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").iterdir()), ["README.md"])
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("take_fragments", release)
+        self.assertIn("git add -A changelog.d", release)
 
     def test_the_632_scripts_read_what_a_change_did(self):
         """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the
@@ -3873,7 +4130,7 @@ sys.exit(fit.main())
         JPEG are converted to BT.709 by every tool that re-encodes them; a still composited over the
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
-        beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
+        beside a converted or already BT.709 cell. Two untagged cells need no label."""
         s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
@@ -3906,7 +4163,10 @@ sys.exit(fit.main())
             ("waveform", [self.src, "--image", png], {"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p": 1}),
             ("grid", [self.src, s601, "--cols", "2", "--rows", "1"], {"colorspace=ispace=smpte170m:": 1, label: 1}),
             ("grid", [s601, self.src, png, s709, "--cols", "2", "--rows", "2"], {"colorspace=ispace=smpte170m:": 1, label: 1, rgb: 1}),
-            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [s709, self.src, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [self.src, self.src, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [s709, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
         ]
         for n, (name, args, want) in enumerate(cases):
             with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
@@ -4836,11 +5096,11 @@ sys.exit(fit.main())
         self.assertTrue(doc["edit_list"])
 
     def test_verified_reports_what_the_tool_measured(self):
-        """#189 C: every success document carries `verified` and `verification`. cut: probe and its streams;
+        """#189 C: every success document carries `verified` and `verification`. cut: probe, a copy's keyframe span and its streams;
         loudness: probe + its own after-write measurements (level, and since 2.20 length); export on a raw source: loudness step
         not ok -> verified false while status stays completed; --dry-run verified nothing."""
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_cut.mp4"), "--json").stdout)
-        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("streams", True), ("stream_lengths", True), ("decode", True)]))
+        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("copy_span", True), ("streams", True), ("stream_lengths", True), ("decode", True)]))
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness", "duration"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
@@ -9332,6 +9592,52 @@ class EvalRunnerTests(unittest.TestCase):
         task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
         self.assertTrue(run.score("called render.py --template reel", task)[0])
 
+    def test_score_slot_matches_a_whole_name_not_a_word_that_contains_it(self):
+        run = self.evals_run
+        # agent_prompts_24.json's slots are bare stems, and a substring test let any word holding
+        # one fill the slot: "execute" ran cut, "benefit" fit, "looks" look, so a transcript that
+        # never called the script passed its routing check
+        for slot, text in (("cut", "I will execute the plan"), ("fit", "a clear benefit"),
+                           ("look", "The output looks fine"), ("cut", "ran shortcut.py a.mp4"),
+                           ("cut.py", "ran shortcut.py a.mp4"), ("render", "the renderer is ready"),
+                           ("cut.py", "I will cut the clip")):  # a slot written with .py needs the script
+            task = {"id": 7, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # the script on a command line or by path, and the tool name an MCP harness logs, still fill it
+        for slot, text in (("cut", "python3 scripts/cut.py a.mp4"), ("cut.py", "$ cut.py a.mp4"),
+                           ("look", "python3 ~/.claude/skills/ffmpeg-skill/scripts/look.py out.mp4"),
+                           ("cut", "python C:\\skills\\ffmpeg-skill\\scripts\\cut.py a.mp4"),
+                           ("cut", "Ran `cut.py`."), ("cut", "scripts/cut.pyで切り出しました"),
+                           ("look", "mcp__ffmpeg-skill__look"), ("look", 'mcp__ffmpeg-skill__look({"input": "out.mp4"})'),
+                           ("fit|render", "ran render.py project.json"),
+                           ("--dry-run", "cut.py a.mp4 --dry-run"), ("--on-missing skip", "join.py --on-missing skip"),
+                           ("--list", "join.py --list a.mp4")):
+            task = {"id": 8, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertTrue(run.score(text, task)[0], f"{slot!r} in {text!r}")
+
+    def test_score_bare_slot_needs_the_tool_called_not_the_word_written(self):
+        run = self.evals_run
+        # the request is part of the transcript, and a bare slot that took the plain word let a
+        # run that only restated the request pass ("I will cut the clip" filled cut); it takes the
+        # script's file name or the MCP tool name, not prose, another script or another file
+        for slot, text in (("cut", "I will cut the clip"), ("look", "let me look at the output"),
+                           ("check", "check the file first"), ("audio", "the audio is fine"),
+                           ("fit", "fit it to 9:16"), ("look", "tools/call look"),
+                           ("cut", "ran auto_cut.py a.mp4"), ("cut", "ran jump_cut.py a.mp4"),
+                           ("cut", "ran pre-cut.py a.mp4"), ("cut", "wrote cut.mp4"), ("cut", "read cut-list.txt"),
+                           ("cut", "deleted cut.pyc"), ("render", "inspected render.pycache"),
+                           ("cut", "mcp__ffmpeg-skill__cut_list"), ("cut", "mcp__ffmpeg-skill__auto_cut"),
+                           ("cut.py", "ran scripts/shortcut_cut.py a.mp4"), ("cut.py", "ran x.cut.py")):
+            task = {"id": 9, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # a flag slot is the whole flag: a longer flag that starts with it does not fill it
+        for slot, text in (("--keep-alpha", "fit.py --keep-alpha-matte"), ("--list", "join.py --list-formats"),
+                           ("--dry-run", "cut.py a.mp4 ---dry-run")):
+            task = {"id": 10, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        self.assertTrue(run.score("fit.py --keep-alpha=1", {"id": 11, "request": "r", "expect": ["--keep-alpha"],
+                                                          "grader_expect": None, "grader_not": None})[0])
+
     def test_score_grader_expect_regex_must_match(self):
         run = self.evals_run
         task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}
@@ -10459,6 +10765,45 @@ class Issue415Tests(unittest.TestCase):
         # an input that is not there yet (a dry run's planned file) counts as having the stream
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(d / "not_written_yet.mkv"))
+
+    def test_an_mxf_output_of_a_reencode_is_refused_before_ffmpeg_runs(self):
+        """#736: MXF takes PCM sound only, so every tool's AAC line failed in the muxer after the
+        encode started ("Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'",
+        nothing written) and a dry run said completed; the H.264 line writes dts the muxer
+        rejects on a read-back. Refused now through the one check every command passes, real and
+        dry run alike, for the three cut modes and the tools of the sweep that broadcast masters
+        meet; a stream copy of the same MXF still writes a decodable file with its PCM sound."""
+        d = self.dir("mxf_out")
+        mxf = d / "in.mxf"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5", "-f", "lavfi", "-i", "sine=r=48000:d=5",
+               "-c:v", "mpeg2video", "-g", "12", "-bf", "0", "-c:a", "pcm_s16le", "-timecode", "01:00:00:00", mxf)
+        for name, argv in (("cut", ["--start", "1.5", "--end", "3", "--accurate"]),
+                           ("cut", ["--start", "1.5", "--end", "3", "--smart"]),
+                           ("fit", ["--duration", "2.5", "--method", "speed"]), ("color", ["--correct", "--contrast", "1.1"]),
+                           ("loudness", []), ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, argv=argv, dry=bool(dry)):
+                    out = d / f"{name}.mxf"
+                    doc = json.loads(tool(name, mxf, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                    self.assertEqual(doc["status"], "failed")
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                    self.assertEqual(err["details"]["container"], "mxf")
+                    self.assertTrue(err["details"]["encoders"])
+                    self.assertIn(".mov", err["hint"])
+                    self.assertFalse(out.exists())
+        # a stream copy still writes a decodable MXF with its PCM sound: one range, and a removal whose
+        # parts land on keyframes (a copy join since #739 reads the MXF keyframes right)
+        for name, argv in (("copy", ["--start", "1.5", "--end", "3"]), ("remove", ["--remove", "1-2"])):
+            with self.subTest(copy=name):
+                kept = d / f"{name}.mxf"
+                doc = json.loads(tool("cut", mxf, *argv, "-o", kept, "--json").stdout)
+                self.assertEqual((doc["status"], doc.get("mode")), ("completed", "copy"))
+                probed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                                         "-of", "csv=p=0", str(kept)], capture_output=True, text=True)
+                self.assertEqual(probed.stdout.strip(), "pcm_s16le")
+                decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
+                self.assertEqual(decoded.stderr.strip(), "")
 
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
@@ -11843,6 +12188,34 @@ def _unused_imports(path: Path) -> "list":
             if isinstance(c, ast.Constant) and isinstance(c.value, str):
                 used.update(n.id for n in ast.walk(ast.parse(c.value, mode="eval")) if isinstance(n, ast.Name))
     return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
+
+
+class PremultipliedMergeMatrix740Tests(unittest.TestCase):
+    """#740: color.py's wide merge leg (a premultiplied ProRes 4444 master's mask kept at 16 bits
+    through the RGB premultiply) converted the graded YUV to RGB with `format=gbrp16le` alone,
+    which is swscale's BT.601 default: a BT.709-tagged source was read as BT.601 and written back
+    tagged BT.709, so opaque pixels came out by the 709->601 shift."""
+
+    def test_the_wide_merge_leg_names_the_matrix_the_grade_leaves(self):
+        from _common.alpha import wide_merge_leg
+        legs = {name: wide_merge_leg("prores4444", meta) for name, meta in (
+            ("bt709", {"video": {"color_space": "bt709"}}),
+            ("bt601", {"video": {"color_space": "smpte170m"}}),
+            ("untagged", {"video": {}}),
+            ("rgb", {"video": {"pix_fmt": "rgba", "color_space": "gbr"}}))}
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["bt709"])
+        self.assertIn("scale=in_color_matrix=bt601,format=gbrp16le", legs["bt601"])
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["rgb"],
+                      "an RGB source on a YUV line is the BT.709 that line is (#496)")
+        self.assertNotIn("in_color_matrix", legs["untagged"],
+                         "an untagged source has no matrix to name: swscale's own default stands")
+
+    def test_color_py_builds_the_leg_through_the_helper(self):
+        src = (SCRIPTS / "color.py").read_text(encoding="utf-8")
+        self.assertIn("wide_merge_leg(alpha_codec, meta)", src)
+        inline = [i for i, line in enumerate(src.splitlines(), 1)
+                  if "format=gbrp16le" in line and not line.strip().startswith("#")]
+        self.assertEqual(inline, [], f"color.py builds the wide merge leg inline at line {inline}")
 
 
 class Audit467Tests(unittest.TestCase):

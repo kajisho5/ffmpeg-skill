@@ -6,6 +6,7 @@ entries, the test here that catches the class wherever it happens: in the tools 
 one written after the test. A fix of a class whose guard is pending does not pass revert_proof.py,
 so a fix of one tool cannot be the end of a class that keeps coming back.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -168,6 +169,28 @@ class SweepGuards(unittest.TestCase):
         failed = {n: ((r["doc"] or {}).get("error") or {}).get("message") or r["stderr"][-200:]
                   for n, r in self.runs.items() if not self._done(r)}
         self.assertEqual(failed, {})
+
+    def test_sweep_mp4_audio_and_video_streams_decode(self):
+        """Decode the MP4 outputs in the cross-tool sweep on this FFmpeg build.
+
+        The sweep also writes a PNG and has inspection-only tools; those are not MP4s.
+        Pixel-value regressions still need their own tests: a successful decode cannot see them.
+        """
+        runs = {n: r for n, r in self.runs.items() if r["out"] and Path(r["out"]).suffix.lower() == ".mp4"}
+        self.assertTrue(runs, "the sweep produced no MP4 cases")
+        for name, run in runs.items():
+            with self.subTest(tool=name):
+                self.assertTrue(self._done(run), f"{name} did not complete: {run['stderr'][-500:]}")
+                proc = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_entries",
+                                       "stream=codec_type,nb_read_frames", "-of", "json", run["out"]],
+                                      capture_output=True, text=True, timeout=60)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertFalse(proc.stderr.strip(), proc.stderr)
+                media = [s for s in json.loads(proc.stdout)["streams"] if s["codec_type"] in ("video", "audio")]
+                self.assertTrue(media, run["out"])
+                for stream in media:
+                    frames = stream.get("nb_read_frames", "")
+                    self.assertTrue(frames.isdigit() and int(frames) > 0, stream)
 
     def test_every_tool_answers_while_its_stdin_stays_open(self):
         """automation (#664 and the two before it): a tool started with an open, silent stdin --
@@ -351,7 +374,10 @@ class GuardRegistryTests(unittest.TestCase):
         the test that guards it or the issue where the guard is still to be written; a registered
         test exists. A new class that reaches three fails this until it is registered."""
         guards = json.loads((ROOT / "docs" / "defect-guards.json").read_text(encoding="utf-8"))
-        rows = [json.loads(l) for l in (ROOT / "docs" / "defect-ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        rows = ledger.rows(ROOT)
         counts = {}
         for r in rows:
             counts[r["class"]] = counts.get(r["class"], 0) + 1

@@ -32,7 +32,7 @@ import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
-from _common import guard_sidecar, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
+from _common import guard_sidecar, mix_color_chains, video_args, aac_args, add_common, apply_common, default_output, die, emit, ffmpeg_base, info, time_arg, probe, run, X264_PRESETS, fmt_secs, decode_pcm_mono, rms_envelope, STATE
 from _common.emit import note, record_fallback, record_skip, warn
 from _common.decision import av_trim, conform_output_t, conform_to_length, rebase_project_paths
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -320,14 +320,7 @@ def main() -> int:
     parts: List[str] = []
     labels: List[str] = []
     project_clips: List[Dict] = []
-    # each camera converted by its own colour tags to the BT.709 the cut is tagged with; beside a
-    # converted camera an untagged one gets its BT.709 label, tags only, so 7.1+'s concat does not
-    # convert one to the other's "unknown" (BT.601) matrix
-    convert = [matrix_chain(m, metas[0]) for m in metas]
-    if any(convert):
-        convert = [c or label_chain(m, metas[0]) for c, m in zip(convert, metas)]
-    # concat mixes samples: a full-range camera beside a limited one is taken to limited range (#410)
-    convert = [c + range_chain(m, metas[0]) for c, m in zip(convert, metas)]
+    convert = mix_color_chains(metas, metas[0])
     # what is actually rendered: a range whose camera has not started yet plays camera 0, and the
     # result says so (`cuts` names the camera on screen, diagnostics.fallbacks the one asked for)
     rendered: List[Tuple[float, float, int]] = []

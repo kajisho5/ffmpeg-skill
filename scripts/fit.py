@@ -29,6 +29,11 @@ detection. A crop_content_off_centre warning names --crop-x/--crop-y with a
 suggested value, or --fit pad / --fit blur, when most of it is cut away.
 Advisory only: the output and the exit status are unchanged.
 
+--zoom in|out: a timed linear push-in/pull-out of the delivered frame toward
+--crop-x/--crop-y, the end zoom held after the move. Every frame keeps its
+timestamp (zoom.check measures it); the zoom upscales the frame (lanczos), so it
+adds no detail.
+
 Examples:
   python3 fit.py input.mp4 --duration 60 --method trim      # keep the first 60s
   python3 fit.py input.mp4 --duration 30 --method speed     # retime the whole clip to exactly 30s
@@ -41,6 +46,7 @@ Examples:
   python3 fit.py input.mp4 --width 1920 --height 1080            # exact frame, no aspect needed
   python3 fit.py input.mp4 --rotate 90                           # rotate 90 degrees clockwise
   python3 fit.py input.mp4 --flip h                              # mirror horizontally
+  python3 fit.py input.mp4 --zoom in --zoom-amount 1.5 --zoom-start 3 --zoom-duration 5   # push in to 1.5x over 3-8 s
 """
 import argparse
 import os
@@ -50,10 +56,11 @@ from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis, with_mapped_chapters
 from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
+from _common.placement import bbox
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
-from _common.probe import fingerprint
+from _common.probe import fingerprint, presentation_times
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
 # reported in the result's diagnostics (large_speed_change): the whole picture and sound
@@ -157,19 +164,11 @@ def measure_picture(geometry, meta: dict, sw: int, sh: int, out_video: dict, siz
     if why:
         note(f"picture: not measured: {why}")
         return {"measured": False, "reason": why}
-    rows = [r for r in range(H) if white[r * W:(r + 1) * W] != black[r * W:(r + 1) * W]]
-    if not rows:
+    box = bbox((int.from_bytes(white, "big") ^ int.from_bytes(black, "big")).to_bytes(W * H, "big"), W, H)
+    if box is None:
         note("picture: not measured: no pixel of the frame changed with the picture")
         return {"measured": False, "reason": "no pixel of the frame changed with the picture"}
-    left, right = W, -1
-    for r in rows:
-        # the row's difference as one integer: its leading zero bytes are the columns before the
-        # first differing pixel, its trailing ones those after the last (no per-pixel loop)
-        d = int.from_bytes(white[r * W:(r + 1) * W], "big") ^ int.from_bytes(black[r * W:(r + 1) * W], "big")
-        x0 = W - (d.bit_length() + 7) // 8
-        x1 = W - 1 - ((d & -d).bit_length() - 1) // 8
-        left, right = min(left, x0), max(right, x1)
-    x, y, w, h = left, rows[0], right - left + 1, rows[-1] - rows[0] + 1
+    x, y, w, h = box
     scale = crop_scale if crop_scale is not None else w / sw
     pic = {"measured": True, "x": x, "y": y, "width": w, "height": h, "frame_width": W, "frame_height": H,
            "frame_share": round(w * h / (W * H), 4), "scale": round(scale, 4),
@@ -369,6 +368,41 @@ def check_crop(path: str, orient: List[str], sw: int, sh: int, window, start: fl
     return check
 
 
+def zoom_filters(w: int, h: int, z0: float, z1: float, start: float, length: float, ax: float, ay: float,
+                 t0: float = 0.0) -> List[str]:
+    """A timed zoom of a w x h frame (#647): z0 to z1, linear over [start, start + length] output
+    seconds (`t0`: the graph's time at the output's first frame), toward the anchor (ax, ay). A
+    per-frame lanczos scale and a crop back keep every frame and timestamp (zoompan makes its own).
+    Sides grow by 4 and offsets stay even (4:2:0); crop's in_w is the first frame's, so x/y are written out."""
+    z = f"({z0:g}+({z1 - z0:g})*clip((t-{t0 + start:.6f})/{length:.6f},0,1))"
+    sw_, sh_ = (f"({n}+4*round(({z}-1)*{n}/4))" for n in (w, h))
+    return [f"scale=w='{sw_}':h='{sh_}':eval=frame:flags=lanczos",
+            f"crop={w}:{h}:x='2*round(({sw_}-{w})*{ax:g}/2)':y='2*round(({sh_}-{h})*{ay:g}/2)'"]
+
+
+def check_zoom(source: str, meta: dict, output: str, out_video: dict) -> dict:
+    """Whether the output's frames, timestamps, length and rate are the source's, from both files'
+    packets (presentation_times()); unreadable frame times are not measured."""
+    v = meta.get("video") or {}
+    src = presentation_times(source, float(v.get("start_time") or 0.0))
+    out = presentation_times(output, float(out_video.get("start_time") or 0.0))
+    rate = frame_rate(meta)
+    if not (src and out and rate):
+        note("zoom: frames not measured: the frame times of the source or the output could not be read")
+        return {"measured": False, "reason": "the frame times of the source or the output could not be read"}
+    drift = max((abs((o - out[0]) - (s - src[0])) for o, s in zip(out, src)), default=0.0)
+    lengths = own_length(v), own_length(out_video)
+    same = {"frames": len(out) == len(src), "timestamps": len(out) == len(src) and drift <= 0.5 / rate,
+            "duration": None not in lengths and abs(lengths[1] - lengths[0]) <= 1 / rate,
+            "fps": exact_rate(float(out_video.get("fps") or 0)) == exact_rate(float(v.get("fps") or 0))}
+    check = {"measured": True, "source_frames": len(src), "output_frames": len(out), "max_timestamp_drift": round(drift, 6),
+             "source_duration": lengths[0], "output_duration": lengths[1], "source_fps": v.get("fps"),
+             "output_fps": out_video.get("fps"), **{f"{k}_match": ok for k, ok in same.items()}}
+    if not all(same.values()):
+        note(f"zoom: the output's {', '.join(k for k, ok in same.items() if not ok)} differ from the source's")
+    return check
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -396,8 +430,12 @@ def main() -> int:
     a.add_argument("--height", type=int, help="output height in px, 1..16384 (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
     add_pad_fill_args(a)
-    a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop, horizontal anchor 0=left, 0.5=centre (default), 1=right")
-    a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
+    a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop or --zoom, horizontal anchor 0=left, 0.5=centre (default), 1=right")
+    a.add_argument("--crop-y", type=float, default=0.5, help="with --fit crop or --zoom, vertical anchor 0=top, 0.5=centre (default), 1=bottom")
+    a.add_argument("--zoom", choices=["in", "out"], help="timed linear push-in/pull-out toward --crop-x/-y")
+    a.add_argument("--zoom-amount", type=float, help="end (in) or start (out) zoom, > 1 (default 1.3)")
+    a.add_argument("--zoom-start", type=float, metavar="S", help="output second the move starts (default 0)")
+    a.add_argument("--zoom-duration", type=float, metavar="S", help="move length (default: to the end), end zoom held")
     a.add_argument("--fade-in", type=float, default=0.0, metavar="S", help="fade the picture and the sound in from black over this many seconds at the start")
     a.add_argument("--fade-out", type=float, default=0.0, metavar="S", help="fade the picture and the sound out to black over this many seconds at the end")
     r = ap.add_argument_group("rotate / flip")
@@ -415,8 +453,15 @@ def main() -> int:
 
     if args.fps is not None and args.fps <= 0:
         die(f"--fps must be positive, got {args.fps:g}")
-    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip and not (args.fade_in or args.fade_out):
-        die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip and/or --fps")
+    zoom_given = [f for f in ("amount", "start", "duration") if getattr(args, f"zoom_{f}") is not None]
+    if zoom_given and not args.zoom:
+        die(f"--zoom-{zoom_given[0]} needs --zoom in|out")
+    if not args.duration and not args.aspect and not args.width and not args.height and not args.fps and not args.rotate and not args.flip and not (args.fade_in or args.fade_out) and not args.zoom:
+        die("nothing to do: give --duration, --aspect, --width/--height, --rotate/--flip, --zoom and/or --fps")
+    if args.zoom_amount is not None and args.zoom_amount <= 1.0:  # a negative --zoom-start is refused in apply_common
+        die(f"--zoom-amount must be > 1.0, got {args.zoom_amount:g}")
+    if args.zoom_duration is not None and args.zoom_duration <= 0:
+        die(f"--zoom-duration must be > 0, got {args.zoom_duration:g}")
     if not 0.0 <= args.crop_x <= 1.0:
         die(f"--crop-x must be 0..1, got {args.crop_x}")
     if not 0.0 <= args.crop_y <= 1.0:
@@ -431,9 +476,11 @@ def main() -> int:
         except OSError as exc:
             die(f"cannot fingerprint the source for the duration plan: {exc}", kind="input")
         STATE.measured_plan_inputs[source["path"]] = source
-    meta = probe(args.input)
+    meta = probe(args.input, advise_deinterlace=True)
     if not meta.get("video"):
         die("input has no video stream")
+    if args.zoom:
+        refuse_still(meta, args.input, "--zoom moves over the input's length, and a still has none")
     audio_streams = meta.get("audio_streams") or []
     if audio_streams and not (0 <= args.audio_stream < len(audio_streams)):
         die(f"--audio-stream {args.audio_stream}: input has {len(audio_streams)} audio stream(s), 0..{len(audio_streams) - 1}")
@@ -656,8 +703,33 @@ def main() -> int:
             vf.insert(0, square_pixels(meta["video"]))
             note(square_pixels_note(meta["video"]))
 
-    # ---- fades: last, so they are drawn on the frame that is delivered, over its final length
     total = min(target, src_dur) if args.duration and args.method == "trim" else target if args.duration else src_dur
+    # ---- zoom: on the frame delivered (after the reframe, before the fades), in output seconds
+    if args.zoom:
+        amount = args.zoom_amount or 1.3
+        z_start = args.zoom_start or 0.0
+        z_len = args.zoom_duration if args.zoom_duration is not None else total - z_start
+        if total > 0 and z_start >= total:
+            die(f"--zoom-start {z_start:g} is at or past the output's end ({total:g}s)")
+        if total > 0 and z_start + z_len > total + 0.5 / (frame_rate(meta) or 1000.0):  # half a frame of slack
+            die(f"--zoom-start {z_start:g} --zoom-duration {z_len:g} ends at {z_start + z_len:g}s, past the output's "
+                f"end ({total:g}s)")
+        sized = bool(args.aspect or args.width or args.height)
+        zw, zh = (out_w, out_h) if sized else (sw, sh)
+        if not (zw and zh):  # a dry run's pending input has no size: the move cannot be planned in pixels
+            die("--zoom needs the input's frame size; the input is not there yet")
+        if max(zw, zh) * amount > 16384:  # the zoomed frame is scaled whole: bounded as --width is
+            die(f"--zoom-amount {amount:g} scales the {zw}x{zh} frame past 16384 px; at most {16384 / max(zw, zh):.2f} here")
+        if not sized and square_pixels(meta["video"]):
+            vf.insert(0, square_pixels(meta["video"]))
+            note(square_pixels_note(meta["video"]))
+        z0, z1 = (1.0, amount) if args.zoom == "in" else (amount, 1.0)
+        vf += zoom_filters(zw, zh, z0, z1, z_start, max(z_len, 1e-6), args.crop_x, args.crop_y, t0=out_seek)
+        extra["zoom"] = {"direction": args.zoom, "from": z0, "to": z1, "start": round(z_start, 6),
+                         "end": round(z_start + z_len, 6), "anchor": {"x": args.crop_x, "y": args.crop_y},
+                         "frame": {"width": zw, "height": zh}}
+
+    # ---- fades: last, so they are drawn on the frame that is delivered, over its final length
     for kind, secs, at in (("in", args.fade_in, 0.0), ("out", args.fade_out, total - args.fade_out)):
         if secs > 0 and total > 0:
             vf.append(f"fade=t={kind}:st={max(at, 0):.3f}:d={secs:g}")
@@ -721,6 +793,11 @@ def main() -> int:
         extra["crop_check"] = check_crop(
             args.input, orient, sw, sh, crop_window, k0, klen,
             speed=factor if abs(factor - 1.0) > 1e-4 else 1.0, output_video=result.get("video"))
+    if args.zoom and not STATE.dry_run:
+        # the source's frames are the output's only when nothing else in the run changes the timing
+        timed = retimed or kept or args.fps or meta["video"].get("variable_frame_rate_suspected")
+        extra["zoom"]["check"] = ({"measured": False, "reason": "the run also trims, retimes or regrids the picture"}
+                                  if timed else check_zoom(args.input, meta, output, result.get("video") or {}))
     emit(output, dropped_non_av_streams=dropped_streams, **extra)
     return 0
 

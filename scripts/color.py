@@ -38,7 +38,7 @@ from _common.emit import note, refuse, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            matrix_label, report as alpha_report, rgb_line, rgb_to_bt709_line, source_alpha, tag_args,
-                           unpremultiply_leg, video_line)
+                           unpremultiply_leg, video_line, wide_merge_leg)
 from _common.decision import keeps_source_tags
 from _common.color import bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402,F401
 
@@ -655,11 +655,11 @@ def main() -> int:
         # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
         un = unpremultiply_leg(meta) if args.source_alpha_mode == "premultiplied" else ""
         # alphamerge negotiates an 8-bit mask. Keep the source mask at 16 bits
-        # through the RGB multiply on a premultiplied ProRes master.
+        # through the RGB multiply on a premultiplied ProRes master; the leg names the graded
+        # YUV's matrix, or format=gbrp16le reads a tagged master by swscale's BT.601 default (#740)
         merge = "[ka_a]alphaextract[ka_m];[ka_g][ka_m]alphamerge"
         if un and alpha_codec == "prores4444":
-            merge = ("[ka_g]format=gbrp16le[ka_rgb];[ka_a]alphaextract,format=gray16le[ka_m];"
-                     "[ka_rgb][ka_m]mergeplanes=map1p=1:map2p=2:map3s=1:format=gbrap16le")
+            merge = wide_merge_leg(alpha_codec, meta)
         fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{un}{vf}{matrix_label(meta)}[ka_g];"
               f"{merge},{finish_chain(alpha_codec, args.alpha_mode, meta, wide=bool(un))}[ka_v]")
         fc = cfr_at_input(fc, meta)  # the conform of a VFR source: the fps filter (#512)

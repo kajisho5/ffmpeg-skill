@@ -1312,6 +1312,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     argv = [str(a) for a in plan["argv"] if not is_output_shape_flag(str(a))]
     expected_frames = plan.get("sequence_frames_sha256")
     replay_env = None
+    if tool == "silence" and "cut_plan" in plan:
+        from _common.pacing_edit import plan_digest
+        replay_env = dict(os.environ, FFMPEG_SKILL_PACING_PLAN_SHA256=plan_digest(plan["cut_plan"]))
     if tool == "sequence" and expected_frames is None:
         warn("this older sequence plan does not bind the ordered frame list; make a new plan to check it",
              "plan_sequence_unbound")

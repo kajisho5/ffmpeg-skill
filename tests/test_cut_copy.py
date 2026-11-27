@@ -2802,5 +2802,103 @@ class DryRunOutputTests(unittest.TestCase):
             STATE.dry_run = False
 
 
+class CopySpanTests(unittest.TestCase):
+    """#620: a stream copy is verified against the span its source's keyframes allow, not against a
+    tolerance, and the result says where it landed. GOP 12 at 25 fps puts keyframes every 0.48 s
+    (0.96, 1.44, ...), so a start of 1.4 snaps to 0.96 and a start of 1.0 to 0.96 too."""
+
+    @classmethod
+    def setUpClass(cls):
+        DIR.mkdir(parents=True, exist_ok=True)
+        cls.src = DIR / "span_gop12_25.mp4"
+        if not cls.src.exists():
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=10",
+               "-f", "lavfi", "-i", "sine=f=440:d=10", "-c:v", "libx264", "-g", "12", "-keyint_min", "12",
+               "-sc_threshold", "0", "-bf", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.src)
+
+    @staticmethod
+    def step(doc):
+        return next(s for s in doc["verification"] if s["step"] == "copy_span")
+
+    def test_a_copy_reports_where_it_landed_and_is_verified_against_that_span(self):
+        out = DIR / "span_single.mp4"
+        doc = cut_json(self.src, "--start", "1.4", "--end", "5.3", "--no-edit-list", "-o", out, "--overwrite")
+        self.assertEqual((doc["mode"], doc["requested_start"], doc["requested_end"]), ("copy", 1.4, 5.3))
+        (lo, hi), = doc["snapped_segments"]
+        self.assertAlmostEqual(lo, 0.96, places=3)  # the keyframe before 1.4
+        self.assertAlmostEqual(hi, 5.3, places=3)
+        step = self.step(doc)
+        self.assertEqual((step["ok"], step["provenance"]), (True, "input_premeasurement"))
+        self.assertAlmostEqual(step["expected"], hi - lo, places=3)
+        self.assertTrue(doc["verified"])
+        # against the written file: its frames span the snapped window, a frame's step to spare
+        pts = sorted(frame_pts(out))
+        self.assertLessEqual(abs((pts[-1] + 0.04 - pts[0]) - (hi - lo)), 0.04 + 1e-6)
+        # 0.44 s from the request: more than COPY_DRIFT_WARN, so --accurate is suggested
+        warned = [w for w in doc["diagnostics"]["warnings"] if w["code"] == "copy_drift_large"]
+        self.assertEqual(len(warned), 1, doc.get("diagnostics"))
+        self.assertAlmostEqual(warned[0]["seconds"], 0.44, places=2)
+        self.assertIn("--accurate", warned[0]["message"])
+
+    def test_a_copy_that_lands_where_asked_says_so_and_does_not_warn(self):
+        doc = cut_json(self.src, "--start", "1.0", "--end", "4.0", "-o", DIR / "span_edit_list.mp4", "--overwrite")
+        self.assertTrue(doc["edit_list"])
+        self.assertEqual(doc["snapped_segments"], [[1.0, 4.0]])
+        self.assertTrue(doc["verified"])
+        self.assertNotIn("copy_drift_large", [w["code"] for w in (doc.get("diagnostics") or {}).get("warnings", [])])
+
+    def test_a_segments_copy_is_judged_by_its_snapped_parts_not_by_the_tolerance(self):
+        out = DIR / "span_segments.mp4"
+        doc = cut_json(self.src, "--segments", "1.0-4.0,6.0-8.0", "-o", out, "--overwrite")
+        self.assertEqual(doc["mode"], "copy")
+        self.assertEqual([[round(i, 2), round(o, 2)] for i, o in doc["snapped_segments"]], [[0.96, 4.0], [5.76, 8.0]])
+        step = self.step(doc)
+        # the older step still bounds the total against the request (--tolerance, user_specified)
+        total = next(s for s in doc["verification"] if s["step"] == "cut_total_duration")
+        self.assertEqual((total["ok"], total["provenance"], total["expected"]), (True, "user_specified", 5.0))
+        # 3.04 + 2.24 s of picture: the parts' keyframe spans, not the 5.0 s asked for
+        self.assertAlmostEqual(step["expected"], 5.28, places=3)
+        self.assertEqual((step["ok"], step["provenance"]), (True, "input_premeasurement"))
+        self.assertLess(step["tolerance"], 0.2, "derived from the frame time, not --tolerance's 0.5")
+        self.assertEqual(len(frame_pts(out)), 132)  # the frames the keyframes allow
+
+    def test_a_written_file_that_misses_the_snapped_span_is_not_verified(self):
+        """The copy is cut for half the length its keyframes allow (the copy command's -t halved
+        under --tolerance -1, which keeps what lands): the file is valid, but not the one planned."""
+        mock_short = (
+            "import sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import cut\n"
+            "real = cut.run\n"
+            "def run(cmd, *a, **k):\n"
+            "    cmd = [str(c) for c in cmd]\n"
+            "    if '-t' in cmd and '-c' in cmd and cmd[cmd.index('-c') + 1] == 'copy':\n"
+            "        i = cmd.index('-t')\n"
+            "        cmd[i + 1] = '%.6f' % (float(cmd[i + 1]) / 2)\n"
+            "    return real(cmd, *a, **k)\n"
+            "cut.run = run\n"
+            "sys.argv = ['cut.py'] + sys.argv[2:]\n"
+            "sys.exit(cut.main())\n")
+        out = DIR / "span_short.mp4"
+        proc = sh(sys.executable, "-c", mock_short, SCRIPTS, self.src, "--start", "1.0", "--end", "5.0",
+                  "--tolerance", "-1", "-o", out, "--overwrite", "--json")
+        doc = json.loads(proc.stdout)
+        self.assertEqual((doc["mode"], doc["status"]), ("copy", "completed"))
+        step = self.step(doc)
+        self.assertFalse(step["ok"])
+        self.assertAlmostEqual(step["expected"], 4.0, places=3)
+        self.assertLess(step["measured"], 2.2)
+        self.assertEqual(step["attribution"], "unresolved")
+        self.assertFalse(doc["verified"])
+        self.assertTrue(any("--accurate" in n for n in doc["notes"]))
+        # the file on disk is what the step measured
+        self.assertLess(probe(str(out))["video"]["duration"], 2.2)
+
+    def test_an_accurate_cut_has_no_snap_to_report(self):
+        doc = cut_json(self.src, "--start", "1.4", "--end", "5.3", "--accurate", "-o", DIR / "span_accurate.mp4", "--overwrite")
+        self.assertIsNone(doc["snapped_segments"])
+        self.assertNotIn("copy_span", [s["step"] for s in doc["verification"]])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

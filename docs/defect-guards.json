@@ -1,5 +1,5 @@
 {
-  "rule": "A class of docs/defect-ledger.jsonl with `threshold` or more entries has a guard: a test that runs every tool and fails wherever the class shows, so a fix of one tool is not the end of a class that keeps coming back. revert_proof.py refuses a fix whose class is due and has no guard (`pending`), and tests/test_guards.py fails when a class becomes due without being listed here.",
+  "rule": "A class of the defect ledger (docs/defect-ledger/) with `threshold` or more entries has a guard: a test that runs every tool and fails wherever the class shows, so a fix of one tool is not the end of a class that keeps coming back. revert_proof.py refuses a fix whose class is due and has no guard (`pending`), and tests/test_guards.py fails when a class becomes due without being listed here.",
   "threshold": 3,
   "classes": {
     "time": {
