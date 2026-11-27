@@ -38,7 +38,7 @@ from _common.runner import (with_flags, HW_FORCED_ENV, OWNED_ENV, _OutputLock, a
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, brand_asset_files, rebase_project_paths
-from _common.runner import parse_json
+from _common.runner import parse_json, refuse_outside_roots
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -850,6 +850,8 @@ def main() -> int:
     # the children refuse an output whose directory does not exist, under --dry-run too, so the
     # directories are created for the plan as well -- and removed again afterwards when a dry
     # run created them and left them empty (a plan leaves nothing behind, sweep F15)
+    for d in (outdir, work):  # its cache, deliveries and intermediates are written here (#572)
+        refuse_outside_roots(str(d), "output")
     created = [d for d in (outdir, work) if not d.exists()]
     outdir.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)

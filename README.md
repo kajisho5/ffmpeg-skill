@@ -7,7 +7,8 @@
 
 <p align="center"><b>Give your coding agent a video editor.</b><br>
 Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.<br>
-No cloud · No API keys · Python standard library</p>
+No cloud · No API keys · Python standard library<br>
+<a href="SECURITY.md#what-you-install-and-what-it-touches">What you install and what it touches</a></p>
 
 <p align="center">
   <a href="https://kajisho5.github.io/ffmpeg-skill/"><b>Website</b></a> ·
@@ -398,8 +399,11 @@ Next to the tool list the document carries a top-level `deprecated` list (since 
 ### MCP
 
 ```json
-{"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/Users/you/.claude/skills/ffmpeg-skill/mcp/server.py"]}}}
+{"mcpServers": {"ffmpeg-skill": {"command": "python3", "args": ["/Users/you/.claude/skills/ffmpeg-skill/mcp/server.py"],
+  "env": {"FFMPEG_SKILL_ROOTS": "/Users/you/Videos"}}}}
 ```
+
+`FFMPEG_SKILL_ROOTS` is optional and recommended over MCP: with it, every tool refuses an input or an output that does not resolve under one of the directories it names (`:`-separated, `;` on Windows; the system temp directory stays allowed), `error.reason: path_outside_roots`. Leave it out and any path works as before. What the skill reads, writes and opens: [SECURITY.md](SECURITY.md#what-you-install-and-what-it-touches).
 
 On Windows, `python3` is only on PATH if Python was installed from the Microsoft Store; a python.org install exposes `python` (or the `py` launcher) instead — if your MCP client reports the server failed to start, change `"command"` above to `"python"` (or the full path from `where python`).
 
