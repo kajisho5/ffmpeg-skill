@@ -496,6 +496,42 @@ raise SystemExit(export.main())
         err = json.loads(proc.stdout)["error"]
         self.assertEqual((err["kind"], err["reason"]), ("input", "source_alpha_mode_needs_keep_alpha"))
 
+    def test_color_source_alpha_mode_premultiplied_on_a_tagged_master_matches_straight_740(self):
+        """#740: on a BT.709-tagged premultiplied ProRes 4444 master the premultiplied run's
+        colour was written by the BT.601 matrix while the stream was tagged BT.709 -- the wide
+        merge leg converted the graded YUV with `format=gbrp16le`'s swscale default. The opaque
+        pixel must be the straight run's graded colour, within rounding (the reporter's read
+        181,129,75 where the straight run wrote 177,126,77)."""
+        bands = "if(lt(X,16),255,if(lt(X,32),128,if(lt(X,48),64,0)))"
+        src = OUT / "alpha_pm_709_src.mov"
+        # The frames carry the tags themselves as well as the encoder options: the FFmpeg 7.1
+        # Debian CI job takes the probe's colour from the frames, so options alone would leave
+        # the fixture unable to satisfy its own premise there.
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+           "color=c=0x30C050:s=64x64:r=1:d=1,format=gbrap,geq=a='" + bands + "':"
+           "r='round(r(X,Y)*" + bands + "/255)':g='round(g(X,Y)*" + bands + "/255)':"
+           "b='round(b(X,Y)*" + bands + "/255)',format=yuva444p10le,"
+           "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709",
+           "-frames:v", "1", "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", src)
+        self.assertEqual(probe(str(src))["video"]["color_space"], "bt709", "the fixture is the tagged one")
+        outs = {}
+        for mode in ("straight", "premultiplied"):
+            outs[mode] = OUT / f"alpha_pm_709_{mode}.mov"
+            doc = json.loads(script("color.py", src, "--correct", "--gamma", "1.6", "--keep-alpha",
+                                    "--alpha-codec", "prores4444", "--source-alpha-mode", mode,
+                                    "--json", "-o", outs[mode]).stdout)
+            self.assertTrue(doc["verified"], doc["verification"])
+        straight = self._bands(outs["straight"], xs=(8,))[0][:3]
+        premultiplied = self._bands(outs["premultiplied"], xs=(8,))[0][:3]
+        for got, want in zip(premultiplied, straight):
+            self.assertAlmostEqual(got, want, delta=2.0, msg=(straight, premultiplied))
+        plan = json.loads(script("color.py", src, "--correct", "--gamma", "1.6", "--keep-alpha",
+                                 "--alpha-codec", "prores4444", "--source-alpha-mode", "premultiplied",
+                                 "--dry-run", "--json", "-o", OUT / "alpha_pm_709_dry.mov").stdout)
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", plan["commands"][0],
+                      "the wide merge leg reads the graded BT.709 YUV with that matrix")
+
     def test_color_keep_alpha_grades_an_rgb_source_tagged_gbr(self):
         """#454: FFmpeg's PNG encoder tags its stream colorspace `gbr` in .mov/.mkv, and the alpha
         line passed that back as `-colorspace gbr`, which the option parser refuses, so every grade
