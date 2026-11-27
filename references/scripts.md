@@ -392,7 +392,9 @@ below its measurement threshold. A `crop_content_off_centre` warning may suggest
 The warning can flag an individual sample even when most motion stayed in frame.
 Use `look.py OUTPUT --at TIME` for each `crop_check.review_points[].output_time_estimate`
 that is available. To compare a trimmed or retimed output with its input, extract the
-source frame separately using the point's `source_time`.
+source frame separately using the point's `source_time`. The window itself is data before anything
+runs: `crop` (dry run, plan and result) gives `{x, y, width, height}` in source pixels and the
+scaled frame's offset (#581).
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 `--zoom in|out` (#647) is a timed push-in or pull-out of the delivered frame (after the
 reframe, before the fades): linear from 1 to `--zoom-amount` (in; out goes back), between
@@ -833,7 +835,7 @@ Preview with `silence.py INPUT --profile editor.json --dry-run`, then supply `-o
 and verify. [Presets, protected ranges and saved plans](../docs/contract.md#pacing-profiles-and-the-independent-master-gate).
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list]
-           [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
+           [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--audition DIR [--audition-seconds 2]] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
@@ -895,6 +897,17 @@ are computed, not measured on the written file. An existing map is refused witho
 and a missing directory or a directory at the path as `kind: input`, before anything runs (a dry
 run predicts both); the map is written only after the cut is, so a failed or refused encode
 leaves none. A dry run writes nothing.
+
+**`--audition DIR` (#581)** writes, per join between two kept ranges, a short clip of the cut as
+it sounds there: `--audition-seconds` (2, 0.5..10) of the range before the join and of the one
+after it, each side at most its own range, joined the way the cut is (no fade, the default codec), at most 360
+lines high (never enlarged), a fast small encode, `DIR/cut_000.mp4` (`.m4a` for a sound-only
+cut), and `DIR/index.json` listing them: `cut_index`, `source_out`, `source_in`, `output_t`,
+`clip`, `clip_source`, `join_at` (seconds into the clip) and the measured `duration` and `audio`.
+The result's `audition` is the same document. `DIR` must exist; an existing clip or index is
+refused without `--overwrite`. The clips come before the cut; under `--list` they are all that is rendered, so the joins
+are heard before anything is cut; a range removed at the file's start or end joins nothing and
+has no clip. A dry run plans the commands and writes nothing.
 
 **`--filler` (1.17)** removes filler words as well, through the same
 `keep_ranges()` graph with more, shorter ranges. It is **never**

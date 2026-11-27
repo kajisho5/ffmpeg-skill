@@ -411,6 +411,30 @@ duration, factor and retime decision for `speed`. Saving a plan checks that its 
 matches the fingerprint taken before measuring it. Plan execution uses `argv` and measures
 the output duration separately.
 
+With `fit.py --fit crop` and a source whose size is known, dry-run JSON, saved plans and completed
+results also include a `crop` object (#581): the window kept, `{x, y, width, height}` in the
+source's displayed pixels (rounded), `source_width`, `source_height`, and `scaled` (`x`, `y`,
+`width`, `height`, `frame_width`, `frame_height`: the offset and size in the scaled frame the crop
+filter cuts from). It is computed from the numbers the crop filter is built from, not measured;
+`picture`, after a real run, is the measurement. A dry run whose input is not there yet has none.
+
+`silence.py --audition DIR` (#581) writes, per join between two kept ranges, a short clip of the
+cut as it sounds there and `DIR/index.json` listing them; the result's `audition` is the same
+document (`dir`, `index`, `seconds`, `height`, `count`, `cuts`). Each entry of `cuts` has
+`cut_index`, `source_out`, `source_in`, `output_t` (the join's time in the cut), `clip`,
+`clip_source` (the two source ranges joined), `join_at` (seconds into the clip) and `duration` and
+`audio`, measured on the written clip (`null` under `--dry-run`). A clip holds at most
+`--audition-seconds` (2 by default, 0.5..10) of each side, never more than that side's own range,
+joined the way the cut is (no fade), at most 360 lines high and never enlarged, in the default
+codec whatever `--codec` says, `.mp4` (`.m4a`
+for a sound-only cut). A range removed at the file's start or end joins nothing and has no clip.
+`DIR` must exist (`output_dir_missing`); an existing clip or index is `output_exists` without
+`--overwrite`, and so is an existing `-o`, before the first clip. Under `--list` the clips are rendered and nothing else is; otherwise they are
+written before the cut, which they do not need. `--max-cuts` bounds the number of clips, under `--list` too. A dry run
+writes nothing. `--audition-seconds` without `--audition`, and
+`--audition` with `--filler-list`, `--profile`, `--protect-ranges` or `--extract-profile`, are
+refused.
+
 New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
 in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
 The tool checks the same fingerprints again before saving the plan. Replay, including replay with
