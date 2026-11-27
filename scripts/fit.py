@@ -524,8 +524,6 @@ def main() -> int:
     if not 0.0 <= args.crop_y <= 1.0:
         die(f"--crop-y must be 0..1, got {args.crop_y}")
     validate_color(args.pad_color, "--pad-color")
-    if args.pad_blur <= 0:
-        die(f"--pad-blur must be > 0, got {args.pad_blur}")
 
     if STATE.plan and args.duration and os.path.isfile(args.input):
         try:

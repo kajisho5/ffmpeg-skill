@@ -2602,8 +2602,18 @@ sys.exit(fit.main())
                     self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
                     self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
                     self.assertTrue(entry["replacement"])
+        version = tuple(int(x) for x in json.loads((ROOT / "package.json").read_text())["version"].split("."))
+        beta = {t["name"] for t in self.contract["tools"] if t["stability"] == "beta"}
         for entry in self.contract["deprecated"]:
-            self.assertGreater(int(entry["removed_in"].split(".")[0]), pkg_major)
+            removed_in, since = (tuple(int(x) for x in entry[k].split(".")) for k in ("removed_in", "since"))
+            if entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta:
+                # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it,
+                # so one listed from a patch (since 4.20.2) waits out 4.21 and goes in 4.22
+                self.assertEqual((removed_in[0], removed_in[2], removed_in[0] == since[0]), (since[0], 0, True), entry["what"])
+                self.assertEqual(removed_in[1], since[1] + (2 if since[2] else 1), entry["what"])
+                self.assertGreater(removed_in, version, entry["what"])
+            else:
+                self.assertGreater(removed_in[0], pkg_major)
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
@@ -2637,7 +2647,7 @@ sys.exit(fit.main())
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24"}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.20.2": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
@@ -2656,7 +2666,9 @@ sys.exit(fit.main())
             with self.subTest(what=entry["what"]):
                 self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES,
                               f"add {entry['since']}'s release date to DEPRECATION_RELEASE_DATES")
-                self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
+                # a beta tool's argument (4.x's beta rule) goes in a minor: the same check, at the minor
+                at = 2 if entry["since"].split(".")[0] == entry["removed_in"].split(".")[0] else 1
+                self.assertGreater(tuple(int(x) for x in entry["removed_in"].split(".")[:at]), tuple(int(x) for x in pkg["version"].split(".")[:at]),
                                    f"package.json is {pkg['version']} but {entry['what']!r} is still "
                                    f"deprecated, not removed: remove it, then drop the entry")
         for entry in _contract.REMOVED:
@@ -3244,7 +3256,7 @@ sys.exit(fit.main())
         """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
         `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
         the same FFmpeg line, and CI no longer runs 3.9 or a 5.x build."""
-        self.assertEqual(self.contract["deprecated"], [])
+        self.assertEqual([e for e in self.contract["deprecated"] if "Python" in e["what"] or "FFmpeg" in e["what"]], [])
         removed = {e["what"]: e for e in self.contract["removed"] if e["removed_in"] == "3.0.0"}
         py = next(e for w, e in removed.items() if "Python 3.9" in w)
         ff = next(e for w, e in removed.items() if "FFmpeg 5.x" in w)
@@ -13990,6 +14002,32 @@ class StumbleLedgerTests(unittest.TestCase):
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
 
+    def test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749(self):
+        """#749: a 0 was read as another value without a word. `export.py --duration 0` wrote the
+        whole clip, `--pad-blur 0` blurred with radius 1 in export.py where fit.py refused it,
+        `caption.py --font-size 0` reported size_used 0 for 28 px text, and `--emoji-scale 0` drew
+        the emoji at 1.0 in caption.py and graphics.py. Each help now states its range (> 0, or
+        1..2000 as overlay.py's --font-size) and the shared step refuses what is outside it, in a
+        dry run as well; the values inside it still run."""
+        clip, srt = str(ROOT / "demos" / "footage" / "veo_sea.mp4"), str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", out, "--dry-run", "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            rows = ((("export", "--preset", "youtube"), "--duration", "2", "> 0"),
+                    (("export", "--preset", "tiktok", "--pad-fill", "blur"), "--pad-blur", "5", "> 0"),
+                    (("fit", "--aspect", "9:16", "--fit", "blur"), "--pad-blur", "5", "> 0"),
+                    (("caption", "--srt", srt), "--font-size", "24", "1..2000"),
+                    (("caption", "--srt", srt), "--emoji-scale", "1.5", "> 0"),
+                    (("graphics", "--template", "hook", "--title", "hi"), "--emoji-scale", "1.5", "> 0"))
+            for (tool, *argv), flag, kept, span in rows:
+                with self.subTest(tool=tool, flag=flag):
+                    proc = run(tool, *argv, f"{flag}=0")
+                    self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                    error = json.loads(proc.stdout)["error"]
+                    self.assertEqual(error["message"], f"{flag} 0 is outside what this option takes, {span}")
+                    self.assertEqual(run(tool, *argv, f"{flag}={kept}").returncode, 0)
+
     def test_every_option_has_help_text(self):
         """#558: twenty options (--preset on eight tools, the colour and font options of overlay
         and graphics, ...) had no help, the text `--help` and every MCP tool description show an
@@ -14053,6 +14091,79 @@ class StumbleLedgerTests(unittest.TestCase):
         for tool, argv in (("cut", ("--start", "1", "--end", "2", "--bogus")), ("export", ("--codec", "hevc")), ("stabilize", ("--zoom=5%", "--wat"))):
             with self.subTest(tool=tool, argv=argv):
                 self.assertNotIn("try:", run(tool, *argv))
+
+    def test_a_try_line_is_a_command_the_tool_accepts(self):
+        """`speedramp.py IN --ramp 3:6:0.5` ended with `try: ... --segment 3:6:0.5`, which speedramp
+        refuses (START-END:FACTOR): --segment was the one option whose help mentions 'ramp', and the
+        value went with it. Every rule that writes a `try:` is run on every tool of tests/sweep.py's
+        table, and each command it prints is run with --dry-run: a misspelt option of the tool (with
+        the value it was given), a choice misspelt or given a common other word, a number with its
+        unit. A flag that another tool takes, or one that only shares a word or a mention in the
+        help, has no single answer here: the hint names the options and no command follows."""
+        import argparse
+        import concurrent.futures
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        from _common import runner
+
+        def taught(tool, argv):
+            parser, saved, err = parsers[tool], sys.argv, io.StringIO()
+            sys.argv = [str(SCRIPTS / f"{tool}.py"), *argv]
+            try:
+                with contextlib.redirect_stderr(err):
+                    parser.parse_args(argv)
+            except SystemExit:
+                pass
+            finally:
+                sys.argv = saved
+            return err.getvalue()
+
+        with tempfile.TemporaryDirectory() as work:
+            clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+            facts = sweep.facts_for(clip, work)
+            parsers = {p.stem: _contract._capture_parser(p) for p in sorted(SCRIPTS.glob("[!_]*.py"))}
+            self.assertNotIn("\ntry:", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            self.assertIn("--segment", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            commands, foreign = {}, []
+            for name, (base, ext) in sweep.TABLE.items():
+                tool = name.split()[0]
+                if tool == "verify":  # it runs its steps for real and ignores --dry-run
+                    continue
+                base, out = [b.format(**facts) for b in base], (["-o", str(Path(work) / f"o{ext}")] if ext else [])
+                acts = {o: a for a in parsers[tool]._actions for o in a.option_strings if o.startswith("--")}
+                cases = []
+                for i, word in enumerate(base):
+                    action = acts.get(word)
+                    if action and len(word) > 5:
+                        cases.append(("option", base[:i] + [word[:3] + word[4] + word[3] + word[5:]] + base[i + 1:]))
+                    if action and action.choices:
+                        cases += [("choice", base[:i + 1] + [w] + base[i + 2:]) for w in (base[i + 1][:-1], *runner._OTHER_WORDS)]
+                    if re.fullmatch(r"\d+(\.\d+)?", word):
+                        cases += [("unit", base[:i] + [word + unit] + base[i + 1:]) for unit in ("s", "px")]
+                for other, parser in parsers.items():
+                    for flag, action in {o: a for a in parser._actions for o in a.option_strings if o.startswith("--")}.items():
+                        if other != tool and not any(o.startswith(flag) for o in acts) and flag not in runner.SHARED:
+                            said = taught(tool, [clip, *base, flag, *([] if action.nargs == 0 else ["2"]), *out])
+                            foreign += [f"{name}: {flag} ({other}.py)"] if "\ntry:" in said else []
+                for rule, argv in cases:
+                    line = re.search(r"\ntry: (.*)", taught(tool, [clip, *argv, *out]))
+                    if line:
+                        commands[line[1]] = rule
+            self.assertEqual(foreign, [], "another tool's option was answered with a command")
+            self.assertEqual(sorted(set(commands.values())), ["choice", "option", "unit"], "every rule was run")
+
+            def refused(line):
+                # the try: line is quoted for the shell it is printed on: list2cmdline on Windows, shlex.join elsewhere
+                cmd = [w.strip('"') for w in shlex.split(line, posix=False)] if os.name == "nt" else shlex.split(line)
+                proc = subprocess.run([sys.executable, *cmd[1:], "--dry-run", "--json", "--overwrite"], capture_output=True,
+                                      text=True, encoding="utf-8", timeout=300, cwd=work)
+                try:
+                    # check.py runs the command and fails a check of the clip (kind verification): accepted
+                    return None if proc.returncode == 0 or json.loads(proc.stdout)["error"]["kind"] == "verification" else line
+                except ValueError:
+                    return line + " :: " + proc.stderr[-200:]
+            with concurrent.futures.ThreadPoolExecutor(4) as pool:
+                self.assertEqual([r for r in pool.map(refused, commands) if r], [])
 
     def test_three_things_most_models_asked_for_are_options_now(self):
         """Nine models were given the same blind tasks; these three shapes came from most of them and

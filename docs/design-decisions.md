@@ -6694,10 +6694,15 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   tighter ceiling states its range.
 - **A value equal to the default is not checked**, so a default outside its own stated range would
   hide; the test reads every stated range against its default instead.
-- Zero is not decided here. On most options it is a real setting; the ones where it is not keep
-  their own check.
-- Code: `scripts/_common/runner.py` (`apply_common`). Test:
-  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
+- **Zero is decided by the help too (#749).** On most options 0 is a real setting and is taken. An
+  option where it is not states `> 0` (`export --duration`, `--pad-blur`, `--emoji-scale`), read as
+  above 0 and at most a million, or a range from 1 (`caption --font-size 1..2000`). fit.py's own
+  `--pad-blur` check went with it, so one option is not refused in one tool and read as another
+  value in the next.
+- Code: `scripts/_common/runner.py` (`apply_common`). Tests:
+  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` and
+  `test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749` (tests/test_contract.py);
+  the class guard `NumericGuard` (tests/test_guards.py) gives every stated range's edges to every tool.
 
 ## After 4.2.1 — one file per `-o` (#562)
 
@@ -6721,11 +6726,16 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 ## After 4.2.2 — the answer is a command, and three options by request
 
 - **`try:` is printed only when it is known.** A usage error ends with the corrected command when
-  every mistake on the line has exactly one answer: one near option, one choice near the word given
-  (or a common other word for it: strong is high, light is low), a number written with its unit
-  (`-30dB`, `0.8s`, `1080px`). If any mistake has two candidates or none, no command is printed: a
-  caller that copies would run a guess as if it were the answer. The command is one the tool
-  takes, and the test runs each.
+  every mistake on the line has exactly one answer: one option spelt like the flag, one choice near
+  the word given (or a common other word for it when that word is a choice: strong is high, light is
+  low), a number written with its unit (`-30dB`, `0.8s`, `1080px`). If any mistake has two
+  candidates or none, no command is printed: a caller that copies would run a guess as if it were
+  the answer. A flag another tool takes, and an option that only shares a word with the flag or
+  whose help mentions it, are named in the hint and are not an answer: they mean something else
+  and take another value (`speedramp.py --ramp 3:6:0.5` is not `--segment 3:6:0.5`, which
+  speedramp refuses). The command corrects the mistakes it names and nothing else, so a value the
+  right option refuses is refused under its right name too; the test runs every rule on every tool
+  of `tests/sweep.py`'s table with a value the option takes, and each command it prints.
 - **A number after an option is joined with `=`.** argparse reads `--threshold -30dB` as two
   options. The corrected form is `--threshold=-30`.
 - **Three options were added during the freeze, by name.** `proxy --height`, `redact --rect` and
@@ -6737,7 +6747,8 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   would be a second code path through that. `cut.py` then `reverse.py` does it, and the usage
   error names `cut.py`.
 - Code: `scripts/_common/runner.py` (`_teach`), `scripts/proxy.py`, `scripts/redact.py`,
-  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py).
+  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py),
+  `test_a_try_line_is_a_command_the_tool_accepts` among them.
 
 ## After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)
 

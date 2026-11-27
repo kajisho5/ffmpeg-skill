@@ -581,7 +581,7 @@ def main() -> int:
                     help="--preset copy only: remux a damaged file -- timestamps regenerated, corrupt packets dropped, "
                          "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
                          "before and after; the input is never touched")
-    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds (a preset's own maximum still applies)")
+    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds, > 0 (a preset's own maximum still applies)")
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="the max size of the file: fit it under MB megabytes (MiB), a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")

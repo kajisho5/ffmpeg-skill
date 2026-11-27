@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 4.20.1
+
+_Automated release: version and notes generated from pull requests merged since 4.20.0._
+
+### Fixed
+
+- A 0 that `export.py --duration`, `--pad-blur`, `caption.py --font-size` and `--emoji-scale` (also in `graphics.py`) cannot take is refused as outside the option's range, instead of being read as the whole clip, radius 1, the default size or scale 1.0 (#749).
+- fix: a zero an option cannot take is refused (#749) (#767)
+
 ## 4.20.0
 
 _Automated release: version and notes generated from pull requests merged since 4.19.0._
