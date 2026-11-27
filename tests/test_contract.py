@@ -2462,8 +2462,8 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_300),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_900),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured)
+            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:

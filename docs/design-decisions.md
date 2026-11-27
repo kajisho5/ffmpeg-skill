@@ -75,6 +75,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 3.3.0 — a declared change scope for `check.py --compare` (#439)](#after-330--a-declared-change-scope-for-checkpy---compare-439)
 - [After 4.8.3 — a declared change scope for sound: `--expect-audio-changed` (#442 phase 2)](#after-483--a-declared-change-scope-for-sound---expect-audio-changed-442-phase-2)
 - [After 4.12.0 — a cut checked against the reference with its spans taken out: `--expect-removed` (#442 phase 3)](#after-4120--a-cut-checked-against-the-reference-with-its-spans-taken-out---expect-removed-442-phase-3)
+- [After 4.16.0 — the change scope read from two render.py projects: `--compare-project` (#442 phase 4)](#after-4160--the-change-scope-read-from-two-renderpy-projects---compare-project-442-phase-4)
 - [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
 - [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
 - [After 4.14.0 — a timed zoom on video (#647)](#after-4140--a-timed-zoom-on-video-647)
@@ -3680,6 +3681,55 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   2026-11-26): no tolerance for a join, and the floors are phases 1 and 2's.
 - **Remaining in #442:** phase 4 (`render.py` deriving the declaration from two project files), the
   floor survey and `--change-grid`.
+
+## After 4.16.0 — the change scope read from two render.py projects: `--compare-project` (#442 phase 4)
+
+- **The declaration comes from the edit, and the check is check.py's.** `render.py NEW.json
+  --compare-project OLD.json` maps each key in which the two projects differ to
+  `--expect-changed`, `--expect-audio-changed` and `--expect-removed` values and runs `check.py
+  --compare` against OLD's own output after the last stage. Phases 1 to 3 measure; this phase only
+  decides what the caller would otherwise have typed, from the project rather than from the
+  agent's account of what it did. Nothing new is measured, so the floors, the tile grid and the
+  "not compared is FAIL" rule are phase 1's to 3's. Code: `render.derive_scope()`,
+  `render.compare_plan()`. Tests:
+  `test_the_declaration_comes_from_the_project_diff_and_is_checked`,
+  `test_whole_file_settings_and_layers_on_their_own_clock_are_declared_whole`,
+  `test_what_no_span_states_is_refused_before_the_first_stage`.
+- **What no span states is refused, before the first stage.** A clip added, removed or re-timed
+  other than a later `in` on the first clip or an earlier `out` on the last, and any change to
+  `transition`, `silence`, `fit`, `frame`, `audiogram` or `snap`, moves frames by an amount only
+  the render knows (a crossfade's offset, a silence cut's measurement, a beat). Declaring a guess
+  would pass or fail on the guess. So the run is refused (`project_diff_not_derivable`, one reason
+  per difference), under `--dry-run` too, and the caller renders without the flag. A refusal costs
+  no encode, and "not compared" was already a FAIL in check.py.
+- **A whole-file setting is the whole stream, not "not derivable".** `audio` and `loudness` change
+  every sample a level is applied to, `brand` and `template` every frame a style reaches, `export`
+  both: the span is the whole file (`0` to the previous render's length), which is true and still
+  holds the other stream to "unchanged". The same for the sound under a trim when an `audio`
+  block, a `loudness` stage or a normalising export is present: a bed starts at the new start and
+  a measured level is measured over a different file.
+- **A layer or cue is its own window, old and new.** An overlay or graphic entry (by index) whose
+  keys other than `start`/`end` differ, or whose window differs, declares both windows; a cue
+  (start, end, text) in one file and not the other declares itself. Caption times are read as
+  caption.py reads them (auto-timed lines 3 s apart, `offset`, at most `min_duration`); an ASS file
+  or inline text cannot be timed without the stage, so it is the whole picture. Files are compared
+  by `batch.file_key()` (a file replaced under its name is a difference).
+- **Under a trim, a layer that moved with the head is unchanged only when it has no clock of its
+  own.** After a head trim of D seconds an entry at `start - D` with the same keys is the same
+  picture over the same frames, unless it is a video layer (its frames run from its start), a
+  graphic with no end (a progress bar fills to the clip's end), a fading whole-clip overlay, or it
+  started before the cut (its animation is part way through). Those are declared.
+- **Windows are closed at both ends, as the stages draw them.** `"end": 2` draws on the frame at
+  2.000 s, and `--expect-removed 0-2` keeps that frame, so a 2 s head trim under an overlay at 1-2 s
+  declares `0.000-0.000`: the new first frame had the overlay and has it no longer. Found by the
+  first test, which FAILed that frame before the end was kept.
+- **Only the two scope rows decide.** check.py is run without a platform, so its format and
+  judgement rows describe the file against youtube's spec; they are kept in `compare_project.check`
+  but `ok` is the `change_scope` and `audio_change_scope` rows. `ok: false` fails the render
+  (`kind: verification`, the file kept), as a failed `"check"` stage does.
+- **No new option beyond the flag** (the freeze; the owner's decision of 2026-11-27 makes #442's
+  phases freeze exceptions): `--compare-project` and the `compare_project` result field. A whole
+  clip removed from a cut list, the floor survey and `--change-grid` remain open in #442.
 
 ## After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)
 
