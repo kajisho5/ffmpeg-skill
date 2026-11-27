@@ -28,7 +28,11 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - # the runner image's packages.microsoft.com source has answered 403 (#751, #757), which failed
+        # the job before a test ran; nothing here installs from it
+        run: |
+          grep -l packages.microsoft.com /etc/apt/sources.list.d/* 2>/dev/null | xargs -r sudo rm -f || true
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
       - id: proof
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -52,7 +56,11 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - # the runner image's packages.microsoft.com source has answered 403 (#751, #757), which failed
+        # the job before a test ran; nothing here installs from it
+        run: |
+          grep -l packages.microsoft.com /etc/apt/sources.list.d/* 2>/dev/null | xargs -r sudo rm -f || true
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
       - id: proof
         env:
           BASE_REF: ${{ github.base_ref }}
