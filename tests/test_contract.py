@@ -3485,6 +3485,39 @@ sys.exit(fit.main())
             self.assertEqual([e["issue"] for e in ledger.added(run, "main", "old")], [4])
         self.assertTrue((ROOT / ledger.DIR).is_dir(), "the repository keeps its entries under docs/defect-ledger/")
 
+    def test_a_fix_pr_says_what_was_swept_in_its_siblings_section(self):
+        """AGENTS.md asks a fix's PR to say what was swept for the same defect elsewhere, and the
+        template has a `## Siblings` section for it, but nothing checked it, so a fix from inside or
+        outside could land with the sweep skipped. The section, with the template's comment
+        removed, is not empty and names the command that was run; a PR that is not a fix is not
+        judged."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("siblings_section", ROOT / ".github" / "scripts" / "siblings_section.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        template = (ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        self.assertIn("## Siblings", template)
+        self.assertEqual(mod.problem(template), "the `## Siblings` section is empty",
+                         "the template as it stands, its comment only, is an empty section")
+        self.assertIn("no `## Siblings` section", mod.problem("## Summary\n\nfixed it\n"))
+        self.assertIn("names no command", mod.problem("## Siblings\n\nI looked around, nothing else.\n## Notes\n"))
+        swept = ("## Summary\r\n\r\nx\r\n\r\n## Siblings\r\n\r\nClass: a zero replaced by a default. "
+                 "`python3 tests/edge_values.py --json`: 107 ran, none other.\r\n")
+        self.assertIsNone(mod.problem(swept))
+        # the command must sit in this section, not in a later one
+        self.assertIsNotNone(mod.problem("## Siblings\n\nnone\n\n## Test plan\n\n`python3 -m unittest`\n"))
+        script = ROOT / ".github" / "scripts" / "siblings_section.py"
+        def run(title, body):
+            env = {**os.environ, "PR_BODY": body}
+            return subprocess.run([sys.executable, str(script), "--title", title], env=env, capture_output=True, text=True).returncode
+        self.assertEqual(run("fix: something", template), 1)
+        self.assertEqual(run("fix(color): something", swept), 0)
+        self.assertEqual(run("docs: something", template), 0, "a PR that is not a fix is not judged")
+        workflow = (ROOT / ".github" / "workflows" / "siblings.yml").read_text(encoding="utf-8")
+        self.assertIn("edited", workflow, "an edit of the body runs the check again")
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
+        self.assertNotIn("$PR_BODY", workflow, "the body reaches the script through the environment, never a shell word")
+
     def test_changelog_fragments_678(self):
         """#678: every PR edited `## Unreleased`, so two open PRs always conflicted there. A change
         is a file under changelog.d/ that starts with its section heading; the release folds them
