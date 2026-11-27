@@ -1532,7 +1532,9 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
 
 # check.py --compare --expect-changed (#439): where the picture differs from the reference.
 CHANGE_GRID = (32, 18)   # tiles across and down: one is 60x60 px at 1080p
-CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area mean) is above this changed
+# a tile whose largest channel difference (0-255, area mean) is above this changed, per --change-grid
+# (tiles across; down is 9/16 of it): 60, 30 and 20 px at 1080p, from the survey in tests/change_floor_survey.py
+CHANGE_FLOORS = {32: 24, 64: 32, 96: 48}
 
 
 def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID,
