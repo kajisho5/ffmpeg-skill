@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.19.0 — the with/without-skill benchmark in the repository, and the hint that names the threshold (#677, #684)](#after-4190--the-withwithout-skill-benchmark-in-the-repository-and-the-hint-that-names-the-threshold-677-684)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,41 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.19.0 — the with/without-skill benchmark in the repository, and the hint that names the threshold (#677, #684)
+
+- **The benchmark is `benchmarks/`, outside `scripts/` and `mcp/`.** It is not shipped (package.json
+  `files` does not name it), so the code ceiling and the standard-library rule of the tools are
+  untouched; it is standard library too (`urllib`). `run.py MODEL --arm skill|raw --runs N` is the
+  agent loop (one `bash` tool, 20 calls), `tasks.py` the 24 requests and their checkers, `page.py`
+  the results schema and the page, `calls.py` the per-task count of calls by kind (#684's question).
+- **Graded by measurement, never by the model's claim.** Each checker measures the output file
+  (length, frame, streams, loudness, a frame's brightness, the pitch of the sound); the claim is
+  kept in the results file beside the grade. Each checker passes a correct output and fails the
+  input unchanged (`test_every_checker_passes_a_correct_output_and_fails_the_input`).
+- **The 2026-11-21 figures are committed as published, with their source, and not re-derived.**
+  Their task file was in a scratch folder and is not in the repository, so they are their own task
+  set (`scratch-24`) and `common-24` (benchmarks/tasks.py, which contains the requests they named)
+  is a new series compared only with itself. A figure the source did not state (DeepSeek V4.1
+  Flash's correct count, every cost without the skill, the named-cut calls) is `null` and shown as
+  "not measured", never filled in or inferred. A published row names an issue or PR of this
+  repository as `source`; a row from `run.py` lists every run it counts
+  (`test_the_schema_refuses_what_a_page_would_misreport`).
+- **The page is generated.** `docs/benchmark.md` is `page.py`'s output from `benchmarks/results/`;
+  build_pages.py renders it from the results as it builds the site, and
+  `test_every_results_file_is_valid_and_the_page_is_what_they_give` keeps the committed copy equal.
+- **No model is called by CI.** The `benchmark` workflow runs on `workflow_dispatch` only, needs the
+  `BENCH_API_URL` and `BENCH_API_KEY` secrets, runs the model's commands as an unprivileged user and
+  attaches the results file; committing it is the maintainer's step. The runner's tests use
+  `--dry-run` and an endpoint on 127.0.0.1 (`test_a_run_against_a_local_endpoint_is_graded_by_measurement`).
+- **`silence.py`'s hint, when nothing sat below `--threshold`, names the quietest stretch's peak and
+  3 dB above it** (#684). It named the track's mean level + 6 dB, and the mean of a talk is the
+  speech: on a 20 s talk whose room hiss peaks near -30 dBFS it said `--threshold -9`, which
+  removes 18.8 s. silencedetect compares each sample with the threshold, so the peak of the quietest
+  `--min-silence` stretch is the level at which the first pause appears; the hint is a suggestion
+  with `--list` named, not an automatic retry, because a clip with no pauses has a quietest stretch
+  too. The default threshold (-35) is unchanged. The `hint` is the third key of the result, after
+  `status` and `wrote`, where a model reads (the first line of a result is for a reader, above).
+  Pinned by the `{room}` line of docs/stumbles.jsonl, replayed in
+  `StumbleLedgerTests.assert_the_hint_is_the_way_out` (the call the hint names removes the four
+  pauses and keeps the talk).

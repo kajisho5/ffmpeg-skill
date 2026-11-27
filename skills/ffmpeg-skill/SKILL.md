@@ -118,7 +118,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "frame-exact but keep the quality" (H.264) | `cut.py in.mp4 --start 1:20.4 --end 2:05.1 --smart` (re-encodes only the partial GOPs; `smart.reason` if it fell back) |
 | "make it exactly 60 seconds" | Choose what to cut first. For a simple trim, use `fit.py in.mp4 --duration 60 --method trim`. |
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
-| "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`) |
+| "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`; nothing removed: run again with the `--threshold` its `hint` names) |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
 | "tighter inside a sentence, more room after one" | `silence.py in.mp4 --words w.json --min-silence 0.2 --sentence-min-silence 0.3 --sentence-margin-tail 0.3` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |

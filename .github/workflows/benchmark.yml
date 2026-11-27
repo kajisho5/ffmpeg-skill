@@ -1,0 +1,82 @@
+# The with/without-skill benchmark (#677), run by hand after a release: Actions -> benchmark ->
+# Run workflow. It calls a model API, so it never runs on a push, a pull request or a fork; CI does
+# not depend on it. It needs two repository secrets the owner adds (Settings -> Secrets and
+# variables -> Actions): BENCH_API_URL (an OpenAI-compatible chat-completions URL) and
+# BENCH_API_KEY. The results file and the transcripts are attached to the run as an artifact;
+# committing the results file under benchmarks/results/ and running
+# `python3 benchmarks/page.py --write` puts it on the Pages site.
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Model ids, one per line or comma-separated, as the endpoint names them"
+        required: true
+      arms:
+        description: "skill, raw, or both"
+        default: both
+      runs:
+        description: "Runs per task (3: a one-answer difference is not reported as a change)"
+        default: "3"
+      only:
+        description: "Comma-separated task ids (empty: all 24)"
+        default: ""
+      budget:
+        description: "Stop starting runs after this many dollars, per model and arm"
+        default: "5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Run the benchmark
+        shell: bash
+        env:
+          BENCH_API_URL: ${{ secrets.BENCH_API_URL }}
+          BENCH_API_KEY: ${{ secrets.BENCH_API_KEY }}
+          MODELS: ${{ inputs.models }}
+          ARMS: ${{ inputs.arms }}
+          RUNS: ${{ inputs.runs }}
+          ONLY: ${{ inputs.only }}
+          BUDGET: ${{ inputs.budget }}
+        run: |
+          if [ -z "$BENCH_API_URL" ] || [ -z "$BENCH_API_KEY" ]; then
+            echo "::error::add the BENCH_API_URL and BENCH_API_KEY repository secrets first"
+            exit 1
+          fi
+          case "$ARMS" in both) ARMS="skill raw" ;; skill|raw) ;; *) echo "::error::arms is skill, raw or both"; exit 1 ;; esac
+          # an unprivileged user runs the model's commands
+          sudo useradd --create-home bench
+          mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/transcripts"
+          echo "$MODELS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -v '^$' | while read -r model; do
+            for arm in $ARMS; do
+              sudo --preserve-env=BENCH_API_URL,BENCH_API_KEY,PATH python3 benchmarks/run.py "$model" --arm "$arm" \
+                --runs "$RUNS" ${ONLY:+--only "$ONLY"} --budget "$BUDGET" --user bench \
+                --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/transcripts/$arm-$(echo "$model" | tr -c 'A-Za-z0-9.\n' '-')"
+            done
+          done
+          cp "$RUNNER_TEMP"/results/*.json benchmarks/results/
+          python3 benchmarks/page.py --write
+          cat docs/benchmark.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            ${{ runner.temp }}/results
+            ${{ runner.temp }}/transcripts
+            docs/benchmark.md

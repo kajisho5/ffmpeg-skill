@@ -33,7 +33,7 @@ from _common.words import _words_from_words_file
 from _common.runner import parse_json, replace_checked, same_file
 from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
-from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
+from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, fmt_secs, run_analysis, require_tool
 from _common.decision import frame_rate, grid_at_or_after, stream_starts
 from _common.probe import PROBED_AUDIO, display_size
 from _common.emit import input_length
@@ -319,7 +319,6 @@ def cut_levels(path: str, tm: Dict[str, Any], duration: float,
     import array
     import math
     import tempfile
-    from _common import require_tool, run_analysis
     points = []
     for r in tm["removed"]:
         for t, edge in ((r["source_start"], "out"), (r["source_end"], "in")):
@@ -867,14 +866,18 @@ def main() -> int:
         # Nothing under the threshold is a valid result, not a failure -- but an agent that only
         # sees "0 silences" tends to reach for raw ffmpeg next. Say what the floor actually is and
         # what threshold would bite, so the retry is a flag change, not a workaround.
-        level = measured_level_dbfs(args.input)
-        if level:
-            suggested = min(-5.0, round(level["mean_dbfs"] + 6.0))
-            summary["hint"] = (f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; the track's mean level is "
-                               f"{level['mean_dbfs']:.1f} dBFS (peak {level['peak_dbfs']:.1f}). For a quiet-room recording try "
-                               f"--threshold {suggested:g}, or a shorter --min-silence")
-        else:
-            summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; try a higher --threshold (e.g. -25) or a shorter --min-silence"
+        # The suggestion is the quietest stretch's peak plus 3 dB, the level silencedetect compares each
+        # sample with. 4.4.1 suggested the track's mean + 6 dB, and the mean is the speech: on a 20 s talk
+        # whose room sat above -35 that suggestion removed 18.8 s (#684). Peaks of 1024-sample blocks;
+        # the quietest run of blocks as long as --min-silence is the first pause a threshold would find.
+        found = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", args.input, "-map", f"0:{PROBED_AUDIO}", "-vn", "-af",
+                              "asetnsamples=n=1024,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.Peak_level:file=-", "-f", "null", "-"], check=False)
+        peaks = [float(line.split("=")[1]) for line in found.stdout.splitlines() if "Peak_level=" in line]
+        k = max(1, math.ceil(args.min_silence * (meta["audio"].get("sample_rate") or 48000) / 1024))
+        quiet = min((max(peaks[i:i + k]) for i in range(len(peaks) - k + 1)), default=math.inf)
+        summary["hint"] = f"no passage sits below {args.threshold:g} dBFS for {args.min_silence:g}s; " + (
+            f"the quietest {args.min_silence:g}s peaks at {quiet:.1f} dBFS. --threshold {min(-5, math.ceil(quiet + 3)):g} takes the pauses at that level "
+            "(see them with --list); if that is speech, there are no pauses to cut" if math.isfinite(quiet) else "try a higher --threshold (e.g. -25) or a shorter --min-silence")
         info("hint: " + summary["hint"])
 
     tm = time_map(held, duration)

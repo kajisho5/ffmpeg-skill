@@ -1,0 +1,21 @@
+{
+ "schema": 1,
+ "date": "2026-11-21",
+ "task_set": "scratch-24",
+ "tasks": 24,
+ "runs_per_task": 1,
+ "call_limit": 20,
+ "release": "4.4.0",
+ "arm": "skill",
+ "models": [
+  "DeepSeek V4.1 Flash",
+  "GLM 5.3 Flash",
+  "Qwen 3.8 27B"
+ ],
+ "requests": 72,
+ "correct": 69,
+ "calls_per_request": 9.4,
+ "cost_usd": 0.48,
+ "source": "https://github.com/kajisho5/ffmpeg-skill/pull/670",
+ "note": "4.4.0 with #669 (audio --mute, fit --fade-in/--fade-out, export --duration); the same figures are in #633's comment of 2026-11-21."
+}

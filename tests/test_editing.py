@@ -2268,7 +2268,10 @@ class EditingTests(MediaFixtures):
         none = json.loads(script("silence.py", tone, "--list", "--json").stdout)
         self.assertEqual(none["silences"], [])
         self.assertIn("--threshold", none["hint"])
-        self.assertIn("mean level", none["hint"])
+        # the level of the quietest stretch, not the track's mean (#684: the mean of a talk is its speech);
+        # a tone with no pause has a quietest stretch too, so the hint says what it is if that is speech
+        self.assertIn("the quietest 0.6s peaks at", none["hint"])
+        self.assertIn("if that is speech, there are no pauses to cut", none["hint"])
         # three 2 s gaps; --margin keeps 0.2 s of each on both sides (0.15 s before 2.22, when this
         # was 5.25 s removed and 6.75 s kept)
         self.assertClose(data["removed_seconds"], 4.9, 0.3)

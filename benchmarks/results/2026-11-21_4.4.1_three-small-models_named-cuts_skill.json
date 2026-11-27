@@ -1,0 +1,32 @@
+{
+ "schema": 1,
+ "date": "2026-11-21",
+ "task_set": "named-cuts-9",
+ "tasks": 9,
+ "runs_per_task": 1,
+ "call_limit": 20,
+ "release": "4.4.1",
+ "arm": "skill",
+ "models": [
+  "DeepSeek V4.1 Flash",
+  "GLM 5.3 Flash",
+  "Qwen 3.8 27B"
+ ],
+ "requests": 27,
+ "correct": 20,
+ "calls_per_request": null,
+ "cost_usd": null,
+ "source": "https://github.com/kajisho5/ffmpeg-skill/issues/675#issuecomment-7064650813",
+ "per_task": {
+  "cutaway": "3 of 3",
+  "reaction cut": "3 of 3",
+  "insert": "3 of 3",
+  "smash cut": "3 of 3",
+  "cross-cutting": "3 of 3",
+  "montage": "2 of 3",
+  "establishing shot": "3 of 3",
+  "J-cut": "0 of 3",
+  "L-cut": "0 of 3"
+ },
+ "note": "The sum of #675's per-request table, before join.py had --audio-lead/--audio-lag: J-cut and L-cut 0 of 6, montage one run out of calls. Calls per request were not published."
+}
