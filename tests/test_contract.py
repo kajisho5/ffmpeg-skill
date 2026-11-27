@@ -222,7 +222,9 @@ class ContractTests(unittest.TestCase):
         one so a new/removed tool that forgets to update one of them fails CI instead of
         drifting silently -- see #50, filed after README said 28 twice, 22 once (stale), and
         package.json's description said 21, all at the same time."""
-        real_count = len(self.contract["tools"])
+        # an alias (#683: crop, folded into fit) is described but not counted
+        real_count = len([t for t in self.contract["tools"] if "alias_of" not in t])
+        self.assertEqual(real_count, 41)
         checks = [
             (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|names)\b|\ball (?P<n>\d+) by\b")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
@@ -273,7 +275,7 @@ class ContractTests(unittest.TestCase):
             seen_core |= core
             seen_all += names
         self.assertEqual(seen_core, set(_contract.MCP_CORE_TOOLS))
-        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"]))
+        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"] if "alias_of" not in t))
         self.assertEqual(set(groups), {r.strip("|").split("|")[0].strip() for r in rows[:-1]})
         total_name, total_counts, _ = [c.strip() for c in rows[-1].strip("|").split("|")]
         self.assertEqual(total_name, "**Total**")
@@ -1117,12 +1119,12 @@ class ContractTests(unittest.TestCase):
     def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
         """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
         (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
-        Every one of the 42 tools is named in that table somewhere, so every tool has at least
-        one example; a row's markdown backticks are stripped from `command`, and a row with
+        Every tool but an alias (#683: crop, out of the table) is named in that table somewhere, so
+        it has at least one example; a row's markdown backticks are stripped from `command`, and a row with
         several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
         `prompts` list rather than one string."""
         by_name = {t["name"]: t for t in self.contract["tools"]}
-        missing = [name for name, t in by_name.items() if not t.get("examples")]
+        missing = [name for name, t in by_name.items() if not t.get("examples") and "alias_of" not in t]
         self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
         cut = next(e for e in by_name["cut"]["examples"] if "cut from 1:20 to 2:05" in e["prompts"])
         self.assertEqual(cut, {"prompts": ["cut from 1:20 to 2:05", "trim the first 10 s"],
@@ -2396,14 +2398,15 @@ sys.exit(fit.main())
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.18.3 behaviour: every
-        contract tool listed. This test proves that view is still byte-for-byte the full set."""
+        contract tool listed but an alias (#683). This test proves that view is still the full set."""
+        advertised = [n for n, s in self.tools.items() if "alias_of" not in s]
         saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
         os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
         try:
             mcp_names = [t["name"] for t in mcp_server.tool_list()]
-            self.assertEqual(sorted(mcp_names), sorted(self.tools), "MCP tools/list (full) == contract tools")
+            self.assertEqual(sorted(mcp_names), sorted(advertised), "MCP tools/list (full) == contract tools but the aliases")
             listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list", env={**os.environ}).stdout.splitlines() if l.strip()]
-            self.assertEqual(sorted(listed), sorted(self.tools))
+            self.assertEqual(sorted(listed), sorted(advertised))
         finally:
             os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
             if saved is not None:
@@ -2413,7 +2416,11 @@ sys.exit(fit.main())
             self.assertEqual(spec["mcp"]["positional"], mcp_server.POSITIONAL.get(name, ["input"]) if spec["mcp"]["positional"] else spec["mcp"]["positional"])
         # a real JSON-RPC round trip, full surface
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]
-        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
+        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(advertised))
+        # an alias is not listed and is still called by name (#683)
+        self.assertEqual({n: s["alias_of"] for n, s in self.tools.items() if "alias_of" in s}, _contract.ALIASES)
+        self.assertEqual(_contract.ALIASES, {"crop": "fit"})
+        self.assertIn("usage:", mcp_server.call_tool("crop", {"argv": ["--help"]})["content"][0]["text"].lower())
 
     def test_mcp_tools_list_defaults_to_the_core_12(self):
         """roadmap P1-7 (docs/design-decisions.md): tools/list defaults to _contract.MCP_CORE_TOOLS,
@@ -2445,7 +2452,7 @@ sys.exit(fit.main())
             listed = sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout
             self.assertEqual([line.split()[0] for line in listed.splitlines()], expected)
             full = self._rpc([request], full=True)[0]
-            self.assertEqual([t["name"] for t in full["result"]["tools"]], list(self.tools))
+            self.assertEqual([t["name"] for t in full["result"]["tools"]], [n for n, s in self.tools.items() if "alias_of" not in s])
 
     def test_mcp_reports_unknown_advertised_tool_names(self):
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
@@ -2462,9 +2469,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_300),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
+            ({}, 12, 75_900),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +100 for caption.py's cue ended with the picture (#776, 75805 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_300),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_500),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -2539,17 +2546,11 @@ sys.exit(fit.main())
         all 42 tools, so this reads tool_list() under FFMPEG_SKILL_MCP_FULL=1 -- the default's
         core-12 filter is a separate, tested concern (test_mcp_tools_list_defaults_to_the_core_12)."""
         snapshot_path = ROOT / "tests" / "fixtures" / "mcp_tools.json"
-        saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
-        os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
-        try:
-            live = [{"name": t["name"],
-                     "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
-                     "required": sorted(t["inputSchema"].get("required", []))}
-                    for t in mcp_server.tool_list()]
-        finally:
-            os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
-            if saved is not None:
-                os.environ["FFMPEG_SKILL_MCP_FULL"] = saved
+        # every tool callable by name, an alias too (#683: crop is not listed and keeps its arguments)
+        live = [{"name": t["name"],
+                 "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
+                 "required": sorted(t["inputSchema"].get("required", []))}
+                for t in map(_contract.mcp_tool, mcp_server.specs().values())]
         if os.environ.get("UPDATE_MCP_SNAPSHOT"):
             snapshot_path.write_text(json.dumps(live, indent=1) + "\n", encoding="utf-8")
         frozen = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -2601,8 +2602,18 @@ sys.exit(fit.main())
                     self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
                     self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
                     self.assertTrue(entry["replacement"])
+        version = tuple(int(x) for x in json.loads((ROOT / "package.json").read_text())["version"].split("."))
+        beta = {t["name"] for t in self.contract["tools"] if t["stability"] == "beta"}
         for entry in self.contract["deprecated"]:
-            self.assertGreater(int(entry["removed_in"].split(".")[0]), pkg_major)
+            removed_in, since = (tuple(int(x) for x in entry[k].split(".")) for k in ("removed_in", "since"))
+            if entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta:
+                # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it,
+                # so one listed from a patch (since 4.20.2) waits out 4.21 and goes in 4.22
+                self.assertEqual((removed_in[0], removed_in[2], removed_in[0] == since[0]), (since[0], 0, True), entry["what"])
+                self.assertEqual(removed_in[1], since[1] + (2 if since[2] else 1), entry["what"])
+                self.assertGreater(removed_in, version, entry["what"])
+            else:
+                self.assertGreater(removed_in[0], pkg_major)
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
@@ -2636,7 +2647,7 @@ sys.exit(fit.main())
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24"}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.20.2": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
@@ -2655,7 +2666,9 @@ sys.exit(fit.main())
             with self.subTest(what=entry["what"]):
                 self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES,
                               f"add {entry['since']}'s release date to DEPRECATION_RELEASE_DATES")
-                self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
+                # a beta tool's argument (4.x's beta rule) goes in a minor: the same check, at the minor
+                at = 2 if entry["since"].split(".")[0] == entry["removed_in"].split(".")[0] else 1
+                self.assertGreater(tuple(int(x) for x in entry["removed_in"].split(".")[:at]), tuple(int(x) for x in pkg["version"].split(".")[:at]),
                                    f"package.json is {pkg['version']} but {entry['what']!r} is still "
                                    f"deprecated, not removed: remove it, then drop the entry")
         for entry in _contract.REMOVED:
@@ -2843,7 +2856,7 @@ sys.exit(fit.main())
 
     def test_mcp_input_schema_equals_translated_contract_schema(self):
         listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]["result"]["tools"]
-        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"]], "MCP order == contract order")
+        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"] if "alias_of" not in t], "MCP order == contract order")
         for entry in listed:
             spec = self.tools[entry["name"]]
             self.assertEqual(self._norm(entry["inputSchema"]), self._norm(_contract.mcp_input_schema(spec)), entry["name"])
@@ -3243,7 +3256,7 @@ sys.exit(fit.main())
         """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
         `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
         the same FFmpeg line, and CI no longer runs 3.9 or a 5.x build."""
-        self.assertEqual(self.contract["deprecated"], [])
+        self.assertEqual([e for e in self.contract["deprecated"] if "Python" in e["what"] or "FFmpeg" in e["what"]], [])
         removed = {e["what"]: e for e in self.contract["removed"] if e["removed_in"] == "3.0.0"}
         py = next(e for w, e in removed.items() if "Python 3.9" in w)
         ff = next(e for w, e in removed.items() if "FFmpeg 5.x" in w)
@@ -14078,6 +14091,79 @@ class StumbleLedgerTests(unittest.TestCase):
         for tool, argv in (("cut", ("--start", "1", "--end", "2", "--bogus")), ("export", ("--codec", "hevc")), ("stabilize", ("--zoom=5%", "--wat"))):
             with self.subTest(tool=tool, argv=argv):
                 self.assertNotIn("try:", run(tool, *argv))
+
+    def test_a_try_line_is_a_command_the_tool_accepts(self):
+        """`speedramp.py IN --ramp 3:6:0.5` ended with `try: ... --segment 3:6:0.5`, which speedramp
+        refuses (START-END:FACTOR): --segment was the one option whose help mentions 'ramp', and the
+        value went with it. Every rule that writes a `try:` is run on every tool of tests/sweep.py's
+        table, and each command it prints is run with --dry-run: a misspelt option of the tool (with
+        the value it was given), a choice misspelt or given a common other word, a number with its
+        unit. A flag that another tool takes, or one that only shares a word or a mention in the
+        help, has no single answer here: the hint names the options and no command follows."""
+        import argparse
+        import concurrent.futures
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        from _common import runner
+
+        def taught(tool, argv):
+            parser, saved, err = parsers[tool], sys.argv, io.StringIO()
+            sys.argv = [str(SCRIPTS / f"{tool}.py"), *argv]
+            try:
+                with contextlib.redirect_stderr(err):
+                    parser.parse_args(argv)
+            except SystemExit:
+                pass
+            finally:
+                sys.argv = saved
+            return err.getvalue()
+
+        with tempfile.TemporaryDirectory() as work:
+            clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+            facts = sweep.facts_for(clip, work)
+            parsers = {p.stem: _contract._capture_parser(p) for p in sorted(SCRIPTS.glob("[!_]*.py"))}
+            self.assertNotIn("\ntry:", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            self.assertIn("--segment", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            commands, foreign = {}, []
+            for name, (base, ext) in sweep.TABLE.items():
+                tool = name.split()[0]
+                if tool == "verify":  # it runs its steps for real and ignores --dry-run
+                    continue
+                base, out = [b.format(**facts) for b in base], (["-o", str(Path(work) / f"o{ext}")] if ext else [])
+                acts = {o: a for a in parsers[tool]._actions for o in a.option_strings if o.startswith("--")}
+                cases = []
+                for i, word in enumerate(base):
+                    action = acts.get(word)
+                    if action and len(word) > 5:
+                        cases.append(("option", base[:i] + [word[:3] + word[4] + word[3] + word[5:]] + base[i + 1:]))
+                    if action and action.choices:
+                        cases += [("choice", base[:i + 1] + [w] + base[i + 2:]) for w in (base[i + 1][:-1], *runner._OTHER_WORDS)]
+                    if re.fullmatch(r"\d+(\.\d+)?", word):
+                        cases += [("unit", base[:i] + [word + unit] + base[i + 1:]) for unit in ("s", "px")]
+                for other, parser in parsers.items():
+                    for flag, action in {o: a for a in parser._actions for o in a.option_strings if o.startswith("--")}.items():
+                        if other != tool and not any(o.startswith(flag) for o in acts) and flag not in runner.SHARED:
+                            said = taught(tool, [clip, *base, flag, *([] if action.nargs == 0 else ["2"]), *out])
+                            foreign += [f"{name}: {flag} ({other}.py)"] if "\ntry:" in said else []
+                for rule, argv in cases:
+                    line = re.search(r"\ntry: (.*)", taught(tool, [clip, *argv, *out]))
+                    if line:
+                        commands[line[1]] = rule
+            self.assertEqual(foreign, [], "another tool's option was answered with a command")
+            self.assertEqual(sorted(set(commands.values())), ["choice", "option", "unit"], "every rule was run")
+
+            def refused(line):
+                # the try: line is quoted for the shell it is printed on: list2cmdline on Windows, shlex.join elsewhere
+                cmd = [w.strip('"') for w in shlex.split(line, posix=False)] if os.name == "nt" else shlex.split(line)
+                proc = subprocess.run([sys.executable, *cmd[1:], "--dry-run", "--json", "--overwrite"], capture_output=True,
+                                      text=True, encoding="utf-8", timeout=300, cwd=work)
+                try:
+                    # check.py runs the command and fails a check of the clip (kind verification): accepted
+                    return None if proc.returncode == 0 or json.loads(proc.stdout)["error"]["kind"] == "verification" else line
+                except ValueError:
+                    return line + " :: " + proc.stderr[-200:]
+            with concurrent.futures.ThreadPoolExecutor(4) as pool:
+                self.assertEqual([r for r in pool.map(refused, commands) if r], [])
 
     def test_three_things_most_models_asked_for_are_options_now(self):
         """Nine models were given the same blind tasks; these three shapes came from most of them and

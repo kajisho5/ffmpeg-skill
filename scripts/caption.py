@@ -57,7 +57,7 @@ from _common.asr import ENGINE_CHOICES
 from _common.decision import ntsc_rate
 from _common.emit import file_origin, note, own_end, warn
 from _common.placement import measure_placement, sample_cues
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import display_size, sound_clock, square_pixels, square_pixels_note
 from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
@@ -248,10 +248,12 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     if n_words <= 1:
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
+    # -copyts and the shift: an MPEG-TS/PS counts a sound-only decode from the sound's own start (#787)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts", "-ss", f"{start:.3f}", "-i", video,
            "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn",
            # a sound that starts late is padded to its place on the file's clock (#414)
-           "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+           "-af", sound_clock(probe(video, required=False), start),
+           "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)  # under --timeout like every other measurement
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:

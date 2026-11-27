@@ -295,6 +295,7 @@
   "name": "crop",
   "properties": [
    "argv",
+   "center",
    "codec",
    "dry_run",
    "fast",
@@ -309,6 +310,7 @@
    "plan",
    "preset",
    "quality",
+   "rect",
    "timeout",
    "width",
    "x",
@@ -496,6 +498,7 @@
    "plan",
    "preset",
    "quality",
+   "rect",
    "rotate",
    "smooth",
    "timeout",

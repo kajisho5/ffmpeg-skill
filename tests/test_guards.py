@@ -47,6 +47,48 @@ class TimeGuard(unittest.TestCase):
     (emit.source_carry, runner.declare_time_map); this runs every tool on a chaptered clip and
     fails on any tool that says it."""
 
+    def test_a_late_sounds_place_is_the_same_in_every_sound_only_read(self):
+        """#787's class on a sound-only read: the demuxer rewrites an MPEG-TS/PS timeline to start
+        at the earliest stream it reads, so every read of a file's sound without its picture counted
+        from the sound's own first sample. The guard remuxes a take whose sound starts 0.3 s late to
+        .ts and fails wherever a tool reads that sound elsewhere than the .mp4 does: the sweep rows
+        of the tools that read sound only, and sync.py --replace-audio's written sound."""
+        from _fixtures import make_tones_take, sh
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = make_tones_take(Path(tmp) / "late.mp4", start=0.0, audio_late=0.3, dur=7)
+            ts = Path(tmp) / "late.ts"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp4), "-c", "copy", "-f", "mpegts", str(ts))
+            differs = {}
+            a, b = sweep.facts_for(str(mp4), tmp), sweep.facts_for(str(ts), tmp)
+            for tool in ("silence", "scenes", "waveform", "cut", "loop", "caption"):
+                if tool not in sweep.TABLE:
+                    continue
+                rm, rt = sweep.row_for(tool, str(mp4), a, tmp), sweep.row_for(tool, str(ts), b, tmp)
+                if {k: v for k, v in rm.items() if k not in ("tool",)} != {k: v for k, v in rt.items() if k not in ("tool",)}:
+                    differs[tool] = (rm, rt)
+            ref = make_tones_take(Path(tmp) / "ref.mp4", dur=8)
+            out = Path(tmp) / "replaced.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(ts), "--replace-audio", "-o", str(out))
+            again = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(out), "--json").stdout)
+            if abs(again["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio"] = again["offset_seconds"]
+            # -copyts is global and -ss preserves timestamps: a .ts reference kept its picture at
+            # 1.467 s beside a sound at 0, and a trim of the second's head was padded back
+            rstart = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=start_time", "-of", "json", str(ts)).stdout)["format"]["start_time"]
+            out2 = Path(tmp) / "replaced_ts_ref.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ts), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out2))
+            starts = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", str(out2)).stdout)["streams"]
+            got = {s["codec_type"]: float(s.get("start_time") or 0) for s in starts}
+            if got.get("video") != 0.0 or got.get("audio") != 0.0:
+                differs["sync --replace-audio (ts reference)"] = (rstart, got)
+            late2 = make_tones_take(Path(tmp) / "early.mp4", start=2.0, dur=8)
+            out3 = Path(tmp) / "trimmed.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out3))
+            measured = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(out3), "--json").stdout)
+            if abs(measured["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio (trimmed head)"] = measured["offset_seconds"]
+            self.assertEqual(differs, {}, "these sound-only reads counted the .ts from its sound's first sample")
+
     def test_no_tool_leaves_chapters_at_the_source_times(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, sil = Path(tmp) / "chaptered.mkv", Path(tmp) / "chaptered_pause.mkv"
@@ -367,6 +409,48 @@ def judged_without_a_file(node, path=""):
         for i, v in enumerate(node):
             found += judged_without_a_file(v, f"{path}[{i}]")
     return found
+
+
+class IgnoredFlagGuard(unittest.TestCase):
+    """ignored_flag (waveform.py --at's video flags, freeze.py --time read as --timeout, #749): a
+    flag is taken and does nothing. This catches the part of the class that the parser and the code
+    show by themselves, on every tool and on one written after this test: an option declared and
+    never read, unless contract --json `deprecated` lists it, which says it goes. A flag that one
+    mode of a tool ignores while another reads it is not seen here."""
+
+    # A dest nothing reads by name, kept on purpose: `--keep-hevc` is the 3.0.0 default, accepted so
+    # a 2.x command line runs unchanged (docs/design-decisions.md), and argparse refuses it beside
+    # `--no-keep-hevc`.
+    UNREAD_BY_DESIGN = {("cut", "keep_hevc")}
+
+    def test_every_declared_option_of_every_tool_is_read(self):
+        """#749: overlay.py declared --emoji-assets, --emoji-scale and --emoji-max and never read
+        them, so a caller's value was accepted and did nothing. Every dest of every tool's parser is
+        read: as `<name>.<dest>` or a "<dest>" string in the tool, or as `args.<dest>` /
+        `getattr(args, "<dest>")` in the shared modules the tools hand their args to. An option
+        `_contract.DEPRECATED` lists ("<tool>.py --flag", where cli) is known: it still has to go."""
+        import argparse
+        import re
+        scripts = ROOT / "scripts"
+        sys.path.insert(0, str(scripts))
+        import _contract
+        shared = "\n".join(p.read_text(encoding="utf-8") for p in sorted(scripts.glob("_*.py")) + sorted((scripts / "_common").glob("*.py"))
+                           if p.name != "_contract.py")
+        deprecated = {d["what"] for d in _contract.DEPRECATED if d["where"] == "cli"}
+        unread = []
+        for tool in sorted(scripts.glob("[!_]*.py")):
+            src = tool.read_text(encoding="utf-8")
+            if tool.stem in _contract.ALIASES:  # an alias hands its args to the tool it names (crop.py -> fit.crop_rect)
+                src += (scripts / f"{_contract.ALIASES[tool.stem]}.py").read_text(encoding="utf-8")
+            for action in _contract._capture_parser(tool)._actions:
+                if isinstance(action, argparse._HelpAction) or (tool.stem, action.dest) in self.UNREAD_BY_DESIGN \
+                        or any(f"{tool.name} {o}" in deprecated for o in action.option_strings):
+                    continue
+                d = re.escape(action.dest)
+                if not (re.search(rf"\b\w+\.{d}\b|[\"']{d}[\"']", src)
+                        or re.search(rf"\bargs\.{d}\b|getattr\(\s*args\s*,\s*[\"']{d}[\"']", shared)):
+                    unread.append(f"{tool.stem}: {'/'.join(action.option_strings) or action.dest}")
+        self.assertEqual(unread, [], "options declared and never read")
 
 
 class NumericGuard(unittest.TestCase):
