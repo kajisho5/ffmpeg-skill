@@ -150,7 +150,7 @@ def _probe_limit() -> float:
 
 def _ffprobe(*args: str) -> "subprocess.CompletedProcess[str]":
     # every short ffprobe question this module asks: text out, stderr dropped, the probe time limit
-    return subprocess.run([found_exe("ffprobe"), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    return subprocess.run(guard_input_protocols([found_exe("ffprobe"), *args]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                           encoding="utf-8", errors="replace", timeout=_probe_limit())
 
 
@@ -1114,12 +1114,47 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
         # a file named like an option is still ffprobe's input: guard_input_names() writes it
         # `./name`, so it is checked as a playlist like any other (review of #636)
         _refuse_playlist(last)
+        refuse_outside_roots(last)
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",
                    f"{value!r} would be opened by ffmpeg as a URL ({url_scheme(value)}:), not as a local file; "
                    "this skill reads and writes local files only. Pass a plain path (a local name containing "
                    "a colon works as ./name)", path=value, scheme=url_scheme(value))
+    for i, value in enumerate(values):  # the last value: an ffmpeg command's output, an option's value after an ffprobe -i
+        last_one = i == len(values) - 1 and value == last
+        if not (last_one and base.startswith("ffprobe") and "-i" in cmd[1:-1]):
+            refuse_outside_roots(value, "output" if last_one and base.startswith("ffmpeg") else "input")
+
+
+ROOTS_ENV = "FFMPEG_SKILL_ROOTS"
+_TEMPLATES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "templates")
+
+
+def _under(real: str, root: str) -> bool:
+    return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def refuse_outside_roots(path: Any, what: str = "input") -> None:
+    """With FFMPEG_SKILL_ROOTS set (os.pathsep-separated absolute directories), refuse a path that
+    does not resolve (symlinks followed) under one of them (#572). The system temp directory, where
+    the tools write their intermediates and pass them between processes, is always allowed, and so
+    is reading the skill's own templates. An entry that is not absolute allows nothing."""
+    raw = os.environ.get(ROOTS_ENV, "")
+    p = str(path)
+    if not raw.strip() or p in ("-", os.devnull) or p.startswith("pipe:"):
+        return
+    import tempfile
+    entries = [e for e in raw.split(os.pathsep) if e.strip()]
+    roots = [os.path.normcase(os.path.realpath(e)) for e in entries if os.path.isabs(e)]
+    real = os.path.normcase(os.path.realpath(p))
+    allowed = roots + [os.path.normcase(os.path.realpath(tempfile.gettempdir()))]
+    if any(_under(real, r) for r in allowed + ([os.path.normcase(os.path.realpath(_TEMPLATES))] if what == "input" else [])):
+        return
+    refuse("input", "path_outside_roots",
+           f"{what} {p!r} resolves to {real!r}, outside the directories {ROOTS_ENV} allows ({os.pathsep.join(roots) or 'none'}); "
+           "move the file under one of them or add its directory to the variable",
+           path=p, resolved=real, roots=roots, ignored=[e for e in entries if not os.path.isabs(e)])
 
 
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
@@ -1198,6 +1233,7 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "media_path_is_url",
                f"output {output!r} would be opened by ffmpeg as a URL, not as a local file; pass a plain path "
                "(a local name containing a colon works as ./name)", path=output, scheme=output.split(":", 1)[0].lower())
+    refuse_outside_roots(output, "output")
     if re.search(r"\.(m3u8?|mpd)$|%0?\d*d[^/\\]*\.(png|jpe?g|bmp|tiff?|webp|dpx|exr|tga|p[pg]m|jp2)$", output, re.I) and "-update" not in cmd:
         # a playlist or a numbered pattern makes ffmpeg write files it names itself (out0.ts,
         # frame001.png): no guard here has seen them, and -y replaced the ones that existed (#562)
@@ -1361,6 +1397,7 @@ def _copies_wma_only(cmd: Sequence[str]) -> bool:
             return False
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
                      "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", file_arg(path)]
+        probe_cmd = guard_input_protocols(probe_cmd)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=_probe_limit())
@@ -1429,6 +1466,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
                      "-show_entries", "stream=index", "-of", "csv=p=0", *input_format_args(path), file_arg(path)]
+        probe_cmd = guard_input_protocols(probe_cmd)
         limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
@@ -2076,6 +2114,7 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
     for output in paths:
         if not output:
             continue
+        refuse_outside_roots(output, "output")
         try:
             exists = os.path.isfile(output)
             real = os.path.realpath(output)
@@ -3595,7 +3634,44 @@ def guard_input_names(cmd: Sequence[str]) -> List[str]:
         for i in range(1, len(cmd) - 1):
             if cmd[i] == "-i":
                 cmd[i + 1] = file_arg(cmd[i + 1])
-    return guard_input_formats(cmd)
+    return guard_input_protocols(guard_input_formats(cmd))
+
+
+# The protocols an input, and every file its demuxer opens (a concat list's entries, an image
+# sequence's frames), may go through (#572). FFmpeg's own default for a local file is
+# file,crypto,data; the skill's commands need file alone (measured over the test suites).
+PROTOCOL_WHITELIST = "file"
+
+
+def guard_input_protocols(cmd: Sequence[str]) -> List[str]:
+    """`cmd` with `-protocol_whitelist PROTOCOL_WHITELIST` first among each input's options (or a
+    value the caller gave replaced): for each `-i` of an ffmpeg or ffprobe command, and for the
+    last argument of an ffprobe command without `-i` when that argument is its input. A second guard
+    behind _refuse_url_media() and _refuse_playlist(), for a URL a demuxer finds inside a file."""
+    cmd = [str(a) for a in cmd]
+    base = os.path.basename(cmd[0]) if cmd else ""
+    if not base.startswith(("ffmpeg", "ffprobe")):
+        return cmd
+    if base.startswith("ffprobe") and "-i" not in cmd[1:-1]:
+        at = {len(cmd) - 1} if len(cmd) > 1 and not cmd[-1].startswith("-") else set()
+    else:
+        at = {i for i in range(1, len(cmd) - 1) if cmd[i] == "-i"}
+    lead = 1  # after the global flags ffmpeg_base() and the probes start with, which stay first
+    while lead < len(cmd) - 1 and (cmd[lead] in ("-hide_banner", "-nostdin", "-y", "-n") or cmd[lead] in ("-v", "-loglevel") and lead + 1 not in at):
+        lead += 2 if cmd[lead] in ("-v", "-loglevel") else 1
+    out: List[str] = cmd[:lead]
+    since = lead  # where the current input's options start in `out`; the list goes first among them
+    for i, a in enumerate(cmd[lead:], start=lead):
+        if i in at:
+            opts = out[since:]
+            if "-protocol_whitelist" in opts[:-1]:
+                out[since + opts.index("-protocol_whitelist") + 1] = PROTOCOL_WHITELIST
+            else:
+                out[since:since] = ["-protocol_whitelist", PROTOCOL_WHITELIST]
+        out.append(a)
+        if i - 1 in at or (i in at and a != "-i"):
+            since = len(out)
+    return out
 
 
 def riff_wave_args(path: str) -> List[str]:
@@ -3945,6 +4021,7 @@ def read_text_or_die(path: str, flag: str) -> str:
     """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
     with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback. The text
     comes back through normalize_text(): no BOM, `\\n` line ends."""
+    refuse_outside_roots(path)
     if os.path.isdir(path):
         # checked first: Windows raises PermissionError, not IsADirectoryError, for a directory
         die(f"{flag}: {path} is a directory, not a text file")
@@ -4011,6 +4088,7 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 def read_json(path: "os.PathLike[str] | str") -> Any:
     """parse_json() of a UTF-8 file. Raises OSError for a file that cannot be read and ValueError
     (UnicodeDecodeError is one) for anything else, so `except (OSError, ValueError)` covers it."""
+    refuse_outside_roots(path)
     with open(path, "r", encoding="utf-8") as fh:
         doc = parse_json(fh.read())
     register_plan_input(path)

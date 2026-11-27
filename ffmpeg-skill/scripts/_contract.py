@@ -465,6 +465,7 @@ ERROR_REASONS = {
     "fit_method_required":"fit.py --duration would retime the clip beyond 1.15x in either direction without a method or an explicit slow-motion filter; details: {factor, threshold, source_duration, target_duration}",
     "output_path_taken": "two files one run writes (a side file and the output, or two side files) resolve to the same path, so the second would replace the first; details: {output, other}",
     "output_looks_like_option": "the output starts with '-' (other than '-' for stdout), which ffmpeg would read as an option; ./name writes a file of that name; details: {output}",
+    "path_outside_roots": "kind input: FFMPEG_SKILL_ROOTS is set (os.pathsep-separated absolute directories) and an input or output does not resolve, symlinks followed, under one of them; the system temp directory is always allowed, and reading the skill's own templates/; a font is not checked; an entry that is not absolute allows nothing; dry runs included; details: {path, resolved, roots, ignored}",
     "media_path_is_url": "an input or output has a protocol prefix (tcp:, http://, file:, ...) that ffmpeg would open as a URL; the skill reads and writes local files only; details: {path, scheme}",
     "output_dir_missing": "the output's directory does not exist; details: {output, directory}",
     "output_extension_missing": "a media output with no file extension (and no -f naming its format), so ffmpeg could not choose a container; refused before ffmpeg runs, dry runs included; details: {output}",
