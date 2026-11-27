@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)](#after-4201--a-callers-subtitle-times-colours-and-luts-are-read-in-0-9-765)
 <!-- contents:end -->
 
 ## Time limits
@@ -3020,8 +3021,9 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `hh:mm:ss[,.]mmm` reads the same to both and is still given to ffmpeg as it is (no side file for
   a BOM, CRLF or a period separator); any other goes as the `_adjusted.srt` copy the tool writes
   (an extra `--mode mux` track as `_trackN.srt`). Always writing the copy would add a side file to
-  every run for files both readers agree on. Code: `caption.srt_timings_shared_grammar()`. Test:
-  `test_caption_hands_ffmpeg_the_cues_it_read`.
+  every run for files both readers agree on. A timing line written in digits other than 0-9 is
+  not rewritten but refused (#765, the section "After 4.20.1" below). Code:
+  `caption.srt_timings_shared_grammar()`. Test: `test_caption_hands_ffmpeg_the_cues_it_read`.
 - **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
   The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
   `.webm`; an EIA-608 track converts as text does (kept as it is in `.mov`, which holds c608). A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
@@ -7222,3 +7224,47 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)
+
+Python's `str.isdigit()` and an `re` pattern's `\d` take full-width and other Unicode digits;
+ffmpeg's SRT reader, `av_parse_color()` and `lut3d`'s .cube reader take 0-9 only. Where this tool
+reads a caller's text that ffmpeg then reads too, the two disagreed on one file.
+
+- **A line of digits outside 0-9 before an SRT timing line is cue text, not the next cue's
+  index.** `srt_blocks()` took "１２３" for an index (`isdigit()`) and dropped it, so a cue whose
+  text was only those digits lost it in every copy the tool writes (`--offset`, `--max-lines`,
+  the ASS route) while the result said `cues: 2`, `verified: true`. ffmpeg keeps it as text;
+  the index test and `_SRT_CUE_START` are now ASCII (`[0-9]`, `re.ASCII`).
+- **An SRT timing line written in other digits is refused, `kind: input`, before any command, dry
+  runs included, with the hint to write the times in ASCII digits.** ffmpeg refuses such a file
+  ("Invalid data found when processing input") when the first timing line is one, and burns the
+  line as the previous cue's text when a later one is; neither is a reading the caller meant, and
+  parse_srt() could read the times (`float()` takes those digits too) only by disagreeing with
+  ffmpeg. The tool follows its rule for a timing line it cannot read (`parse_srt()`'s "cannot read
+  the timing line", `kind: input`), not #414's rewritten copy: a copy would burn times ffmpeg
+  would never have read from the caller's file. `srt_file_blocks()` is the one reader of the
+  caller's file for `parse_srt()` and `srt_timings_shared_grammar()`, so caption.py's first
+  track and each extra `--mode mux` track meet it before any command; `_SHARED_SRT_TIMING` is
+  `re.ASCII` too. render.py's captions and waveform.py's `--srt` pass caption.py's refusal on as
+  `kind: input`: in a dry run before any command, in a real run when their caption stage runs,
+  after the stages before it, as for any refusal of caption.py's.
+- **`--color` with an alpha in other digits and a .cube LUT whose size or rows are in other digits
+  are refused, `kind: input`, as other text that ffmpeg cannot read there is.** `red@0.` followed
+  by a full-width 5 passed `validate_color()` and failed in ffmpeg after a dry run that had
+  completed; `refuse_bad_cube()` counted `LUT_3D_SIZE` and rows in those digits, which `lut3d`
+  refuses. `_COLOR_TOKEN_RE` is `re.ASCII`; the cube check takes `[0-9]+` and ASCII rows.
+- **Left as they are, by decision:** a `--text` cue file is this tool's own grammar, read by
+  `parse_time()` and converted before ffmpeg sees it (the SRT it writes is in 0-9), so
+  `TIME_RE`, `DROP_FRAME_RE`, `DROP_FRAME_LABEL` and `DROP_FRAME_CLOCK` keep taking any digit,
+  and a full-width cue reads as the caller wrote it. `SRT_TIMING_RE` and `TIMING_ONLY_RE` only
+  recognise an SRT given as `--text` to refuse it; made ASCII, a full-width SRT would pass and be
+  burned line by line as auto-timed text. `_VTT_INLINE` strips WebVTT tags ffmpeg's WebVTT reader
+  drops whatever digits they hold, so its wider `\d` agrees with ffmpeg. Numbers converted with
+  `int()`/`float()` before they reach ffmpeg (argparse options, `--allow-silent`,
+  `FFMPEG_SKILL_ENCODE` quality, a project's width and height, `--rect`) reach it in 0-9 and are
+  not refused.
+- Code: `_common.asr.srt_blocks()`, `_common.asr.srt_file_blocks()`, `caption._SHARED_SRT_TIMING`,
+  `_common.color._COLOR_TOKEN_RE`, `color.refuse_bad_cube()`. Tests (tests/test_contract.py):
+  `test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it`,
+  `test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs`.

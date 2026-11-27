@@ -11461,6 +11461,45 @@ class TextAndJsonReaderTests(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(asr.parse_srt(str(self.write(f"{case}.srt", body))), want)
 
+    def test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it(self):
+        """#765: before a timing line with no blank line above it, a cue whose text was "１２３" was
+        taken for the next cue's index (str.isdigit() takes full-width digits) and lost. ffmpeg's
+        SRT reader takes an index in 0-9 only and burns the line as text; so does parse_srt()."""
+        from _common import asr
+        src = self.write("full_width_text.srt", "1\n00:00:01,000 --> 00:00:02,000\n１２３\n"
+                                                "00:00:03,000 --> 00:00:04,000\nWorld\n")
+        want = [(1.0, 2.0, "１２３"), (3.0, 4.0, "World")]
+        self.assertEqual(asr.parse_srt(str(src)), want)
+        as_ffmpeg_reads_it = self.write("full_width_text_ffmpeg.srt",
+                                        sh("ffmpeg", "-v", "error", "-i", src, "-f", "srt", "-").stdout)
+        self.assertEqual(asr.parse_srt(str(as_ffmpeg_reads_it)), want)
+
+    def test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs(self):
+        """#765: a timing line written in full-width digits read as valid to parse_srt() and to the
+        shared-grammar check, so the file went to ffmpeg, which refused it ("Invalid data found")
+        after the run had started, or burned the line as the previous cue's text. It is refused as
+        input before any command, dry run or not, with the way out. The same digits slipped through
+        two other checks of a caller's text that ffmpeg reads: a colour's @alpha and a .cube LUT."""
+        fw = "００:００:０３,０００ --> ００:００:０４,０００"
+        caption, clip = str(SCRIPTS / "caption.py"), str(self.clip)
+        for case, body in (("first", f"1\n{fw}\nHello\n"),
+                           ("after_a_blank", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n\n2\n{fw}\nHello\n"),
+                           ("no_blank_line", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n{fw}\nHello\n")):
+            for dry in (["--dry-run"], []):
+                with self.subTest(case=case, dry=bool(dry)):
+                    doc = self.refused_as_input(case, caption, clip, "--srt", f"{case}.srt", "--fast", "-o",
+                                                f"fw_{case}.mp4", *dry, files=[(f"{case}.srt", body)])
+                    self.assertIn("ASCII digits", doc["error"]["hint"])
+                    self.assertFalse(doc.get("commands"), "refused before any ffmpeg command")
+        rows = "\n".join(f"{r} {g} {b}" for b in (0, 1) for g in (0, 1) for r in (0, 1))
+        color, pad = str(SCRIPTS / "color.py"), str(SCRIPTS / "pad.py")
+        for case, argv, files in (
+                ("cube_size", [color, clip, "--lut", "s.cube"], [("s.cube", "LUT_3D_SIZE ２\n" + rows + "\n")]),
+                ("cube_rows", [color, clip, "--lut", "r.cube"], [("r.cube", "LUT_3D_SIZE 2\n" + rows.replace("1", "１") + "\n")]),
+                ("alpha", [pad, clip, "--end", "0.5", "--color", "red@0.５"], [])):
+            with self.subTest(case=case):
+                self.refused_as_input(case, *argv, "-o", f"{case}.mp4", "--dry-run", files=files)
+
     def test_a_cue_line_of_spaces_does_not_split_the_srt_it_is_written_to(self):
         from _common import asr
         out = self.work / "spaces.srt"

@@ -62,7 +62,7 @@ from _common.runner import carried_stream_maps, refuse_output_is_input, same_fil
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
-from _common.asr import srt_blocks
+from _common.asr import srt_file_blocks
 from _common.runner import absent_word, normalize_text
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
@@ -1147,8 +1147,9 @@ def track_title_for(code: Optional[str], given: Optional[str]) -> Optional[str]:
 
 
 # a timing line in the grammar ffmpeg's SRT demuxer and parse_srt() read alike: hours, minutes,
-# seconds and three-digit milliseconds on both sides (ffmpeg allows position fields after it)
-_SHARED_SRT_TIMING = re.compile(r"^\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}(\s.*)?$")
+# seconds and three-digit milliseconds on both sides (ffmpeg allows position fields after it), in
+# the digits 0-9: srt_file_blocks() refuses a timing line in other digits, which ffmpeg cannot read
+_SHARED_SRT_TIMING = re.compile(r"^\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}(\s.*)?$", re.ASCII)
 
 
 def srt_timings_shared_grammar(path: str) -> bool:
@@ -1157,7 +1158,7 @@ def srt_timings_shared_grammar(path: str) -> bool:
     parse_srt() reads 1.5 s (#414); such a file is handed to ffmpeg as a rewritten copy."""
     # the timing lines parse_srt() reads, grouped as it groups them (srt_blocks()): a later line
     # that only holds "-->" is dialogue, not a timing this check should judge
-    return all(_SHARED_SRT_TIMING.match(times) for times, _body in srt_blocks(read_text_or_die(path, "--srt")))
+    return all(_SHARED_SRT_TIMING.match(times) for times, _body in srt_file_blocks(path)[1])
 
 
 def mux_subtitle_codec(output: str) -> str:
