@@ -20,7 +20,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, script, sh, tiny_clip  # noqa: E402
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, integrated_lufs, script, sh, tiny_clip  # noqa: E402
 from _common import font_for_script, probe, shell_quote  # noqa: E402
 
 
@@ -1508,8 +1508,8 @@ class OrchestrationTests(MediaFixtures):
         script("render.py", self.src, "--template", "reels", "--cues", self.cues,
                "--write-project", proj, "-o", OUT / "ip_out.mp4", "--json")
 
-        def presets(project, *extra):
-            doc = json.loads(script("render.py", project, "--dry-run", "--json", *extra).stdout)
+        def presets(project, *extra):  # --staged: fused (#357), the export is the only encode
+            doc = json.loads(script("render.py", project, "--dry-run", "--json", "--staged", *extra).stdout)
             x264 = [re.search(r"-preset (\S+)", c).group(1) for c in doc["commands"] if "-c:v libx264" in c]
             return doc.get("intermediate_preset"), x264
 
@@ -2329,6 +2329,144 @@ class OrchestrationTests(MediaFixtures):
             with self.subTest(script=name):
                 out = script(name, "--help").stdout
                 self.assertIn("usage:", out)
+
+
+class OnePassRenderTests(MediaFixtures):
+    """#357: a template render of one uncut clip is encoded once (fit, captions and loudness read into
+    the export's command), equivalent to the staged render; anything else renders stage by stage, and
+    the result's render_path_reason says why."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.flat = OUT / "onepass_flat.mp4"  # a flat picture: the captions are the only pixels that differ from it
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x606060:s=1280x720:r=30:d=4",
+           "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000:d=4", "-c:v", "libx264", "-preset", "veryfast",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", cls.flat)
+        cls.flat_cues = OUT / "onepass_cues.txt"
+        cls.flat_cues.write_text("0:00-0:02 One pass renders this line\n0:02-0:04 And this one, a little longer\n", encoding="utf-8")
+
+    @staticmethod
+    def _encodes(doc):
+        return [c for c in doc["commands"] if re.search(r"-c:v (?!copy)", c)]
+
+    def _caption_box(self, path, t):
+        """The box of the pixels that differ from the flat background at `t` (#547's bbox)."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common.placement import bbox
+        frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                                "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout[:1080 * 1920]
+        return bbox(bytes(255 if abs(v - frame[0]) > 24 else 0 for v in frame), 1080, 1920)
+
+    def test_a_template_render_is_one_encode_equivalent_to_the_staged_render(self):
+        docs = {}
+        for path in ("fused", "staged"):
+            work = OUT / f"onepass_work_{path}"
+            shutil.rmtree(work, ignore_errors=True)
+            docs[path] = json.loads(script("render.py", "--template", "reels", self.flat, "--cues", self.flat_cues,
+                                           "-o", OUT / f"onepass_{path}.mp4", "--work", work, "--json",
+                                           *(["--staged"] if path == "staged" else [])).stdout)
+        fused, staged = docs["fused"], docs["staged"]
+        self.assertEqual((fused["render_path"], fused["render_path_reason"]), ("fused", None))
+        self.assertEqual((staged["render_path"], staged["render_path_reason"]), ("staged", "staged_requested"))
+        self.assertEqual(len(self._encodes(fused)), 1, fused["commands"])
+        self.assertGreaterEqual(len(self._encodes(staged)), 3, staged["commands"])
+        self.assertTrue(fused["verified"] and staged["verified"])
+        self.assertEqual(fused["stages"], staged["stages"])
+        self.assertIsNone(fused["intermediate_preset"], "no stage encoded an intermediate")
+        self.assertIn("loudness", [v.get("stage") for v in fused["verification"]], "the loudness stage's check, on the delivery")
+        self.assertEqual(fused["caption"], staged["caption"])
+        a, b = (probe(str(OUT / f"onepass_{p}.mp4")) for p in ("fused", "staged"))
+        for key in ("width", "height", "fps", "nb_frames"):
+            self.assertEqual(a["video"][key], b["video"][key], key)
+        self.assertEqual(a["stream_counts"], b["stream_counts"])
+        self.assertAlmostEqual(a["duration"], b["duration"], delta=0.03)
+        self.assertAlmostEqual(integrated_lufs(OUT / "onepass_fused.mp4"), integrated_lufs(OUT / "onepass_staged.mp4"), delta=0.5)
+        # the captions are laid out against the frame fit plans: the same ASS, drawn in the same place.
+        # The karaoke word lengths are read from the sound: the source's here, an AAC re-encode of it there
+        ass = [(OUT / f"onepass_work_{p}" / "captioned.ass").read_text(encoding="utf-8") for p in ("fused", "staged")]
+        self.assertEqual(*(re.sub(r"\\kf\d+", r"\\kf", text) for text in ass))
+        for got, want in zip(*(map(int, re.findall(r"\\kf(\d+)", text)) for text in ass)):
+            self.assertLessEqual(abs(got - want), 2)
+        for t in (1.0, 3.0):
+            box_f, box_s = self._caption_box(OUT / "onepass_fused.mp4", t), self._caption_box(OUT / "onepass_staged.mp4", t)
+            self.assertIsNotNone(box_f)
+            for got, want in zip(box_f, box_s):
+                self.assertLessEqual(abs(got - want), 2, (t, box_f, box_s))
+        ssim = sh("ffmpeg", "-nostats", "-i", OUT / "onepass_fused.mp4", "-i", OUT / "onepass_staged.mp4",
+                  "-lavfi", "ssim", "-f", "null", "-").stderr
+        self.assertGreaterEqual(float(re.search(r"All:([0-9.]+)", ssim).group(1)), 0.98)
+        self.assertEqual(Path(fused["caption_srt"]).read_text(encoding="utf-8"), Path(staged["caption_srt"]).read_text(encoding="utf-8"))
+        plan = json.loads(script("render.py", "--template", "reels", self.flat, "--cues", self.flat_cues, "-o", OUT / "onepass_plan.mp4",
+                                 "--work", "onepass_relative_work", "--dry-run", "--json", cwd=OUT).stdout)  # a relative --work too
+        self.assertEqual((plan["render_path"], len(self._encodes(plan))), ("fused", 1), "the plan is the one command")
+
+    def test_every_reason_for_the_staged_path_is_named(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _fixtures import make_multistream
+        subs = make_multistream(OUT / "onepass_subs.mkv", subtitle=True)
+        tracks = make_multistream(OUT / "onepass_tracks.mp4")
+        base = {"clips": [{"src": str(self.flat)}], "frame": {"aspect": "9:16", "fit": "crop"},
+                "loudness": {"lufs": -14}, "export": {"preset": "reels"}}
+
+        def reason(name, change=None, *extra, src=None):
+            proj = json.loads(json.dumps(base))
+            if src:
+                proj["clips"] = [{"src": str(src)}]
+            proj.update(change or {})
+            proj["output"] = str(OUT / f"onepass_r_{name}.mp4")
+            path = OUT / f"onepass_r_{name}.json"
+            path.write_text(json.dumps(proj), encoding="utf-8")
+            return script("render.py", path, "--dry-run", "--json", *extra)
+
+        cases = {
+            "staged_requested": ({}, ["--staged"]), "cache": ({}, ["--cache", OUT / "onepass_cache"]),
+            "stop_after": ({}, ["--stop-after", "export"]), "no_encoding_export": ({"export": {"preset": "copy"}}, []),
+            "export_not_a_platform_preset": ({"export": {"preset": "h265"}}, []),
+            "clips_cut_or_joined": ({"clips": [{"src": str(self.flat), "in": 0, "out": 2}]}, []),
+            "silence_stage": ({"silence": {"threshold": -40}}, []),
+            "graphics_stage": ({"graphics": [{"template": "lower-third", "name": "A", "start": 0, "end": 1}]}, []),
+            "overlays_stage": ({"overlays": [{"text": "hi"}]}, []), "audio_stage": ({"audio": {"gain": 1}}, []),
+            "audiogram_stage": ({"audiogram": {"background": "black"}}, []),
+            "fit_not_one_picture_chain": ({"fit": {"duration": 3, "method": "trim"}}, []),
+            "fit_changes_frame_rate": ({"frame": {"aspect": "9:16", "fit": "crop", "fps": 25}}, []),
+        }
+        for name, (change, extra) in cases.items():
+            with self.subTest(reason=name):
+                doc = json.loads(reason(name, change, *extra).stdout)
+                self.assertEqual((doc.get("render_path"), doc.get("render_path_reason")), ("staged", name), doc.get("error"))
+        for name, src in (("source_variable_frame_rate", self.vfr), ("source_rotated_or_anamorphic", self.rot),
+                          ("source_hdr", self.hdr), ("source_subtitle_or_data_streams", subs),
+                          ("source_several_audio_tracks", tracks)):
+            with self.subTest(reason=name):
+                doc = json.loads(reason(name, None, src=src).stdout)
+                self.assertEqual((doc.get("render_path"), doc.get("render_path_reason")), ("staged", name), doc.get("error"))
+        with self.subTest(reason="loudness_not_planned"):  # loudness.py refuses a silent track; the staged path runs it
+            silent = OUT / "onepass_silent.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=gray:s=320x240:r=30:d=2", "-f", "lavfi",
+               "-i", "anullsrc=r=48000:cl=mono", "-t", "2", "-c:v", "libx264", "-c:a", "aac", silent)
+            proc = reason("silent", None, src=silent)
+            self.assertEqual(json.loads(proc.stdout)["render_path_reason"], "loudness_not_planned")
+            self.assertIn("render path: staged (loudness_not_planned)", proc.stderr)
+        # a stage whose plan does not read into one chain, or that refused: emoji drawn as PNG overlays are
+        # inputs of their own (only where libass draws no colour, so the plans are given here)
+        sys.path.insert(0, str(SCRIPTS))
+        import render
+        work = OUT / "onepass_unit"
+        work.mkdir(exist_ok=True)
+        for name, script_name, command in (
+                ("fit_not_planned", "fit.py", None), ("captions_not_planned", "caption.py", None),
+                ("captions_not_one_picture_chain", "caption.py", ["ffmpeg", "-i", "x", "-i", "e.png", "-filter_complex", "[0:v][1:v]overlay", "o"])):
+            with self.subTest(reason=name):
+                def planned(script_, argv, command=command, script_name=script_name, **spec):
+                    if script_ == script_name:
+                        return None if command is None else {"command": command}
+                    return {"command": ["ffmpeg", "-i", "x", "-vf", "null", "o"]}
+                with unittest.mock.patch.object(render, "stage_recipe", planned), unittest.mock.patch.object(render, "sh") as export:
+                    why, _ = render.render_fused(str(self.flat), work, ".mp4", {"aspect": "9:16"}, ["--aspect", "9:16"],
+                                                 ["--text", str(self.flat_cues)], None, [], str(work / "o.mp4"))
+                self.assertEqual(why, name)
+                export.assert_not_called()
 
 
 class DemoGalleryTests(unittest.TestCase):

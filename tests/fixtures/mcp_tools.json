@@ -996,6 +996,7 @@
    "plan",
    "project",
    "srt",
+   "staged",
    "stop_after",
    "template",
    "timeout",

@@ -16,7 +16,7 @@ from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, note, refuse, warn
-from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
+from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, planned_input, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
 # a cover (`V`), its `audio` the first sound stream. Without a -map, FFmpeg picks the largest
@@ -552,7 +552,7 @@ def probe(path: str, role: str = "input", *, required: bool = True, advise_deint
         "chapter_times": [(round(_to_float(c.get("start_time")) or 0.0, 2), round(_to_float(c.get("end_time")) or 0.0, 2))
                           for c in (raw.get("chapters") or [])],
     }
-    return out
+    return planned_input(path, out) if role == "input" else out
 
 
 _CARRY: Dict[str, Dict[str, Any]] = {}

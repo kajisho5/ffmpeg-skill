@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,75 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.20.0 — a template render is encoded once (#357)
+
+Before this, a `--template reels` render of one clip encoded the picture three times (fit, captions,
+export at `--intermediate-preset superfast` then `medium`) and the sound four (fit, captions,
+loudness, export), and only the export was kept.
+
+- **The stages still plan their own work; render.py only joins the plans.** fit.py, caption.py and
+  loudness.py run as themselves, with every refusal, measurement and side file of a real run (the
+  generated ASS and SRT are written), and stop at the ffmpeg command that would write their file:
+  `runner._stage_command` prints that command and exits, under `FFMPEG_SKILL_STAGE`, a variable
+  `render.py` sets for its own children only (as `FFMPEG_SKILL_MCP_PROGRESS`). The export then runs
+  for real on the source, and the same variable makes the one command that writes the delivery read
+  the source through fit's `-vf`, caption's `-vf` and loudness's `-af`. Nothing is re-derived in
+  render.py: a stage changed later changes its own plan.
+- **The captions are laid out against the frame fit plans.** The caption stage probes the source,
+  and `probe()` (`runner.planned_input`) reads its picture as fit's planned output: the size from
+  `frame_size()`, the rule fit.py sizes with, and the pixel format and colour tags fit's command
+  writes. The test compares the ASS of the two paths (identical, the karaoke word lengths within
+  2 cs: they are read from the sound, the source's here and an AAC re-encode there) and the box of
+  the drawn captions in the two deliveries (#547's `bbox`, within 2 px).
+- **The loudness is measured on the source.** fit and captions do not touch the sound on this path
+  (a fit that retimes, trims or fades is staged), so the measurement is the one loudness.py would
+  make on its input, less two AAC generations. loudness.py's own check (target, tolerance 1 LU)
+  is made on the delivery the export measured, tagged `stage: loudness`, `measured_on: delivery`;
+  the export's platform check and its `--normalize` pass are unchanged.
+- **Which projects.** One uncut clip with any of fit, captions and loudness before a platform
+  export, chapters and check after it. Everything else is staged, and `render_path_reason` names the
+  first reason (the codes are in the contract): `--staged`, `--cache` (a cache keys one file per
+  stage), `--stop-after` (it asks for a stage's file), a cut, a join, silence, graphics, overlays,
+  audio, audiogram, a non-platform export, a VFR, rotated, non-square-pixel, HDR, multi-track
+  source or one with subtitle or data streams (each stage handles these on its own and the
+  equivalence of the fused command with them is not tested), a fit that retimes, trims, fades or
+  changes the rate, emoji drawn as PNG overlays (inputs of their own), and a stage that refused its
+  plan (the staged path then runs it and reports why).
+- **The design questions of 2026-10-24.** *Each stage verifies its own output*: no stage writes a
+  file here, so the checks move to the delivery, which the export verifies (streams, lengths, frame,
+  rate, codec, decode, loudness) and the check stage checks; the loudness stage's check is kept,
+  measured there. fit's `picture` (a measurement of fit's file) is not made, so `stage_pictures` has
+  only the export's. *The contract is the single source*: the plan mode is an environment variable
+  between render.py and its children, not a flag, so no tool's schema changes; render.py gains
+  `--staged` and the two result keys. *Plan before render*: `--dry-run` takes the same path and shows
+  the one command, and `render_path` says which path will run.
+- **`--intermediate-preset` (2.15, 2.16) is a staged-path setting.** A fused render has no
+  intermediate, so `intermediate_preset` is `null`; its test now renders `--staged`.
+- **Not done.** Graphics, overlays (a logo is an input of its own) and the audio stage are not
+  fused; a project with them is staged. A failure of the one encode is reported as the export's, not
+  retried staged; `--staged` is that retry.
+- Measured (FFmpeg 6.1.1, 4 cores, shared machine; 30 s 1920x1080 testsrc2 with a tone,
+  `--template reels --cues`, whole render including its own dry run and `check --content`):
+
+  | | staged (`--staged`) | fused (default) |
+  |---|---|---|
+  | ffmpeg encodes in `commands` | 4 (fit, captions, loudness's audio, export) | 1 |
+  | whole render, two runs ten minutes apart, load average 4-10 | 172.3 s | 52.6 s |
+  | whole render, load average 19-25 (10:20, the same pair run back to back) | 291.2 s | 162.0 s |
+  | the recorded encode commands alone, run again in sequence (load about 20) | 183.0 s | 114.2 s |
+  | SSIM against a lossless encode of the fused graph | 0.9634 | 0.9632 |
+  | SSIM fused against staged | | 0.9983 |
+  | frames, size, rate, duration | 900, 1080x1920, 30, 30.000 s | the same |
+  | integrated loudness / sample peak | -14.0 LUFS / -4.7 dBFS | the same |
+
+  The machine is shared, so the absolute times are not this render's alone; the ratio of the pair
+  run back to back is. On this synthetic clip the stages' CRF 18 superfast intermediates lose almost
+  nothing the export keeps, so the two SSIM against the reference are equal; the gain is the time
+  and the one generation, not a measurable quality step (the issue's 8.0.1 measurement on camera
+  footage had 0.9871 against 0.9869).
+
+- Code: `render.fuse_blocker`, `render.stage_recipe`, `render.render_fused`, `runner._stage_command`,
+  `runner.planned_input`. Tests (tests/test_orchestration.py, `OnePassRenderTests`):
+  `test_a_template_render_is_one_encode_equivalent_to_the_staged_render`,
+  `test_every_reason_for_the_staged_path_is_named`.

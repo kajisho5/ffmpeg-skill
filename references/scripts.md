@@ -1079,7 +1079,16 @@ render.py plan.json [--audit-log FILE]       # execute a plan written by <tool> 
 render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the cut for an editor, nothing rendered
 render.py project.json --intermediate-preset medium   # the stages' own encoder preset instead of superfast
 render.py v2.json --compare-project v1.json   # check the render changed only what the project edit changed
+render.py project.json --staged               # every stage writes its own file (the default before #357)
 ```
+One encode (#357): a project of one uncut clip whose stages are `fit`, `captions` and `loudness`
+(any of them) before a platform `export`, as every video `--template` with `--cues` and no logo,
+title or graphics, is encoded once. fit, caption and loudness run as themselves up to their encode
+(captions laid out against the frame fit plans, loudness measured on the source) and the export
+reads the source through their filters: one lossy generation instead of three, and on a 30 s 1080p
+reels render about half the time (docs/design-decisions.md has the measurement). `render_path` says `fused` or `staged`, `render_path_reason` why
+a project was staged (`--staged`, `--cache`, `--stop-after`, a cut, a graphics/overlay/audio/silence
+stage, a VFR, rotated, HDR or multi-track source, a fit that retimes or trims, emoji drawn as overlays).
 A real render first runs its own dry run; when that is refused because a stage needs a filter or an
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
@@ -1126,7 +1135,7 @@ keep: a 30 s 1080p reels render took 41.7 s instead of 51.8 s on FFmpeg 8.0.1 (S
 between the two deliveries); `superfast` (2.16) took it to 30 s from veryfast's 33 s on 8.0.1, the
 same time on 6.1, at the same quality. `medium` restores the stages' default; `--fast` still overrides
 everything; a stage given its own `--preset` keeps it. The result names it as
-`intermediate_preset` (`null` when not applied).
+`intermediate_preset` (`null` when not applied, and on a one-encode render, which has no intermediate).
 `--export-timeline FILE` (2.1) writes the project's cut as an editor timeline instead of
 rendering it: `.fcpxml` (FCPXML 1.10: Final Cut Pro, DaVinci Resolve), `.edl` (CMX 3600:
 Premiere, Resolve, Avid) or `.otio` (OpenTimelineIO JSON: Resolve natively, others through
