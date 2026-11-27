@@ -326,7 +326,7 @@ directory of PNGs — and on most builds only the second one exists.
   the emoji arrives and leaves with the line instead of popping in.
 - `overlay.py --text` has no PNG route: `--emoji png|color` there names
   `caption.py`/`graphics.py` instead. Its `--emoji-assets`, `--emoji-scale` and `--emoji-max` do
-  nothing: deprecated since 4.19.0 (warning `deprecated_option`), removed in 4.20.0.
+  nothing: deprecated since 4.20.1 (warning `deprecated_option`), removed in 4.22.0.
 
 ### Reframing, fps and duration
 `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot

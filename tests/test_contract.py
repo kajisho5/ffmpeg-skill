@@ -2462,8 +2462,8 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +100 for overlay.py's three deprecated-option notes (#749)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_300),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
@@ -2606,8 +2606,10 @@ sys.exit(fit.main())
         for entry in self.contract["deprecated"]:
             removed_in, since = (tuple(int(x) for x in entry[k].split(".")) for k in ("removed_in", "since"))
             if entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta:
-                # 4.x's beta rule: a beta tool's argument goes in the minor after the one that lists it
-                self.assertEqual((removed_in[0], removed_in[1], removed_in[0] == since[0]), (since[0], since[1] + 1, True), entry["what"])
+                # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it,
+                # so one listed from a patch (since 4.20.1) waits out 4.21 and goes in 4.22
+                self.assertEqual((removed_in[0], removed_in[2], removed_in[0] == since[0]), (since[0], 0, True), entry["what"])
+                self.assertEqual(removed_in[1], since[1] + (2 if since[2] else 1), entry["what"])
                 self.assertGreater(removed_in, version, entry["what"])
             else:
                 self.assertGreater(removed_in[0], pkg_major)
@@ -2644,7 +2646,7 @@ sys.exit(fit.main())
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.19.0": None}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.20.1": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
