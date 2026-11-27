@@ -687,6 +687,45 @@ class EditingTests(MediaFixtures):
     def test_crop_negative_offset_refused(self):
         script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
 
+    def test_fit_rect_writes_crops_file_and_a_box_without_a_corner_is_centred(self):
+        """#683: crop.py is folded into fit.py. `fit.py --rect W:H:X:Y` runs crop.py's code and writes
+        the same pixels; without X:Y (crop.py: without --x/--y, or --center, #676) the box is centred."""
+        src = OUT / "rect683_src.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=0.4", "-f", "lavfi",
+           "-i", "sine=d=0.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+
+        def pixels(tool, *argv):
+            out = OUT / f"rect683_{tool}_{abs(hash(argv))}.mp4"
+            doc = json.loads(script(f"{tool}.py", src, *argv, "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            return subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-map", "0:v", "-f", "rawvideo", "-"],
+                                  capture_output=True, check=True).stdout
+        corner = pixels("crop", "--x", "11", "--y", "20", "--width", "100", "--height", "80")
+        self.assertEqual(len(corner), 10 * 100 * 80 * 3 // 2)
+        self.assertEqual(pixels("fit", "--rect", "100:80:11:20"), corner)
+        self.assertEqual(pixels("crop", "--rect", "100:80:11:20"), corner)
+        centred = pixels("crop", "--x", "110", "--y", "80", "--width", "100", "--height", "80")
+        self.assertNotEqual(centred, corner)
+        for tool, argv in (("fit", ("--rect", "100:80")), ("crop", ("--width", "100", "--height", "80")),
+                           ("crop", ("--width", "100", "--height", "80", "--center")), ("crop", ("--rect", "100:80"))):
+            with self.subTest(tool=tool, argv=argv):
+                self.assertEqual(pixels(tool, *argv), centred)
+        # the same command line, the output name aside
+        plan = lambda tool, *argv: json.loads(script(f"{tool}.py", src, *argv, "-o", OUT / "rect683_plan.mp4",
+                                                     "--dry-run", "--json").stdout)["commands"]
+        self.assertEqual(plan("crop", "--x", "11", "--y", "20", "--width", "100", "--height", "80"), plan("fit", "--rect", "100:80:11:20"))
+        for tool, argv, said in (("fit", ("--rect", "100:80", "--aspect", "1:1"), "--aspect"),
+                                 ("fit", ("--rect", "100:80", "--fit", "blur"), "--fit"),
+                                 ("fit", ("--rect", "101:80"), "even"), ("fit", ("--rect", "100x80"), "W:H:X:Y"),
+                                 ("fit", ("--rect", "400:80"), "exceeds"),
+                                 ("crop", ("--x", "3", "--width", "100", "--height", "80"), "--x X --y Y"),
+                                 ("crop", ("--x", "3", "--y", "3", "--width", "100", "--height", "80", "--center"), "--x X --y Y"),
+                                 ("crop", ("--rect", "100:80", "--width", "100"), "--rect")):
+            with self.subTest(refused=argv):
+                proc = script(f"{tool}.py", src, *argv, "-o", OUT / "rect683_no.mp4", "--json", expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+                self.assertIn(said, proc.stderr)
+
     # ---------------------------------------------------------------- sphere
     def test_sphere_extracts_a_flat_viewport(self):
         out = OUT / "sphere1.mp4"
