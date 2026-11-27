@@ -63,7 +63,11 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+        # the runner image's packages.microsoft.com source has answered 403 (#751, #757), which failed
+        # the job before a test ran; nothing here installs from it
+        run: |
+          grep -l packages.microsoft.com /etc/apt/sources.list.d/* 2>/dev/null | xargs -r sudo rm -f || true
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
       - name: Install ffmpeg (macOS)
         if: runner.os == 'macOS'
         # Homebrew's `ffmpeg` formula no longer links libass / freetype / harfbuzz / zimg, so it has no
