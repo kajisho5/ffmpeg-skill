@@ -15,12 +15,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fixtures import (MULTI_PROBED, MediaFixtures, OUT, ROOT, SCRIPTS, frame_rgb, make_multistream,  # noqa: E402
-                       sar_clip, script, sh, written_track)
+                       make_vfr_flash_beep, sar_clip, script, sh, written_track)
+import caption_delivery  # noqa: E402
 from _common import probe, runner  # noqa: E402
 from _common.color import is_rgb  # noqa: E402
 
@@ -2188,6 +2190,70 @@ class KeyFillRangeTests(unittest.TestCase):
                         offset = (32 * 256 + x) * 2
                         measured = int.from_bytes(raw[offset:offset + 2], "little")
                         self.assertAlmostEqual(measured, expected, delta=3, msg=f"alpha {x}, {codec}, {mode}")
+
+
+class CaptionDeliveryHarnessTests(unittest.TestCase):
+    """#729: tests/caption_delivery.py runs an accurate cut, a caption mux and a copy export on a
+    phone capture the caller supplies and on a 30000/1001 CFR control it generates, and records what
+    the issue lists. Here it runs on the control and on the synthetic VFR clip of #512, whose frames
+    arrive 33 ms and 233 ms apart; no phone footage is read or fetched."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        cls.dir = Path(str(OUT)) / "caption_delivery"
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        control = cls.dir / "control.mp4"
+        how = caption_delivery.make_control(control, 20)
+        cls.control = caption_delivery.run_case("control", control, cls.dir / "control_work", generated=how)
+        cls.vfr = caption_delivery.run_case("vfr", make_vfr_flash_beep(cls.dir / "vfr.mp4"), cls.dir / "vfr_work")
+
+    def test_cues_land_within_a_frame_on_the_control_and_on_a_vfr_clip(self):
+        for report in (self.control, self.vfr):
+            with self.subTest(case=report["case"]):
+                self.assertTrue(report["ok"], [c for c in report["checks"] if not c["ok"]])
+                self.assertEqual([r["cue"] for r in report["cues"]], ["start", "middle", "end"])
+                self.assertEqual(set(report["sample_rates"].values()), {48000})
+        # the control is 30000/1001 throughout and keeps its own rate; the VFR clip is conformed to a grid
+        self.assertEqual(self.control["source"]["video"]["r_frame_rate"], "30000/1001")
+        self.assertFalse(self.control["source"]["video"]["packets"]["vfr"])
+        self.assertIsNone(self.control["cut"]["cfr_grid"])
+        self.assertEqual(self.control["delivery"]["r_frame_rate"], "30000/1001")
+        self.assertTrue(self.vfr["source"]["video"]["packets"]["vfr"])
+        self.assertEqual(self.vfr["cut"]["cfr_grid"], "27")
+        self.assertEqual(self.vfr["delivery"]["r_frame_rate"], "27/1")
+
+    def test_the_report_records_what_729_lists(self):
+        report = self.control
+        self.assertEqual(report["provenance"]["file"], "control.mp4")
+        self.assertRegex(report["provenance"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("rate=30000/1001", report["provenance"]["generated"])
+        self.assertGreater(report["source"]["video"]["packets"]["count"], 500)
+        for key in ("requested_start", "requested_end", "adjusted_end", "delivered_start", "delivered_end", "start_delta_ms", "first_frame_on_screen"):
+            self.assertTrue(all(r[key] is not None for r in report["cues"]), key)
+        # the 0.4 s end cue is the deliberate minimum-duration change, and only it
+        self.assertEqual([(m["cue"], m["requested_seconds"], m["delivered_seconds"]) for m in report["min_duration_changes"]], [("end", 0.4, 1.0)])
+        for key in ("container_seconds", "picture_seconds", "sound_seconds", "requested_seconds"):
+            self.assertIsInstance(report["delivery"][key], float)
+        self.assertTrue(all(str(self.dir) not in c for c in report["cut"]["commands"] + report["caption"]["commands"]), "work paths are scrubbed")
+        page = caption_delivery.markdown(report)
+        self.assertIn("| start |", page)
+        self.assertIn("Minimum-duration changes: end: 0.4 s became 1.0 s", page)
+
+    def test_a_cue_moved_by_a_step_is_a_failed_check(self):
+        """The comparison is not vacuous: the same run with caption.py's --offset 0.5 delivers every
+        cue half a second late, and the start and on-screen checks fail while the ends (moved with
+        them by caption.py's own adjusted copy) pass."""
+        def late(name, *argv):
+            return run(name, *argv, *(["--offset", "0.5"] if name == "caption" else []))
+        run = caption_delivery.tool
+        with unittest.mock.patch.object(caption_delivery, "tool", late):
+            report = caption_delivery.run_case("late", self.dir / "control.mp4", self.dir / "late_work")
+        self.assertFalse(report["ok"])
+        failed = sorted(c["check"] for c in report["checks"] if not c["ok"])
+        self.assertEqual(failed, sorted(f"{cue} cue {what}" for cue in ("start", "middle", "end")
+                                        for what in ("starts within one delivered frame", "is on screen less than a frame after its start")))
 
 
 if __name__ == "__main__":

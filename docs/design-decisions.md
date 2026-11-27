@@ -139,6 +139,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
 - [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
+- [After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)](#after-4200--caption-delivery-on-a-phone-capture-is-a-harness-not-a-fixture-729)
 <!-- contents:end -->
 
 ## Time limits
@@ -7251,3 +7252,28 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
 - Code: `scripts/speedramp.py`, `scripts/_common/runner.py` (`_parses`), the help of
   `scripts/color.py` and `scripts/batch.py`. Tests: `test_speedramp_takes_one_span_as_speed_start_end`,
   `test_a_printed_try_line_passes_the_tools_own_usage_check`, `StumbleLedgerTests` (tests/test_contract.py).
+
+## After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)
+
+- **The phone file is the caller's, the control is generated.** No phone footage is committed or
+  downloaded: `tests/caption_delivery.py` takes a capture by argument or `$FFMPEG_SKILL_PHONE_CAPTURE`,
+  reads it where it is, and writes its cut, captioned and delivered files to a temporary folder.
+  The 30000/1001 CFR control is made by the harness itself (testsrc2 and a 48 kHz tone), so every
+  run, here or on a contributor's machine, has a case whose answer is known. The committed report
+  is the control's (`docs/caption-delivery/`); a report of a private capture names the file and its
+  device tags and is the owner's to share. Location tags are never copied into it.
+- **What is judged is what #729 asks.** A cue's delivered start is within one delivered frame of the
+  request, and the first frame shown at or after it is less than a frame later; its delivered end is
+  within a frame of the end caption.py gave it; the sample rate is the source's at every step; the
+  delivery is CFR on the grid it reports and its picture lasts B - A within a frame; each tool's
+  own `verified` is true. The ends are compared with the adjusted ends, not the requested ones: a
+  0.4 s cue that the default `--min-duration` lengthens to 1 s is a deliberate change, recorded in
+  `min_duration_changes`, not a failure.
+- **A lengthened last cue past the picture's end is recorded, not judged.** On a short clip the
+  default `--min-duration` can carry the last cue past the cut's end, and the muxed container follows
+  it (the 4 s VFR fixture delivers a 3.84 s container around a 3.22 s picture). The report says so
+  (`past_picture_end_ms`); whether caption.py should stop a cue at the picture's end is not decided
+  here.
+- Code: `tests/caption_delivery.py`. Tests: `CaptionDeliveryHarnessTests` (tests/test_delivery.py),
+  on the control and on the VFR clip of #512 (`make_vfr_flash_beep`), with a forced half-second
+  offset that must fail the start checks.

@@ -1,0 +1,230 @@
+{
+ "case": "cfr-30000-1001-control",
+ "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+ "provenance": {
+  "file": "control_30000_1001.mp4",
+  "bytes": 67113977,
+  "sha256": "9425c804ac32ecdbfe5166f40d92b69f230be04ff5f2330b9ff450a7d59ecf73",
+  "generated": "ffmpeg -f lavfi -i testsrc2=size=640x360:rate=30000/1001:duration=600 -f lavfi -i sine=frequency=440:sample_rate=48000:duration=600 -fps_mode cfr -c:v libx264 -preset veryfast -g 60 -pix_fmt yuv420p -c:a aac -b:a 128k control.mp4",
+  "container": "mov,mp4,m4a,3gp,3g2,mj2",
+  "device_tags": {
+   "major_brand": "isom",
+   "encoder": "Lavf60.16.100"
+  },
+  "video": {
+   "codec": "h264",
+   "width": 640,
+   "height": 360,
+   "pix_fmt": "yuv420p",
+   "color_transfer": null,
+   "rotation": null,
+   "time_base": "1/30000"
+  },
+  "audio": {
+   "codec": "aac",
+   "sample_rate": 48000,
+   "channels": 1
+  }
+ },
+ "source": {
+  "duration": 600.032767,
+  "video": {
+   "r_frame_rate": "30000/1001",
+   "avg_frame_rate": "30000/1001",
+   "packets": {
+    "count": 17983,
+    "first": 0.0,
+    "last": 599.9994,
+    "intervals_ms": {
+     "min": 33.366,
+     "median": 33.367,
+     "max": 33.367
+    },
+    "distinct_intervals_ms": 1,
+    "vfr": false,
+    "head": [
+     0.0,
+     0.033367,
+     0.066733,
+     0.1001,
+     0.133467
+    ],
+    "tail": [
+     599.865933,
+     599.8993,
+     599.932667,
+     599.966033,
+     599.9994
+    ]
+   }
+  },
+  "audio": {
+   "sample_rate": 48000,
+   "channels": 1,
+   "first_packet": -0.021333
+  }
+ },
+ "cut": {
+  "start": 2.0,
+  "end": 598.033,
+  "accurate": true,
+  "cfr_grid": null,
+  "grid_note": "no fps filter: the source is CFR and kept its own rate",
+  "commands": [
+   "/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -protocol_whitelist file -ss 1.000000 -i <work>/control_30000_1001.mp4 -ss 1.000000 -t 596.033000 -map 0:V:0 -map 0:a:0 -sn -dn -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -movflags +faststart -colorspace bt709 -color_primaries bt709 -color_trc bt709 -c:a aac -b:a 192k <work>/cfr-30000-1001-control_cut.mp4"
+  ]
+ },
+ "caption": {
+  "mode": "mux",
+  "codec": "mov_text",
+  "commands": [
+   "/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -protocol_whitelist file -i <work>/cfr-30000-1001-control_cut.mp4 -protocol_whitelist file -i <work>/cfr-30000-1001-control_captioned_adjusted.srt -map 0:v:0 -map 0:a:0 -map 1:0 -c:v copy -c:a copy -movflags +faststart -c:s:0 mov_text -disposition:s:0 0 <work>/cfr-30000-1001-control_captioned.mp4"
+  ]
+ },
+ "export": {
+  "preset": "copy",
+  "commands": [
+   "/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -protocol_whitelist file -i <work>/cfr-30000-1001-control_captioned.mp4 -map 0:V:0 -map 0:a:0 -c:v copy -movflags +faststart -c:a copy -map 0:s -c:s:0 copy <work>/cfr-30000-1001-control_delivered.mp4"
+  ]
+ },
+ "cues": [
+  {
+   "cue": "start",
+   "requested_start": 1.003,
+   "requested_end": 2.503,
+   "adjusted_end": 2.503,
+   "delivered_start": 1.003,
+   "delivered_end": 2.503,
+   "start_delta_ms": 0.0,
+   "first_frame_on_screen": 1.034367,
+   "on_screen_after_ms": 31.367
+  },
+  {
+   "cue": "middle",
+   "requested_start": 298.019,
+   "requested_end": 299.219,
+   "adjusted_end": 299.219,
+   "delivered_start": 298.019,
+   "delivered_end": 299.219,
+   "start_delta_ms": 0.0,
+   "first_frame_on_screen": 298.031067,
+   "on_screen_after_ms": 12.067
+  },
+  {
+   "cue": "end",
+   "requested_start": 594.436,
+   "requested_end": 594.836,
+   "adjusted_end": 595.436,
+   "delivered_start": 594.436,
+   "delivered_end": 595.436,
+   "start_delta_ms": 0.0,
+   "first_frame_on_screen": 594.460533,
+   "on_screen_after_ms": 24.533
+  }
+ ],
+ "min_duration_changes": [
+  {
+   "cue": "end",
+   "requested_seconds": 0.4,
+   "delivered_seconds": 1.0,
+   "moved_end_ms": 600.0,
+   "past_picture_end_ms": null,
+   "why": "caption.py --min-duration (default 1.0 s) extends a shorter cue's end, never past the next cue; --min-duration 0 keeps it"
+  }
+ ],
+ "sample_rates": {
+  "source": 48000,
+  "cut": 48000,
+  "delivered": 48000
+ },
+ "delivery": {
+  "container_seconds": 596.062133,
+  "picture_seconds": 596.062134,
+  "sound_seconds": 596.054333,
+  "requested_seconds": 596.033,
+  "r_frame_rate": "30000/1001",
+  "avg_frame_rate": "30000/1001",
+  "frame_ms": 33.367
+ },
+ "checks": [
+  {
+   "check": "start cue starts within one delivered frame",
+   "ok": true,
+   "detail": "0.0 ms, one frame is 33.367 ms"
+  },
+  {
+   "check": "middle cue starts within one delivered frame",
+   "ok": true,
+   "detail": "0.0 ms, one frame is 33.367 ms"
+  },
+  {
+   "check": "end cue starts within one delivered frame",
+   "ok": true,
+   "detail": "0.0 ms, one frame is 33.367 ms"
+  },
+  {
+   "check": "start cue is on screen less than a frame after its start",
+   "ok": true,
+   "detail": "first frame at 1.034367 s, 31.367 ms after"
+  },
+  {
+   "check": "middle cue is on screen less than a frame after its start",
+   "ok": true,
+   "detail": "first frame at 298.031067 s, 12.067 ms after"
+  },
+  {
+   "check": "end cue is on screen less than a frame after its start",
+   "ok": true,
+   "detail": "first frame at 594.460533 s, 24.533 ms after"
+  },
+  {
+   "check": "start cue ends within one frame of its adjusted end",
+   "ok": true,
+   "detail": "delivered 2.503 s, adjusted 2.503 s"
+  },
+  {
+   "check": "middle cue ends within one frame of its adjusted end",
+   "ok": true,
+   "detail": "delivered 299.219 s, adjusted 299.219 s"
+  },
+  {
+   "check": "end cue ends within one frame of its adjusted end",
+   "ok": true,
+   "detail": "delivered 595.436 s, adjusted 595.436 s"
+  },
+  {
+   "check": "every cue delivered",
+   "ok": true,
+   "detail": "3 of 3 subtitle packets with text"
+  },
+  {
+   "check": "sample rate kept at every step",
+   "ok": true,
+   "detail": {
+    "source": 48000,
+    "cut": 48000,
+    "delivered": 48000
+   }
+  },
+  {
+   "check": "delivered picture is CFR on its reported grid",
+   "ok": true,
+   "detail": "r_frame_rate 30000/1001, intervals 33.366..33.367 ms"
+  },
+  {
+   "check": "delivered picture lasts B - A within one frame",
+   "ok": true,
+   "detail": "596.062134 s against 596.033000 s (+29.134 ms)"
+  },
+  {
+   "check": "each tool verified its own output",
+   "ok": true,
+   "detail": {
+    "cut": true,
+    "caption": true,
+    "export": true
+   }
+  }
+ ],
+ "ok": true
+}
