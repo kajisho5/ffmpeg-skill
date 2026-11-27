@@ -221,12 +221,12 @@ def main(argv=None):
                               "post": url, "body": body, "runs": args.runs, "call_limit": args.limit}, ensure_ascii=False))
         print(f"{len(selected)} task(s) x {args.runs} run(s), arm {args.arm}: {len(selected) * args.runs} requests would be sent", file=sys.stderr)
         return 0
-    if os.name == "nt":  # the tool is bash in a POSIX folder (runuser, chown); Windows resolves `bash` to the WSL launcher
-        print("run.py: the model's commands run in bash on Linux or macOS; on Windows run it inside WSL (--dry-run works here)", file=sys.stderr)
-        return 2
     url, key = os.environ.get("BENCH_API_URL"), os.environ.get("BENCH_API_KEY")
     if not url or not key:
         print("run.py: set BENCH_API_URL and BENCH_API_KEY (or use --dry-run)", file=sys.stderr)
+        return 2
+    if os.name == "nt":  # the tool is bash in a POSIX folder (runuser, chown); Windows resolves `bash` to the WSL launcher
+        print("run.py: the model's commands run in bash on Linux or macOS; on Windows run it inside WSL (--dry-run works here)", file=sys.stderr)
         return 2
     out = Path(args.out or tempfile.mkdtemp(prefix="bench-transcripts-"))
     rows, spent = [], 0.0
