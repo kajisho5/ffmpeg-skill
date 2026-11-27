@@ -277,6 +277,26 @@ class AnalysisTests(MediaFixtures):
         again = json.loads(script("sync.py", ref, out, "--json").stdout)
         self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
 
+    def test_a_late_sound_on_mpeg_ts_keeps_its_place_on_the_files_clock(self):
+        """#787: a sound-only decode of an MPEG-TS or MPEG-PS counted from the sound's first sample,
+        because the demuxer rewrote the timestamps to start at the earliest stream it read. The same
+        take remuxed to .ts measured its beep 0.28 s early and silencedetect reported every silence
+        that far off; with -copyts and the shift both read the file's clock, as the MP4 does."""
+        mp4 = make_tones_take(OUT / "ts_clock.mp4", start=0.0, audio_late=0.3, dur=3)
+        ts = OUT / "ts_clock.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", mp4, "-c", "copy", "-f", "mpegts", ts)
+        self.assertGreater(probe(str(ts))["start_time"], 0.5, "the fixture's TS starts late")
+
+        def first_loud(path):
+            pcm = content_probe.decode_pcm_mono(path, 8000)
+            return next(i for i, v in enumerate(pcm) if abs(v) > 0.05) / 8000
+
+        def silences(path):
+            return [(round(a, 2), round(b, 2)) for a, b in content_probe.detect_silences(path, -40.0, 0.2)]
+
+        self.assertAlmostEqual(first_loud(str(ts)), first_loud(str(mp4)), delta=0.01)
+        self.assertEqual(silences(str(ts)), silences(str(mp4)))
+
     def test_sync_replace_audio_stream_copy_writes_faststart_mp4(self):
         """Same shape as #275/#277: --replace-audio stream-copies the reference's video with
         -c:v copy while only the audio is rebuilt, and must write -movflags +faststart on the

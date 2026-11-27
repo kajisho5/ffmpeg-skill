@@ -61,6 +61,10 @@ def fingerprint(path: str, *, complete: bool = False) -> Dict[str, Any]:
     return result
 
 
+def sound_clock(meta: "Optional[Dict[str, Any]]", start: float = 0.0) -> str:
+    """A sound-only decode's filter, to keep its samples on the file's clock under `-copyts` (#787)."""
+    return f"asetpts=PTS-{float((meta or {}).get('start_time') or 0.0) + start:.6f}/TB,aresample=async=1:first_pts=0"
+
 def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
                     *, check: bool = True) -> "Sequence[float]":
     """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
@@ -74,7 +78,9 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     exact in a float32, so every value read back is the double the list held."""
     register_plan_input(path)
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    # -copyts: without it the demuxer rewrites the timestamps of an MPEG-TS/PS to start at the
+    # earliest stream it reads -- here the sound alone -- and the sound's own start becomes 0 (#787)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts"]
     if start:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", path]
@@ -84,7 +90,8 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     # so sample i is at start + i / sample_rate on the file's clock: sync.py measured a track that
     # starts 0.3 s late 0.279 s off, and --replace-audio placed it that far late (#409)
     # the first audio track, the one probe() describes (default selection takes the most channels)
-    cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn", "-af", sound_clock(probe(path, required=False), start), "-ac", "1",
+            "-ar", str(sample_rate), "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:
@@ -1165,8 +1172,11 @@ def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tu
     if dry_run_input_pending(path):
         return []
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn", "-af",
-           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
+    # the file's clock, as decode_pcm_mono() reads it: on an MPEG-TS/PS the demuxer would
+    # otherwise count from the sound's first sample, which is late when the sound starts last (#787)
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
+           "-af", f"{sound_clock(probe(path, required=False))},silencedetect=noise={threshold}dB:d={min_silence}",
+           "-f", "null", "-"]
     proc = run_analysis(cmd, check=False, record=True)
     if proc.returncode != 0:
         die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
