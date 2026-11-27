@@ -78,6 +78,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.13.0 — dropped and repeated frames in `check.py --content` (#574)](#after-4130--dropped-and-repeated-frames-in-checkpy---content-574)
 - [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
 - [After 4.14.0 — a timed zoom on video (#647)](#after-4140--a-timed-zoom-on-video-647)
+- [After 4.14.0 — a protocol allow-list on every input and FFMPEG_SKILL_ROOTS (#572)](#after-4140--a-protocol-allow-list-on-every-input-and-ffmpeg_skill_roots-572)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3752,6 +3753,59 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   a move that ends past it (half a frame of slack), a zero duration, `--zoom-*` without
   `--zoom`, and `--zoom` on a still (`insert.py --zoom` animates one). Test:
   `FitZoomTests.test_fit_zoom_refuses_a_move_it_cannot_make_647`.
+
+## After 4.14.0 — a protocol allow-list on every input and FFMPEG_SKILL_ROOTS (#572)
+
+- **Every input of every ffmpeg and ffprobe command carries `-protocol_whitelist file`.** It is
+  a second guard behind the URL and playlist refusals (`_refuse_url_media()`,
+  `_refuse_playlist()`, above): those decide by the name and the first bytes the skill can see,
+  and a demuxer can still find a name inside a file. The list is added where the input names are
+  already guarded, `runner.guard_input_names()` (which `run()`, `run_analysis()` and the frame
+  readers apply), and `runner.guard_input_protocols()` is applied directly by the short probes
+  that start their own process (`runner._ffprobe()`, the two stream checks inside `runner`,
+  `_review.py`); `pacing.py` no longer passes its own. It goes first among that input's own
+  options (after the leading `-hide_banner`/`-loglevel`/`-nostdin`/`-y`), so an option such as
+  `-ss`, `-f wav` or `-c:v libvpx-vp9` stays right before its `-i`. `file` alone is what the
+  skill's own commands need, measured: the whole suite (`tests/run_parallel.py`, 2021 tests:
+  concat lists, image sequences, `-f lavfi` inputs, two-pass and multi-part cuts) ran with it,
+  no ffmpeg reported "not on whitelist", and the only failures were tests that pinned an argv
+  without it. `-f lavfi` takes it
+  and ignores it; a concat list's entries and an image sequence's frames are opened through the
+  input's own list. What it changes was measured on FFmpeg 6.1.1: a demuxer opened from a local
+  file already inherits `file,crypto,data`, so the allow-list takes away `data:` and `crypto:`
+  (an `-f concat` list with a `data:` entry is read without it and refused with it), and keeps the
+  network protocols out whatever a later FFmpeg's default is. It does not stop a demuxer from
+  reading another *local* file; that is what the playlist refusal is for. Not built here: the
+  AVI/GAB2 case named in #572 (a playlist inside an AVI subtitle stream; FFmpeg's own avidec
+  limits GAB2 to SRT and ASS, which was not measured), and an HLS playlist behind an ID3 tag
+  (6.1 already refuses to probe HLS under a name that is not `.m3u8`: "Not detecting m3u8/hls
+  with non standard extension"). Tests: `test_every_executed_ffmpeg_and_ffprobe_input_carries_the_protocol_whitelist`
+  (stand-ins for ffmpeg and ffprobe on PATH log each process a tool starts),
+  `test_a_file_a_demuxer_opens_from_inside_a_local_input_is_kept_to_the_file_protocol`.
+- **`FFMPEG_SKILL_ROOTS` bounds every input and output to named directories, and is off by
+  default.** Unset, nothing changes. Set (absolute directories, `os.pathsep`-separated), a path
+  that does not resolve under one of them after `os.path.realpath()` is refused, `kind: input`,
+  `error.reason: path_outside_roots`, details `{path, resolved, roots, ignored}`, before ffmpeg
+  runs, dry runs included. An entry that is not absolute allows nothing and is listed in
+  `ignored`, so a mistake narrows what is allowed instead of widening it. One check,
+  `runner.refuse_outside_roots()`, is called where the path guards already are: every input and
+  the output of an ffmpeg/ffprobe command (`_refuse_url_media()`), every output a tool writes
+  itself (`_check_output_path()`, `refuse_existing_outputs()`, so side files, plans and
+  `place_output()` deliveries too), every caller file read as text or JSON (`read_text_or_die()`,
+  `read_json()`: projects, recipes, brands, subtitles, word lists), every concat-list entry
+  (`decision.concat_list_line()`), `color.py --lut`, and the directories and files an
+  orchestrator writes itself (`render.py --work`, `--cache`, `--audit-log`; `batch.py`'s
+  `output_dir` and `--work`). Children started by `render.py`,
+  `batch.py` and `verify.py` inherit the variable and check their own paths. **The system temp
+  directory is always allowed**: the tools write their intermediates there and hand them to
+  child tools, which cannot tell those from a caller's paths; a caller's file in the temp
+  directory is therefore allowed too. Reading the skill's own `templates/` is allowed; writing
+  there is not. `verify.py` runs its steps as tools, so a step refused this way is reported as
+  that step's failure (`kind: verification`), as any failed step is. A font (`--font-file`, `--fonts-dir`, or one fontconfig finds) is not
+  checked, because it is usually a system file outside any media folder. A symlink swapped after
+  the check is outside what one check can close. Tests:
+  `test_ffmpeg_skill_roots_keeps_every_input_and_output_under_the_named_directories` (every tool
+  in `tests/sweep.py`'s table, plus `join`, `render` (an output and a `--work` outside), `batch` (an `output_dir` outside), `sequence` and a `--plan`).
 
 ## After 3.3.0 — non-finite numbers are refused in one place
 

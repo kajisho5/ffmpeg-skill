@@ -1047,6 +1047,7 @@ class AudiogramTests(MediaFixtures):
     # the output are substituted; every other argument, and their order, is the pin.
     WAVEFORM_1_15_1 = [
         "{ffmpeg}", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-protocol_whitelist", "file",  # since #572, on every input; the one change to the pin
         "-i", "{input}",
         "-filter_complex",
         "color=c=black:s=640x360:r=25[bg];[0:a:0]showwaves=s=640x360:mode=line:rate=25:"

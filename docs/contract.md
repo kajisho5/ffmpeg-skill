@@ -793,6 +793,21 @@ shell, but an agent ecosystem should use the structured form. No tool, CLI or MC
 runs a shell, evaluates strings, or executes anything other than the named script,
 `ffmpeg` and `ffprobe`.
 
+Every input of every `ffmpeg` and `ffprobe` command a tool runs carries
+`-protocol_whitelist file` (#572), so a file a demuxer finds named inside another file is opened
+as a local file or not at all; `commands` shows it. `FFMPEG_SKILL_ROOTS` (unset by default) names
+the directories a run may use, separated by `os.pathsep` (`:`, `;` on Windows), each absolute:
+when it is set, an input or an output that does not resolve under one of them, symlinks
+followed, is refused before ffmpeg runs, dry runs included (`kind: input`,
+`error.reason: path_outside_roots`, details `{path, resolved, roots, ignored}`; an entry that is
+not absolute allows nothing and is listed in `ignored`). It covers the inputs and the output of
+every ffmpeg/ffprobe command, every file a tool writes itself (side files, `--plan`), the text
+and JSON files it reads (projects, recipes, brands, subtitles), `color.py --lut`, and
+`render.py --work`/`--cache`/`--audit-log` and `batch.py`'s `output_dir`/`--work`. The system
+temp directory is always allowed, because the tools keep their intermediates there, and so is
+reading the skill's own `templates/`; a font is not checked. `verify.py` reports a step refused
+this way as that step's failure (`kind: verification`), as it does any step's.
+
 ## JSON output
 
 `wrote` is the document's first line after `status` when a media file was written: its length, `(ASKED N s: M s
@@ -1175,7 +1190,7 @@ A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
 `output_container_codecs` (a `.webm` or `.mxf` output for an H.264/HEVC or AAC encode, which those containers cannot hold),
-`media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold),
+`media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold), `path_outside_roots` (an input or output outside the directories `FFMPEG_SKILL_ROOTS` names, see [Invocation](#invocation)),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_extension_missing` (a media output with no file extension, which leaves ffmpeg no container to choose), `output_extension_unknown` (a media output whose extension this ffmpeg build maps to no muxer, such as `out.xyz`, with no `-f`), `output_extension_unsupported` (a `.wma` output the run would encode into; `.wma` is written only as a stream copy of WMA sound), `output_extension_audio_only` (an audio-only extension such as `.wav` or `.m4a` for a run that writes a picture), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `input_is_directory`, `input_empty` (0 bytes), `input_not_media` (ffprobe cannot read it as media) and `input_permission_denied` (the file, or a directory on the way to it, is not readable by the user; a path that is not there stays "input not found"), `still_unreadable` (a file with an image name that ffmpeg cannot decode as one; for `sequence.py`, a frame of the sequence that does not decode, when its decode check completes; when the check cannot be made a note says so and the encode runs), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
 `render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and
 `encoder_list_unreadable`, and `--transcribe`'s `asr_engine_missing`, `no_speech`, `engine_failed`

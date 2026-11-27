@@ -106,7 +106,7 @@ def decoded_pcm(path, options, fmt, code):
     """Disk-backed native samples, with the shared analysis timeout and local protocol guard."""
     with tempfile.TemporaryDirectory(prefix="pacing-pcm-") as directory:
         raw = Path(directory)/"samples.raw"
-        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-protocol_whitelist", "file,pipe",
+        cmd = ["ffmpeg", "-v", "error", "-nostdin",
                "-i", path, "-map", "0:a:0", *options, "-f", fmt, str(raw)]
         run_analysis(cmd)
         if not raw.stat().st_size:

@@ -5767,6 +5767,156 @@ sys.exit(fit.main())
         tool("cut", self.src, "--start", "0", "--end", "0.5", "-o", "./clip:1.mp4", cwd=self.work)
         self.assertTrue(colon.exists())
 
+
+    @staticmethod
+    def _inputs_and_options(argv):
+        """(input, the options before it that apply to it) for each input of one ffmpeg/ffprobe argv."""
+        if os.path.basename(argv[0]) == "ffprobe" and "-i" not in argv[1:-1]:
+            return [] if len(argv) < 2 or argv[-1].startswith("-") else [(argv[-1], argv[1:-1])]
+        found, since = [], 1
+        for i in range(1, len(argv) - 1):
+            if argv[i] == "-i":
+                found.append((argv[i + 1], argv[since:i]))
+                since = i + 2
+        return found
+
+    @unittest.skipIf(os.name == "nt", "the logging stand-ins for ffmpeg and ffprobe are POSIX scripts")
+    def test_every_executed_ffmpeg_and_ffprobe_input_carries_the_protocol_whitelist(self):
+        """#572: every input of every ffmpeg and ffprobe process a tool starts names its protocols
+        (`-protocol_whitelist file`), so a demuxer that finds a URL inside a local file cannot open
+        it through another protocol. Measured where the processes start: stand-ins for ffmpeg and
+        ffprobe first on PATH log each argv and run the real program."""
+        work = self.out("protocol_log"); work.mkdir(exist_ok=True)
+        log, bindir = work / "log", work / "bin"
+        log.mkdir(exist_ok=True); bindir.mkdir(exist_ok=True)
+        for name in ("ffmpeg", "ffprobe"):
+            stand_in = bindir / name
+            stand_in.write_text(f"#!{sys.executable}\nimport json, os, sys, uuid\n"
+                                f"open(os.path.join({str(log)!r}, uuid.uuid4().hex), 'w').write(json.dumps(sys.argv))\n"
+                                f"os.execv({shutil.which(name)!r}, [{shutil.which(name)!r}] + sys.argv[1:])\n", encoding="utf-8")
+            stand_in.chmod(0o755)
+        env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+        frames = work / "frames"; frames.mkdir(exist_ok=True)
+        for i in range(3):
+            ffmpeg("-f", "lavfi", "-i", f"color=c=blue:s=64x64", "-frames:v", "1", frames / f"f{i:03d}.png")
+        listing = work / "clips.txt"; listing.write_text(f"{self.src}\n{self.camb}\n", encoding="utf-8")
+        project = work / "project.json"
+        project.write_text(json.dumps({"output": str(work / "render.mp4"), "clips": [{"src": str(self.src), "in": 0, "out": 1}]}), encoding="utf-8")
+        runs = [("probe", [self.src]), ("cut", [self.src, "--start", "0", "--end", "1", "-o", work / "cut.mp4"]),
+                ("cut", [self.src, "--segments", "0-1,2-3", "-o", work / "parts.mp4"]),
+                ("fit", [self.src, "--aspect", "1:1", "-o", work / "fit.mp4"]),
+                ("join", [self.src, self.camb, "-o", work / "join.mp4"]),
+                ("join", [f"--list={listing}", "--transition", "none", "--copy", "-o", work / "join_copy.mp4"]),
+                ("export", [self.src, "--preset", "youtube", "-o", work / "export.mp4"]),
+                ("check", [self.src, "--platform", "youtube"]), ("loop", [self.src, "--times", "2", "-o", work / "loop.mp4"]),
+                ("overlay", [self.src, "--image", self.logo, "-o", work / "overlay.mp4"]),
+                ("sequence", ["--dir", frames, "--pattern", "*.png", "-o", work / "seq.mp4"]),
+                ("render", [project]), ("silence", [self.src, "--list"])]
+        for name, args in runs:
+            proc = tool(name, *args, "--overwrite", "--json", check=False, env=env)
+            doc = json.loads(proc.stdout)
+            err = (doc[0] if isinstance(doc, list) else doc).get("error") or {}
+            self.assertIn(err.get("kind"), (None, "verification"), (name, err, proc.stderr[-400:]))
+        seen = {"ffmpeg": 0, "ffprobe": 0}
+        for entry in log.iterdir():
+            argv = json.loads(entry.read_text(encoding="utf-8"))
+            for path, opts in self._inputs_and_options(argv):
+                seen[os.path.basename(argv[0])] += 1
+                self.assertIn(("-protocol_whitelist", "file"), list(zip(opts, opts[1:])), (path, argv))
+        self.assertGreater(seen["ffmpeg"], 10, seen)
+        self.assertGreater(seen["ffprobe"], 10, seen)
+
+    def test_a_file_a_demuxer_opens_from_inside_a_local_input_is_kept_to_the_file_protocol(self):
+        """#572, the second guard on its own: a concat list the skill passes as `-f concat` is not
+        read as a playlist (_refuse_playlist), so the protocol list is what stops an entry that
+        names another protocol. FFmpeg's own default for a local file also lets `data:` and
+        `crypto:` through; the command the runner builds does not, and a plain file still opens."""
+        import base64, importlib
+        runner = importlib.import_module("_common.runner")
+        work = self.out("protocol_list"); work.mkdir(exist_ok=True)
+        clip = work / "clip.ts"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10", "-t", "0.5", "-c:v", "mpeg2video", clip)
+        inline = work / "inline.txt"
+        inline.write_text("file 'data:video/mp2t;base64," + base64.b64encode(clip.read_bytes()).decode() + "'\n", encoding="utf-8")
+        plain = work / "plain.txt"
+        plain.write_text(f"file '{clip}'\n", encoding="utf-8")
+        def codecs(listfile, guarded):
+            cmd = ["ffprobe", "-v", "error", "-f", "concat", "-safe", "0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", "-i", str(listfile)]
+            return sh(*(runner.guard_input_names(cmd) if guarded else cmd), check=False)
+        self.assertIn("mpeg2video", codecs(inline, guarded=False).stdout, "FFmpeg's default opens the data: entry")
+        refused = codecs(inline, guarded=True)
+        self.assertNotIn("mpeg2video", refused.stdout)
+        self.assertIn("not on whitelist", refused.stderr)
+        self.assertIn("mpeg2video", codecs(plain, guarded=True).stdout)
+
+    def test_ffmpeg_skill_roots_keeps_every_input_and_output_under_the_named_directories(self):
+        """#572: with FFMPEG_SKILL_ROOTS set, an input or an output that does not resolve under
+        one of its directories is refused as kind input (path_outside_roots), dry runs included,
+        by every tool in tests/sweep.py's table and the ones swept by hand; a symlink inside is
+        followed to where it points. The system temp directory, where the tools keep their
+        intermediates, still works, and unset the variable changes nothing."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        # the tools' temp directory is one of their own beside the two, so neither is inside it
+        # wherever OUT is (revert_proof.py runs the suite from a checkout in the system temp dir)
+        inside, outside, tmp = (Path(OUT) / f"roots_{n}" for n in ("inside", "outside", "tmp"))
+        for d in (inside, outside, tmp):
+            shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
+        src = inside / "clip.mp4"; shutil.copy(self.src, src)
+        stray = outside / "clip.mp4"; shutil.copy(self.src, stray)
+        link = inside / "link.mp4"
+        if hasattr(os, "symlink"):
+            os.symlink(stray, link)
+        env = dict(os.environ, FFMPEG_SKILL_ROOTS=os.pathsep.join(["relative/ignored", str(inside)]),
+                   TMPDIR=str(tmp), TEMP=str(tmp), TMP=str(tmp))
+        facts = sweep.facts_for(str(src), str(tmp))
+
+        def refused(name, *args):
+            proc = tool(name, *args, "--dry-run", "--json", check=False, env=env)
+            doc = json.loads(proc.stdout)
+            if name == "verify":  # its steps run as tools of their own; a step's refusal fails the step
+                self.assertIn(f"{str(args[0])!r} resolves to", doc["files"][0]["steps"][0]["error"])
+                return None
+            err = doc.get("error") or {}
+            self.assertEqual((err.get("kind"), err.get("reason")), ("input", "path_outside_roots"), (name, args, proc.stdout[-400:]))
+            self.assertEqual(err["details"]["roots"], [os.path.normcase(os.path.realpath(inside))])
+            self.assertEqual(err["details"]["ignored"], ["relative/ignored"])
+            return err
+
+        for t, (args, ext) in sweep.TABLE.items():
+            name, args = t.split()[0], [a.format(**facts) for a in args]
+            with self.subTest(tool=t):
+                for given in (stray, link) if link.exists() else (stray,):
+                    err = refused(name, given, *args, *(["-o", tmp / f"roots_{name}{ext}"] if ext else []))
+                    if err:
+                        self.assertEqual(err["details"]["resolved"], os.path.normcase(os.path.realpath(stray)))
+                if ext:  # the output, or a side file beside it (caption's .srt), is the path refused
+                    err = refused(name, src, *args, "-o", outside / f"out{ext}")
+                    self.assertEqual(Path(err["details"]["path"]).parent, outside)
+        project = inside / "project.json"
+        project.write_text(json.dumps({"output": str(outside / "render.mp4"), "clips": [{"src": str(src)}]}), encoding="utf-8")
+        frames = outside / "frames"; frames.mkdir()
+        ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x64", "-frames:v", "1", frames / "f000.png")
+        kept_in = inside / "project_in.json"
+        kept_in.write_text(json.dumps({"output": str(inside / "render.mp4"), "clips": [{"src": str(src)}]}), encoding="utf-8")
+        folder = inside / "batch"; folder.mkdir(); shutil.copy(self.src, folder / "a.mp4")
+        recipe = inside / "recipe.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(outside / "batch_out"),
+                                      "steps": [["loudness.py", "{in}", "-o", "{out}"]]}), encoding="utf-8")
+        for name, args in (("join", [src, stray, "-o", inside / "join.mp4"]), ("render", [project]),
+                           ("render", [kept_in, "--work", outside / "work"]), ("batch", [folder, "--recipe", recipe]),
+                           ("sequence", ["--dir", frames, "--pattern", "*.png", "-o", inside / "seq.mp4"]),
+                           ("cut", [src, "--start", "0", "--end", "1", "-o", inside / "cut.mp4", "--plan", outside / "plan.json"])):
+            with self.subTest(tool=name):
+                refused(name, *args)
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), ["clip.mp4", "frames"], "a refused run wrote outside the roots")
+        # inside the roots a real run works, its intermediates in the temp directory included
+        done = tool("cut", src, "--segments", "0-1,2-3", "-o", inside / "parts.mp4", "--json", env=env)
+        self.assertEqual(json.loads(done.stdout)["status"], "completed")
+        self.assertTrue((inside / "parts.mp4").is_file())
+        # unset, a path anywhere is taken as before
+        tool("probe", stray, "--json", env={k: v for k, v in env.items() if k != "FFMPEG_SKILL_ROOTS"})
+
     def test_refusals_at_the_runner_choke_points_carry_a_reason_and_details(self):
         """The runner's guards refused in prose only. Each now names error.reason and the facts in
         error.details; render.py executing a plan forwards its tool's reason and details."""
@@ -13702,7 +13852,8 @@ class BasicsAudit558Tests(unittest.TestCase):
         for kept in ("take.mp4", "./-take.mp4", "dir/-take.mp4", "/abs/-take.mp4", "-", "C:\\clips\\-take.mp4", "C:/clips/take.mp4"):
             self.assertEqual(runner.file_arg(kept), kept)
         self.assertEqual(runner.guard_input_names(["ffmpeg", "-y", "-i", "-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"]),
-                         ["ffmpeg", "-y", "-i", "./-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"])
+                         ["ffmpeg", "-y", "-protocol_whitelist", "file", "-i", "./-a.mp4",
+                          "-protocol_whitelist", "file", "-i", "b.mp4", "-map", "0", "out.mp4"])
         self.assertEqual(runner.guard_input_names(["ffprobe", "-version"]), ["ffprobe", "-version"], "an option stays an option")
         work = self.work / "dash"
         work.mkdir(exist_ok=True)

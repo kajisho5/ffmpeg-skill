@@ -2305,7 +2305,7 @@ class OrchestrationTests(MediaFixtures):
         before = list(_common.STATE.commands)
         proc = _common.run(["ffmpeg", "-i", "in.mp4", "out.mp4"], quiet=True, ctx=ctx)
         self.assertEqual(proc.returncode, 0, "a dry run plans without executing ffmpeg")
-        self.assertEqual(ctx.commands, ["ffmpeg -i in.mp4 out.mp4"])
+        self.assertEqual(ctx.commands, ["ffmpeg -protocol_whitelist file -i in.mp4 out.mp4"])  # the list since #572
         self.assertEqual(_common.STATE.commands, before, "the global STATE must not have seen this call")
 
     def test_skill_md_stays_within_the_agent_reading_budget(self):

@@ -16,7 +16,7 @@ from _common.color import (as_limited, bt709_label_filter, bt709_line_filter, bt
                            hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
-from _common.runner import absent_word, file_arg, read_json
+from _common.runner import absent_word, file_arg, read_json, refuse_outside_roots
 from _common.probe import AUDIO_MEDIA_EXT, display_size
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -202,6 +202,7 @@ def concat_list_line(path: str) -> str:
         refuse("input", "media_path_has_line_break",
                f"{str(path)!r} contains a line break, which ffmpeg's concat list cannot hold (each line is a "
                "directive of its own); rename the file", path=str(path))
+    refuse_outside_roots(path)  # the demuxer opens it as an input of its own (#572)
     # only on Windows: on POSIX the quoted form takes a backslash literally, and it is part of the name (#408)
     escaped = (str(path).replace("\\", "/") if _on_windows() else str(path)).replace("'", "'\\''")
     return f"file '{escaped}'"
