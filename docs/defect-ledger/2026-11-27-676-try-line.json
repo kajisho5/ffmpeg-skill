@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-27",
+  "issue": 676,
+  "class": "claim",
+  "what": "A usage error's `try:` line, documented as a command the tool takes, failed the tool's own usage check for 10 of the taught lines in docs/stumbles.jsonl: a guess written without a value was answered with an option that needs one (caption.py --soft as --mode, broll.py --keep-audio as --audio, sequence.py --glob as --pattern, straighten.py --crop as --fit, color.py --grade as --source-alpha-mode), `--size 1920x1080` with --width, a number (background, insert, join, sphere), grid.py --layout 2x1 with --cols, and grid.py --columns 2 without the --rows it requires. color.py --correct --brightness 0.1 was answered with --peak 0.1 (the PQ peak of --to-sdr), which ran.",
+  "escaped": "The test of the try: line ran three hand-picked lines; the replay of the ledger checks only the words the answer must name, never the command it prints. _teach chose the replacement by name and help text alone and never asked the parser whether the corrected line was one it takes.",
+  "mechanism": "runner._parses parses the corrected line with the tool's own parser (its error turned into an exception for the call) and the try: line is printed only when that parse succeeds. test_a_printed_try_line_passes_the_tools_own_usage_check runs every try: line the taught ledger lines print and fails on a usage error. color.py's help no longer says brightness on --peak or grade on --source-alpha-mode, so --brightness names --exposure and --gamma and --grade is answered with --correct."
+}

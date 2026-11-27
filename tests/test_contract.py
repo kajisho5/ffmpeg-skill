@@ -2463,7 +2463,7 @@ sys.exit(fit.main())
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
             ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_600),  # +400 for speedramp.py --speed, --start and --end (#676, 197574 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
@@ -13932,6 +13932,54 @@ class StumbleLedgerTests(unittest.TestCase):
                     answer = (proc.stdout + proc.stderr).rsplit("error:", 1)[-1]
                     for phrase in row["must_say"]:
                         self.assertIn(phrase, answer)
+
+    @unittest.skipIf(os.name == "nt", "the try: line is quoted for cmd.exe there, which shlex does not read")
+    def test_a_printed_try_line_passes_the_tools_own_usage_check(self):
+        """#676: `try:` is printed only when the tool's own parser takes the corrected line. Before, a
+        guess with no value was answered with an option that needs one (`caption.py --soft` as `--mode`,
+        `color.py --grade` as `--source-alpha-mode`), `--size 1920x1080` with `--width` (a number) and
+        `grid.py --columns 2` without the `--rows` it requires: each command, copied, was a usage error."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        printed = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            for row in self.rows():
+                if row["status"] != "taught":
+                    continue
+                argv = [clip if a == "{clip}" else a for a in row["argv"]]
+                proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4"), "--dry-run"],
+                                      capture_output=True, text=True, encoding="utf-8", timeout=120)
+                line = next((l for l in (proc.stdout + proc.stderr).rsplit("error:", 1)[-1].splitlines() if l.startswith("try: ")), None)
+                if line is None:
+                    continue
+                printed += 1
+                with self.subTest(tool=row["tool"], argv=row["argv"]):
+                    again = subprocess.run([sys.executable, *shlex.split(line[len("try: "):])[1:]], capture_output=True, text=True, encoding="utf-8", timeout=120)
+                    self.assertNotEqual(again.returncode, 2, again.stderr[-300:])
+        self.assertGreaterEqual(printed, 10)
+
+    def test_speedramp_takes_one_span_as_speed_start_end(self):
+        """#676: `--speed 2 --start 3 --end 4` is the shape the probe table lists for one sped-up span.
+        It is the three --segment pieces it stands for, the same commands; --start/--end without
+        --speed, --speed beside --segment and a --speed that is not one factor are refused."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        dur = json.loads(subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), clip, "--json"], capture_output=True, text=True, encoding="utf-8").stdout)["duration"]
+        run = lambda *argv: subprocess.run([sys.executable, str(SCRIPTS / "speedramp.py"), clip, *argv, "-o", "x.mp4", "--dry-run", "--json"],
+                                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        for span, pieces in ((("--speed", "2", "--start", "3", "--end", "4"), ("0-3:1", "3-4:2", f"4-{dur!r}:1")),
+                             (("--speed", "0.5", "--start", "2"), ("0-2:1", f"2-{dur!r}:0.5")),
+                             (("--speed", "2"), (f"0-{dur!r}:2",))):
+            with self.subTest(span=span):
+                one, many = run(*span), run(*[a for p in pieces for a in ("--segment", p)])
+                self.assertEqual(one.returncode, 0, one.stderr[-300:])
+                self.assertEqual(json.loads(one.stdout)["commands"], json.loads(many.stdout)["commands"])
+        for argv, says in ((("--segment", f"0-{dur!r}:1", "--start", "2"), "--start and --end are the span of --speed"),
+                           (("--segment", f"0-{dur!r}:1", "--speed", "2"), "one of the two"), ((), "one of the two"),
+                           (("--speed", "0:2"), "--segment START-END:FACTOR"), (("--speed", "nan"), "takes one FACTOR"),
+                           (("--speed", "50", "--start", "1", "--end", "2"), "FACTOR must be 0.05..20.0")):
+            with self.subTest(refused=argv):
+                proc = run(*argv)
+                self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                self.assertIn(says, json.loads(proc.stdout)["error"]["message"])
 
     def test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept(self):
         """argparse takes a shortened option name. `freeze.py --time 3 --hold 1` ran with --timeout 3,

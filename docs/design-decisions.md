@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,36 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes
+
+- **`speedramp.py --speed F --start A --end B` is one span, the rest at 1x.** It is the shape the
+  issue's probe table lists for speedramp, and it has one meaning: the same command as
+  `--segment 0-A:1 --segment A-B:F --segment B-END:1`, built from those pieces after the probe
+  (`--start` defaults to 0, `--end` to the clip's end), so every check `--segment` has applies to it
+  unchanged. `--segment` stays the documented form. Either one or the other: both, neither, or
+  `--start`/`--end` without `--speed` is refused, before the probe. The nine-model probe was not
+  re-run for this change (the issue's step 1); the shape is taken from the issue's table, and the
+  owner named the three options (`feature_freeze_named`, 2026-11-27). `--speed` is read as text so
+  that `--speed 0:2` (a time and a factor) is answered with the `--segment` form instead of
+  argparse's "invalid float value".
+- **`try:` is printed only when the tool's own parser takes it.** "The command is one the tool
+  takes" (after 4.2.2) was true of the three lines its test ran and false of 10 taught lines in the
+  ledger: a guess written without a value answered with an option that needs one (`--soft` as
+  `caption.py --mode`), `--size 1920x1080` with `--width`, `--columns 2` without the `--rows` grid
+  requires. `runner._parses` parses the corrected line before it is printed. It checks names,
+  arity, types, choices and required options; a value the tool refuses after parsing
+  (`look.py --tiles 4`, `speedramp.py --segment 3:6:0.5`) can still be printed, and the refusal
+  that follows says the shape.
+- **A help string does not say a word another option owns.** `color.py --peak` said "peak
+  brightness", so `--brightness 0.1` was answered with `--peak 0.1`, a `--to-sdr` setting, and that
+  command ran; `--source-alpha-mode` said "grades", so `--grade` was answered with it. `--peak` now
+  says luminance, `--exposure` and `--gamma` say brightness (two answers, so no `try:`), `--correct`
+  says grade. `batch.py --recipe`, `--jobs` and `--force` use config, parallel/workers and no cache.
+- **Not done here:** `crop.py --size WxH` and a centred crop without `--x/--y` are #683's (crop
+  folded into fit) and wait for it; `multicam.py`'s misses were already taught; the probe for
+  `color.py` and `batch.py` was not re-run, so their new ledger lines say they were written by an
+  agent that had read the tool.
+- Code: `scripts/speedramp.py`, `scripts/_common/runner.py` (`_parses`), the help of
+  `scripts/color.py` and `scripts/batch.py`. Tests: `test_speedramp_takes_one_span_as_speed_start_end`,
+  `test_a_printed_try_line_passes_the_tools_own_usage_check`, `StumbleLedgerTests` (tests/test_contract.py).

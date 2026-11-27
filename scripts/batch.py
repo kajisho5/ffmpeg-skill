@@ -792,11 +792,11 @@ def cached_output_changed(hit: Dict[str, Any], recipe: "Optional[Dict[str, Any]]
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("folder")
-    ap.add_argument("--recipe", required=True, help="batch.json")
-    ap.add_argument("--force", action="store_true", help="ignore the cache and redo everything")
+    ap.add_argument("--recipe", required=True, help="batch.json, the recipe (config) file")
+    ap.add_argument("--force", action="store_true", help="ignore the cache (no cache read) and redo everything")
     ap.add_argument("--watch", type=float, help="keep polling the folder every N seconds")
     ap.add_argument("--jobs", default="1", metavar="N",
-                    help="process N files at once, or 'auto' for min(cpu_count, 4). Capped at "
+                    help="process N files at once (in parallel, N workers), or 'auto' for min(cpu_count, 4). Capped at "
                          "min(N, cpu_count, 8): every item is already an ffmpeg that threads "
                          "across cores, so more than a few contend rather than go faster. "
                          "Default 1, which is 1.16's behaviour exactly.")
