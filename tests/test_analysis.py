@@ -2774,13 +2774,34 @@ class TimestampSeekTests(unittest.TestCase):
                 out = OUT / f"tsseek_cut_{ext[1:]}.mp4"
                 doc = json.loads(script("cut.py", src, "--start", "2.5", "--end", "3.5", "--accurate", "-o", out, "--json").stdout)
                 self.assertTrue(doc["verified"], [s for s in doc["verification"] if not s.get("ok")])
-                # the source's frame at 2.5 s from the file's start (its own timestamps: FFmpeg
-                # counts a video-only decode from the picture's start, 21 ms after the sound's here)
-                at = probe(str(src))["start_time"] + 2.499
-                psnr = subprocess.run(["ffmpeg", "-hide_banner", "-copyts", "-i", str(out), "-i", str(src), "-filter_complex",
-                                       f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS[a];[1:v]select=gte(t\\,{at:.6f}),setpts=PTS-STARTPTS,"
-                                       "trim=end_frame=1[b];[a][b]psnr", "-f", "null", "-"], capture_output=True, text=True, encoding="utf-8").stderr
-                self.assertGreater(float(re.search(r"average:([0-9.]+|inf)", psnr).group(1)), 30.0, "the cut starts on the frame at 2.5 s")
+                # the source's first frame at or after 2.5 s from the file's start, chosen by the
+                # pts ffprobe decodes (its own timestamps: the picture starts 21 ms after the sound
+                # on the TS), not by a seek or a select on FFmpeg's clock, and compared by index
+                origin = probe(str(src))["start_time"]
+                pts = self._frame_pts(src)
+                want = next(i for i, p in enumerate(pts) if p >= origin + 2.499)
+                got = self._psnr_first(out, src, want)
+                if got <= 30.0:  # which source frame the cut did start on, for a run on another FFmpeg
+                    near = {n: round(self._psnr_first(out, src, n), 2) for n in (want - 1, want + 1)}
+                    self.fail(f"the cut starts on the frame at 2.5 s: PSNR {got:.2f} against frame {want} (pts "
+                              f"{pts[want]:.6f}, file start {origin:.6f}); against frames {want - 1} (pts {pts[want - 1]:.6f}) "
+                              f"and {want + 1} (pts {pts[want + 1]:.6f}): {near}; the cut's first frame pts "
+                              f"{self._frame_pts(out)[:1]}")
+
+    @staticmethod
+    def _frame_pts(path):
+        """Every decoded video frame's pts in seconds, in output order, from the file's start."""
+        rows = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                               "-of", "csv=p=0", str(path)], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+        return [float(r.split(",")[0]) for r in rows.split() if r.split(",")[0] not in ("", "N/A")]
+
+    @staticmethod
+    def _psnr_first(cut, src, n):
+        """PSNR of the cut's first frame against the source's frame `n` (decoded from the start)."""
+        err = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(cut), "-i", str(src), "-filter_complex",
+                              f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS[a];[1:v]select=eq(n\\,{n}),setpts=PTS-STARTPTS,"
+                              "trim=end_frame=1[b];[a][b]psnr", "-f", "null", "-"], capture_output=True, text=True, encoding="utf-8").stderr
+        return float(re.search(r"average:([0-9.]+|inf)", err).group(1))
 
 
 class GeometryAuditAnalysisTests(unittest.TestCase):
