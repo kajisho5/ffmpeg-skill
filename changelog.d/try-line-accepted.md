@@ -1,3 +1,0 @@
-### Fixed
-
-- A usage error's `try:` line is a command the tool accepts. `speedramp.py IN --ramp 3:6:0.5` suggested `--segment 3:6:0.5`, which speedramp refuses (`START-END:FACTOR`): an option whose help only mentions the word, one that only shares a word with the flag, and one spelt like a flag another tool takes (`export.py --alpha-codec png` became `--alpha-mode png`, `pad.py --smart` became `--start` with no value) are named in the hint and no longer printed as the answer. A common other word for a choice is used only when it is a choice (`check.py --platform strong` suggested `ig`, the platform nearest to "high").

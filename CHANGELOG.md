@@ -6,6 +6,20 @@
 
 (nothing yet)
 
+## 4.20.2
+
+_Automated release: version and notes generated from pull requests merged since 4.20.1._
+
+### Fixed
+
+- `overlay.py` no longer takes `--emoji-assets`, `--emoji-scale` or `--emoji-max` silently: it draws text with drawtext and never read them, so a value given there did nothing and nothing said so. Each now prints one warning and adds `deprecated_option` to the result's `diagnostics.warnings`. A guard test (tests/test_guards.py) reads every tool's parser and fails on an option nothing reads that `deprecated` does not list (#749).
+- A usage error's `try:` line is a command the tool accepts. `speedramp.py IN --ramp 3:6:0.5` suggested `--segment 3:6:0.5`, which speedramp refuses (`START-END:FACTOR`): an option whose help only mentions the word, one that only shares a word with the flag, and one spelt like a flag another tool takes (`export.py --alpha-codec png` became `--alpha-mode png`, `pad.py --smart` became `--start` with no value) are named in the hint and no longer printed as the answer. A common other word for a choice is used only when it is a choice (`check.py --platform strong` suggested `ig`, the platform nearest to "high").
+
+### Changed
+
+- deprecated: `overlay.py --emoji-assets`, `--emoji-scale` and `--emoji-max`, which have no effect (`caption.py` and `graphics.py` keep theirs). They are listed in `contract --json` `deprecated` and go in 4.22.0 under the beta rule; remove them from overlay command lines (#749).
+- fix: overlay.py's emoji options say they do nothing, and a try: line is a command the tool accepts (#749) (#764)
+
 ## 4.20.1
 
 _Automated release: version and notes generated from pull requests merged since 4.20.0._
