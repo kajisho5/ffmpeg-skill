@@ -9,6 +9,7 @@ so a fix of one tool cannot be the end of a class that keeps coming back.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -406,6 +407,38 @@ class IgnoredFlagGuard(unittest.TestCase):
                         or re.search(rf"\bargs\.{d}\b|getattr\(\s*args\s*,\s*[\"']{d}[\"']", shared)):
                     unread.append(f"{tool.stem}: {'/'.join(action.option_strings) or action.dest}")
         self.assertEqual(unread, [], "options declared and never read")
+
+
+class NumericGuard(unittest.TestCase):
+    """numeric (#749, #645, #630): a number an option cannot take was taken and read as another
+    one. Every numeric option of every tool in the sweep's table is given, in a dry run, the value
+    just past each end of the range its help states (a..b, or 0 for "> 0") and 1000000000; each
+    must be refused before anything is planned: by the shared step, which names the option, or by
+    argparse where the option has choices."""
+
+    def test_no_tool_takes_a_number_outside_the_range_its_help_states(self):
+        import edge_values
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        taken = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            facts = sweep.facts_for(clip, tmp)
+            by_tool = edge_values.options()
+            for entry, (base, ext) in sweep.TABLE.items():
+                tool = entry.split()[0]
+                if " " in entry:
+                    continue
+                out = ["-o", str(Path(tmp) / f"edge{ext}")] if ext else []
+                for flag, text in by_tool.get(tool, {}).items():
+                    span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
+                    values = ([] if flag == "--length-samples" else ["1000000000"]) + (
+                        ["0"] if span and span[0] == "> 0" else [f"{float(span[1]) - 1:g}", f"{float(span[2]) + 1:g}"] if span else [])
+                    for value in values:
+                        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *[a.format(**facts) for a in base],
+                                               f"{flag}={value}", *out, "--dry-run", "--overwrite"], capture_output=True, text=True,
+                                              encoding="utf-8", errors="replace", timeout=60)
+                        if proc.returncode == 0 or not (f"{flag} {float(value):g} is outside what this option takes" in proc.stderr or "invalid choice" in proc.stderr):
+                            taken[f"{tool} {flag}={value}"] = next((l for l in proc.stderr.splitlines() if l.startswith("error:")), "ran")[:160]
+        self.assertEqual(taken, {})
 
 
 class GuardRegistryTests(unittest.TestCase):

@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-27",
+  "issue": 749,
+  "class": "numeric",
+  "what": "a 0 an option cannot take was read as another value without a word: export.py --duration 0 wrote the whole clip, export.py --pad-blur 0 blurred with radius 1 where fit.py refused the same value, caption.py --font-size 0 reported size_used 0 for text drawn at the default size, and --emoji-scale 0 drew the emoji at 1.0 in caption.py and graphics.py",
+  "escaped": "#645's shared step refuses only a range a help states as a..b, a negative and anything past a million; these helps stated no range, so 0 passed it and each tool read it its own way: export.py's `args.duration or dur` and `if args.duration` as no limit, pad_filters' `max(1, ...)` as radius 1, the emoji scales' `or 1.0` as 1.0, and caption.py carried 0 into the style and reported it as size_used. fit.py's own `--pad-blur <= 0` check was the only refusal, so the same option behaved two ways. tests/edge_values.py listed the rows among the 107 that ran, where 0 is a real setting on most of the others",
+  "mechanism": "runner.apply_common also reads a help's \"> 0\" as the range taken (0 < v <= 1e6), and the four helps state their range: export --duration and --pad-blur, caption and graphics --emoji-scale > 0, caption --font-size 1..2000 as overlay.py's; the clamps and fit.py's own check that read 0 another way are removed, so the refusal comes from one place in a dry run as well. test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749 gives each row 0 and a value that still runs; test_guards.NumericGuard gives every numeric option of every tool in the sweep table the values just past its stated range and 1000000000, and tests/edge_values.py now shows 489 refused, 102 ran, 0 hung"
+}

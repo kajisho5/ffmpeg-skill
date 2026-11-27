@@ -6693,10 +6693,15 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   tighter ceiling states its range.
 - **A value equal to the default is not checked**, so a default outside its own stated range would
   hide; the test reads every stated range against its default instead.
-- Zero is not decided here. On most options it is a real setting; the ones where it is not keep
-  their own check.
-- Code: `scripts/_common/runner.py` (`apply_common`). Test:
-  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
+- **Zero is decided by the help too (#749).** On most options 0 is a real setting and is taken. An
+  option where it is not states `> 0` (`export --duration`, `--pad-blur`, `--emoji-scale`), read as
+  above 0 and at most a million, or a range from 1 (`caption --font-size 1..2000`). fit.py's own
+  `--pad-blur` check went with it, so one option is not refused in one tool and read as another
+  value in the next.
+- Code: `scripts/_common/runner.py` (`apply_common`). Tests:
+  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` and
+  `test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749` (tests/test_contract.py);
+  the class guard `NumericGuard` (tests/test_guards.py) gives every stated range's edges to every tool.
 
 ## After 4.2.1 — one file per `-o` (#562)
 

@@ -2016,7 +2016,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # 3.0.0: every deprecation announced in 1.x and 2.x was settled by its major (REMOVED below).
 # A beta tool's argument goes in the minor release after the one that lists it (4.x's beta rule).
 DEPRECATED: List[Dict[str, str]] = [
-    {"what": f"overlay.py {flag}", "since": "4.20.1", "replacement": "none (the option has no effect)", "removed_in": "4.22.0", "where": "cli"}
+    {"what": f"overlay.py {flag}", "since": "4.20.2", "replacement": "none (the option has no effect)", "removed_in": "4.22.0", "where": "cli"}
     for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max")]
 
 # What each major removed or changed, with the version that deprecated each: the "Removed" half of

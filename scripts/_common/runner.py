@@ -649,13 +649,14 @@ def apply_common(args: "argparse.Namespace") -> None:
         env_limit, env_problem = _read_env_timeout()
         if env_problem:
             warn(env_problem, "timeout_env_invalid", value=os.environ.get("FFMPEG_SKILL_TIMEOUT"), timeout=env_limit)
-    # one step for every number a tool takes (#645): the range its help states as a..b is the range it
-    # takes, a negative needs a help that names one, and nothing but a sample count is past a million
+    # one step for every number a tool takes (#645): the range its help states as a..b or "> 0" (#749)
+    # is the range it takes, a negative needs a help that names one, and nothing but a sample count is past a million
     for a in getattr(getattr(STATE, "parser", None), "_actions", ()):
         v, text = getattr(args, a.dest, None), a.help or ""
-        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", text)
+        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
         if a.type in (int, float) and isinstance(v, (int, float)) and v != a.default and a.dest not in ("timeout", "length_samples") and (
-                not float(span[1]) <= v <= float(span[2]) if span else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
+                (not 0 < v <= 1e6 if span[0] == "> 0" else not float(span[1]) <= v <= float(span[2])) if span
+                else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
             die(f"{next((o for o in a.option_strings if o in [x.split('=')[0] for x in sys.argv[1:]]), a.option_strings[0])} {v:g} is outside what this option takes" + (f", {span[0]}" if span else ""), hint=text.replace("%%", "%") or None)
     STATE.encode_policy = _apply_encode_policy(args)
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
