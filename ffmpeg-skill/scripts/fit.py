@@ -672,6 +672,12 @@ def main() -> int:
             # the kept window from the same numbers the crop filter above was built from (the
             # anchor's even offset included): fractions of the scaled frame, which is the displayed
             # frame's proportions on each axis. No margin on either axis: nothing is cut, no check
+            # the window as data (#581), from the same numbers: in the source's displayed pixels, and
+            # in the scaled frame the crop filter cuts it from
+            extra["crop"] = {"x": round(ox * kx), "y": round(oy * ky), "width": round(out_w * kx), "height": round(out_h * ky),
+                             "source_width": sw, "source_height": sh,
+                             "scaled": {"x": ox, "y": oy, "width": out_w, "height": out_h,
+                                        "frame_width": out_w + mx, "frame_height": out_h + my}}
             rel_x, rel_y = mx / (out_w + mx), my / (out_h + my)
             if rel_x > 0 or rel_y > 0:
                 crop_window = (("x", ox / (out_w + mx), (ox + out_w) / (out_w + mx)) if rel_x >= rel_y
