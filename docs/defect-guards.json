@@ -29,6 +29,11 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "ignored_flag": {
+      "test": "test_guards.IgnoredFlagGuard.test_every_declared_option_of_every_tool_is_read",
+      "also": "test_contract.StumbleLedgerTests.test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept",
+      "how": "every tool's parser is read against its code: an option no tool or shared module reads by name fails (cut --keep-hevc is kept on purpose and listed). A flag that one mode of a tool ignores while another mode reads it (waveform --at's form of the class) is not seen by it"
     }
   }
 }

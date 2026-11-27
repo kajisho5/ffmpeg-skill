@@ -368,6 +368,46 @@ def judged_without_a_file(node, path=""):
     return found
 
 
+class IgnoredFlagGuard(unittest.TestCase):
+    """ignored_flag (waveform.py --at's video flags, freeze.py --time read as --timeout, #749): a
+    flag is taken and does nothing. This catches the part of the class that the parser and the code
+    show by themselves, on every tool and on one written after this test: an option declared and
+    never read, unless contract --json `deprecated` lists it, which says it goes. A flag that one
+    mode of a tool ignores while another reads it is not seen here."""
+
+    # A dest nothing reads by name, kept on purpose: `--keep-hevc` is the 3.0.0 default, accepted so
+    # a 2.x command line runs unchanged (docs/design-decisions.md), and argparse refuses it beside
+    # `--no-keep-hevc`.
+    UNREAD_BY_DESIGN = {("cut", "keep_hevc")}
+
+    def test_every_declared_option_of_every_tool_is_read(self):
+        """#749: overlay.py declared --emoji-assets, --emoji-scale and --emoji-max and never read
+        them, so a caller's value was accepted and did nothing. Every dest of every tool's parser is
+        read: as `<name>.<dest>` or a "<dest>" string in the tool, or as `args.<dest>` /
+        `getattr(args, "<dest>")` in the shared modules the tools hand their args to. An option
+        `_contract.DEPRECATED` lists ("<tool>.py --flag", where cli) is known: it still has to go."""
+        import argparse
+        import re
+        scripts = ROOT / "scripts"
+        sys.path.insert(0, str(scripts))
+        import _contract
+        shared = "\n".join(p.read_text(encoding="utf-8") for p in sorted(scripts.glob("_*.py")) + sorted((scripts / "_common").glob("*.py"))
+                           if p.name != "_contract.py")
+        deprecated = {d["what"] for d in _contract.DEPRECATED if d["where"] == "cli"}
+        unread = []
+        for tool in sorted(scripts.glob("[!_]*.py")):
+            src = tool.read_text(encoding="utf-8")
+            for action in _contract._capture_parser(tool)._actions:
+                if isinstance(action, argparse._HelpAction) or (tool.stem, action.dest) in self.UNREAD_BY_DESIGN \
+                        or any(f"{tool.name} {o}" in deprecated for o in action.option_strings):
+                    continue
+                d = re.escape(action.dest)
+                if not (re.search(rf"\b\w+\.{d}\b|[\"']{d}[\"']", src)
+                        or re.search(rf"\bargs\.{d}\b|getattr\(\s*args\s*,\s*[\"']{d}[\"']", shared)):
+                    unread.append(f"{tool.stem}: {'/'.join(action.option_strings) or action.dest}")
+        self.assertEqual(unread, [], "options declared and never read")
+
+
 class GuardRegistryTests(unittest.TestCase):
     def test_every_class_with_three_entries_has_a_guard_or_a_pending_issue(self):
         """A class the ledger records three times is registered in docs/defect-guards.json, with

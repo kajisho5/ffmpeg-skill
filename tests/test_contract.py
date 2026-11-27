@@ -2601,8 +2601,16 @@ sys.exit(fit.main())
                     self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
                     self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
                     self.assertTrue(entry["replacement"])
+        version = tuple(int(x) for x in json.loads((ROOT / "package.json").read_text())["version"].split("."))
+        beta = {t["name"] for t in self.contract["tools"] if t["stability"] == "beta"}
         for entry in self.contract["deprecated"]:
-            self.assertGreater(int(entry["removed_in"].split(".")[0]), pkg_major)
+            removed_in, since = (tuple(int(x) for x in entry[k].split(".")) for k in ("removed_in", "since"))
+            if entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta:
+                # 4.x's beta rule: a beta tool's argument goes in the minor after the one that lists it
+                self.assertEqual((removed_in[0], removed_in[1], removed_in[0] == since[0]), (since[0], since[1] + 1, True), entry["what"])
+                self.assertGreater(removed_in, version, entry["what"])
+            else:
+                self.assertGreater(removed_in[0], pkg_major)
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
@@ -2636,7 +2644,7 @@ sys.exit(fit.main())
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24"}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.19.0": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
@@ -2655,7 +2663,9 @@ sys.exit(fit.main())
             with self.subTest(what=entry["what"]):
                 self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES,
                               f"add {entry['since']}'s release date to DEPRECATION_RELEASE_DATES")
-                self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
+                # a beta tool's argument (4.x's beta rule) goes in a minor: the same check, at the minor
+                at = 2 if entry["since"].split(".")[0] == entry["removed_in"].split(".")[0] else 1
+                self.assertGreater(tuple(int(x) for x in entry["removed_in"].split(".")[:at]), tuple(int(x) for x in pkg["version"].split(".")[:at]),
                                    f"package.json is {pkg['version']} but {entry['what']!r} is still "
                                    f"deprecated, not removed: remove it, then drop the entry")
         for entry in _contract.REMOVED:
@@ -3243,7 +3253,7 @@ sys.exit(fit.main())
         """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
         `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
         the same FFmpeg line, and CI no longer runs 3.9 or a 5.x build."""
-        self.assertEqual(self.contract["deprecated"], [])
+        self.assertEqual([e for e in self.contract["deprecated"] if "Python" in e["what"] or "FFmpeg" in e["what"]], [])
         removed = {e["what"]: e for e in self.contract["removed"] if e["removed_in"] == "3.0.0"}
         py = next(e for w, e in removed.items() if "Python 3.9" in w)
         ff = next(e for w, e in removed.items() if "FFmpeg 5.x" in w)
