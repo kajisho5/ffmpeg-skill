@@ -44,12 +44,14 @@ Examples:
   python3 fit.py input.mp4 --aspect 9:16 --fit crop --crop-x 1   # keep the right edge (e.g. product held stage-right)
   python3 fit.py input.mp4 --height 1080                         # width follows the source aspect
   python3 fit.py input.mp4 --width 1920 --height 1080            # exact frame, no aspect needed
+  python3 fit.py input.mp4 --rect 1080:1080:420:0                # cut an exact box W:H:X:Y, no scaling (W:H: centred)
   python3 fit.py input.mp4 --rotate 90                           # rotate 90 degrees clockwise
   python3 fit.py input.mp4 --flip h                              # mirror horizontally
   python3 fit.py input.mp4 --zoom in --zoom-amount 1.5 --zoom-start 3 --zoom-duration 5   # push in to 1.5x over 3-8 s
 """
 import argparse
 import os
+import re
 import sys
 from fractions import Fraction
 from typing import Any, List, Optional
@@ -58,9 +60,9 @@ from _common.runner import require_tool, run_analysis, with_mapped_chapters
 from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.placement import bbox
 from _common.timeline import exact_rate, output_timecode_args
-from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note
+from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note, with_cfr
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
-from _common.probe import fingerprint, presentation_times
+from _common.probe import fingerprint, presentation_times, probed_maps
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
 # reported in the result's diagnostics (large_speed_change): the whole picture and sound
@@ -403,6 +405,48 @@ def check_zoom(source: str, meta: dict, output: str, out_video: dict) -> dict:
     return check
 
 
+def crop_rect(args, w: int, h: int, x: "Optional[int]", y: "Optional[int]", suffix: str) -> int:
+    """--rect W:H[:X:Y]: an exact box of the source's displayed frame, no scaling (crop.py is this
+    with its own option names, #683). x/y None: the box is centred. Width and height must be even
+    (4:2:0 chroma) and the box inside the frame: refused, never rounded. An odd x/y is taken as
+    given (exact=1), not moved to the chroma grid."""
+    if args.fps is not None and args.fps <= 0:
+        die(f"--fps must be positive, got {args.fps:g}")
+    if (x or 0) < 0 or (y or 0) < 0:
+        die(f"--x/--y must be >= 0, got x={x} y={y}")
+    if w <= 0 or h <= 0:
+        die(f"--width/--height must be > 0, got width={w} height={h}")
+    if w % 2 or h % 2:
+        die(f"--width/--height must be even (4:2:0 chroma), got width={w} height={h}")
+    meta = probe(args.input)
+    if not meta.get("video"):
+        die("input has no video stream")
+    # the box is in the displayed frame cropdetect.py reports: rotation applied, and a
+    # non-square-pixel source squared at its display aspect first (#411)
+    sw, sh = display_size(meta["video"])
+    x, y = (x, y) if x is not None else ((sw - w) // 2, (sh - h) // 2)
+    if x < 0 or y < 0 or x + w > sw or y + h > sh:
+        die(f"crop rectangle ({x},{y},{w}x{h}) exceeds the source frame ({sw}x{sh})")
+    output = args.output or default_output(args.input, suffix)
+    # exact=1: without it crop rounds an odd x/y down to the chroma grid of a 4:2:0 frame, and the
+    # rectangle written was one pixel left of / above the one asked for (A170's sibling, A157)
+    vf = [f"crop={w}:{h}:{x}:{y}:exact=1", "setsar=1"]
+    if square_pixels(meta["video"]):
+        vf.insert(0, square_pixels(meta["video"]))
+        note(square_pixels_note(meta["video"]))
+    # the picture the rectangle was checked against, not the largest one default selection takes
+    cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta)
+    cmd += ["-vf", with_cfr(",".join(vf), meta, args.fps)] + video_args(meta, args.crf, args.preset) + cfr_args(meta, args.fps)
+    cmd += aac_args() if meta.get("audio") else ["-an"]
+    # the crop keeps the timeline, so the subtitle/data tracks are copied as the other reframes copy
+    # them, and dropped (said) only where the container refuses them (#520)
+    dropped_streams = run_keeping_subtitles(cmd, output)
+    result = probe(output, role="output")
+    info(f"wrote {output} ({fmt_secs(result['duration'])}, {result['video']['width']}x{result['video']['height']})")
+    emit(output, dropped_non_av_streams=dropped_streams)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -428,6 +472,8 @@ def main() -> int:
                         "but left at its own levels, since an eq on PQ/HLG code values is not a -15%% perceptual dim")
     a.add_argument("--width", type=int, help="output width in px, 1..16384 (default: keep source width or the width implied by the aspect); with --height also given, both are used directly")
     a.add_argument("--height", type=int, help="output height in px, 1..16384 (default: keep source height or the height implied by the aspect); with --width also given, both are used directly")
+    a.add_argument("--rect", metavar="W:H:X:Y", help="cut this exact box of the source's displayed frame, in px, no scaling "
+                   "(W:H alone: centred); width and height even. crop.py --x --y --width --height is the same box")
     a.add_argument("--pad-color", default="black", help="pad colour, e.g. black, white, 0x101010 (default black)")
     add_pad_fill_args(a)
     a.add_argument("--crop-x", type=float, default=0.5, help="with --fit crop or --zoom, horizontal anchor 0=left, 0.5=centre (default), 1=right")
@@ -448,6 +494,17 @@ def main() -> int:
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.rect is not None:
+        others = [f"--{k.replace('_', '-')}" for k in ("duration", "method", "from_center", "smooth", "aspect", "fit", "width", "height",
+                                                       "crop_x", "crop_y", "zoom", "fade_in", "fade_out", "rotate", "flip", "audio_stream",
+                                                       "max_speed", "pad_color", "pad_fill", "pad_blur")
+                  if getattr(args, k) not in (ap.get_default(k), "crop")]
+        if others:
+            die(f"--rect cuts the box and nothing else; run {others[0]} as a second fit.py step")
+        if not re.fullmatch(r"\d+:\d+(:\d+:\d+)?", args.rect):
+            die(f"give the box as --rect W:H:X:Y or W:H (centred), whole pixels, got {args.rect!r}")
+        w, h, *xy = (int(n) for n in args.rect.split(":"))
+        return crop_rect(args, w, h, *(xy or (None, None)), "fit")
     method_given = args.method is not None
     args.method = args.method or "speed"
 

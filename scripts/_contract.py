@@ -1970,6 +1970,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
+        **({"alias_of": ALIASES[name]} if name in ALIASES else {}),
         # 4.0.0: what the 4.x promise covers for this tool (docs/contract.md, Stability guarantee (4.x))
         "stability": "stable" if name in STABLE_TOOLS else "beta",
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
@@ -2064,11 +2065,14 @@ READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
 # evals/agent_prompts*.json (render/look/caption/export/check each >=10 hits; fit/cut/audio/
 # loudness/graphics/silence/probe each >=6) -- not a hand-picked "starter" set. `tools/list`
-# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 42; the
-# other 30 stay reachable by name through tools/call either way, and `contract --json` always
-# describes all 42.
+# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 41; the
+# other 29 stay reachable by name through tools/call either way, and `contract --json` always
+# describes all 41 and the aliases.
 MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
-# 4.0.0: the tools whose surface 4.x promises not to break; the other 30 are "beta" (docs/contract.md).
+# 4.19 (#683): a tool folded into another keeps its script, MCP name and schema (callable by name, the 1.x
+# snapshot) and leaves what is advertised: the tool count, SKILL.md's table and tools/list, full or not
+ALIASES = {"crop": "fit"}
+# 4.0.0: the tools whose surface 4.x promises not to break; the other 29 are "beta" (docs/contract.md).
 STABLE_TOOLS = MCP_CORE_TOOLS
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "

@@ -222,7 +222,9 @@ class ContractTests(unittest.TestCase):
         one so a new/removed tool that forgets to update one of them fails CI instead of
         drifting silently -- see #50, filed after README said 28 twice, 22 once (stale), and
         package.json's description said 21, all at the same time."""
-        real_count = len(self.contract["tools"])
+        # an alias (#683: crop, folded into fit) is described but not counted
+        real_count = len([t for t in self.contract["tools"] if "alias_of" not in t])
+        self.assertEqual(real_count, 41)
         checks = [
             (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|names)\b|\ball (?P<n>\d+) by\b")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
@@ -273,7 +275,7 @@ class ContractTests(unittest.TestCase):
             seen_core |= core
             seen_all += names
         self.assertEqual(seen_core, set(_contract.MCP_CORE_TOOLS))
-        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"]))
+        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"] if "alias_of" not in t))
         self.assertEqual(set(groups), {r.strip("|").split("|")[0].strip() for r in rows[:-1]})
         total_name, total_counts, _ = [c.strip() for c in rows[-1].strip("|").split("|")]
         self.assertEqual(total_name, "**Total**")
@@ -1117,12 +1119,12 @@ class ContractTests(unittest.TestCase):
     def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
         """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
         (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
-        Every one of the 42 tools is named in that table somewhere, so every tool has at least
-        one example; a row's markdown backticks are stripped from `command`, and a row with
+        Every tool but an alias (#683: crop, out of the table) is named in that table somewhere, so
+        it has at least one example; a row's markdown backticks are stripped from `command`, and a row with
         several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
         `prompts` list rather than one string."""
         by_name = {t["name"]: t for t in self.contract["tools"]}
-        missing = [name for name, t in by_name.items() if not t.get("examples")]
+        missing = [name for name, t in by_name.items() if not t.get("examples") and "alias_of" not in t]
         self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
         cut = next(e for e in by_name["cut"]["examples"] if "cut from 1:20 to 2:05" in e["prompts"])
         self.assertEqual(cut, {"prompts": ["cut from 1:20 to 2:05", "trim the first 10 s"],
@@ -2396,14 +2398,15 @@ sys.exit(fit.main())
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.18.3 behaviour: every
-        contract tool listed. This test proves that view is still byte-for-byte the full set."""
+        contract tool listed but an alias (#683). This test proves that view is still the full set."""
+        advertised = [n for n, s in self.tools.items() if "alias_of" not in s]
         saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
         os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
         try:
             mcp_names = [t["name"] for t in mcp_server.tool_list()]
-            self.assertEqual(sorted(mcp_names), sorted(self.tools), "MCP tools/list (full) == contract tools")
+            self.assertEqual(sorted(mcp_names), sorted(advertised), "MCP tools/list (full) == contract tools but the aliases")
             listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list", env={**os.environ}).stdout.splitlines() if l.strip()]
-            self.assertEqual(sorted(listed), sorted(self.tools))
+            self.assertEqual(sorted(listed), sorted(advertised))
         finally:
             os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
             if saved is not None:
@@ -2413,7 +2416,11 @@ sys.exit(fit.main())
             self.assertEqual(spec["mcp"]["positional"], mcp_server.POSITIONAL.get(name, ["input"]) if spec["mcp"]["positional"] else spec["mcp"]["positional"])
         # a real JSON-RPC round trip, full surface
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]
-        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
+        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(advertised))
+        # an alias is not listed and is still called by name (#683)
+        self.assertEqual({n: s["alias_of"] for n, s in self.tools.items() if "alias_of" in s}, _contract.ALIASES)
+        self.assertEqual(_contract.ALIASES, {"crop": "fit"})
+        self.assertIn("usage:", mcp_server.call_tool("crop", {"argv": ["--help"]})["content"][0]["text"].lower())
 
     def test_mcp_tools_list_defaults_to_the_core_12(self):
         """roadmap P1-7 (docs/design-decisions.md): tools/list defaults to _contract.MCP_CORE_TOOLS,
@@ -2445,7 +2452,7 @@ sys.exit(fit.main())
             listed = sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout
             self.assertEqual([line.split()[0] for line in listed.splitlines()], expected)
             full = self._rpc([request], full=True)[0]
-            self.assertEqual([t["name"] for t in full["result"]["tools"]], list(self.tools))
+            self.assertEqual([t["name"] for t in full["result"]["tools"]], [n for n, s in self.tools.items() if "alias_of" not in s])
 
     def test_mcp_reports_unknown_advertised_tool_names(self):
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
@@ -2462,9 +2469,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
+            ({}, 12, 75_800),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_500),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -2539,17 +2546,11 @@ sys.exit(fit.main())
         all 42 tools, so this reads tool_list() under FFMPEG_SKILL_MCP_FULL=1 -- the default's
         core-12 filter is a separate, tested concern (test_mcp_tools_list_defaults_to_the_core_12)."""
         snapshot_path = ROOT / "tests" / "fixtures" / "mcp_tools.json"
-        saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
-        os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
-        try:
-            live = [{"name": t["name"],
-                     "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
-                     "required": sorted(t["inputSchema"].get("required", []))}
-                    for t in mcp_server.tool_list()]
-        finally:
-            os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
-            if saved is not None:
-                os.environ["FFMPEG_SKILL_MCP_FULL"] = saved
+        # every tool callable by name, an alias too (#683: crop is not listed and keeps its arguments)
+        live = [{"name": t["name"],
+                 "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
+                 "required": sorted(t["inputSchema"].get("required", []))}
+                for t in map(_contract.mcp_tool, mcp_server.specs().values())]
         if os.environ.get("UPDATE_MCP_SNAPSHOT"):
             snapshot_path.write_text(json.dumps(live, indent=1) + "\n", encoding="utf-8")
         frozen = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -2843,7 +2844,7 @@ sys.exit(fit.main())
 
     def test_mcp_input_schema_equals_translated_contract_schema(self):
         listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]["result"]["tools"]
-        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"]], "MCP order == contract order")
+        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"] if "alias_of" not in t], "MCP order == contract order")
         for entry in listed:
             spec = self.tools[entry["name"]]
             self.assertEqual(self._norm(entry["inputSchema"]), self._norm(_contract.mcp_input_schema(spec)), entry["name"])

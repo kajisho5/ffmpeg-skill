@@ -647,7 +647,7 @@ def main() -> int:
         if encoder == "hap" and (meta["video"]["width"] % 4 or meta["video"]["height"] % 4):
             die(f"--preset hap-alpha needs a width and height that are multiples of 4 (HAP's texture blocks); "
                 f"this source is {meta['video']['width']}x{meta['video']['height']}",
-                hint="crop or pad it first (crop.py, pad.py)")
+                hint="crop or pad it first (fit.py --rect, pad.py)")
         # a pixel format with an alpha plane, or a VP9 stream stored with one (probed as yuv420p);
         # a dry run decides on these metadata reads alone and decodes nothing
         has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or "")) or vp9_alpha_tagged(args.input)

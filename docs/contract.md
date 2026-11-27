@@ -7,7 +7,7 @@ dry-run, input preservation and repeatability. It is the interface a planning ag
 consumes instead of reading `SKILL.md`, which stays written for a coding agent that
 follows the workflow by hand.
 
-The whole document is about 950 KB, almost all of it the 42 `tools` entries. `--tool NAME`
+The whole document is about 950 KB, almost all of it the `tools` entries: 41 tools and one alias (`crop`, see "Aliases"). `--tool NAME`
 (repeatable; `cut` or `cut.py`) keeps only the named tools under `tools`, in the order given,
 and every other key as it is: about 55 to 85 KB for one tool. An unknown name is refused (exit
 2) with the list of tools, and `doctor` does not take the flag.
@@ -53,7 +53,7 @@ under:
 - **`stable`**: the 12 core tools (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`,
   `audio`, `loudness`, `graphics`, `silence`, `probe`; the MCP server's default `tools/list`). The
   table below holds for them for the whole of 4.x, as it held for every tool in 3.x.
-- **`beta`**: the other 30. The same table holds, except that an argument or an output key may be
+- **`beta`**: the other 29 (and the `crop` alias). The same table holds, except that an argument or an output key may be
   removed, renamed or made required in a minor release after it has been listed in `deprecated`
   for one minor release (not the three steps below). Tool names and script names are not
   removed in 4.x.
@@ -167,7 +167,7 @@ removes a tool, a flag or an output key.
 
 | What changed in 4.0.0 | 3.x behaviour | 4.0 behaviour | Migrating from 3.x |
 |---|---|---|---|
-| The promise is split by tool (`stability`) | every tool under the same promise | the 12 core ones `stable`, the other 30 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
+| The promise is split by tool (`stability`) | every tool under the same promise | the 12 core ones `stable`, the other 29 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
 | `export.py`, a single-file video delivery (not GIF) that misses a required property: a missing picture or sound stream, the wrong video codec (for an editing master also its profile and pixel format), preset size or fixed frame rate, or a duration or `--max-mb` limit (#620) | exit 0 with `verified: false` | exit 1, `kind: verification`, the failed steps listed and the file kept. A failed loudness step still only sets `verified: false` | Read the exit status (or `status`) for a delivery that misses a required property, and keep reading `verified`: a loudness miss is still exit 0 with `verified: false` |
 | `fit.py --duration` whose implicit speed factor is above 1.15 or below 1/1.15 (#582) | retimed, with `large_speed_change` among the warnings | refused before ffmpeg runs, `error.reason: fit_method_required` (`details: {factor, threshold, source_duration, target_duration}`), dry runs with a known length included | Pass `--method speed` to retime or `--method trim` to trim; `--smooth blend` or `--smooth interpolate` also chooses a retime |
 | Delivery templates (`render.py --template`) (#575) | platform checks only | the template's `check` also runs `check.py --content` (black frames, freezes, flashes, silence, dropouts); a failed row fails the render and keeps the file | Fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}` |
@@ -219,7 +219,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `supports_json` | whether `--json` exists |
 | `supports_json_brief` | whether `--json-brief` exists (1.11.0): the same success document with `probe` replaced by a compact `summary` (`duration_s`, `width`, `height`, `fps`, `vcodec`, `acodec`, `channels`, and `lufs` when the tool measured one), `commands` replaced by the number of commands run, and the per-step `verification` list dropped (its verdict stays in `verified`). Tool-specific keys are unchanged, `--json`'s own output is unchanged, and a failure prints the same failure document either way |
 | `mutates_input` | always `false`: no tool overwrites its input |
-| `stability` | `stable` (the 12 core tools) or `beta` (the other 30); since 4.0.0, see "Stability guarantee (4.x)" |
+| `stability` | `stable` (the 12 core tools) or `beta` (the other 29); since 4.0.0, see "Stability guarantee (4.x)" |
 | `produces_artifact` | writes a file (media, PNG, HTML, EDL) |
 | `verification` | `{required, tools}`: which tools to run on the output afterwards |
 | `requires_visual_verification` | the picture changed; run `ffmpeg-skill/look` and inspect the PNG |
@@ -230,6 +230,16 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | | `scenes` has `audio_only: true` and `video_required: false` after 3.2.0: an audio-only file is one scene, measured by `--beats`, `--audio-peaks`, `--speech` and `--highlights` (result key `audio_only: true`); `--sheet` and `--shots` refuse it. `render` has `audio_only: true` and `video_required: false` since 2.17.4: `--template podcast` and `--template audiogram` take an audio file. `join` has them since 0.9.1: audio-only inputs are joined as audio (no `look` needed then); mixing audio and video inputs is refused |
 | `deterministic_inputs`, `idempotency_hint` | see Repeatability |
 | `mcp` | the MCP tool name and its positional arguments |
+| `alias_of` | only on an alias (4.19, #683): the tool that does its job, e.g. `fit` on `crop` |
+
+### Aliases
+
+A tool folded into another keeps its script, its CLI options, its MCP name and its schema, and is
+marked `alias_of` (`_contract.ALIASES`). It is left out of what is advertised: the tool count,
+SKILL.md's table, README's Tools section and `tools/list`, full or default. `tools/call` runs it by
+name and the 1.x snapshot still pins its arguments. `crop` is the one alias: `crop.py --x X --y Y
+--width W --height H` runs the code `fit.py --rect W:H:X:Y` runs and writes the same file. Both
+take the box without `--x/--y` (or `X:Y`) as a centred one.
 
 ### Roles
 
@@ -475,7 +485,7 @@ on one machine and VideoToolbox bytes on another; `encoder` in the result says w
 
 ## `provides`
 
-`provides` lists these 42 tools by a cross-repository Capability id, for
+`provides` lists these 41 tools and the `crop` alias by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
@@ -1348,7 +1358,7 @@ name, `description` is the ToolSpec's own one-line description (unchanged from t
 CLI's `--help` first line), the order is the contract's sorted order, and `inputSchema` is
 `_contract.mcp_input_schema(ToolSpec)`. The structured-arguments note that explains how to
 call a tool (`_contract.MCP_STRUCTURED_NOTE`) is server-wide, not per-tool: it is sent once,
-in `initialize`'s `instructions` field, rather than appended to all 42 descriptions (1.20.0).
+in `initialize`'s `instructions` field, rather than appended to every description (1.20.0).
 `tools/call` maps structured arguments to
 argv with the ToolSpec's `mcp.positional` and `mcp.argument_exceptions`. A new
 public script, a removed one, or a changed parser therefore changes the MCP surface
@@ -1405,17 +1415,17 @@ but with `overwrite` it replaces an existing file at its output or plan path, wh
 count as an additive update. The hints are hints: a client must not treat them as a security
 boundary.
 
-### Default `tools/list` surface: core 12, opt-in for all 42
+### Default `tools/list` surface: core 12, opt-in for all 41
 
 By default `tools/list` returns only the core dozen in `_contract.MCP_CORE_TOOLS` (`render`,
 `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`,
-`probe`) rather than all 42, so a session doesn't pay context for 30 schemas it is unlikely to ever call
+`probe`) rather than all 41, so a session doesn't pay context for 29 schemas it is unlikely to ever call
 directly -- the set is the tools eval iterations 17-20's ground-truth `expect` lists actually name
-most often across the corpus in `evals/agent_prompts*.json`. Every tool -- including the other 30
--- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
-contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
+most often across the corpus in `evals/agent_prompts*.json`. Every tool -- including the other 29
+and the `crop` alias -- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
+contract (`ffmpeg-skill contract --json`) still describes all 41 and the alias unconditionally. Set
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
-return all 42, as every version before 1.18.3 did.
+return all 41 (every tool but an alias), as every version before 1.18.3 returned every tool.
 
 Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` to advertise a named subset.
 The server trims whitespace, ignores duplicate names and preserves contract order.

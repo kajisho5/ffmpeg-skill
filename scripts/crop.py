@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Crop a video to an exact pixel rectangle.
+"""Crop a video to an exact pixel rectangle (an alias of fit.py --rect since 4.19).
 
 {x, y, width, height} are literal pixel offsets and dimensions in the SOURCE
 frame, not aspect-ratio-relative -- for cropping to a target aspect ratio
 (e.g. 16:9 -> 9:16) use fit.py --fit crop instead, which computes the
 rectangle for you and lets you steer it with --crop-x/--crop-y. This tool is
 for when the caller already knows the exact rectangle (a face-detection box,
-a saved crop from a previous edit, a hand-picked region).
+a saved crop from a previous edit, a hand-picked region). It runs the code
+fit.py --rect W:H:X:Y runs and writes the same file; new commands use that.
 
-The rectangle must lie entirely inside the source frame after accounting for
+--width/--height without --x/--y (or with --center) is a centred box. The
+rectangle must lie entirely inside the source frame after accounting for
 any display rotation, and --width/--height must be even (required for 4:2:0
 chroma subsampling, the pixel format every encoder here uses) -- given values
 are validated and refused, never silently rounded, since a caller-specified
@@ -18,73 +20,40 @@ taken as given (the crop starts on that pixel), not moved to the chroma grid.
 Examples:
   python3 crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920
   python3 crop.py input.mp4 --x 0 --y 140 --width 1920 --height 800 -o cropped.mp4
+  python3 crop.py input.mp4 --width 1080 --height 1080          # centred
 """
 import argparse
+import re
 import sys
 
-from _common import add_common, apply_common, aac_args, cfr_args, with_cfr, default_output, die, emit, ffmpeg_base, info, probe, run_keeping_subtitles, video_args, X264_PRESETS, fmt_secs
-from _common.probe import display_size, probed_maps, square_pixels, square_pixels_note
-from _common.emit import note
+from _common import add_common, apply_common, die, X264_PRESETS
+from fit import crop_rect
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_crop.<ext>)")
-    ap.add_argument("--x", type=int, required=True, help="left edge of the crop rectangle, in source pixels")
-    ap.add_argument("--y", type=int, required=True, help="top edge of the crop rectangle, in source pixels")
-    ap.add_argument("--width", type=int, required=True, help="crop width in px (must be even); a size WxH is --width W --height H")
-    ap.add_argument("--height", type=int, required=True, help="crop height in px (must be even)")
+    ap.add_argument("--rect", metavar="W:H:X:Y", help="the box in one value, fit.py --rect's order (W:H alone: centred), instead of the four options below")
+    ap.add_argument("--x", type=int, help="left edge of the crop rectangle, in source pixels (with --y; both left out: centred)")
+    ap.add_argument("--y", type=int, help="top edge of the crop rectangle, in source pixels")
+    ap.add_argument("--width", type=int, help="crop width in px (must be even); a size WxH is --width W --height H")
+    ap.add_argument("--height", type=int, help="crop height in px (must be even)")
+    ap.add_argument("--center", action="store_true", help="centre the box (what leaving --x/--y out does)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     ap.add_argument("--fps", type=float, help="force a constant output frame rate (recommended for VFR sources)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
-    if args.fps is not None and args.fps <= 0:
-        die(f"--fps must be positive, got {args.fps:g}")
-
-    if args.x < 0 or args.y < 0:
-        die(f"--x/--y must be >= 0, got x={args.x} y={args.y}")
-    if args.width <= 0 or args.height <= 0:
-        die(f"--width/--height must be > 0, got width={args.width} height={args.height}")
-    if args.width % 2 or args.height % 2:
-        die(f"--width/--height must be even (4:2:0 chroma), got width={args.width} height={args.height}")
-
-    meta = probe(args.input)
-    if not meta.get("video"):
-        die("input has no video stream")
-    # the rectangle is in the displayed frame cropdetect.py reports: rotation applied, and a
-    # non-square-pixel source squared at its display aspect first (#411)
-    sw, sh = display_size(meta["video"])
-    if args.x + args.width > sw or args.y + args.height > sh:
-        die(f"crop rectangle ({args.x},{args.y},{args.width}x{args.height}) exceeds the source frame ({sw}x{sh})")
-    has_audio = bool(meta.get("audio"))
-
-    output = args.output or default_output(args.input, "crop")
-    # exact=1: without it crop rounds an odd --x/--y down to the chroma grid of a 4:2:0 frame,
-    # and the rectangle written was one pixel left of / above the one asked for (A170's sibling, A157)
-    vf = [f"crop={args.width}:{args.height}:{args.x}:{args.y}:exact=1", "setsar=1"]
-    if square_pixels(meta["video"]):
-        vf.insert(0, square_pixels(meta["video"]))
-        note(square_pixels_note(meta["video"]))
-    # the picture the rectangle was checked against, not the largest one default selection takes
-    cmd = ffmpeg_base() + ["-i", args.input] + probed_maps(meta) + ["-vf", with_cfr(",".join(vf), meta, args.fps)]
-    cmd += video_args(meta, args.crf, args.preset)
-    cmd += cfr_args(meta, args.fps)
-    if has_audio:
-        cmd += aac_args()
-    else:
-        cmd += ["-an"]
-    # the crop keeps the timeline, so the subtitle/data tracks are copied as fit.py and color.py copy
-    # them, and dropped (said) only where the container refuses them (#520)
-    dropped_streams = run_keeping_subtitles(cmd, output)
-
-    result = probe(output, role="output")
-    v = result["video"]
-    info(f"wrote {output} ({fmt_secs(result['duration'])}, {v['width']}x{v['height']})")
-    emit(output, dropped_non_av_streams=dropped_streams)
-    return 0
+    if args.rect is not None:
+        if not re.fullmatch(r"\d+:\d+(:\d+:\d+)?", args.rect) or any(v is not None for v in (args.x, args.y, args.width, args.height)):
+            die(f"give the box as --rect W:H:X:Y or W:H (centred), or as --width --height [--x --y], got {args.rect!r}")
+        args.width, args.height, *xy = (int(n) for n in args.rect.split(":"))
+        args.x, args.y = xy or (None, None)
+    if args.width is None or args.height is None or (args.x is None) != (args.y is None) or (args.center and args.x is not None):
+        die("give the box as --width W --height H, with --x X --y Y for its corner or neither (centred), or as --rect W:H:X:Y")
+    return crop_rect(args, args.width, args.height, args.x, args.y, "crop")
 
 
 if __name__ == "__main__":
