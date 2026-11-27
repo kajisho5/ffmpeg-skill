@@ -387,11 +387,15 @@ def main() -> int:
         on_clock = ["aresample=async=1:first_pts=0"] if stream_starts(second_meta)[1] > 0.0005 else []
         # --replace-audio reads the sound alone too, so a .ts whose timeline starts late is counted
         # from its sound unless -copyts keeps the file's timestamps and the shift puts the samples
-        # back on the file's clock (#787, #409)
-        second_clock = [sound_clock(second_meta)] if (second_meta.get("start_time") or 0) > 0 or on_clock else []
+        # back on the file's clock (#787, #409). -ss before -i preserves the timestamps too, so a
+        # negative offset's trimmed head is part of the shift: without it first_pts=0 padded the
+        # trimmed 2 s back and an event at 3 s stayed at 3 s
+        second_clock = [sound_clock(second_meta, head_trim)] if (second_meta.get("start_time") or 0) > 0 or on_clock else []
 
         if args.replace_audio:
-            cmd = ffmpeg_base() + ["-i", args.reference]
+            # -copyts is global, so it kept the reference's own start too: a .ts reference at
+            # 1.467 s wrote its picture there beside a sound at 0; -itsoffset puts it back on 0
+            cmd = ffmpeg_base() + (["-itsoffset", f"{-(probe(args.reference).get('start_time') or 0.0):.6f}"] if second_clock else []) + ["-i", args.reference]
             if head_trim > 0:
                 cmd += ["-ss", f"{head_trim:.4f}"]
             cmd += (["-copyts"] if second_clock else []) + ["-i", args.second, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]

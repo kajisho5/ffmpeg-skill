@@ -72,6 +72,21 @@ class TimeGuard(unittest.TestCase):
             again = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(out), "--json").stdout)
             if abs(again["offset_seconds"]) > 0.01:
                 differs["sync --replace-audio"] = again["offset_seconds"]
+            # -copyts is global and -ss preserves timestamps: a .ts reference kept its picture at
+            # 1.467 s beside a sound at 0, and a trim of the second's head was padded back
+            rstart = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=start_time", "-of", "json", str(ts)).stdout)["format"]["start_time"]
+            out2 = Path(tmp) / "replaced_ts_ref.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ts), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out2))
+            starts = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", str(out2)).stdout)["streams"]
+            got = {s["codec_type"]: float(s.get("start_time") or 0) for s in starts}
+            if got.get("video") != 0.0 or got.get("audio") != 0.0:
+                differs["sync --replace-audio (ts reference)"] = (rstart, got)
+            late2 = make_tones_take(Path(tmp) / "early.mp4", start=2.0, dur=8)
+            out3 = Path(tmp) / "trimmed.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out3))
+            measured = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(out3), "--json").stdout)
+            if abs(measured["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio (trimmed head)"] = measured["offset_seconds"]
             self.assertEqual(differs, {}, "these sound-only reads counted the .ts from its sound's first sample")
 
     def test_no_tool_leaves_chapters_at_the_source_times(self):
