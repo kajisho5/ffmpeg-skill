@@ -162,6 +162,55 @@ def _hung_state(pgid):
     return "PROCESSES AT THE KILL:\n" + "\n".join(lines) + "\n"
 
 
+# How long a tool has to report on its own after its hung ffmpeg is killed (#680)
+FFMPEG_GRACE = 30
+
+
+def _stop_hung(child):
+    """Stop a command past SH_LIMIT and read its pipes: (stdout, stderr, a note on what was done).
+
+    On POSIX the ffmpeg and ffprobe processes under it are killed first, so a tool that was waiting on
+    one gets its exit and its stderr and fails with its own message: the command and the tail of
+    ffmpeg's stderr, which until then sat in the tool's pipe and was lost with it (#680). The process
+    group is killed after that, or after FFMPEG_GRACE if the tool does not exit. On Windows the
+    feed's ffmpeg.exe is a shim whose child holds the pipes, so the whole tree is ended before they
+    are read (taskkill /T, as .github/scripts/ffmpeg_next_probe.py does) and no tool reports."""
+    note = ""
+    if os.name == "posix":
+        import signal
+        try:
+            rows = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,args="], capture_output=True, text=True, timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            rows = ""
+        hung = [int(r.split()[0]) for r in rows.splitlines() if len(r.split()) > 2 and r.split()[1] == str(child.pid)
+                and int(r.split()[0]) != child.pid and os.path.basename(r.split()[2]).startswith(("ffmpeg", "ffprobe"))]
+        for pid in hung:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        if hung:
+            try:
+                out, err = child.communicate(timeout=FFMPEG_GRACE)
+                note = f"its ffmpeg/ffprobe (pid {', '.join(map(str, hung))}) was killed first: STDERR is the tool's own report of it\n"
+            except subprocess.TimeoutExpired:
+                note = f"the tool did not exit within {FFMPEG_GRACE} s of its ffmpeg/ffprobe being killed\n"
+        try:  # the rest of the group: a tool that did not exit, or a step it started next
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    else:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(child.pid)], capture_output=True)
+        note = "on Windows the whole tree is ended at once, so ffmpeg's own stderr is not here\n"
+    if child.returncode is None:
+        child.kill()
+        try:
+            out, err = child.communicate(timeout=FFMPEG_GRACE)
+        except subprocess.TimeoutExpired:
+            out, err = "", f"(the pipes were still held {FFMPEG_GRACE} s after the kill)"
+    return out or "", err or "", note
+
+
 def sh(*cmd, expect_fail=False, env=None, cwd=None):
     argv = [str(c) for c in cmd]
     posix = os.name == "posix"
@@ -171,15 +220,8 @@ def sh(*cmd, expect_fail=False, env=None, cwd=None):
         out, err = child.communicate(timeout=SH_LIMIT)
     except subprocess.TimeoutExpired:
         seen = _hung_state(child.pid) if posix else ""
-        if posix:  # the script's ffmpeg too: it is in the child's process group
-            import signal
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except OSError:
-                pass
-        child.kill()
-        out, err = child.communicate()
-        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\n{seen}STDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
+        out, err, note = _stop_hung(child)  # the script's ffmpeg too: it is in the child's process group
+        raise AssertionError(f"still running after {SH_LIMIT:.0f} s, killed: {argv}\n{seen}{note}STDOUT:\n{out[-2000:]}\nSTDERR:\n{err[-2000:]}")
     proc = subprocess.CompletedProcess(argv, child.returncode, out, err)
     if expect_fail:
         assert proc.returncode != 0, f"expected failure but succeeded: {cmd}"

@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.18.0 — CI in two stages, the changed area first, and a weekly run on the next FFmpeg (#680)](#after-4180--ci-in-two-stages-the-changed-area-first-and-a-weekly-run-on-the-next-ffmpeg-680)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,54 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.18.0 — CI in two stages, the changed area first, and a weekly run on the next FFmpeg (#680)
+
+- **macOS and Windows wait for a green Linux stage on a pull request.** `ci.yml`'s `test-macos-windows`
+  `needs: [test, test-ffmpeg-7]` and, on a pull request, runs only when both succeeded: a change that
+  breaks a test costs the nine Linux jobs and no macOS (10x) or Windows (2x) minute. On `main` and on a
+  manual run it still runs after a red stage 1 (`!cancelled()`), so a broken `main` is seen on every OS.
+  The price is wall time on a green pull request: the two stages run one after the other, where the one
+  matrix ran them side by side. That was the point of the issue, not an oversight.
+- **The two test jobs are the old matrix split by OS, under the old names.** `test` is Ubuntu (py3.10 on
+  24.04 and py3.13), `test-macos-windows` macOS and Windows on py3.10, three parts each; every job's
+  `name:` is the one the single matrix gave it, so a required check keeps its name. The shared steps are
+  copied, not referenced (no YAML anchors), and the test holds them equal.
+- **revert-proof is not in stage 1.** It is its own workflow so that a title edit re-runs it without
+  cancelling the test matrix (#632, `revert-proof.yml`'s header), and a job cannot `needs:` one of another
+  workflow.
+- **`run_parallel.py --first` reorders a part and changes nothing else.** The modules that test the
+  files changed since `HEAD^1` (the base, in a pull request's merge commit) start first in every part
+  that has them; the split into parts is the one `split_parts` makes without it, so each module still
+  runs exactly once and the parts stay balanced. The issue said "at the head of part 1": moving the
+  modules into part 1 would unbalance the parts on every pull request. A failure in the changed area is
+  in the log minutes earlier; the job's verdict still comes when the part ends, and a part can end up to
+  one first module later than in the longest-first order.
+- **The map from a file to its tests is read from the tests, every run.** `covering_modules()` counts
+  how often each test module names a tool (`NAME.py`, an import), a shared module (`_common.NAME`,
+  `from _common import NAME`) or the MCP server, most references first; a shared module no test names
+  stands for the modules of the tools that import it. Nothing is kept by hand, so a new script is in
+  the map as soon as a test names it, and one that no test names fails the test below. Several changed
+  files give each file's best module before any file's second. A file no test names (docs, a
+  workflow) moves nothing, and a `git diff` that fails is said and moves nothing.
+- **The next FFmpeg is tried every week, and a failure is one issue.** `ffmpeg-next.yml` runs on
+  Mondays: the probe, then the whole suite on the newest FFmpeg the Windows feed offers, in one job so
+  that one job holds the version and the failing tests' names (`FAIL:`/`ERROR:` lines of the log). A
+  command past 300 s is killed and fails its test by name, so a hang is a named failure rather than the
+  end of the job. The `report` job opens the issue, or comments on the open one with the same title,
+  after a scheduled or manual run that failed: `issues: write` is its only scope, it checks nothing
+  out, and the version and test names reach its script as environment. A pull request run and a
+  cancelled run report nothing. `workflow_dispatch` with `force_failure` skips the suite and takes the
+  failure path, to try the report by hand.
+- **A command past the harness limit has its ffmpeg killed first** (after #533 and #704, which added
+  what the processes were doing). The tool that was waiting on it gets its exit and fails with its own
+  message, which carries ffmpeg's stderr tail; before, that tail sat in the tool's pipe and went down
+  with it. The group is killed after the tool exits, or after 30 s. On Windows the feed's `ffmpeg.exe`
+  is a shim whose child holds the pipes, so the whole tree is ended with `taskkill /T` before they are
+  read, as the probe does; the message says ffmpeg's own stderr is not there.
+- Code: `.github/workflows/ci.yml`, `.github/workflows/ffmpeg-next.yml`, `tests/run_parallel.py`
+  (`covering_modules`, `first_modules`), `tests/_fixtures.py` (`_stop_hung`). Tests (tests/test_contract.py):
+  `test_ci_runs_macos_and_windows_after_a_green_linux_stage_680`,
+  `test_run_parallel_first_maps_every_script_to_its_tests_and_only_reorders_680`,
+  `test_ffmpeg_next_runs_weekly_and_reports_a_failure_in_one_issue_680`,
+  `test_a_killed_tool_reports_its_hung_ffmpegs_stderr_680`, `test_ci_parts_cover_every_test_module_exactly_once`.

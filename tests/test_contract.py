@@ -3768,8 +3768,167 @@ sys.exit(fit.main())
             self.assertEqual(len(parts), n)
             self.assertEqual(sorted(j for p in parts for j in p), sorted(work), n)
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(ci.count("--part ${{ matrix.part }}/3"), 2)
-        self.assertEqual(ci.count("part: [1, 2, 3]"), 2)
+        # three jobs since #680: Linux, macOS/Windows, the FFmpeg 7.1 container
+        self.assertEqual(ci.count("--part ${{ matrix.part }}/3"), 3)
+        self.assertEqual(ci.count("part: [1, 2, 3]"), 3)
+
+    @staticmethod
+    def _ci_jobs(text):
+        """A workflow's jobs as {name: its text}: two-space keys under `jobs:` (no YAML parser in the
+        standard library, and CI's Python has none installed)."""
+        body = text[text.index("\njobs:\n") + 7:]
+        heads = list(re.finditer(r"(?m)^  ([\w-]+):\n", body))
+        return {m.group(1): body[m.end():(heads[i + 1].start() if i + 1 < len(heads) else len(body))]
+                for i, m in enumerate(heads)}
+
+    def test_ci_runs_macos_and_windows_after_a_green_linux_stage_680(self):
+        """#680: a pull request that breaks a test goes red on Linux (1x) without starting a macOS
+        (10x) or Windows (2x) job. Stage 2 `needs:` both Linux jobs and, on a pull request, runs only
+        when both succeeded; on main and on a manual run it runs whatever they said. Split by OS, the
+        two test jobs are the matrix the single job had (3 OSes x py3.10 + Linux py3.13, 3 parts each)
+        under the same names, with the same shared steps, and every part runs the changed area first."""
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        jobs = self._ci_jobs(ci)
+        self.assertEqual(sorted(jobs), ["test", "test-ffmpeg-7", "test-macos-windows"])
+        linux, other, seven = jobs["test"], jobs["test-macos-windows"], jobs["test-ffmpeg-7"]
+        for job in (linux, seven):
+            self.assertNotIn("needs:", job)
+        self.assertIn("    needs: [test, test-ffmpeg-7]\n", other)
+        cond = re.search(r"(?m)^    if: \$\{\{ (.*) \}\}$", other).group(1)
+        self.assertEqual(cond, "!cancelled() && (github.event_name != 'pull_request' || "
+                               "(needs.test.result == 'success' && needs.test-ffmpeg-7.result == 'success'))")
+
+        def axis(job, key):
+            return re.findall(r"[\w.-]+", re.search(rf"(?m)^        {key}: \[(.*)\]$", job).group(1))
+        self.assertNotIn("include:", linux + other)
+        combos = {(o, py, n) for job in (linux, other) for o in axis(job, "os") for py in axis(job, "python")
+                  for n in axis(job, "part")}
+        before = {(o, "3.10", n) for o in ("ubuntu-latest", "macos-latest", "windows-latest") for n in "123"}
+        self.assertEqual(combos, before | {("ubuntu-latest", "3.13", n) for n in "123"})
+        self.assertEqual(axis(linux, "os"), ["ubuntu-latest"])
+        self.assertEqual(axis(other, "os"), ["macos-latest", "windows-latest"])
+        self.assertEqual(axis(seven, "part"), ["1", "2", "3"])
+        name = "    name: test (${{ matrix.os }}, py${{ matrix.python }}, ${{ matrix.part }}/3)\n"
+        self.assertIn(name, linux)
+        self.assertIn(name, other)
+
+        def steps(job):
+            # each step without the comments and blank lines that follow it (they lead the next item)
+            return {s.split("\n", 1)[0]: re.sub(r"(?:\n[ \t]*(?:#.*)?)+$", "", s.rstrip("\n"))
+                    for s in re.split(r"(?m)^(?=      - )", job[job.index("    steps:\n"):])[1:]}
+        a, b = steps(linux), steps(other)
+        shared = set(a) & set(b)
+        for head in shared:
+            self.assertEqual(a[head], b[head], head)
+        for head in ("      - name: ffmpeg version, listings and doctor", "      - run: node bin/install.js"):
+            self.assertIn(head, shared)
+        self.assertTrue(any("actions/checkout@" in h for h in shared) and any("upload-artifact@" in h for h in shared))
+        self.assertIn("      - name: Install ffmpeg (Linux)", a)
+        self.assertIn("      - name: Cross-module -k and reverse-order test isolation (Linux)", a)
+        self.assertTrue({"      - name: Install ffmpeg (macOS)", "      - name: Install ffmpeg (Windows)"} <= set(b))
+        self.assertNotIn("      - name: Install ffmpeg (Linux)", b)
+        for job in (linux, other, seven):
+            self.assertRegex(job, r"(?m)^      - run: python3? tests/run_parallel\.py --part \$\{\{ matrix\.part \}\}/3 --first git:HEAD\^1$")
+
+    def test_run_parallel_first_maps_every_script_to_its_tests_and_only_reorders_680(self):
+        """#680: `run_parallel.py --first` starts the modules that test a changed file first. The map is
+        read from the tests (covering_modules()), so every tool, shared module and the MCP server is in
+        it with at least one test module; a file that is in none fails here, not by running last."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        try:
+            import run_parallel
+        finally:
+            sys.path.remove(str(ROOT / "tests"))
+        cover = run_parallel.covering_modules()
+        files = sorted(p.relative_to(ROOT).as_posix() for p in (*SCRIPTS.glob("*.py"), *SCRIPTS.glob("_common/*.py")))
+        self.assertEqual(sorted(cover), sorted(files + ["mcp/server.py"]))
+        modules = set(run_parallel.all_modules())
+        for path, mods in cover.items():
+            self.assertTrue(mods, f"no test module names {path}: give it a test")
+            self.assertLessEqual(set(mods), modules, path)
+        self.assertEqual(cover["scripts/verify.py"][0], "test_analysis")
+        # a shared module no test names is reached through the tools that import it (cut.py and
+        # silence.py); its name is built here so that this test does not name it
+        self.assertIn("test_audio", cover["scripts/_common/" + "wor" + "ds.py"])
+        first = run_parallel.first_modules("scripts/audio.py,README.md\ntests/test_editing.py test_guards")
+        self.assertEqual(first[:3], [cover["scripts/audio.py"][0], "test_editing", "test_guards"])
+        self.assertEqual(len(first), len(set(first)))
+        self.assertEqual(run_parallel.first_modules(""), [])
+        self.assertEqual(run_parallel.first_modules("docs/contract.md tests/test_gone.py"), [])
+        with self.assertRaises(ValueError):
+            run_parallel.first_modules("test_nope")
+        # a revision git cannot read is said, and nothing moves
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(run_parallel.first_modules("git:no-such-revision-680"), [])
+        self.assertIn("git diff failed", out.getvalue())
+        proc = subprocess.run([sys.executable, str(ROOT / "tests" / "run_parallel.py"), "--first", "test_nope"],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("no test module", proc.stderr)
+
+    def test_ffmpeg_next_runs_weekly_and_reports_a_failure_in_one_issue_680(self):
+        """#680: the newest FFmpeg on the Windows feed is tried every week, and a run that fails or
+        hangs opens or comments on one issue with the version and the failing tests. Only the report
+        job writes, with `issues: write` alone and nothing checked out; a pull request run and a
+        cancelled one report nothing; a manual run can take the failure path on purpose."""
+        wf = (ROOT / ".github" / "workflows" / "ffmpeg-next.yml").read_text(encoding="utf-8")
+        triggers = wf[wf.index("\non:\n"):wf.index("\nconcurrency:")]
+        self.assertRegex(triggers, r'\n  schedule:\n(?:    #.*\n)*    - cron: "\d+ \d+ \* \* [0-6]"\n')
+        self.assertIn("      force_failure:\n", triggers)
+        jobs = self._ci_jobs(wf)
+        self.assertEqual(sorted(jobs), ["probe", "report"])
+        probe, report = jobs["probe"], jobs["report"]
+        self.assertNotIn("permissions:", probe)
+        self.assertNotRegex(probe, r":\s*write\b")
+        self.assertRegex(report, r"\n    permissions:\n      issues: write\n    steps:\n")
+        self.assertEqual(len(re.findall(r":\s*write\b", report)), 1)
+        self.assertNotIn("uses:", report)  # nothing checked out, no action: gh and the run's token
+        self.assertIn("    needs: probe\n", report)
+        self.assertIn("    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.probe.result == 'failure' }}\n", report)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", report)
+        # untrusted text (a version line, test names) reaches the script as environment, never as code
+        script = report[report.index("        run: |"):]
+        self.assertNotIn("${{", script)
+        for key in ("VERSION: ${{ needs.probe.outputs.version }}", "FAILED: ${{ needs.probe.outputs.failed }}"):
+            self.assertIn(key, report)
+        self.assertIn("gh issue comment", script)
+        self.assertIn("gh issue create", script)
+        self.assertIn("      failed: ${{ steps.summary.outputs.failed }}\n", probe)
+        self.assertIn("        if: ${{ !inputs.force_failure }}\n", probe)
+        self.assertIn("        if: ${{ inputs.force_failure }}\n", probe)
+        summary = probe[probe.index("      - name: Summary"):]
+        self.assertIn("        if: always()\n", summary)
+        self.assertIn("^(FAIL|ERROR): ", summary)
+        self.assertIn('FFSKILL_TEST_SH_LIMIT: "300"', probe)
+        self.assertIn("python tests/run_parallel.py 2>&1 | tee suite.log", probe)
+        # the probe's own tree kill before its pipes are read stays (#659)
+        self.assertIn('["taskkill", "/F", "/T", "/PID"', (ROOT / ".github" / "scripts" / "ffmpeg_next_probe.py").read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "names the hung process by its argv[0], as Linux's ps shows it")
+    def test_a_killed_tool_reports_its_hung_ffmpegs_stderr_680(self):
+        """#680 (after #533, #704): a command past the harness limit has its ffmpeg killed first, so the
+        tool waiting on it fails with its own message, which carries ffmpeg's stderr tail; until then
+        that tail sat in the tool's pipe and went down with it. The group is killed after."""
+        import _fixtures
+        work = self.out("hung_680")
+        work.mkdir()
+        (work / "ffmpeg").symlink_to(sys.executable)
+        tool = work / "tool.py"
+        tool.write_text(
+            "import subprocess, sys\n"
+            "code = \"import sys, time; sys.stderr.write('the last line ffmpeg wrote\\\\n'); sys.stderr.flush(); time.sleep(120)\"\n"
+            "p = subprocess.run([sys.argv[1], '-c', code], capture_output=True, text=True)\n"
+            "sys.exit('ffmpeg failed (%d): %s' % (p.returncode, p.stderr.strip()))\n", encoding="utf-8")
+        started = time.time()
+        with unittest.mock.patch.object(_fixtures, "SH_LIMIT", 3):
+            with self.assertRaises(AssertionError) as raised:
+                _fixtures.sh(sys.executable, tool, work / "ffmpeg")
+        said = str(raised.exception)
+        self.assertLess(time.time() - started, _fixtures.FFMPEG_GRACE, said)
+        self.assertIn("still running after 3 s, killed:", said)
+        self.assertIn("was killed first", said)
+        self.assertIn("ffmpeg failed (-9): the last line ffmpeg wrote", said.split("STDERR:", 1)[1])
 
     def test_npm_package_omits_the_maintainer_diary(self):
         """docs/design-decisions.md: references/process-pitfalls.md stays out of the npm package.

@@ -4,6 +4,7 @@
     python3 tests/run_parallel.py            # processes at once = CPU count
     python3 tests/run_parallel.py --jobs 2
     python3 tests/run_parallel.py --part 2/3  # CI: the second of three machines' share
+    python3 tests/run_parallel.py --first scripts/audio.py,test_editing   # those modules' tests start first
 
 The tests of `python3 tests/test_all.py` and `python3 -m unittest tests.test_contract`, in the same
 modules; only the wall time changes. test_contract used to run only under --part, so a local run
@@ -19,6 +20,13 @@ of the module, in its own process and OUT directory), so no one module sets the 
 dealt out by their rough cost, longest first, each to the part with the least so far, so the N
 parts take about the same time; test_contract is one of the items, so a part needs nothing else.
 Every item lands in exactly one part.
+
+`--first ITEM[,ITEM]` starts some modules before the rest (#680). An item is a test module
+(`test_audio`), a changed file (`scripts/audio.py`, `tests/test_audio.py`), or `git:REV` for every
+file changed between REV and HEAD (CI passes `git:HEAD^1`). A file stands for the test modules that
+name it, most references first (covering_modules(), read from the tests on every run, not kept by
+hand); a file no test module names (docs, a workflow) stands for none. It only reorders: the split
+into parts is the same, and every module of the part still runs.
 """
 import argparse
 import os
@@ -82,6 +90,67 @@ def skip_summary(skipped: "dict[str, int]") -> str:
                      + [f"  {count:3d}  {reason}" for reason, count in rows])
 
 
+def covering_modules() -> "dict[str, list]":
+    """Each tool, shared module and the MCP server, as a repository path, to the test modules that name
+    it, most references first: a tool by `NAME.py` or an import of it, a shared module by
+    `_common.NAME` or `from _common import NAME`. A shared module no test names stands for the
+    modules that cover the tools that import it."""
+    root = HERE.parent
+    texts = {m: (HERE / f"{m}.py").read_text(encoding="utf-8") for m in all_modules()}
+    files = sorted(root.glob("scripts/*.py")) + sorted(root.glob("scripts/_common/*.py")) + [root / "mcp" / "server.py"]
+    cover = {}
+    for path in files:
+        s = re.escape(path.stem)
+        shared = path.parent.name == "_common"
+        pattern = (rf"\b_common[./]{s}\b|^\s*from _common import [^\n]*\b{s}\b" if shared
+                   else rf"\b{s}\.py\b|^\s*(?:from|import) {s}\b")
+        counts = {m: len(re.findall(pattern, text, re.M)) for m, text in texts.items()}
+        cover[path.relative_to(root).as_posix()] = sorted((m for m in counts if counts[m]), key=lambda m: (-counts[m], m))
+    for rel, mods in cover.items():
+        if not mods and "/_common/" in rel:
+            s = re.escape(Path(rel).stem)
+            users = [r for r in cover if "/_common/" not in r and re.search(
+                rf"^\s*from _common(?:\.{s} import| import [^\n]*\b{s}\b)", (root / r).read_text(encoding="utf-8"), re.M)]
+            cover[rel] = sorted({m for r in users for m in cover[r]})
+    return cover
+
+
+def first_modules(spec: str) -> "list":
+    """The modules --first names, in the order they start (see the module docstring). ValueError for
+    a module name that is not a test module."""
+    known, cover, lists = set(all_modules()), None, []
+    items = [i.replace("\\", "/") for i in re.split(r"[,\s]+", spec or "") if i]
+    for item in items:
+        if item.startswith("git:"):
+            try:
+                diff = subprocess.run(["git", "diff", "--name-only", item[4:], "HEAD"], cwd=str(HERE.parent),
+                                      capture_output=True, text=True)
+                said = diff.stderr.strip() if diff.returncode else ""
+            except OSError as exc:
+                diff, said = None, str(exc)
+            if diff is None or diff.returncode:
+                # the run goes on in the usual order: a failed diff is said, not taken as "nothing changed"
+                print(f"--first {item}: git diff failed, so no file of the change starts first: {said}")
+            else:
+                items += diff.stdout.split()
+            continue
+        stem = re.fullmatch(r"(?:tests/)?(test_\w+)(\.py)?", item)
+        if stem and (stem.group(1) in known or not item.startswith("tests/")):
+            if stem.group(1) not in known:
+                raise ValueError(f"--first: no test module {item!r}")
+            found = [stem.group(1)]
+        else:
+            cover = cover if cover is not None else covering_modules()
+            found = cover.get(item, [])
+        lists.append(found)
+    # each item's best module before any item's second: a second changed tool's own tests do not
+    # wait behind the first tool's incidental ones
+    names = []
+    for rank in range(max(map(len, lists), default=0)):
+        names += [m[rank] for m in lists if rank < len(m) and m[rank] not in names]
+    return names
+
+
 def run_shard(name: str, k: int, n: int) -> int:
     """Child mode: run every n-th test of module `name`, starting at k, in definition order."""
     tests = list(_flatten(unittest.defaultTestLoader.loadTestsFromName(name)))
@@ -121,6 +190,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--jobs", type=int, default=0, help="processes run at once (default: CPU count)")
     ap.add_argument("--part", metavar="I/N", help="run only part I of N (1-based); for CI jobs")
+    ap.add_argument("--first", metavar="ITEM[,ITEM]", default="",
+                    help="start these modules first: test modules, changed files, or git:REV (only reorders)")
     ap.add_argument("--shard", nargs=3, metavar=("MODULE", "K", "N"), help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.shard:
@@ -134,6 +205,15 @@ def main() -> int:
             ap.error(f"--part must be I/N with 1 <= I <= N <= {len(work)}, got {args.part!r}")
         work = split_parts(work, int(m.group(2)))[int(m.group(1)) - 1]
         names = sorted({j[0] for j in work})
+    try:
+        first = first_modules(args.first)
+    except ValueError as exc:
+        ap.error(str(exc))
+    if first:
+        # a stable sort: the named modules lead in the order given, each group keeps longest first
+        rank = {n: i for i, n in enumerate(first)}
+        work = sorted(work, key=lambda j: rank.get(j[0], len(rank)))
+        print("first: " + (", ".join(n for n in first if n in names) or "none of them is in this part"))
     jobs = args.jobs or min(os.cpu_count() or 1, len(work))
     # absolute: the children run with cwd=tests/, so a relative OUT would mean a different place there
     out_root = Path(os.environ.get("OUT", HERE / "out")).resolve()
