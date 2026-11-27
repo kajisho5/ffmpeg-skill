@@ -1,5 +1,5 @@
 # The newest FFmpeg the Windows feed offers, on the tests that broke when it moved (#659).
-# ci.yml pins the version the suite passes on; this is where the next one is read before unpinning.
+# ci.yml pins the version the suite passes on; this is where the next one is read before moving the pin.
 # Runs when asked, and on a pull request that changes this file or its probe.
 name: ffmpeg next
 on:

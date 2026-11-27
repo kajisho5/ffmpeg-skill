@@ -560,18 +560,22 @@ class OrchestrationTests(MediaFixtures):
     # ------------------------------------------------------------ 1.18.0: --switch energy / --edl
     def _loud_cams(self):
         """Two cameras on one reference timeline: camA loud 0-6s / quiet 6-12s, camB the reverse
-        -- --switch energy should pick camA for the first half and camB for the second."""
+        -- --switch energy should pick camA for the first half and camB for the second.
+
+        Both hear one scene (the same seeded noise in irregular bursts), each 6 dB louder in its
+        own half, so the alignment finds 0 s (#659). The earlier pair shared no sound (a 440 Hz
+        tone each, loud and quiet swapped): the alignment put camB 6.017 s late, lining up the two
+        loud halves, and the late picks were a tie between two equally quiet tones that an
+        encoder change decided (FFmpeg 9.1 picked camA from 10.25 s)."""
         camA = OUT / "mc_energy_a.mp4"
         camB = OUT / "mc_energy_b.mp4"
         if not camA.exists():
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-               "-i", "testsrc2=size=160x90:rate=30", "-f", "lavfi",
-               "-i", "aevalsrc='0.8*sin(2*PI*440*t)*lt(t\\,6)+0.01*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
-               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camA)
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-               "-i", "testsrc2=size=160x90:rate=30,hue=h=90", "-f", "lavfi",
-               "-i", "aevalsrc='0.01*sin(2*PI*440*t)*lt(t\\,6)+0.8*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
-               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camB)
+            for path, hue, first, second in ((camA, "", 1, 0.5), (camB, ",hue=h=90", 0.5, 1)):
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", f"testsrc2=size=160x90:rate=30{hue}", "-f", "lavfi",
+                   "-i", "anoisesrc=seed=7:color=pink:sample_rate=48000:amplitude=0.5",
+                   "-af", f"volume='(0.1+0.9*lt(mod(1.3*t*t\\,1)\\,0.2))*if(lt(t\\,6)\\,{first}\\,{second})':eval=frame",
+                   "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", path)
         return camA, camB
 
     def test_multicam_switch_energy_picks_the_loudest_camera(self):
@@ -580,6 +584,7 @@ class OrchestrationTests(MediaFixtures):
         data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
                                  "--fast", "-o", out, "--json").stdout)
         self.assertEqual(data["switch_mode"], "energy")
+        self.assertAlmostEqual(data["offsets_seconds"][1], 0.0, delta=0.05, msg="the fixture's cameras share a timeline")
         cams_by_time = {}
         for s, e, c in data["cuts"]:
             cams_by_time[(s + e) / 2] = c

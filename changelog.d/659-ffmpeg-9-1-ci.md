@@ -1,0 +1,3 @@
+### Fixed
+
+- **Windows CI installs FFmpeg 9.1.0 in place of 9.0.2, and three tests no longer rest on what a build does not promise (#659).** The time-outs on 9.1 were the AAC coder fixed in #660. `multicam --switch energy`'s test used two cameras that shared no sound, so the alignment put one 6 s late and the late picks were a tie that the encoder decided; its cameras now hear one scene. The loudness sync test's beeps measured a range of 0.1 LU, beside loudnorm's rule that a range of 0 is always dynamic; two of its beeps are now 6 dB down. `waveform.py`'s whole-argv test now expects the AAC coder the runner names from 9.1 on. No tool's behaviour changes.

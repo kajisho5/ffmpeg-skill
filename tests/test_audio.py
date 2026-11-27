@@ -281,21 +281,28 @@ class AudioTests(MediaFixtures):
         # filled with silence before loudnorm. The dynamic-mode restamp closed it, and so did
         # swresample's own threshold for a gap under 100 ms, so every later beep played early by
         # the gap's length (0.8 s and 85 ms here). What is checked is the thing a viewer sees,
-        # flash against beep, not how a build stamps its packets (review of #636)
+        # flash against beep, not how a build stamps its packets (review of #636). The first two
+        # beeps are 6 dB down so the range is 1.7 LU, not 0.1: loudnorm runs dynamic for a range
+        # of 0 whatever the target, and four equal beeps measured that close to it (#659: on
+        # FFmpeg 9.1 the -30 run came out dynamic too)
         for name, cut in (("gap80", "between(t,0.70,0.78)"), ("gap800", "between(t,1.60,2.40)")):
             short = OUT / f"loud_flash_beep_{name}.mp4"
-            sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", f"aselect='not({cut})'", "-c:v", "copy", "-c:a", "aac", short)
+            sh("ffmpeg", "-y", "-v", "error", "-i", src, "-af", f"aselect='not({cut})',volume='if(lt(t,2),0.5,1)':eval=frame",
+               "-c:v", "copy", "-c:a", "aac", short)
             self.assertLessEqual(max(abs(o) for o in av_offsets_ms(short)), 18, f"fixture {name}: the gapped source is in sync")
-            modes = set()
+            lra = float(json.loads(script("loudness.py", short, "--measure-only").stdout)["input_lra"])
+            self.assertGreaterEqual(lra, 1.0, f"fixture {name}: a range clear of 0, where loudnorm is dynamic at any target")
+            modes, measured = set(), {}
             for target in ("-14", "-30"):
                 with self.subTest(gap=name, target=target):
                     fixed = OUT / f"loud_flash_beep_{name}_{target[1:]}.mp4"
                     doc = json.loads(script("loudness.py", short, "-I", target, "--tp", "-1", "-o", fixed, "--overwrite", "--json").stdout)
                     modes.add(doc["result"]["loudnorm_mode"])
+                    measured[target] = {k: doc["result"].get(k) for k in ("loudnorm_mode", "input_lra", "tp_ceiling_used", "encodes")}
                     offsets = av_offsets_ms(fixed)
                     self.assertEqual(len(offsets), 4, offsets)
                     self.assertLessEqual(max(abs(o) for o in offsets), 25, f"flash minus beep {offsets} ms")
-            self.assertEqual(modes, {"dynamic", "linear"}, "the two targets are there to run both loudnorm modes")
+            self.assertEqual(modes, {"dynamic", "linear"}, f"the two targets are there to run both loudnorm modes: {measured}")
 
     def test_loudness_two_pass(self):
         out = OUT / "loud.mp4"
@@ -1071,13 +1078,15 @@ class AudiogramTests(MediaFixtures):
         # machine (macOS CI runs 7.x, where the tags travel as -x264-params); the pin is the
         # argv around it.
         sys.path.insert(0, str(SCRIPTS))
-        from _common import bt709_tag_args
+        from _common import bt709_tag_args, runner
         expected = []
         for part in self.WAVEFORM_1_15_1:
             if part == "{bt709}":
                 expected.extend(bt709_tag_args())
             else:
                 expected.append(part.format(ffmpeg=plan[0], input=str(self.src), output=str(out)))
+        # and the AAC coder the runner names from FFmpeg 9.1 on (#659), on the line every command takes
+        expected = runner.pin_aac_coder(expected)
         # 2.10.3: the default lime waves have chroma, so they and the plate are made in RGB and
         # converted to the BT.709 the output is tagged with (drawn colours); 1.15.1's graph is
         # otherwise unchanged -- and byte for byte unchanged for grey waves (below)
