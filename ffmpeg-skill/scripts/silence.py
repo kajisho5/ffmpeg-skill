@@ -35,7 +35,7 @@ from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_out
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
 from _common.decision import frame_rate, grid_at_or_after, stream_starts
-from _common.probe import PROBED_AUDIO, display_size
+from _common.probe import PROBED_AUDIO, display_size, sound_clock
 from _common.emit import input_length
 
 
@@ -339,8 +339,10 @@ def cut_levels(path: str, tm: Dict[str, Any], duration: float,
         raw = os.path.join(tmp, "pcm.s16le")
         # padded from the file's start, as decode_pcm_mono() pads it: the windows are read at
         # t x rate, so a sound that starts late was read that far after each cut (#462 A42)
-        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
-                             "-map", f"0:{PROBED_AUDIO}", "-vn", "-af", "aresample=async=1:first_pts=0",
+        # -copyts and the shift: an MPEG-TS/PS would otherwise count from the sound's own start (#787)
+        proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts",
+                             "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
+                             "-af", sound_clock(probe(path, required=False)),
                              "-ac", str(channels), "-ar", str(CUT_LEVEL_RATE), "-f", "s16le", "-y", raw],
                             check=False, text=False)
         if proc.returncode != 0 or not os.path.isfile(raw) or not os.path.getsize(raw):
