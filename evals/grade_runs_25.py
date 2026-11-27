@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 W = Path(__file__).resolve().parent
+sys.path.insert(0, str(W))
+from run import _slot_hit  # noqa: E402  one slot matcher for every grader (tests/test_guards.py TestClassGuard)
 
 
 def load_run(d: Path):
@@ -114,7 +116,7 @@ def grade(p, d: Path):
     alltext = "\n".join([cmdtext, *outs, final])
     fails = []
     for slot in p.get("expect", []):
-        if not any(alt in cmdtext for alt in slot.split("|")):
+        if not _slot_hit(slot, cmdtext):
             fails.append("expect %r not in any command" % slot)
     for rx in p.get("grader_expect", []):
         if not re.search(rx, cmdtext):
@@ -127,7 +129,7 @@ def grade(p, d: Path):
     if re_exp:
         tool = re_exp.get("tool")
         if paired is not None:
-            tool_outs = [o for c, o in zip(cmds, paired) if o and tool + ".py" in c and "--json" in c]
+            tool_outs = [o for c, o in zip(cmds, paired) if o and _slot_hit(tool + ".py", c) and "--json" in c]
         else:
             tool_outs = outs
         docs = result_docs(tool_outs)

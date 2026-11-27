@@ -29,6 +29,12 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "test": {
+      "test": "test_guards.TestClassGuard.test_no_test_writes_a_fixed_name_into_a_shared_directory",
+      "also": "test_guards.TestClassGuard.test_no_grader_fills_a_slot_with_a_word_that_contains_its_stem",
+      "also_pending": 786,
+      "how": "every tests/test_*.py is parsed: a test method or setUp that writes a name it wrote down (to write_text, mkdir, open for writing, shutil's destination, the value after -o, an ffmpeg call's output) into SHARED_OUT, tests/out, $OUT, the system temp directory or a module-level directory made from one of them (or from OUT at import, #685's DIR = OUT / name) fails; every evals/ grader that reads expect decides its slots with run._slot_hit and no slot alternative is tested with `in` by hand, and for every slot of every corpus the stem in prose, in a longer word or file, in another case or a longer flag fills nothing in _slot_hit, run.score or grade_runs_25.grade. It does not see a shared path reached through a helper, a class attribute or a project file's relative name, a write by a call it does not know as one, or setUpClass's shared fixtures; and #659's form, an outcome asserted without the condition the fixture's outcome rests on, is not mechanical: #786 stays open for it"
     }
   }
 }
