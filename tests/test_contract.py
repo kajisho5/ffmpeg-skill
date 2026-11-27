@@ -11015,6 +11015,93 @@ class Issue415Tests(unittest.TestCase):
                                  capture_output=True, text=True).stdout
         self.assertEqual(sum(1 for ln in decoded.splitlines() if ln and not ln.startswith("#")), 50)
 
+    def test_an_flv_output_of_b_frame_video_is_refused_before_ffmpeg_runs(self):
+        """#762: FLV keeps its pts, but `ffmpeg -ss 0` of the tools' B-frame H.264 written there
+        said "could not seek" and decoded no picture, while 23 of the sweep's 26 tools said
+        verified: true. Refused now, real and dry run alike, an MP4's copy of B-frame video
+        included; a source without B-frames, and a copy of an FLV into FLV, are still written."""
+        d = self.dir("flv_out")
+        src, flat = d / "in.mp4", d / "flat.mp4"
+        for path, bf in ((src, "3"), (flat, "0")):
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=2", "-f", "lavfi", "-i", "sine=r=48000:d=2",
+                   "-c:v", "libx264", "-bf", bf, "-pix_fmt", "yuv420p", "-c:a", "aac", path)
+
+        def frames(path, *seek):
+            out = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", *seek, "-i", str(path), "-map", "0:V:0", "-f", "framecrc", "-"],
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+            return sum(1 for ln in out.splitlines() if ln and not ln.startswith("#"))
+        # the premise, measured: B-frames read back whole from the start and not at all after a seek,
+        # with or without FLV's keyframe index; without B-frames all 50 after the seek
+        for name, argv, want in (("bf3", ["-bf", "3"], 0), ("index", ["-bf", "3", "-flvflags", "add_keyframe_index"], 0),
+                                 ("bf0", ["-bf", "0"], 50)):
+            ffmpeg("-i", src, "-c:v", "libx264", *argv, "-c:a", "aac", d / f"{name}.flv")
+            self.assertEqual((frames(d / f"{name}.flv"), frames(d / f"{name}.flv", "-ss", "0")), (50, want), name)
+        for name, argv in (("cut", ["--start", "0.2", "--end", "1.5", "--accurate"]), ("cut", ["--start", "0.2", "--end", "1.5"]),
+                           ("color", ["--correct", "--contrast", "1.1"]), ("loudness", []), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, argv=argv, dry=bool(dry)):
+                    out = d / f"{name}.flv"
+                    doc = json.loads(tool(name, src, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                    self.assertEqual(doc["status"], "failed", doc.get("verification"))
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"], err["details"]["container"]), ("input", "output_container_codecs", "flv"), err)
+                    self.assertIn("seek", err["message"])
+                    self.assertFalse(out.exists())
+        doc = json.loads(tool("loudness", flat, "-o", d / "flat.flv", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        self.assertEqual(frames(d / "flat.flv", "-ss", "0"), 50)
+        doc = json.loads(tool("metadata", d / "bf3.flv", "--title", "t", "-o", d / "kept.flv", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        self.assertEqual(frames(d / "kept.flv"), 50)
+
+    def test_nut_flv_and_mpegts_stream_lengths_are_read_from_their_packets(self):
+        """#762: NUT and FLV state no stream length (loudness.py: "the output reports no duration";
+        loop.py read NUT's last pts, 6.061 s, for 6.0), and MPEG-TS states its sound's from the
+        last PES timestamp, several AAC frames before the end (a copy cut read 1.259 s for 1.536 s
+        and failed stream_lengths). Each length is now where the stream's last packet ends, less
+        its start, measured here against every packet of the file."""
+        d = self.dir("packet_lengths")
+        src = d / "in.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-f", "lavfi", "-i", "sine=r=48000:d=3",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", src)
+
+        def packet_lengths(path):
+            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "packet=stream_index,pts_time,duration_time",
+                                  "-show_entries", "stream=index,codec_type,start_time,duration", "-of", "json", str(path)],
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
+            got = json.loads(out.stdout)
+            kinds = {s["index"]: s for s in got["streams"]}
+            ends = {}
+            for pk in got["packets"]:
+                i = pk["stream_index"]
+                ends[i] = max(ends.get(i, 0.0), float(pk["pts_time"]) + float(pk.get("duration_time") or 0))
+            return {kinds[i]["codec_type"]: (round(e - float(kinds[i]["start_time"]), 3), kinds[i].get("duration")) for i, e in ends.items()}
+        for ext in (".ts", ".m2ts", ".mts"):
+            with self.subTest(ext=ext):
+                out = d / f"cut{ext}"
+                doc = json.loads(tool("cut", src, "--start", "0.2", "--end", "1.5", "-o", out, "--json").stdout)
+                stated = packet_lengths(out)
+                # the premise: the header's estimate of the sound is more than the 0.25 s tolerance short
+                self.assertGreater(stated["audio"][0] - float(stated["audio"][1]), 0.25, stated)
+                step = next(s for s in doc["verification"] if s["step"] == "stream_lengths")
+                self.assertEqual({k: round(v, 3) for k, v in step["measured"].items()}, {k: v[0] for k, v in stated.items()})
+                self.assertEqual((doc["mode"], doc["verified"], step["ok"]), ("copy", True, True), doc["verification"])
+        doc = json.loads(tool("loop", src, "--times", "2", "-o", d / "loop.nut", "--json").stdout)
+        stated = packet_lengths(d / "loop.nut")
+        self.assertEqual({k: v[1] for k, v in stated.items()}, {"video": None, "audio": None}, "the premise: NUT states no stream length")
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertEqual(step["measured"], max(v[0] for v in stated.values()))
+        self.assertTrue(doc["verified"], doc["verification"])
+        doc = json.loads(tool("loudness", src, "-o", d / "level.nut", "--json").stdout)
+        step = next(s for s in doc["verification"] if s["step"] == "duration")
+        self.assertEqual(step.get("measured"), packet_lengths(d / "level.nut")["audio"][0], step)
+        # FLV, written here by ffmpeg since the tools refuse it for B-frames: probe.py reads the same
+        ffmpeg("-i", src, "-c", "copy", d / "copy.flv")
+        meta = json.loads(tool("probe", d / "copy.flv", "--json").stdout)
+        meta = meta[0] if isinstance(meta, list) else meta
+        self.assertEqual({k: round(meta[k]["duration"], 3) for k in ("video", "audio")},
+                         {k: v[0] for k, v in packet_lengths(d / "copy.flv").items()})
+
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
         54 in the real run, and nothing said so."""

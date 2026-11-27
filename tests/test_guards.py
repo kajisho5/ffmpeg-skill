@@ -368,6 +368,99 @@ def judged_without_a_file(node, path=""):
     return found
 
 
+# the containers a tool's -o can name: one extension per muxer the skill meets (.m2ts and .ts are one
+# muxer, but a camera's .m2ts is its own name)
+GUARD_CONTAINERS = (".mp4", ".mov", ".mkv", ".webm", ".mxf", ".avi", ".wmv", ".flv", ".nut", ".ts", ".m2ts", ".mpg")
+
+
+def planned_codecs(cmd: str):
+    """(video, sound) encoder names the last -c:v/-c:a (or -c) of a planned ffmpeg command gives."""
+    import re
+    import shlex
+    v = a = None
+    tokens = shlex.split(cmd)
+    for i, t in enumerate(tokens[:-1]):
+        m = re.match(r"^-(?:c|codec)(?::([va]))?(?::\d+)?$|^-(v|a)codec$", t)
+        if m:
+            kind = m.group(1) or m.group(2)
+            v = tokens[i + 1] if kind in (None, "v") else v
+            a = tokens[i + 1] if kind in (None, "a") else a
+    return v, a
+
+
+def decoded(path: str, *seek: str, sel: str = "0:V:0") -> int:
+    out = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", *seek, "-i", path, "-map", sel, "-f", "framecrc", "-"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+    return sum(1 for ln in out.splitlines() if ln and not ln.startswith("#"))
+
+
+class CapabilityGuard(unittest.TestCase):
+    """capability (#736, #754, #762): a container that cannot hold what the tools write was written
+    to anyway, and the run either failed after the encode started or said verified: true for a file
+    a reader that seeks cannot open, or whose lengths the skill reads wrong. Every tool of the sweep's
+    table that writes video is run as a dry run into every container: it is refused before ffmpeg
+    runs (output_container_codecs), or it completes. Every container and encoder pair a completed
+    run plans is then written from a B-frame H.264/AAC clip and read back: as many pictures and
+    sound frames after `ffmpeg -ss 0` as from the start (a priming frame stored before 0 aside), and
+    each stream's length, as the skill's probe reads it, within 0.05 s of the clip's 2 s. A stream
+    copy the muxer refuses writes nothing and fails kind ffmpeg, which is decided
+    (docs/design-decisions.md, #754) and passes."""
+
+    def test_every_output_container_is_refused_or_reads_back_after_a_seek(self):
+        from concurrent.futures import ThreadPoolExecutor
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from _common.emit import own_length
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "bframes.mp4")
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=2",
+                            "-f", "lavfi", "-i", "sine=r=48000:d=2", "-c:v", "libx264", "-bf", "3", "-pix_fmt", "yuv420p",
+                            "-c:a", "aac", src], check=True)
+            facts = sweep.facts_for(src, tmp)
+            tools = [t for t, (_, ext) in sweep.TABLE.items() if ext == ".mp4"]
+
+            def plan(job):
+                tool, ext = job
+                out = os.path.join(tmp, f"dry_{tool.replace(' ', '_').replace('-', '')}{ext}")
+                doc, _ = sweep.run_json([sys.executable, str(ROOT / "scripts" / f"{tool.split()[0]}.py"), src,
+                                         *[a.format(**facts) for a in sweep.TABLE[tool][0]], "-o", out, "--dry-run", "--json"])
+                return tool, ext, out, doc or {}
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                plans = list(pool.map(plan, [(t, e) for e in GUARD_CONTAINERS for t in tools]))
+            wrong, pairs = {}, {}
+            for tool, ext, out, doc in plans:
+                if doc.get("status") != "completed":
+                    reason = (doc.get("error") or {}).get("reason")
+                    if reason != "output_container_codecs":
+                        wrong[f"{tool} {ext}"] = f"dry run neither completed nor refused the container: {(doc.get('error') or {}).get('message')}"
+                    continue
+                for cmd in doc.get("commands") or []:
+                    if cmd.rstrip().endswith(out) or cmd.rstrip().endswith(f"'{out}'"):
+                        pairs.setdefault((ext,) + planned_codecs(cmd), tool)
+            self.assertTrue(any(k[0] == ".mp4" for k in pairs), "the guard saw what the tools plan for an .mp4")
+            for (ext, v, a), tool in sorted(pairs.items(), key=str):
+                name = f"{tool}: {v}/{a} into {ext}"
+                path = os.path.join(tmp, f"read_{v}_{a}{ext}")
+                cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src, "-map", "0:V:0", "-map", "0:a:0"]
+                cmd += ["-c:v", v or "copy", "-c:a", a or "copy", path]
+                proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+                if proc.returncode != 0:
+                    if "copy" not in (v, a):
+                        wrong[name] = f"planned, and the muxer refused it after the start: {proc.stderr.strip()[-200:]}"
+                    continue
+                for sel in ("0:V:0", "0:a:0"):
+                    whole, seeking = decoded(path, sel=sel), decoded(path, "-ss", "0", sel=sel)
+                    # a seek to 0 leaves out a priming frame stored before 0 (Matroska's AAC): one, not more
+                    if not whole or whole - seeking > 1:
+                        wrong[f"{name} {sel}"] = f"{seeking} of {whole} frames decode after -ss 0"
+                meta, _ = sweep.run_json([sys.executable, str(ROOT / "scripts" / "probe.py"), path, "--json"])
+                meta = (meta[0] if isinstance(meta, list) else meta) or {}
+                for kind in ("video", "audio"):
+                    length = own_length(meta.get(kind))
+                    if length is None or abs(length - 2.0) > 0.05:
+                        wrong[f"{name} {kind}"] = f"the skill reads its length as {length} for 2 s"
+            self.assertEqual(wrong, {}, "these containers took what the tools write and gave back a file a reader cannot use")
+
+
 class GuardRegistryTests(unittest.TestCase):
     def test_every_class_with_three_entries_has_a_guard_or_a_pending_issue(self):
         """A class the ledger records three times is registered in docs/defect-guards.json, with

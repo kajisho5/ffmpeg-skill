@@ -29,6 +29,10 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "capability": {
+      "test": "test_guards.CapabilityGuard.test_every_output_container_is_refused_or_reads_back_after_a_seek",
+      "how": "every tool of the sweep's table that writes video runs as a dry run into .mp4, .mov, .mkv, .webm, .mxf, .avi, .wmv, .flv, .nut, .ts, .m2ts and .mpg; each is refused with output_container_codecs or completes, and every container and encoder pair a completed run plans is written from a B-frame H.264/AAC clip and read back: the frames after ffmpeg -ss 0 and each stream's length through probe.py"
     }
   }
 }

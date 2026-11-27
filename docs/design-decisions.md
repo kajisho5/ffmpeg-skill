@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.18.0 — FLV is refused for B-frame video, and NUT, FLV and MPEG-TS lengths are read from packets (#762)](#after-4180--flv-is-refused-for-b-frame-video-and-nut-flv-and-mpeg-ts-lengths-are-read-from-packets-762)
 <!-- contents:end -->
 
 ## Time limits
@@ -3081,8 +3082,8 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   H.264 into `.avi`, whose header then gave the sound 3.093 s for 3.0), by its `has_b_frames`;
   a copy from the same container keeps what it had. `-bf 0` for an AVI name would make the
   encode right, as for MXF above, and is not done for the same reason: the encoder line is not
-  switched by the output's name. FLV keeps its pts but writes no seek index, so the same B-frame
-  line there also decodes nothing after `-ss 0`; it has its own cause and is not refused here.
+  switched by the output's name. FLV keeps its pts, but a seek to the start of the same B-frame
+  line fails there too; it is refused by the same table since #762 (After 4.18.0, below).
   An `.avi`/`.wmv` source keeps its extension in a default output name (`NO_DEFAULT_ENCODE_EXT`
   holds `.webm` only), so a re-encode of one with no `-o` is refused with the hint rather than
   renamed: a stream copy of WMV video into an `.mp4` default would fail in the muxer instead.
@@ -7246,3 +7247,40 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.18.0 — FLV is refused for B-frame video, and NUT, FLV and MPEG-TS lengths are read from packets (#762)
+
+Found by #754's sweep (tests/sweep.py with every `.mp4` output swapped per extension, every file read
+back), on FFmpeg 6.1.1 with a 3 s 320x240 30 fps libx264/AAC source.
+
+- **An `.flv` output of the H.264/HEVC encoders is refused before ffmpeg runs, as `.avi` is.** FLV
+  keeps each packet's pts, but with the tools' B-frame line `ffmpeg -ss 0` of the file says "could
+  not seek to position 0.046" and reads on from where probing left it, past the clip's only
+  keyframe: 0 of 90 pictures decode (49 of 90 for libx265, which FFmpeg 6.1 also writes to FLV).
+  25 of the sweep's 26 tools wrote such a file; 23 said `verified: true`, because no check of
+  theirs seeks (`loop` and `loudness` said false for the length below). `-flvflags
+  add_keyframe_index` changes nothing (0 of 90); `-bf 0`, or `-preset ultrafast`, which has no
+  B-frames, gives 90 of 90. The encoder line is still not switched by the output's name (#754, above),
+  so the refusal is by encoder name and also refuses an ultrafast line that would have been right;
+  `-bf 0` for an FLV name is the way to write FLV from a re-encode if that is wanted, with a test that
+  counts the frames after `-ss 0`. A stream copy of B-frame video from another container is refused by
+  `_copies_reordered_video()` (an MP4's copy decodes 0 of 90 after `-ss 0`; one without B-frames 90),
+  and a copy of an FLV into FLV keeps what it had. The hint names `.mp4`, `.mov` and `.mkv`.
+- **A NUT, FLV or MPEG-TS stream's length is where its last packet ends.** NUT and FLV state no
+  stream duration, so `loudness.py` said "the output reports no duration" for a NUT whose read-back
+  was clean, and NUT's container duration is its last packet's pts, not a length (`loop.py` read
+  6.061 s for 6.0). MPEG-TS states one, estimated from the last PES timestamp, and a PES of sound
+  holds several AAC frames: a stream copy cut into `.ts`, `.m2ts` or `.mts` read its sound as
+  1.259 s for the 1.536 s its packets hold, and `stream_lengths` failed it (0.363 s short against
+  0.25). `probe()` now reads the packets of those three containers' last 10 s (ffprobe
+  `-read_intervals`, no decode) and gives each stream its last packet's pts plus duration less its
+  start; for NUT and FLV, whose streams state nothing, the container's length is the latest end
+  less the file's start. A stream with no packet in that window keeps what ffprobe said, so a NUT
+  sound that stops more than 10 s before the picture is still `not_measured`, never guessed. The
+  length of a NUT, FLV or MPEG-TS sound counts its first AAC frame, which those containers do not
+  mark as priming, as Matroska's DURATION tag does (3.029 s for 3.0 s of sound; an MP4's edit list
+  hides it).
+- Code: `_common.runner._CONTAINER_ENCODERS` (`.flv`), `_common.probe._packet_ends()` and its use in
+  `probe()`. Tests: `test_an_flv_output_of_b_frame_video_is_refused_before_ffmpeg_runs`,
+  `test_nut_flv_and_mpegts_stream_lengths_are_read_from_their_packets`, and the capability guard
+  `test_guards.CapabilityGuard.test_every_output_container_is_refused_or_reads_back_after_a_seek`.
