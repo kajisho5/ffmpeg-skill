@@ -18,7 +18,11 @@
   same thing usually happens elsewhere, and the reporter found it because nobody here looked. Name
   the defect's class without naming the tool, run `python3 tests/sweep.py INPUT --baseline PLAIN`
   and the path-parity checks in `.claude/skills/sibling-sweep/SKILL.md`, then fix the shared cause
-  or file the siblings in one issue. The PR body says what was swept and what it showed.
+  or file the siblings in one issue. The PR body says what was swept and what it showed, in its
+  `## Siblings` section; `.github/scripts/siblings_section.py` fails a fix's PR whose section is
+  empty or names no command. The sweep also comes before the first reply to an outside report
+  or the first review of an outside fix PR: the reply names the siblings found (or the command
+  that found none), so the reporter can fix the class in one pass.
 - **A class that keeps coming back gets a guard, not another fix.** `docs/defect-guards.json`
   lists every class of the defect ledger (`docs/defect-ledger/`) with three or more entries and the test in
   `tests/test_guards.py` that runs every tool and fails wherever the class shows. A fix of a class
