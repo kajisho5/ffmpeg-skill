@@ -2463,7 +2463,7 @@ sys.exit(fit.main())
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
             ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_300),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
@@ -13988,6 +13988,32 @@ class StumbleLedgerTests(unittest.TestCase):
                 span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", spec.get("description", ""))
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
+
+    def test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749(self):
+        """#749: a 0 was read as another value without a word. `export.py --duration 0` wrote the
+        whole clip, `--pad-blur 0` blurred with radius 1 in export.py where fit.py refused it,
+        `caption.py --font-size 0` reported size_used 0 for 28 px text, and `--emoji-scale 0` drew
+        the emoji at 1.0 in caption.py and graphics.py. Each help now states its range (> 0, or
+        1..2000 as overlay.py's --font-size) and the shared step refuses what is outside it, in a
+        dry run as well; the values inside it still run."""
+        clip, srt = str(ROOT / "demos" / "footage" / "veo_sea.mp4"), str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", out, "--dry-run", "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            rows = ((("export", "--preset", "youtube"), "--duration", "2", "> 0"),
+                    (("export", "--preset", "tiktok", "--pad-fill", "blur"), "--pad-blur", "5", "> 0"),
+                    (("fit", "--aspect", "9:16", "--fit", "blur"), "--pad-blur", "5", "> 0"),
+                    (("caption", "--srt", srt), "--font-size", "24", "1..2000"),
+                    (("caption", "--srt", srt), "--emoji-scale", "1.5", "> 0"),
+                    (("graphics", "--template", "hook", "--title", "hi"), "--emoji-scale", "1.5", "> 0"))
+            for (tool, *argv), flag, kept, span in rows:
+                with self.subTest(tool=tool, flag=flag):
+                    proc = run(tool, *argv, f"{flag}=0")
+                    self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                    error = json.loads(proc.stdout)["error"]
+                    self.assertEqual(error["message"], f"{flag} 0 is outside what this option takes, {span}")
+                    self.assertEqual(run(tool, *argv, f"{flag}={kept}").returncode, 0)
 
     def test_every_option_has_help_text(self):
         """#558: twenty options (--preset on eight tools, the colour and font options of overlay
