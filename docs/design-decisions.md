@@ -140,6 +140,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
 - [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
 - [After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)](#after-4200--caption-delivery-on-a-phone-capture-is-a-harness-not-a-fixture-729)
+- [After 4.20.0 — the social card's count comes from the contract](#after-4200--the-social-cards-count-comes-from-the-contract)
 <!-- contents:end -->
 
 ## Time limits
@@ -7277,3 +7278,18 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
 - Code: `tests/caption_delivery.py`. Tests: `CaptionDeliveryHarnessTests` (tests/test_delivery.py),
   on the control and on the VFR clip of #512 (`make_vfr_flash_beep`), with a forced half-second
   offset that must fail the start checks.
+
+## After 4.20.0 — the social card's count comes from the contract
+
+- **The card is drawn, and it records what it says.** `brand/og.png` said "42 local FFmpeg tools ·
+  12 stable" as pixels, where no count check reads. `brand/og.py` draws the card with ffmpeg
+  (drawtext, geq, overlay; Inter and JetBrains Mono) from the contract's count of tools that are not
+  an alias of another and of stable tools, and writes that line into the PNG as a `tEXt` chunk.
+  `test_the_social_card_says_the_contracts_tool_count` compares the chunk in both copies and
+  README's alt text with the contract, so a change of the count fails until the card is drawn
+  again. Pixels are not compared: they depend on the font files and the FFmpeg build.
+- **The hand-drawn card stays until the count changes.** Its pixels were not redrawn; the line it
+  shows was recorded in it (`og.write_text`, which leaves the image data as it is). The first change
+  of the count replaces it with the drawn one, which follows its layout.
+- Code: `brand/og.py`. Tests: `test_the_social_card_says_the_contracts_tool_count`,
+  `test_the_social_card_generator_draws_the_line_it_records` (tests/test_contract.py).

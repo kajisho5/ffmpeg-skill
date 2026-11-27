@@ -241,6 +241,51 @@ class ContractTests(unittest.TestCase):
                               f"{path.relative_to(ROOT)}: states tool count(s) {sorted(counts)}, "
                               f"but scripts/ actually has {real_count} public tools -- update the stale wording")
 
+    @staticmethod
+    def _og():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("og", ROOT / "brand" / "og.py")
+        og = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(og)
+        return og
+
+    def test_the_social_card_says_the_contracts_tool_count(self):
+        """brand/og.png, and the copy the site serves, is a picture: "42 local FFmpeg tools · 12 stable"
+        in it is text no count check read, so a change of the tool count left it behind. brand/og.py
+        draws it with the numbers read from the contract and records that line in the PNG; the line
+        must be the contract's in both copies, and README's alt text for it must say the same. When
+        the count changes this fails until `python3 brand/og.py` draws the card again."""
+        og = self._og()
+        n, stable = og.counts()
+        line = og.card_text()
+        self.assertTrue(line.startswith(f"{n} local FFmpeg tools · {stable} stable · "))
+        for path in (og.OUT, *og.COPIES):
+            self.assertEqual(og.read_text(path), line, f"{path.relative_to(ROOT)}: the card's text is not the contract's; run python3 brand/og.py")
+        alt = re.search(r'<img src="brand/og\.png"[^>]*\balt="([^"]*)"', (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertTrue(alt, "README.md: no <img> of brand/og.png with an alt text")
+        self.assertIn(f"{n} local FFmpeg tools, {stable} stable", alt.group(1))
+
+    def test_the_social_card_generator_draws_the_line_it_records(self):
+        """brand/og.py draws a 1280x640 card and records in it the line it drew. Skipped where the
+        fonts it draws with or drawtext are not installed."""
+        og = self._og()
+        fonts = og.font_files(None)
+        filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, encoding="utf-8").stdout
+        if not fonts or not re.search(r"\sdrawtext\s", filters):
+            self.skipTest("brand/og.py needs drawtext and the Inter and JetBrains Mono fonts")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "og.png"
+            og.render(out, "41 local FFmpeg tools · 12 stable · your agent does the work", fonts)
+            self.assertEqual(int.from_bytes(out.read_bytes()[16:20], "big"), og.W)
+            self.assertEqual(int.from_bytes(out.read_bytes()[20:24], "big"), og.H)
+            self.assertEqual(og.read_text(out), "41 local FFmpeg tools · 12 stable · your agent does the work")
+            pixels = lambda: subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "md5", "-"], capture_output=True, text=True, encoding="utf-8").stdout
+            before = pixels()
+            og.write_text(out, "again")  # a second record replaces the first and leaves the pixels
+            self.assertEqual(og.read_text(out), "again")
+            self.assertEqual(out.read_bytes().count(b"tEXtffmpeg-skill:text"), 1)
+            self.assertEqual(pixels(), before)
+
     def test_the_why_42_faq_table_matches_the_tools_section_and_the_mcp_core(self):
         """README's "Why 42 tools?" answer restates two facts held elsewhere: which group each
         tool sits in (the Tools section) and which 12 tools/list shows by default
