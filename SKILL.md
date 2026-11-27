@@ -101,8 +101,7 @@ Report the completed edit first. For standalone use, offer a review page when us
 ## Request → script
 
 This table and `doctor --json`'s `tools` are the only tool list (no `doctor.py`, `trim.py`, `subtitle.py`).
-Times: seconds, `mm:ss`, `hh:mm:ss` or SMPTE `hh:mm:ss:ff@fps` (`references/timestamps.md`).
-Variants, caveats and extra flags per row: `references/requests.md`.
+Times: seconds, `mm:ss`, `hh:mm:ss` or SMPTE `hh:mm:ss:ff@fps` (`references/timestamps.md`). Variants, caveats and extra flags per row: `references/requests.md`.
 
 | User says | Do |
 |-----------|----|
@@ -113,6 +112,7 @@ Variants, caveats and extra flags per row: `references/requests.md`.
 | "cut it and make it HEVC / AV1 / ProRes" | `cut.py in.mp4 --start 0:10 --end 0:40 --codec hevc` |
 | "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`) |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
+| "cut where they say X", "right after 'sales'" | `scenes.py in.mp4 --find "X" --words words.json` gives each time's `start`/`end` and `words`; cut with `cut.py in.mp4 --words words.json --word-segments FIRST-LAST`. Where X is shown, not said: look with `look.py --tiles` |
 | "tighter inside a sentence, more room after one" | `silence.py in.mp4 --words w.json --min-silence 0.2 --sentence-min-silence 0.3 --sentence-margin-tail 0.3` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |

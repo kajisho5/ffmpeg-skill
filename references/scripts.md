@@ -1395,6 +1395,7 @@ already has a picture.
 scenes.py INPUT [--threshold 10] [--min-scene 1] [--highlights N [--target SECONDS] [--max-scene 15] [--edl picks.txt]] [--sheet scenes.png] [--json]
 scenes.py INPUT --beats [--beat-step 0.01] [--beat-range 60-200] [--min-confidence 0.5] [--json]   # INPUT may be audio-only
 scenes.py INPUT [--shots] [--audio-peaks] [--speech] [--json]
+scenes.py INPUT --find "TEXT" --words words.json [--nth N] [--json]   # when it is said (#692)
 ```
 Lists scenes with audio energy, the loudest moments, and (with
 `--highlights`) proposes N ranges that add up to `--target` seconds, biased to
@@ -1406,6 +1407,22 @@ threshold; raise `--threshold` to 12 for 0.98 precision at 0.94 recall).
 Dissolves and very slow fades are not cuts and will be missed. Highlights are
 a proposal engine, not a judgement of content: tell the user what it picked
 and why (energy, scene length).
+
+**`--find TEXT --words FILE` (#692)** answers when a word or phrase is said, from the same words
+file `cut.py --words` reads (a whisper JSON with word timings; a word without one refuses the file,
+`kind: input`, as `cut.py` does). Nothing else runs: no scene detection, and `--highlights`, `--edl`,
+`--target`, `--sheet`, `--beats`, `--shots`, `--audio-peaks` and `--speech` are refused alongside it.
+The result's `find` is `{text, words_file, count, nth, matches}`; each match is `{text, start, end,
+confidence, words}`, where `start`/`end` are the words' own times, `confidence` is the lowest of their
+`probability` values (`null` when a word has none) and `words: [first, last]` are the indices
+`cut.py --words FILE --word-segments FIRST-LAST` takes. Case, punctuation (an apostrophe or hyphen
+inside a word stays) and full/half width are set aside; a phrase matches consecutive whole words whose
+letters, joined, are its letters, so `sale` is not found in `sales`, and in a script without spaces a
+token-split word is found from its tokens (and, with nothing to mark where a word ends there, a
+token that begins a longer word is found too). Matches do not overlap. `--nth N` keeps the N-th (1 is the
+first); `count` still says how many there were. Not said is an answer: `status: completed`,
+`matches: []` and a `notes` line. Turning "right after X" into a cut point is the caller's (`end`).
+"Where X is shown" has no search here: look with `look.py --tiles`.
 
 **`--beats` (1.17)** measures the music's beat grid and reports it:
 

@@ -1059,6 +1059,7 @@
    "dry_run",
    "edl",
    "fast",
+   "find",
    "highlights",
    "input",
    "json_brief",
@@ -1066,6 +1067,7 @@
    "min_confidence",
    "min_scene",
    "no_timecode",
+   "nth",
    "overwrite",
    "plan",
    "rank_by",
@@ -1075,7 +1077,8 @@
    "speech",
    "target",
    "threshold",
-   "timeout"
+   "timeout",
+   "words"
   ],
   "required": []
  },

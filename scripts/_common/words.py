@@ -1,10 +1,12 @@
 """Word timings from a transcript, and the measured start of a spoken word (#449)."""
 import math
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import asr as _asr
 from _common.asr import _dicts
+from _common.decision import normalise_filler_token
 from _common.emit import die
 from _common.probe import decode_pcm_mono
 from _common.runner import parse_json, read_text_or_die
@@ -49,6 +51,9 @@ def _words_from_transcript(data):
         try:
             out.append({"word": str(w.get("word") or w.get("text") or ""),
                         "start": float(w["start"]), "end": float(w["end"])})
+            # the engine's own score, kept for scenes.py --find (#692); a word without one has none
+            if isinstance(w.get("probability"), (int, float)):
+                out[-1]["confidence"] = float(w["probability"])
         except (KeyError, TypeError, ValueError):
             untimed.append({"word": str(w.get("word") or w.get("text") or "")})
     return out, had_segments, untimed
@@ -142,3 +147,31 @@ def plan_word_ranges(path: str, words: List[Dict[str, Any]], ranges: List[Tuple[
             mid = (b["cut"][0] + a["cut"][1]) / 2
             a["cut"][1] = b["cut"][0] = round((mid - v0) * rate) / rate + v0 if rate else mid
     return docs
+
+
+def _said(text: str) -> str:
+    """A word as --find compares it: full- and half-width folded (NFKC), then normalise_filler_token."""
+    return normalise_filler_token(unicodedata.normalize("NFKC", str(text)))
+
+
+def find_said(words: List[Dict[str, Any]], text: str) -> List[Dict[str, Any]]:
+    """Each time `text` is said in `words` (read_word_list), in order and not overlapping: the
+    consecutive words whose letters, joined, are the text's letters. A match starts and ends on a
+    word ("sale" is not found in "sales"), and the times are the words' own."""
+    target = "".join(_said(t) for t in text.split())
+    if not target:
+        die(f"--find {text!r}: nothing to look for once case and punctuation are set aside", kind="input")
+    said = [_said(w["word"]) for w in words]
+    found, i = [], 0
+    while i < len(words):
+        joined, j = "", i
+        while said[i] and j < len(words) and joined != target and target.startswith(joined + said[j]):
+            joined, j = joined + said[j], j + 1
+        if not (said[i] and joined == target):
+            i += 1
+            continue
+        scores = [w.get("confidence") for w in words[i:j]]
+        found.append({"text": " ".join(w["word"].strip() for w in words[i:j]).strip(), "start": words[i]["start"],
+                      "end": words[j - 1]["end"], "confidence": None if None in scores else min(scores), "words": [i, j - 1]})
+        i = j
+    return found

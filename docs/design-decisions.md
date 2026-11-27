@@ -138,6 +138,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.17.0 — when a word is said: scenes.py --find (#692)](#after-4170--when-a-word-is-said-scenespy---find-692)
 <!-- contents:end -->
 
 ## Time limits
@@ -7217,3 +7218,36 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.17.0 — when a word is said: scenes.py --find (#692)
+
+- **`scenes.py --find TEXT --words FILE` reads the words file `cut.py --words` reads, with the same
+  reader** (`_common/words.py` `read_word_list`), so a word without a timing refuses the file
+  (`kind: input`) for the reason #449 gave: the indices count every word, and a dropped word would shift
+  them. Each match carries `words: [first, last]`, and `cut.py --words FILE --word-segments FIRST-LAST`
+  cuts exactly the span `--find` returned (`transcript` equals `[start, end]`).
+- **No `--transcribe` here.** The indices only mean something against a file the caller keeps and gives
+  to `cut.py`; a transcription made inside this run and not kept could be searched but not cut by index,
+  and a second transcription for the cut may split the words differently. The caller makes the words
+  file once and passes it to both.
+- **Matching is on the words, normalised, never inside one.** NFKC (full and half width), then
+  `normalise_filler_token` (case-folded, punctuation removed except an apostrophe or hyphen inside a
+  word). A phrase matches consecutive words whose letters, joined, are its letters; a match starts and
+  ends on a word, so `sale` is not found in `sales`. Joining without spaces is what finds a phrase in a
+  script without spaces, where the engine splits a word into tokens; there, a token that begins a longer
+  word is found too, because nothing in the file marks where the word ends. Matches do not overlap.
+- **Not said is an answer**: `status: completed`, `matches: []`, a `notes` line. `--nth N` past the
+  count is the same answer, with `count` saying how many there were.
+- **The times are the words' own.** No margin, onset or frame grid is applied: "right after X" is the
+  match's `end`, and a margin or a measured onset is `cut.py`'s (`--margin-*`, `--onset-search`).
+  `confidence` is the lowest `probability` of the matched words, and `null` when any of them has none
+  (whisper.cpp's full JSON is read for words but its token scores are not); never a guessed number.
+- **`--find` runs nothing else.** It is a question about the transcript, so no scene detection runs and
+  the flags that shape or write the scene measurement (`--highlights`, `--edl`, `--target`, `--sheet`,
+  `--beats`, `--shots`, `--audio-peaks`, `--speech`) are refused alongside it rather than ignored. The input
+  is still probed, so an unusable input is refused as in every other `scenes.py` run.
+- **"When X appears" has no search** and gets none: the agent looks with `look.py --tiles` (SKILL.md's row).
+- Code: `_common/words.py` (`find_said`, `_said`; `_words_from_transcript` keeps a word's `probability`
+  as `confidence`), `scenes.py` (`find_run`). Tests: `SceneFindTests` (tests/test_editing.py):
+  `test_a_word_said_twice_a_phrase_once_and_the_words_own_times`,
+  `test_not_said_is_an_answer_and_no_timings_is_refused`, `test_the_indices_cut_the_span_it_found`.

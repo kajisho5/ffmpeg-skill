@@ -16,6 +16,7 @@ Examples:
   python3 scenes.py event.mp4 --highlights 4 --edl picks.txt   # cut.py --segments compatible list
   python3 scenes.py event.mp4 --sheet scenes.png             # one thumbnail per scene
   python3 scenes.py talk.mp4 --highlights 5 --rank-by duration  # longest unbroken scenes, not loudest
+  python3 scenes.py talk.mp4 --find "sales" --words words.json  # when a word or phrase is said
 """
 import argparse
 import math
@@ -33,6 +34,7 @@ from _common.color import bt709_label_filter  # noqa: E402
 from _common.probe import PROBED_VIDEO, square_pixels  # noqa: E402
 from _common import dry_run_input_pending  # noqa: E402
 from _common.emit import input_length  # noqa: E402
+from _common.words import find_said, read_word_list  # noqa: E402
 
 SHOT_FPS = 4.0          # frames/second sampled for --shots' flow estimate
 SHOT_W, SHOT_H = 48, 27  # decode size for --shots (16:9-ish; enough blocks, still a few KB/shot)
@@ -152,6 +154,28 @@ def sheet_graph(starts: List[float], src: str, thumb: str, tile: str) -> str:
     return ";".join(parts)
 
 
+def find_run(args) -> Dict:
+    """--find (#692): the times a word or phrase is said, from the words file cut.py --words reads.
+    "Not said" is an answer (an empty list and a note); with no word timings the file is refused."""
+    others = [f for f, on in (("--highlights", args.highlights), ("--edl", args.edl), ("--target", args.target is not None),
+                              ("--sheet", args.sheet), ("--beats", args.beats), ("--shots", args.shots),
+                              ("--audio-peaks", args.audio_peaks), ("--speech", args.speech)) if on]
+    if args.find is None or not args.words or others:
+        die("--find (the word or phrase) and --words (the transcript with word timings) go together"
+            + (f", and answer from the transcript alone: run {', '.join(others)} separately" if others else ""), kind="input")
+    if args.nth is not None and args.nth < 1:
+        die(f"--nth counts from 1 (the first time it is said), got {args.nth}", kind="input")
+    probe(args.input)
+    found = find_said(read_word_list(args.words), args.find)
+    picked = found if args.nth is None else found[args.nth - 1:args.nth]
+    if not picked:
+        note(f"--find {args.find!r}: " + (f"said {len(found)} time(s), so there is no --nth {args.nth}" if found
+                                           else f"not said in {args.words}"))
+    info(f"--find {args.find!r}: said {len(found)} time(s)")
+    return {"file": args.input, "find": {"text": args.find, "words_file": args.words, "count": len(found),
+                                         "nth": args.nth, "matches": picked}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
@@ -184,10 +208,17 @@ def main() -> int:
                     help="report a per-second speech-vs-music energy ratio (zero-crossing-rate proxy, "
                          "a measurement, not a speech/music classification)")
     ap.add_argument("--sheet", help="write a contact sheet PNG with the first frame of every scene")
+    ap.add_argument("--find", metavar="TEXT", help="when a word or phrase is said, from --words; nothing else runs (#692)")
+    ap.add_argument("--words", metavar="FILE", help="--find: whisper JSON with word timings, as cut.py --words")
+    ap.add_argument("--nth", type=int, metavar="N", help="--find: only the N-th time (1 is the first)")
     ap.add_argument("--no-timecode", action="store_true", help="--sheet without the burnt-in timecode stamp (a way out if drawtext itself is unusable, see doctor)")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.find is not None or args.words or args.nth is not None:
+        result = find_run(args)
+        emit(None, **result) if STATE.json else print_json(result)
+        return 0
     if args.highlights < 0:
         die(f"--highlights must be 0 or more (the number of ranges to propose), got {args.highlights}")
     if not args.highlights:

@@ -13,6 +13,7 @@ variant it does not show.
 | "cut out the pauses", "jump cuts" | `silence.py input.mp4 [--threshold -40 --min-silence 0.8]` |
 | "cut the ums and uhs", "remove the filler words" | `silence.py input.mp4 --filler --words words.json` (measured word timings; `--transcribe` makes them) |
 | "don't cut inside a sentence, just the real pauses" | `silence.py input.mp4 --speech-aware` — a breath under `--min-silence` inside a sentence is kept, only sentence-boundary pauses cut; composes with `--filler` into one list |
+| "cut where they say X", "right after the punchline" | `scenes.py input.mp4 --find "X" --words words.json` → each time's `start`/`end` and `words` → `cut.py input.mp4 --words words.json --word-segments FIRST-LAST` (or `--start`/`--end` from the times; "right after" is the match's `end`). Where X is *shown*: `look.py --tiles` and the agent's eyes |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` → `cut.py --segments` |
 | "cut on the beat", "edit it to the music" | `scenes.py track.mp4 --beats --json > beats.json`, then `cut.py input.mp4 --segments ... --snap beats --snap-source beats.json` (`--snap-source` carries the measured grid over) |
 | "speed up here, slow-mo there" (known segments) | `speedramp.py action.mp4 --segment 0-3:1.0 --segment 3-4:0.25 --segment 4-8:2.0` |
