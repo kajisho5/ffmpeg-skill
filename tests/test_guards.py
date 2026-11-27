@@ -398,6 +398,8 @@ class IgnoredFlagGuard(unittest.TestCase):
         unread = []
         for tool in sorted(scripts.glob("[!_]*.py")):
             src = tool.read_text(encoding="utf-8")
+            if tool.stem in _contract.ALIASES:  # an alias hands its args to the tool it names (crop.py -> fit.crop_rect)
+                src += (scripts / f"{_contract.ALIASES[tool.stem]}.py").read_text(encoding="utf-8")
             for action in _contract._capture_parser(tool)._actions:
                 if isinstance(action, argparse._HelpAction) or (tool.stem, action.dest) in self.UNREAD_BY_DESIGN \
                         or any(f"{tool.name} {o}" in deprecated for o in action.option_strings):
