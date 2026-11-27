@@ -16,7 +16,7 @@ from _common.color import (as_limited, bt709_label_filter, bt709_line_filter, bt
                            hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
-from _common.runner import absent_word, file_arg, read_json
+from _common.runner import absent_word, file_arg, read_json, refuse_outside_roots
 from _common.probe import AUDIO_MEDIA_EXT, display_size
 from _common.runner import CODECS, STATE, ffmpeg_encoders, ffmpeg_list_error, ffmpeg_version, hw_platform_reason
 
@@ -52,7 +52,7 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
     if fill == "blur":
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
-        radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
+        radius = min(int(blur), max(1, min(out_w, out_h) // 2 - 1))
         # left unset, the chroma radius was the luma one, and a 4:2:0 68x120 frame's 34x60 chroma
         # planes failed at 20 ("must be <= 17", #527). On a larger frame it is still the luma one
         chroma = boxblur_chroma_radius(radius)
@@ -83,7 +83,7 @@ def warn_mostly_cropped(video: Optional[Dict[str, Any]], out_w: int, out_h: int)
 def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
                         help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
-    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
+    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur, > 0 (default 20)")
 
 
 def aspect_ratio(value: Any) -> Optional[Fraction]:
@@ -202,6 +202,7 @@ def concat_list_line(path: str) -> str:
         refuse("input", "media_path_has_line_break",
                f"{str(path)!r} contains a line break, which ffmpeg's concat list cannot hold (each line is a "
                "directive of its own); rename the file", path=str(path))
+    refuse_outside_roots(path)  # the demuxer opens it as an input of its own (#572)
     # only on Windows: on POSIX the quoted form takes a backslash literally, and it is part of the name (#408)
     escaped = (str(path).replace("\\", "/") if _on_windows() else str(path)).replace("'", "'\\''")
     return f"file '{escaped}'"
@@ -1293,6 +1294,16 @@ def range_chain(meta: Optional[Dict[str, Any]], line_meta: Optional[Dict[str, An
         return ""
     f = limited_range_filter(meta)
     return f + "," if f else ""
+
+
+def mix_color_chains(metas: Sequence[Optional[Dict[str, Any]]], line_meta: Optional[Dict[str, Any]],
+                     *, draws_colour: bool = False) -> List[str]:
+    """Per-input matrix and range before mixing. A BT.709 input, whether converted or
+    already tagged, makes FFmpeg negotiate a matrix for its untagged neighbours (#696)."""
+    matrices = [matrix_chain(m, line_meta) for m in metas]
+    if draws_colour or any(matrices) or any(((m or {}).get("video") or {}).get("color_space") == "bt709" for m in metas):
+        matrices = [c or label_chain(m, line_meta) for c, m in zip(matrices, metas)]
+    return [c + range_chain(m, line_meta) for c, m in zip(matrices, metas)]
 
 
 def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:

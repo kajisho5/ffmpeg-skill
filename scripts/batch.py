@@ -34,11 +34,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from _common import STATE, add_common, apply_common, child_args, die, emit, info, run_tool, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import (with_flags, HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
+from _common.runner import (with_flags, ENCODE_ENV, HW_FORCED_ENV, OWNED_ENV, _OutputLock, add_hw_orchestrator_args, copy_to_sibling, env_hw, read_json,
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, brand_asset_files, rebase_project_paths
-from _common.runner import parse_json
+from _common.runner import parse_json, refuse_outside_roots
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -251,11 +251,13 @@ def gpu_key() -> str:
     not the CPU's bytes, so a --hw output is never served to a --no-hw run or the other way round
     (render.py's cache_key folds the same two variables in). Read after apply_common(), which has
     exported --hw/--no-hw to the steps. '' when every step encodes on the CPU -- no flag and no
-    $FFMPEG_SKILL_HW, or --no-hw -- so the keys of a cache written before --hw existed still hit."""
+    $FFMPEG_SKILL_HW, or --no-hw -- so the keys of a cache written before --hw existed still hit.
+    $FFMPEG_SKILL_ENCODE, when set, is part of it too: it sets the steps' encoder defaults (#576)."""
+    policy = os.environ.get(ENCODE_ENV, "").strip()
     if not env_hw():
-        return ""
+        return f":encode={policy}" if policy else ""
     # the variable alone leaves export.py's delivery presets on the CPU; --hw puts them on the GPU
-    return ":hw" if os.environ.get(HW_FORCED_ENV) == "1" else ":hw-env"
+    return (":hw" if os.environ.get(HW_FORCED_ENV) == "1" else ":hw-env") + (f":encode={policy}" if policy else "")
 
 
 JOBS_CAP = 8   # beyond this, concurrent encodes contend for the same cores and memory
@@ -850,6 +852,8 @@ def main() -> int:
     # the children refuse an output whose directory does not exist, under --dry-run too, so the
     # directories are created for the plan as well -- and removed again afterwards when a dry
     # run created them and left them empty (a plan leaves nothing behind, sweep F15)
+    for d in (outdir, work):  # its cache, deliveries and intermediates are written here (#572)
+        refuse_outside_roots(str(d), "output")
     created = [d for d in (outdir, work) if not d.exists()]
     outdir.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)

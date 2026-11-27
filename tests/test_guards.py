@@ -6,8 +6,10 @@ entries, the test here that catches the class wherever it happens: in the tools 
 one written after the test. A fix of a class whose guard is pending does not pass revert_proof.py,
 so a fix of one tool cannot be the end of a class that keeps coming back.
 """
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -168,6 +170,28 @@ class SweepGuards(unittest.TestCase):
         failed = {n: ((r["doc"] or {}).get("error") or {}).get("message") or r["stderr"][-200:]
                   for n, r in self.runs.items() if not self._done(r)}
         self.assertEqual(failed, {})
+
+    def test_sweep_mp4_audio_and_video_streams_decode(self):
+        """Decode the MP4 outputs in the cross-tool sweep on this FFmpeg build.
+
+        The sweep also writes a PNG and has inspection-only tools; those are not MP4s.
+        Pixel-value regressions still need their own tests: a successful decode cannot see them.
+        """
+        runs = {n: r for n, r in self.runs.items() if r["out"] and Path(r["out"]).suffix.lower() == ".mp4"}
+        self.assertTrue(runs, "the sweep produced no MP4 cases")
+        for name, run in runs.items():
+            with self.subTest(tool=name):
+                self.assertTrue(self._done(run), f"{name} did not complete: {run['stderr'][-500:]}")
+                proc = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_entries",
+                                       "stream=codec_type,nb_read_frames", "-of", "json", run["out"]],
+                                      capture_output=True, text=True, timeout=60)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertFalse(proc.stderr.strip(), proc.stderr)
+                media = [s for s in json.loads(proc.stdout)["streams"] if s["codec_type"] in ("video", "audio")]
+                self.assertTrue(media, run["out"])
+                for stream in media:
+                    frames = stream.get("nb_read_frames", "")
+                    self.assertTrue(frames.isdigit() and int(frames) > 0, stream)
 
     def test_every_tool_answers_while_its_stdin_stays_open(self):
         """automation (#664 and the two before it): a tool started with an open, silent stdin --
@@ -345,13 +369,48 @@ def judged_without_a_file(node, path=""):
     return found
 
 
+class NumericGuard(unittest.TestCase):
+    """numeric (#749, #645, #630): a number an option cannot take was taken and read as another
+    one. Every numeric option of every tool in the sweep's table is given, in a dry run, the value
+    just past each end of the range its help states (a..b, or 0 for "> 0") and 1000000000; each
+    must be refused before anything is planned: by the shared step, which names the option, or by
+    argparse where the option has choices."""
+
+    def test_no_tool_takes_a_number_outside_the_range_its_help_states(self):
+        import edge_values
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        taken = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            facts = sweep.facts_for(clip, tmp)
+            by_tool = edge_values.options()
+            for entry, (base, ext) in sweep.TABLE.items():
+                tool = entry.split()[0]
+                if " " in entry:
+                    continue
+                out = ["-o", str(Path(tmp) / f"edge{ext}")] if ext else []
+                for flag, text in by_tool.get(tool, {}).items():
+                    span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
+                    values = ([] if flag == "--length-samples" else ["1000000000"]) + (
+                        ["0"] if span and span[0] == "> 0" else [f"{float(span[1]) - 1:g}", f"{float(span[2]) + 1:g}"] if span else [])
+                    for value in values:
+                        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *[a.format(**facts) for a in base],
+                                               f"{flag}={value}", *out, "--dry-run", "--overwrite"], capture_output=True, text=True,
+                                              encoding="utf-8", errors="replace", timeout=60)
+                        if proc.returncode == 0 or not (f"{flag} {float(value):g} is outside what this option takes" in proc.stderr or "invalid choice" in proc.stderr):
+                            taken[f"{tool} {flag}={value}"] = next((l for l in proc.stderr.splitlines() if l.startswith("error:")), "ran")[:160]
+        self.assertEqual(taken, {})
+
+
 class GuardRegistryTests(unittest.TestCase):
     def test_every_class_with_three_entries_has_a_guard_or_a_pending_issue(self):
         """A class the ledger records three times is registered in docs/defect-guards.json, with
         the test that guards it or the issue where the guard is still to be written; a registered
         test exists. A new class that reaches three fails this until it is registered."""
         guards = json.loads((ROOT / "docs" / "defect-guards.json").read_text(encoding="utf-8"))
-        rows = [json.loads(l) for l in (ROOT / "docs" / "defect-ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        rows = ledger.rows(ROOT)
         counts = {}
         for r in rows:
             counts[r["class"]] = counts.get(r["class"], 0) + 1

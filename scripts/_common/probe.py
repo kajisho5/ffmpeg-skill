@@ -15,7 +15,7 @@ import sys
 from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.emit import die, refuse, warn
+from _common.emit import die, note, refuse, warn
 from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
@@ -271,7 +271,7 @@ def _refuse_not_media(path: str, stderr: str) -> "None":
            hint=hint, path=path)
 
 
-def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str, Any]:
+def probe(path: str, role: str = "input", *, required: bool = True, advise_deinterlace: bool = False) -> Dict[str, Any]:
     """Return a compact, script-friendly description of a media file.
 
     role="output" marks a file this tool just wrote: a read failure is then reported as an
@@ -402,6 +402,8 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
         } for n, s in enumerate(subs)],
     }
     if video:
+        if advise_deinterlace and video.get("field_order") in ("tt", "bb", "tb", "bt"):
+            note("Input video is marked interlaced. For progressive editing, run deinterlace.py first.")
         r_rate = _fraction(video.get("r_frame_rate"))
         avg_rate = _fraction(video.get("avg_frame_rate"))
         fps = float(avg_rate) if avg_rate else (float(r_rate) if r_rate else None)
@@ -524,7 +526,7 @@ def probe(path: str, role: str = "input", *, required: bool = True) -> Dict[str,
         STATE.audio_inputs.add(os.path.realpath(path))
     if role == "input" and getattr(STATE, "first_input", None) is None:
         STATE.first_input = (path, len(out.get("audio_streams") or []),
-                             (out.get("video") or {}).get("hdr10_static"))
+                             (out.get("video") or {}).get("hdr10_static"), (out.get("video") or {}).get("bit_depth"))
     if role == "input" and out["timecode"].get("value") and getattr(STATE, "source_timecode", None) is None:
         STATE.source_timecode = (out["timecode"]["value"], duration)
     # what a source carries besides its picture and sound, for emit()'s source_carry comparison:
@@ -1524,7 +1526,7 @@ CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area 
 
 
 def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID,
-                 squares: "Tuple[str, str]" = ("", "")) -> "Optional[Dict[str, Any]]":
+                 squares: "Tuple[str, str]" = ("", ""), removed: "Sequence[Tuple[float, float]]" = ()) -> "Optional[Dict[str, Any]]":
     """Which tiles of which frames of `path` differ from `reference`, frame i against frame i in
     decode order (as compare_pictures() pairs them; the caller checks sizes and frame counts).
     Both pictures go to 8-bit RGB planes, are subtracted, and each frame of the difference is
@@ -1533,7 +1535,9 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
     caller's rectangle in displayed pixels names the tiles it means on a non-square-pixel file.
     {frames, changed {frame index: a bit mask of the tiles above `floor`, bit column + row * columns;
     change_mask_tiles() lists them}, peaks {frame index: its largest tile}, quiet_peak (the largest
-    tile at or under the floor)}. A mask and not a list: two unrelated hours differ in every tile
+    tile at or under the floor)}. `removed` (#442 phase 3): [(start, end)] in the reference's own
+    timestamps, seconds; a reference frame whose time is in one (start included, end not) is dropped
+    before the pairing, so a cut is compared against the reference with the same spans taken out. A mask and not a list: two unrelated hours differ in every tile
     of every frame, which as tuples is tens of millions of objects.
     None when the pass fails, times out of its bytes mid-frame, or decodes no frame: nothing was
     compared, which the caller must not read as "nothing changed"."""
@@ -1542,6 +1546,8 @@ def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" 
     from _common import runner as _runner
     gw, gh = grid
     sq_a, sq_b = (s + "," if s else "" for s in squares)
+    drop = "+".join(f"gte(t\\,{s!r})*lt(t\\,{e!r})" for s, e in removed)
+    sq_b = (f"select=not({drop})," if drop else "") + sq_b
     graph = (f"[0:V:0]{sq_a}settb=1/1000,setpts=N,format=gbrp[a];[1:V:0]{sq_b}settb=1/1000,setpts=N,format=gbrp[b];"
              f"[a][b]blend=all_mode=difference:shortest=1,scale={gw}:{gh}:flags=area[o]")
     # passthrough: the frames carry index timestamps, and a constant-rate muxer would drop
@@ -1609,3 +1615,59 @@ def change_mask_tiles(mask: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "List
     """change_tiles()'s bit mask as [(column, row)], row by row."""
     gw = grid[0]
     return [(t % gw, t // gw) for t in range(grid[0] * grid[1]) if mask >> t & 1]
+
+
+# check.py --compare --expect-audio-changed (#442 phase 2): where the sound differs from the reference.
+AUDIO_WINDOW = 0.1       # seconds per window of the difference
+AUDIO_REL_DB = -3.0      # a window changed when the difference is louder than this against the louder file's own level (dB)
+AUDIO_LEVEL_DB = 2.5     # ... or when the two files' levels in it are further apart than this (dB)
+AUDIO_GATE_DB = -70.0    # a difference quieter than this (dBFS) is not a change, and a level under -60 is not compared
+
+
+def audio_change_windows(path: str, reference: str, seconds: float,
+                         removed: "Sequence[Tuple[float, float]]" = ()) -> "Optional[Dict[str, Any]]":
+    """Which windows of `path`'s first audio track differ from `reference`'s, over the first `seconds`
+    rounded down to whole windows (the stretch under one window is not compared: a codec's padding
+    there made a window of a few samples that differed from its reference by chance). Both go to 48 kHz
+    stereo float, are subtracted per channel, and ffmpeg's astats gives the RMS of the difference
+    and of each file per AUDIO_WINDOW. A window
+    changed when, in either channel, the difference is above AUDIO_GATE_DB and more than
+    AUDIO_REL_DB against the louder file (a codec's error is a fraction of the signal, so it is
+    judged against it), or the two levels (above -60 dBFS) are more than AUDIO_LEVEL_DB apart
+    (a gain change leaves a waveform difference under the first test).
+    {windows, changed [window indexes], peaks {index: dB of the first test}, quiet_peak (the
+    largest value of the first test in a window that did not change; None when none was above
+    the gate)}. `removed` (#442 phase 3): [(start, end)] seconds from the start of the reference's
+    track, taken out of it (the parts left joined end to end) before the subtraction. None when the pass fails or yields fewer windows than `seconds` holds (a decode that stopped early): not measured, never "unchanged"."""
+    count = int(seconds / AUDIO_WINDOW + 0.05)
+    if count < 1:
+        return None
+    pre = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    ref = f"[1:a:0]{pre}[b];"
+    if removed:
+        edges = [0.0] + [t for span in removed for t in span] + [None]
+        kept = [(edges[i], edges[i + 1]) for i in range(0, len(edges), 2) if edges[i + 1] is None or edges[i + 1] > edges[i]]
+        ref = (f"[1:a:0]{pre},asetpts=PTS-STARTPTS,asplit={len(kept)}" + "".join(f"[r{i}]" for i in range(len(kept))) + ";"
+               + "".join(f"[r{i}]atrim=start={s!r}" + (f":end={e!r}" if e is not None else "") + f",asetpts=PTS-STARTPTS[k{i}];"
+                         for i, (s, e) in enumerate(kept))
+               + "".join(f"[k{i}]" for i in range(len(kept))) + f"concat=n={len(kept)}:v=0:a=1[b];")
+    graph = (f"[0:a:0]{pre}[a];{ref}[a][b]amerge=inputs=2,pan=6c|c0=c0-c2|c1=c1-c3|c2=c0|c3=c1|c4=c2|c5=c3,"
+             f"atrim=end_sample={count * round(AUDIO_WINDOW * 48000)},asetnsamples=n={round(AUDIO_WINDOW * 48000)},astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,"
+             "ametadata=mode=print:file=-")
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", path, "-i", reference,
+                         "-filter_complex", graph, "-f", "null", "-"], check=False)
+    levels = [float(line.rpartition("=")[2]) for line in proc.stdout.splitlines() if line.startswith("lavfi.astats.")]
+    if proc.returncode != 0 or len(levels) != 6 * count:
+        return None
+    changed: "List[int]" = []
+    peaks: "Dict[int, Optional[float]]" = {}
+    quiet: "Optional[float]" = None
+    for n in range(len(levels) // 6):
+        diff, a, b = levels[6 * n:6 * n + 2], levels[6 * n + 2:6 * n + 4], levels[6 * n + 4:6 * n + 6]
+        rel = max([d - max(x, y) for d, x, y in zip(diff, a, b) if d > AUDIO_GATE_DB], default=None)
+        if rel is not None and rel > AUDIO_REL_DB or any(max(x, y) > -60 and abs(x - y) > AUDIO_LEVEL_DB for x, y in zip(a, b)):
+            changed.append(n)
+            peaks[n] = None if rel is None else round(rel, 1)
+        elif rel is not None and (quiet is None or rel > quiet):
+            quiet = rel
+    return {"windows": len(levels) // 6, "changed": changed, "peaks": peaks, "quiet_peak": None if quiet is None else round(quiet, 1)}

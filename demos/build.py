@@ -2032,7 +2032,9 @@ INSPECTION = [
      "to touch: both pictures are subtracted frame by frame on a 32x18 grid, and a change_scope row "
      "FAILs with the time and place of a change nobody declared, WARNs when the declared span did "
      "not change, and FAILs when the two files could not be compared. A 200x60 box on a 1080p "
-     "frame leaves the whole-frame SSIM above 0.99; this row finds it."),
+     "frame leaves the whole-frame SSIM above 0.99; this row finds it. --expect-audio-changed 12-18 "
+     "does the same for the sound: 0.1 s windows of the difference of the two decoded tracks, an "
+     "audio_change_scope row, and an untouched AAC re-encode at 64 kbps or more is not a change."),
     ("report.py", "python3 scripts/report.py --before raw.mov --after final.mp4 -o report.html",
      "a single self-contained HTML page: before/after contact sheets, loudness, the platform "
      "check table and the exact commands. It is a file to open, not a picture to embed here."),

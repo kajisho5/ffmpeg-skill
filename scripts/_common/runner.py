@@ -150,7 +150,7 @@ def _probe_limit() -> float:
 
 def _ffprobe(*args: str) -> "subprocess.CompletedProcess[str]":
     # every short ffprobe question this module asks: text out, stderr dropped, the probe time limit
-    return subprocess.run([found_exe("ffprobe"), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    return subprocess.run(guard_input_protocols([found_exe("ffprobe"), *args]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                           encoding="utf-8", errors="replace", timeout=_probe_limit())
 
 
@@ -333,6 +333,7 @@ def require_tool(name: str) -> str:
                    f"FFmpeg {found[0]}.{found[1]} (read from ffprobe -version) is not supported since ffmpeg-skill 3.0.0 (5.x was deprecated in "
                    f"2.14.0): a newer build is needed, FFmpeg {floor} or later. On {system}:\n{hint}",
                    code=127, version=f"{found[0]}.{found[1]}", required=floor)
+        _report_untested_build(found)
     if path:
         return path
     system = platform.system()
@@ -346,6 +347,33 @@ def require_tool(name: str) -> str:
 
 
 MIN_FFMPEG = (6, 1)   # requirements.ffmpeg since 3.0.0 (_contract.MIN_FFMPEG is the same floor)
+# the FFmpeg majors the test suite runs on (#556; .github/workflows/ci.yml: Ubuntu apt 6.1, Debian
+# 7.1, Homebrew 8.x, gyan.dev 9.0; a test keeps the two in step). Whole majors: a defect seen on
+# one version so far was one major's behaviour, and a minor outside the exact ones CI runs is no
+# less covered than the next patch release.
+TESTED_FFMPEG_MAJORS = (6, 9)
+
+
+def tested_build(found: "Tuple[int, int]", release: bool) -> "Tuple[str, Optional[str]]":
+    """("release" | "git" | "unknown", None when the build is one the suite covers, else why not)."""
+    lo, hi = TESTED_FFMPEG_MAJORS
+    if found == (0, 0):
+        return "unknown", "its version could not be read"
+    if not release:
+        return "git", f"a git or vendor build (FFmpeg {found[0]} from libavutil), so its release cannot be matched to the tested {lo}.x-{hi}.x"
+    return "release", None if lo <= found[0] <= hi else f"the test suite runs FFmpeg {lo}.x-{hi}.x"
+
+
+def _report_untested_build(found: "Tuple[int, int]") -> None:
+    """Once per run, a warning when the build on PATH is outside the tested majors, a git build or
+    unreadable (#556): the run goes on as before, but its results are not covered by the suite."""
+    build, why = tested_build(found, _FFMPEG_VERSION_IS_RELEASE)
+    if why is None or any(w.get("code") == "ffmpeg_version_untested" for w in STATE.warnings):
+        return
+    version = None if build == "unknown" else f"{found[0]}.{found[1]}" if build == "release" else f"{found[0]}"
+    warn(f"FFmpeg {version or '(version unknown)'} on PATH: {why}; the results are not covered by the test suite on this build",
+         "ffmpeg_version_untested", version=version, build=build,
+         tested=f"{TESTED_FFMPEG_MAJORS[0]}.x-{TESTED_FFMPEG_MAJORS[1]}.x")
 
 
 X264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo")
@@ -372,7 +400,7 @@ class Context:
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "time_mapped", "watched", "temp_dirs", "side_deliveries",
                  "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
-                 "sequence_frames_sha256")
+                 "sequence_frames_sha256", "encode_policy")
 
     def __init__(self) -> None:
         self.reset()
@@ -409,6 +437,7 @@ class Context:
         self.plan_generated_inputs: set[str] = set()  # temporary inputs reconstructed by the tool
         self.sequence_frames_sha256: Optional[str] = None
         self.measured_plan_inputs: Dict[str, Dict[str, Any]] = {}  # fingerprints taken before plan measurements
+        self.encode_policy: Dict[str, Any] = {}      # $FFMPEG_SKILL_ENCODE as read, plus `applied` (#576); {} when unset or not for this tool
         self.codec: Optional[str] = None             # --codec: encoder for the re-encode (None = x264 for SDR, x265 for HDR)
         self.alpha_line: Optional[str] = None        # --keep-alpha / --transparent: the alpha line written (_common.alpha.ALPHA_CODECS)
         self.hw = False                              # --hw / $FFMPEG_SKILL_HW: VideoToolbox encoders where they apply
@@ -615,14 +644,16 @@ def apply_common(args: "argparse.Namespace") -> None:
         env_limit, env_problem = _read_env_timeout()
         if env_problem:
             warn(env_problem, "timeout_env_invalid", value=os.environ.get("FFMPEG_SKILL_TIMEOUT"), timeout=env_limit)
-    # one step for every number a tool takes (#645): the range its help states as a..b is the range it
-    # takes, a negative needs a help that names one, and nothing but a sample count is past a million
+    # one step for every number a tool takes (#645): the range its help states as a..b or "> 0" (#749)
+    # is the range it takes, a negative needs a help that names one, and nothing but a sample count is past a million
     for a in getattr(getattr(STATE, "parser", None), "_actions", ()):
         v, text = getattr(args, a.dest, None), a.help or ""
-        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", text)
+        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
         if a.type in (int, float) and isinstance(v, (int, float)) and v != a.default and a.dest not in ("timeout", "length_samples") and (
-                not float(span[1]) <= v <= float(span[2]) if span else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
+                (not 0 < v <= 1e6 if span[0] == "> 0" else not float(span[1]) <= v <= float(span[2])) if span
+                else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
             die(f"{next((o for o in a.option_strings if o in [x.split('=')[0] for x in sys.argv[1:]]), a.option_strings[0])} {v:g} is outside what this option takes" + (f", {span[0]}" if span else ""), hint=text.replace("%%", "%") or None)
+    STATE.encode_policy = _apply_encode_policy(args)
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
         args.preset = "veryfast"
     STATE.codec = getattr(args, "codec", None) or None
@@ -666,6 +697,60 @@ def apply_common(args: "argparse.Namespace") -> None:
     if crf is not None and not 0 <= int(crf) <= top:
         die(f"--crf must be between 0 and {top} ({'SVT-AV1' if STATE.codec == 'av1' else 'x264/x265'} scale; 18 is visually lossless), got {crf}")
     install_signal_handlers()
+
+
+ENCODE_ENV = "FFMPEG_SKILL_ENCODE"
+_ON, _OFF = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
+
+
+def _apply_encode_policy(args: "argparse.Namespace") -> Dict[str, Any]:
+    """$FFMPEG_SKILL_ENCODE (#576), the house settings for the encoder flags, e.g.
+    `codec=h264,quality=18,preset=medium,hw=0,locked`: a flag this call did not give takes the house
+    value (--codec, --quality, an x264 --preset, --hw/--no-hw as $FFMPEG_SKILL_HW would); with `locked`,
+    one given with another value, and --fast where a preset is pinned, is refused before anything runs.
+    Only on a tool with one of those flags; an entry that does not read is refused, never skipped."""
+    acts = {a.dest: a for a in getattr(STATE.parser, "_actions", ()) if a.dest in ("codec", "quality", "hw")
+            or a.dest == "preset" and tuple(a.choices or ()) == X264_PRESETS}
+    text = os.environ.get(ENCODE_ENV, "").strip()
+    if not acts or not text:
+        return {}
+    policy: Dict[str, Any] = {}
+    for item in [s.strip() for s in text.split(",") if s.strip()]:
+        key, _, value = (p.strip().lower() for p in item.partition("="))
+        if (key, value) == ("locked", ""):
+            policy["locked"] = True
+        elif key in ("codec", "preset") and value in (CODECS if key == "codec" else X264_PRESETS):
+            policy[key] = value
+        elif key == "quality" and value.isdigit():
+            policy[key] = int(value)
+        elif key == "hw" and value in _ON + _OFF:
+            policy[key] = value in _ON
+        else:
+            refuse("input", "encode_policy", f"${ENCODE_ENV}: {item!r} is not codec=h264|hevc|av1|prores, quality=N, "
+                   "preset=<x264 preset>, hw=0|1 or locked", hint=f"fix or unset ${ENCODE_ENV}", entry=item)
+    opts = STATE.parser._option_string_actions
+    given = {hit[0].dest for a in sys.argv[1:(sys.argv + ["--"]).index("--")] if a.startswith("--") for name in [a.split("=")[0]]
+             for hit in [[opts[name]] if name in opts else [v for o, v in opts.items() if o.startswith(name)]] if len(hit) == 1}
+    asked = {"codec": getattr(args, "codec", None), "quality": getattr(args, "quality", None),
+             "preset": getattr(args, "preset", None), "hw": hw_flag(args)}
+    for key in [k for k in ("codec", "quality", "preset", "hw") if k in policy and k in acts]:
+        if key in given or (key == "hw" and "no_hw" in given):
+            if policy.get("locked") and asked[key] != policy[key]:
+                flag = ("--hw" if asked[key] else "--no-hw") if key == "hw" else f"--{key} {asked[key]}"
+                refuse("input", "encode_policy", f"{flag} is not the house setting {key}={int(policy[key]) if key == 'hw' else policy[key]} "
+                       f"(${ENCODE_ENV} is locked)", hint=f"leave the flag out, or change ${ENCODE_ENV}", key=key, asked=asked[key], policy=policy[key])
+        elif key == "hw":
+            if os.environ.get(HW_FORCED_ENV) != "1":  # render.py/batch.py --hw|--no-hw chose for their stages
+                os.environ[HW_ENV] = "1" if policy["hw"] else "0"
+        else:
+            setattr(args, key, policy[key])
+    if policy.get("locked") and "preset" in policy and STATE.fast:
+        refuse("input", "encode_policy", f"--fast replaces the house preset {policy['preset']} (${ENCODE_ENV} is locked)",
+               hint=f"leave --fast out, or take preset out of ${ENCODE_ENV}", key="fast", asked=True, policy=policy["preset"])
+    # the keys whose default the house set here (hw: where $FFMPEG_SKILL_HW applies; export.py's presets keep theirs)
+    policy["applied"] = [k for k in ("codec", "quality", "preset", "hw") if k in policy and k in acts and not {k, "no_" + k} & given
+                         and (k != "hw" or getattr(args, "_hw_env", False))]
+    return policy
 
 
 # The child processes this tool is waiting on right now (an ffmpeg, or a sibling script under
@@ -1086,12 +1171,47 @@ def _refuse_url_media(cmd: Sequence[str]) -> None:
         # a file named like an option is still ffprobe's input: guard_input_names() writes it
         # `./name`, so it is checked as a playlist like any other (review of #636)
         _refuse_playlist(last)
+        refuse_outside_roots(last)
     for value in values:
         if looks_like_url(value):
             refuse("input", "media_path_is_url",
                    f"{value!r} would be opened by ffmpeg as a URL ({url_scheme(value)}:), not as a local file; "
                    "this skill reads and writes local files only. Pass a plain path (a local name containing "
                    "a colon works as ./name)", path=value, scheme=url_scheme(value))
+    for i, value in enumerate(values):  # the last value: an ffmpeg command's output, an option's value after an ffprobe -i
+        last_one = i == len(values) - 1 and value == last
+        if not (last_one and base.startswith("ffprobe") and "-i" in cmd[1:-1]):
+            refuse_outside_roots(value, "output" if last_one and base.startswith("ffmpeg") else "input")
+
+
+ROOTS_ENV = "FFMPEG_SKILL_ROOTS"
+_TEMPLATES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "templates")
+
+
+def _under(real: str, root: str) -> bool:
+    return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def refuse_outside_roots(path: Any, what: str = "input") -> None:
+    """With FFMPEG_SKILL_ROOTS set (os.pathsep-separated absolute directories), refuse a path that
+    does not resolve (symlinks followed) under one of them (#572). The system temp directory, where
+    the tools write their intermediates and pass them between processes, is always allowed, and so
+    is reading the skill's own templates. An entry that is not absolute allows nothing."""
+    raw = os.environ.get(ROOTS_ENV, "")
+    p = str(path)
+    if not raw.strip() or p in ("-", os.devnull) or p.startswith("pipe:"):
+        return
+    import tempfile
+    entries = [e for e in raw.split(os.pathsep) if e.strip()]
+    roots = [os.path.normcase(os.path.realpath(e)) for e in entries if os.path.isabs(e)]
+    real = os.path.normcase(os.path.realpath(p))
+    allowed = roots + [os.path.normcase(os.path.realpath(tempfile.gettempdir()))]
+    if any(_under(real, r) for r in allowed + ([os.path.normcase(os.path.realpath(_TEMPLATES))] if what == "input" else [])):
+        return
+    refuse("input", "path_outside_roots",
+           f"{what} {p!r} resolves to {real!r}, outside the directories {ROOTS_ENV} allows ({os.pathsep.join(roots) or 'none'}); "
+           "move the file under one of them or add its directory to the variable",
+           path=p, resolved=real, roots=roots, ignored=[e for e in entries if not os.path.isabs(e)])
 
 
 def _check_no_overwrite_input(cmd: Sequence[str]) -> None:
@@ -1170,6 +1290,7 @@ def _check_output_path(cmd: Sequence[str]) -> None:
         refuse("input", "media_path_is_url",
                f"output {output!r} would be opened by ffmpeg as a URL, not as a local file; pass a plain path "
                "(a local name containing a colon works as ./name)", path=output, scheme=output.split(":", 1)[0].lower())
+    refuse_outside_roots(output, "output")
     if re.search(r"\.(m3u8?|mpd)$|%0?\d*d[^/\\]*\.(png|jpe?g|bmp|tiff?|webp|dpx|exr|tga|p[pg]m|jp2)$", output, re.I) and "-update" not in cmd:
         # a playlist or a numbered pattern makes ffmpeg write files it names itself (out0.ts,
         # frame001.png): no guard here has seen them, and -y replaced the ones that existed (#562)
@@ -1333,6 +1454,7 @@ def _copies_wma_only(cmd: Sequence[str]) -> bool:
             return False
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
                      "stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json", file_arg(path)]
+        probe_cmd = guard_input_protocols(probe_cmd)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=_probe_limit())
@@ -1374,6 +1496,15 @@ _WEBM_AUDIO_ENCODER_RE = re.compile(r"^(?:libopus|opus|libvorbis|vorbis)$")
 _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec$")
 
 
+# What each muxer takes, as (video encoders, sound encoders, what to say, the way out), by extension.
+_CONTAINER_ENCODERS = {
+    ".webm": (_WEBM_VIDEO_ENCODER_RE, _WEBM_AUDIO_ENCODER_RE, "WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound",
+              "name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha"),
+    ".mxf": (re.compile(r"^(?:mpeg2video|dnxhd)$"), re.compile(r"^pcm_\w+$"), "MXF, which holds MPEG-2/DNxHD video and PCM sound (H.264 writes dts it rejects)",
+             "name a .mov (--codec prores) or .mkv output; cut.py without --accurate keeps an MXF's own streams"),
+}
+
+
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
     """False only when every input of `cmd` is a file that was read and holds no `kind` ("v"/"a"/"s")
     stream, and no filter graph could make one. An encoder option for a stream the output will
@@ -1392,6 +1523,7 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
             return True
         probe_cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", kind,
                      "-show_entries", "stream=index", "-of", "csv=p=0", *input_format_args(path), file_arg(path)]
+        probe_cmd = guard_input_protocols(probe_cmd)
         limit = _probe_limit()  # PROBE_TIMEOUT, or --timeout when that is lower; never unlimited (--timeout 0)
         try:
             proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
@@ -1407,13 +1539,12 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
 
 
 def _check_container_codecs(cmd: Sequence[str]) -> None:
-    """A `.webm` output whose command encodes a picture or a sound WebM cannot hold (the tools'
-    H.264/HEVC and AAC lines) is refused before anything runs, dry runs included: the muxer
-    refused it only after the encode had started, as `kind: ffmpeg` with "Nothing was written
-    into output file", and a dry run said completed (#488). A stream copy is left to the muxer:
-    what it copies is not named in the command."""
+    """A `.webm` or `.mxf` output whose command encodes what the muxer cannot hold (the tools' H.264/HEVC
+    and AAC lines) is refused before anything runs, dry runs included, not after the encode started
+    (#488, MXF #736). A stream copy is left to the muxer: what it copies is not named in the command."""
     output = cmd[-1]
-    if os.path.splitext(output)[1].lower() != ".webm":
+    rule = _CONTAINER_ENCODERS.get(os.path.splitext(output)[1].lower())
+    if not rule:
         return
     refused: List[Any] = []
     for i, tok in enumerate(cmd[:-2]):
@@ -1421,20 +1552,14 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
         if not m:
             continue
         stream, value = m.group(1) or m.group(2), cmd[i + 1]
-        if value == "copy" or stream is None:
-            continue
-        allowed = _WEBM_VIDEO_ENCODER_RE if stream == "v" else _WEBM_AUDIO_ENCODER_RE
-        if not allowed.match(value):
+        if value != "copy" and stream and not rule[0 if stream == "v" else 1].match(value):
             refused.append((stream, value))
     # only for a stream the output will have: asked last, and only when something would be refused
     refused = [value for stream, value in dict.fromkeys(refused) if _an_input_has(cmd, stream)]
     if refused:
         refuse("input", "output_container_codecs",
-               f"output {output!r} is WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound; this tool "
-               f"encodes {' and '.join(refused)} for it",
-               hint="name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); "
-                    "a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha",
-               output=output, container="webm", encoders=refused)
+               f"output {output!r} is {rule[2]}; this tool encodes {' and '.join(refused)} for it",
+               hint=rule[3], output=output, container=output.rsplit(".", 1)[1].lower(), encoders=refused)
 
 
 def _check_picture_into_audio_extension(cmd: Sequence[str]) -> None:
@@ -2046,6 +2171,7 @@ def refuse_existing_outputs(paths: Sequence[str]) -> None:
     for output in paths:
         if not output:
             continue
+        refuse_outside_roots(output, "output")
         try:
             exists = os.path.isfile(output)
             real = os.path.realpath(output)
@@ -3565,7 +3691,44 @@ def guard_input_names(cmd: Sequence[str]) -> List[str]:
         for i in range(1, len(cmd) - 1):
             if cmd[i] == "-i":
                 cmd[i + 1] = file_arg(cmd[i + 1])
-    return guard_input_formats(cmd)
+    return guard_input_protocols(guard_input_formats(cmd))
+
+
+# The protocols an input, and every file its demuxer opens (a concat list's entries, an image
+# sequence's frames), may go through (#572). FFmpeg's own default for a local file is
+# file,crypto,data; the skill's commands need file alone (measured over the test suites).
+PROTOCOL_WHITELIST = "file"
+
+
+def guard_input_protocols(cmd: Sequence[str]) -> List[str]:
+    """`cmd` with `-protocol_whitelist PROTOCOL_WHITELIST` first among each input's options (or a
+    value the caller gave replaced): for each `-i` of an ffmpeg or ffprobe command, and for the
+    last argument of an ffprobe command without `-i` when that argument is its input. A second guard
+    behind _refuse_url_media() and _refuse_playlist(), for a URL a demuxer finds inside a file."""
+    cmd = [str(a) for a in cmd]
+    base = os.path.basename(cmd[0]) if cmd else ""
+    if not base.startswith(("ffmpeg", "ffprobe")):
+        return cmd
+    if base.startswith("ffprobe") and "-i" not in cmd[1:-1]:
+        at = {len(cmd) - 1} if len(cmd) > 1 and not cmd[-1].startswith("-") else set()
+    else:
+        at = {i for i in range(1, len(cmd) - 1) if cmd[i] == "-i"}
+    lead = 1  # after the global flags ffmpeg_base() and the probes start with, which stay first
+    while lead < len(cmd) - 1 and (cmd[lead] in ("-hide_banner", "-nostdin", "-y", "-n") or cmd[lead] in ("-v", "-loglevel") and lead + 1 not in at):
+        lead += 2 if cmd[lead] in ("-v", "-loglevel") else 1
+    out: List[str] = cmd[:lead]
+    since = lead  # where the current input's options start in `out`; the list goes first among them
+    for i, a in enumerate(cmd[lead:], start=lead):
+        if i in at:
+            opts = out[since:]
+            if "-protocol_whitelist" in opts[:-1]:
+                out[since + opts.index("-protocol_whitelist") + 1] = PROTOCOL_WHITELIST
+            else:
+                out[since:since] = ["-protocol_whitelist", PROTOCOL_WHITELIST]
+        out.append(a)
+        if i - 1 in at or (i in at and a != "-i"):
+            since = len(out)
+    return out
 
 
 def riff_wave_args(path: str) -> List[str]:
@@ -3915,6 +4078,7 @@ def read_text_or_die(path: str, flag: str) -> str:
     """Read a caller-supplied UTF-8 text file (a cue list, chapters, notes) or fail as kind input
     with the flag named, instead of a FileNotFoundError / UnicodeDecodeError traceback. The text
     comes back through normalize_text(): no BOM, `\\n` line ends."""
+    refuse_outside_roots(path)
     if os.path.isdir(path):
         # checked first: Windows raises PermissionError, not IsADirectoryError, for a directory
         die(f"{flag}: {path} is a directory, not a text file")
@@ -3981,6 +4145,7 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 def read_json(path: "os.PathLike[str] | str") -> Any:
     """parse_json() of a UTF-8 file. Raises OSError for a file that cannot be read and ValueError
     (UnicodeDecodeError is one) for anything else, so `except (OSError, ValueError)` covers it."""
+    refuse_outside_roots(path)
     with open(path, "r", encoding="utf-8") as fh:
         doc = parse_json(fh.read())
     register_plan_input(path)

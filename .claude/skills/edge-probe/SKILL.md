@@ -63,7 +63,7 @@ asks what the tool does once it has one and the value is wrong.
    #645 a range is one of them: `apply_common` refuses a number outside the `a..b` its option's
    help states, a negative the help does not name, and anything past a million. So most findings
    are fixed by writing the range in the help, with no new check. Each
-   fix adds a line to `docs/defect-ledger.jsonl` and a test that gives the edge value and reads
+   fix adds an entry under `docs/defect-ledger/` and a test that gives the edge value and reads
    the refusal.
 
 ## What a round should not do
@@ -80,7 +80,7 @@ asks what the tool does once it has one and the value is wrong.
 
 - `tests/edge_values.py`: the runner (`--only`, `--json`, `--clip`). It reads the options from
   `scripts/_contract.py --json --static` and the minimal calls from `tests/sweep.py`.
-- `docs/defect-ledger.jsonl`: classes `unbounded`, `numeric`, `claim`.
+- `docs/defect-ledger/` (and the older `docs/defect-ledger.jsonl`): classes `unbounded`, `numeric`, `claim`.
 - The method follows two published skills, Trail of Bits' `sharp-edges` (probe what zero, empty
   and negative mean; an easy wrong call is the design's fault) and `property-based-testing` (the
   properties in step 4), both CC BY-SA 4.0 at github.com/trailofbits/skills. No text is taken from

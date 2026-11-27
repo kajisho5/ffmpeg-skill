@@ -34,13 +34,14 @@ sys.path.insert(0, str(ROOT / "mcp"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
+ENCODE_ENV = "FFMPEG_SKILL_ENCODE"  # EncodePolicyTests pins it to the runner's name
 from _fixtures import OUT, SHARED_OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
 # opt in with an explicit env. The names come from the runner, so this scrub and the one in
 # tests/_fixtures.py cannot drift from what the tools read.
-for _k in (HW_ENV, HW_FORCED_ENV):
+for _k in (HW_ENV, HW_FORCED_ENV, ENCODE_ENV):  # and the house encoder settings (#576)
     os.environ.pop(_k, None)
 
 for _k in ("FFMPEG_SKILL_MCP_FULL", "FFMPEG_SKILL_MCP_TOOLS"):
@@ -349,13 +350,33 @@ class ContractTests(unittest.TestCase):
             self.assertTrue((ROOT / rel).is_file(), rel)
         pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", "gemini-extension.json"):
+        for manifest in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json",
+                         ".codex-plugin/plugin.json", "gemini-extension.json"):
             doc = json.loads((ROOT / manifest).read_text(encoding="utf-8"))
             self.assertEqual((doc["name"], doc["version"]), ("ffmpeg-skill", pkg["version"]), manifest)
             self.assertTrue(doc.get("description"), manifest)
             self.assertGreaterEqual(release.count(manifest), 2, f"{manifest}: bumped and staged by release.yml")
         cursor = json.loads((ROOT / ".cursor-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertTrue((ROOT / cursor["logo"]).is_file(), "the logo is a committed, relative path")
+        codex = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        logo = codex["interface"]["logo"]
+        self.assertTrue((ROOT / (logo[2:] if logo.startswith("./") else logo)).is_file(),
+                        "the Codex logo is a committed, relative path inside the plugin")
+        agents_market = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        claude_market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        plugin_source = {
+            "source": "git-subdir",
+            "url": "https://github.com/kajisho5/ffmpeg-skill.git",
+            "path": "ffmpeg-skill",
+            "ref": "plugin",
+        }
+        self.assertEqual(agents_market["name"], "ffmpeg-skill")
+        self.assertEqual([p["name"] for p in agents_market["plugins"]], ["ffmpeg-skill"])
+        self.assertEqual(agents_market["plugins"][0]["source"], plugin_source)
+        self.assertEqual(agents_market["plugins"][0]["source"], claude_market["plugins"][0]["source"],
+                         ".agents marketplace must point at the same plugin-branch tree as .claude-plugin")
+        self.assertEqual(codex["skills"], "./skills/")
+        self.assertNotIn("mcpServers", codex)
         # the npm installer copies one skill directory: the plugin copy must not ride along, or an
         # agent's skills folder would hold the same skill twice
         self.assertNotIn("skills/", pkg["files"])
@@ -504,9 +525,25 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             names = {p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()}
             for needed in (".claude-plugin/plugin.json", ".claude-plugin/icon.png",
+                           ".codex-plugin/plugin.json", ".codex-plugin/icon.png",
                            "skills/ffmpeg-skill/SKILL.md", "SKILL.md",
                            "scripts/_contract.py", "mcp/server.py", "docs/contract.md"):
                 self.assertIn(needed, names)
+            # Codex skills/ and logo paths resolve inside the shipped plugin-branch layout
+            codex_shipped = json.loads((tree / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            skills_rel = codex_shipped["skills"]
+            if skills_rel.startswith("./"):
+                skills_rel = skills_rel[2:]
+            self.assertTrue((tree / skills_rel).is_dir(),
+                            f"Codex skills path {codex_shipped['skills']!r} missing in plugin tree")
+            logo_rel = codex_shipped["interface"]["logo"]
+            if logo_rel.startswith("./"):
+                logo_rel = logo_rel[2:]
+            self.assertTrue((tree / logo_rel).is_file(),
+                            f"Codex logo path {codex_shipped['interface']['logo']!r} missing in plugin tree")
+            self.assertTrue((tree / skills_rel / "ffmpeg-skill" / "SKILL.md").is_file())
+            self.assertTrue((tree / "scripts").is_dir())
+            self.assertTrue((tree / "docs" / "contract.md").is_file())
             # bin/ is the npx installer: a plugin host installs, and the plugin directory flags it
             self.assertFalse([n for n in names if n.split("/")[0] in
                               ("tests", "evals", "site", "brand", "demos", "assets", ".github", "bin")])
@@ -590,6 +627,8 @@ class ContractTests(unittest.TestCase):
             # under one directory, which is what a git-subdir marketplace source names
             self.assertTrue(all(n.startswith("ffmpeg-skill/") for n in listed if n), listed[:3])
             self.assertIn("ffmpeg-skill/.claude-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/plugin.json", listed)
+            self.assertIn("ffmpeg-skill/.codex-plugin/icon.png", listed)
             self.assertIn("ffmpeg-skill/skills/ffmpeg-skill/SKILL.md", listed)
             again = publish(bare)                       # the branch holds this tree: nothing is pushed
             self.assertEqual(again.returncode, 0, again.stderr)
@@ -902,14 +941,11 @@ class ContractTests(unittest.TestCase):
         """4.0.1 was not published: 4.0.0 was bumped by hand, its section sat on top of
         CHANGELOG.md with no `## Unreleased` above it, and the bump step of the next release
         asserted on the missing heading. The step's own lines are run here on both shapes."""
-        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        start = release.index('          m = re.search(r"## Unreleased')
-        step = textwrap.dedent(release[start:release.index("          changelog_path.write_text(changelog", start)])
-        def bumped(changelog):
-            scope = {"re": re, "changelog": changelog, "old": "4.0.0",
-                     "section": "## 4.0.1\n\n_Automated release: since 4.0.0._\n\n- fix: one\n\n"}
-            exec(step, scope)
-            return scope["changelog"]
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        bumped = lambda changelog: frag.assemble(changelog, [], "4.0.1", "4.0.0", "- fix: one")
         head = "# Changelog\n\n> note\n\n"
         after_a_hand_bump = bumped(head + "## 4.0.0\n\nThe third break.\n\n## 3.15.1\n\nold\n")
         self.assertEqual(re.findall(r"(?m)^## (\S+)", after_a_hand_bump), ["Unreleased", "4.0.1", "4.0.0", "3.15.1"])
@@ -985,11 +1021,18 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(market["plugins"][0]["source"], {
             "source": "git-subdir", "url": "https://github.com/kajisho5/ffmpeg-skill.git", "path": "ffmpeg-skill", "ref": "plugin"})
         self.assertIn("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text := (ROOT / "README.md").read_text(encoding="utf-8"))
-        # every `marketplace add` line in the README carries the flag, however many there are
-        self.assertEqual(readme_text.count("marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
-                         readme_text.count("marketplace add kajisho5/ffmpeg-skill"))
-        for host in ("claude plugin marketplace add", "codex plugin marketplace add"):
-            self.assertIn(f"{host} kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        # Claude still sparse-checks out .claude-plugin; every Claude `marketplace add` keeps the flag.
+        # The documented Codex route keeps --sparse .claude-plugin (checked against Codex 0.167);
+        # the agent-agnostic .agents/plugins/marketplace.json route does not need it.
+        self.assertEqual(readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin"),
+                         readme_text.count("claude plugin marketplace add kajisho5/ffmpeg-skill"))
+        self.assertIn("claude plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill --sparse .claude-plugin", readme_text)
+        self.assertIn("checked against Codex CLI 0.167", readme_text)
+        self.assertIn("2.2 MB instead of 66 MB in Codex 0.167", readme_text)
+        self.assertIn("codex plugin marketplace add kajisho5/ffmpeg-skill\n", readme_text)
+        self.assertIn("codex plugin add ffmpeg-skill@ffmpeg-skill", readme_text)
+        self.assertIn(".agents/plugins/marketplace.json", readme_text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"/plugin install {manifest['name']} --marketplace kajisho5/ffmpeg-skill", readme)
         self.assertIn(f"claude plugin install {manifest['name']}@{market['name']}", readme)
@@ -1485,8 +1528,8 @@ import fit
 replacement = sys.argv.pop(1)
 sys.argv[0] = "fit.py"
 real_probe = fit.probe
-def probe_then_replace(path, role="input"):
-    measured = real_probe(path, role)
+def probe_then_replace(path, role="input", **kwargs):
+    measured = real_probe(path, role, **kwargs)
     if role == "input":
         shutil.copyfile(replacement, path)
     return measured
@@ -1603,6 +1646,8 @@ sys.exit(fit.main())
         log = sh("git", "log", f"{last_tag}..HEAD", "--format=%B----COMMIT----", cwd=ROOT, check=False).stdout
         closed = sorted(set(int(n) for n in re.findall(r"(?im)^closes\s+#(\d+)\.?\s*$", log)))
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        for fragment in sorted((ROOT / "changelog.d").glob("*.md")):  # not yet folded in by the release (#678)
+            changelog += fragment.read_text(encoding="utf-8")
         missing = [n for n in closed if f"#{n}" not in changelog]
         self.assertEqual(missing, [], f"issue(s) closed since {last_tag} but not mentioned in CHANGELOG.md: {missing}")
 
@@ -1977,6 +2022,26 @@ sys.exit(fit.main())
         # a direct push has no PR by SHA either, and keeps the title rules
         v, d = rv.resolve("1.0.3", ["docs: typo", "Fix by direct push"], labels({}), ["c", "d"], lambda sha: None)
         self.assertEqual((v, [x["bump"] for x in d]), ("1.0.4", [None, "patch"]))
+        # A PR merged with a merge commit is that one commit, not its branch's: the branch commit
+        # "... (#453)" named an issue, and asking for PR 453's labels stopped every release after
+        # 4.7.1. The real git log, on a throwaway repository.
+        import tempfile
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                       GIT_COMMITTER_EMAIL="t@t")
+            git = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "base")
+            git("tag", "v1.0.0")
+            git("checkout", "-q", "-b", "topic")
+            git("commit", "-q", "--allow-empty", "-m", "feat: x (#453)")
+            git("checkout", "-q", "main")
+            git("merge", "-q", "--no-ff", "topic", "-m", "Merge pull request #715 from o/topic")
+            git("commit", "-q", "--allow-empty", "-m", "fix: y (#716)")
+            subjects = [s for _, s in rv._main_commits("v1.0.0..HEAD", cwd=repo)]
+        self.assertEqual(subjects, ["fix: y (#716)", "Merge pull request #715 from o/topic"])
+        self.assertIn('"--first-parent", rev_range', (ROOT / ".github" / "workflows" / "release.yml").read_text(),
+                      "the release notes list main's commits too, not a merged branch's")
 
     def test_release_version_resolver_does_not_depend_on_a_pr_title(self):
         """3.13.2 (2026-11-19): four PRs titled without a fix/feat prefix carried only `chore`
@@ -2143,6 +2208,17 @@ sys.exit(fit.main())
             self.assertEqual(_common.matrix_chain(meta(color_space="smpte170m"), meta()), "")
         finally:
             _common.STATE.codec, _common.STATE.hw = saved
+
+    def test_mix_color_chains_accepts_missing_metadata(self):
+        """An input that was not probed is accepted just as by matrix_chain."""
+        tagged = {"video": {"color_space": "bt709"}}
+        self.assertEqual(_common.mix_color_chains([None, {}], None), ["", ""])
+        self.assertEqual(_common.mix_color_chains([None, {}], None, draws_colour=True),
+                         [_common.label_chain(None, None), _common.label_chain({}, None)])
+        self.assertEqual(_common.mix_color_chains([tagged, None], None),
+                         [_common.matrix_chain(tagged, None), _common.label_chain(None, None)])
+        self.assertEqual(_common.mix_color_chains([None, tagged], None),
+                         [_common.label_chain(None, None), _common.matrix_chain(tagged, None)])
 
     def test_fold_bt709_matrix_into_the_tools_graph(self):
         """run() moves the encoder line's conversion -vf into the tool's own graph, first: with no
@@ -2386,9 +2462,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 73_500),
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 196_000),  # +500 more for color.py --source-alpha-mode (#453)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 25_000),
+            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_300),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -2903,6 +2979,20 @@ sys.exit(fit.main())
         proc = sh(sys.executable, ROOT / "mcp" / "server.py", "--call", "not_a_tool")
         self.assertTrue(json.loads(proc.stdout)["isError"])
 
+    def test_pacing_profile_surface_and_mcp_repeated_references(self):
+        tool = self.tools["silence"]
+        schema = tool["output_schema"]["properties"]["profile"]
+        self.assertEqual(schema["properties"]["contract"]["const"], "pacing-profile@1")
+        self.assertIn("noise_floor_db", schema["properties"]["silence_detection"]["required"])
+        self.assertIn("source", self.tools["verify"]["input_schema"]["properties"])
+        args = {"input": str(self.wav), "extract_profile": True,
+                "references": [str(self.wav), str(self.wav)], "dry_run": True}
+        response = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "silence", "arguments": args}}])[0]["result"]
+        self.assertFalse(response.get("isError"), response)
+        profile = response["structuredContent"]["profile"]
+        self.assertEqual(profile["probe_meta"]["analysis_count"], 3)
+
     def test_mcp_round_trips_built_from_the_derived_schema(self):
         listed = {t["name"]: t["inputSchema"] for t in self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])[0]["result"]["tools"]}
         project = self.out("mcp_project.json")
@@ -3245,6 +3335,41 @@ sys.exit(fit.main())
             else:
                 self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
 
+    def test_a_build_outside_the_tested_majors_is_said_once_and_the_run_goes_on_556(self):
+        """#556: an ffprobe that reports a future major, a git build or an unreadable version adds one
+        ffmpeg_version_untested warning (build release / git / unknown) and the run succeeds; a tested
+        major adds none. The tested range follows the FFmpeg versions the CI workflow installs."""
+        from _common import runner
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        majors = {6 if "Ubuntu 24.04 apt = 6.1" in ci else None, 7 if "ffmpeg 7.1 apt" in ci else None,
+                  8 if "Homebrew = 8.x" in ci else None, int(re.search(r"choco install ffmpeg --version (\d+)\.", ci).group(1))}
+        self.assertEqual((min(majors - {None}), max(majors - {None})), runner.TESTED_FFMPEG_MAJORS, majors)
+        if os.name == "nt":
+            self.skipTest("the ffprobe shim is a POSIX shell script")
+        src = self.out("tested_src.mp4")
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:d=1", src)
+        real = shutil.which("ffprobe")
+        cases = (("ffprobe version 9.0.2 Copyright", None), ("ffprobe version 6.1.1-3ubuntu5 Copyright", None),
+                 ("ffprobe version 10.0 Copyright", ("10.0", "release")),
+                 ("ffprobe version N-12345-gabcdef Copyright\nlibavutil      60. 3.100 / 60. 3.100", ("8", "git")),
+                 ("ffprobe version N-12345-gabcdef Copyright", (None, "unknown")))
+        for n, (banner, want) in enumerate(cases):
+            shim = self.out(f"tested_shim_{n}")
+            shim.mkdir(exist_ok=True)
+            (shim / "ffprobe").write_text(f'#!/bin/sh\nif [ "$1" = "-version" ]; then printf "{banner}\\n"; exit 0; fi\nexec "{real}" "$@"\n', encoding="utf-8")
+            (shim / "ffprobe").chmod(0o755)
+            env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "cut.py"), str(src), "--start", "0", "--end", "0.5", "--json",
+                                   "-o", str(self.out(f"tested_out_{n}.mp4"))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, (banner, proc.stderr))
+            found = [w for w in json.loads(proc.stdout).get("diagnostics", {}).get("warnings", []) if w["code"] == "ffmpeg_version_untested"]
+            if want is None:
+                self.assertEqual(found, [], banner)
+                continue
+            self.assertEqual(len(found), 1, (banner, found))
+            self.assertEqual((found[0]["version"], found[0]["build"], found[0]["tested"]), (*want, "6.x-9.x"), banner)
+            self.assertEqual(proc.stderr.count("not covered by the test suite"), 1, proc.stderr)
+
     def test_doctor_checks_ffprobe_against_the_floor_too(self):
         """requirements name ffprobe >= 6.1 as well: an old ffprobe beside a 6.1 ffmpeg is unsupported."""
         from unittest import mock
@@ -3305,13 +3430,13 @@ sys.exit(fit.main())
         text, a test over every tool). `mechanism: null` needs `why_none`, and a class gets that
         answer once: the second defect of a class with no mechanism behind it is the evidence
         that the mechanism is what has to change."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
         seen_without = {}
-        path = ROOT / "docs" / "defect-ledger.jsonl"
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            where = f"{path.name}:{n}"
+        for entry in ledger.rows(ROOT):
+            where = n = entry.pop("_where")
             for key in ("date", "issue", "class", "what", "escaped", "mechanism"):
                 self.assertIn(key, entry, where)
             self.assertIn(entry["class"], self.DEFECT_CLASSES, where)
@@ -3323,6 +3448,139 @@ sys.exit(fit.main())
                              f"{where}: class {entry['class']!r} already had a defect closed with no mechanism "
                              f"(line {seen_without.get(entry['class'])}); this one changes the mechanism")
             seen_without[entry["class"]] = n
+
+    def test_two_fixes_add_ledger_entries_without_a_conflict_678(self):
+        """#678: every fix appended a line to docs/defect-ledger.jsonl, so two open fixes always
+        conflicted in its last line, and external PRs (a fork's branch the maintainer cannot push
+        to) stalled each time main moved. An entry is a file under docs/defect-ledger/: two
+        branches that each add one merge with no conflict, and the ledger reader and revert_proof
+        find the entry a change adds, as a file or as a line a branch opened before the split
+        still adds to the .jsonl."""
+        import importlib.util
+        import tempfile
+        spec = importlib.util.spec_from_file_location("defect_ledger", ROOT / ".github" / "scripts" / "defect_ledger.py")
+        ledger = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ledger)
+        entry = lambda n: json.dumps({"date": "2026-11-26", "issue": n, "class": "claim", "what": "w", "escaped": "e", "mechanism": "m"})
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / ledger.LEGACY).write_text(entry(1) + "\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n in (2, 3):
+                run("checkout", "-q", "-b", f"fix{n}", "main")
+                (root / ledger.DIR).mkdir(exist_ok=True)  # git keeps no empty directory
+                (root / ledger.DIR / f"2026-11-26-{n}.json").write_text(entry(n) + "\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"fix: {n}")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "fix2")], [2])
+            run("checkout", "-q", "fix2")
+            run("merge", "-q", "--no-edit", "fix3")  # check=True: a conflict fails here
+            self.assertEqual([e["issue"] for e in ledger.rows(root)], [1, 2, 3])
+            # a branch opened before the split adds its line to the .jsonl: that is an entry too
+            run("checkout", "-q", "-b", "old", "main")
+            with open(root / ledger.LEGACY, "a", encoding="utf-8") as fh:
+                fh.write(entry(4) + "\n")
+            run("commit", "-q", "-am", "fix: 4")
+            self.assertEqual([e["issue"] for e in ledger.added(run, "main", "old")], [4])
+        self.assertTrue((ROOT / ledger.DIR).is_dir(), "the repository keeps its entries under docs/defect-ledger/")
+
+    def test_a_fix_pr_says_what_was_swept_in_its_siblings_section(self):
+        """AGENTS.md asks a fix's PR to say what was swept for the same defect elsewhere, and the
+        template has a `## Siblings` section for it, but nothing checked it, so a fix from inside or
+        outside could land with the sweep skipped. The section, with the template's comment
+        removed, is not empty and names the command that was run; a PR that is not a fix is not
+        judged."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("siblings_section", ROOT / ".github" / "scripts" / "siblings_section.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        template = (ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        self.assertIn("## Siblings", template)
+        self.assertEqual(mod.problem(template), "the `## Siblings` section is empty",
+                         "the template as it stands, its comment only, is an empty section")
+        self.assertIn("no `## Siblings` section", mod.problem("## Summary\n\nfixed it\n"))
+        self.assertIn("names no command", mod.problem("## Siblings\n\nI looked around, nothing else.\n## Notes\n"))
+        swept = ("## Summary\r\n\r\nx\r\n\r\n## Siblings\r\n\r\nClass: a zero replaced by a default. "
+                 "`python3 tests/edge_values.py --json`: 107 ran, none other.\r\n")
+        self.assertIsNone(mod.problem(swept))
+        # the command must sit in this section, not in a later one
+        self.assertIsNotNone(mod.problem("## Siblings\n\nnone\n\n## Test plan\n\n`python3 -m unittest`\n"))
+        script = ROOT / ".github" / "scripts" / "siblings_section.py"
+        def run(title, body):
+            env = {**os.environ, "PR_BODY": body}
+            return subprocess.run([sys.executable, str(script), "--title", title], env=env, capture_output=True, text=True).returncode
+        self.assertEqual(run("fix: something", template), 1)
+        self.assertEqual(run("fix(color): something", swept), 0)
+        self.assertEqual(run("docs: something", template), 0, "a PR that is not a fix is not judged")
+        workflow = (ROOT / ".github" / "workflows" / "siblings.yml").read_text(encoding="utf-8")
+        self.assertIn("edited", workflow, "an edit of the body runs the check again")
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
+        self.assertNotIn("$PR_BODY", workflow, "the body reaches the script through the environment, never a shell word")
+
+    def test_changelog_fragments_678(self):
+        """#678: every PR edited `## Unreleased`, so two open PRs always conflicted there. A change
+        is a file under changelog.d/ that starts with its section heading; the release folds them
+        into the new version's section (Fixed / Added / Changed, then the generated bullets), with
+        whatever a branch opened before the split still wrote under `## Unreleased`, and deletes
+        them. Two branches that each add one merge with no conflict, and revert_proof counts a
+        `### Fixed` fragment as a fix the way it counts a `+- ` line in CHANGELOG.md."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("changelog_fragments", ROOT / ".github" / "scripts" / "changelog_fragments.py")
+        frag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(frag)
+        # the shape of a real release: 4.8.0's section is the automated line, `### ` groups, then bullets
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        real = re.search(r"(?m)^## 4\.8\.0\n.*?(?=^## )", changelog, re.S).group(0)
+        self.assertRegex(real, r"(?s)^## 4\.8\.0\n\n_Automated release: .*?_\n\n### Fixed\n\n.*### Added\n\n.*\n- ci: ")
+        head = "# Changelog\n\n> note\n\n"
+        legacy = "### Changed\n\n- **Old branch.** Wrote under Unreleased (#1)."
+        out = frag.assemble(
+            head + "## Unreleased\n\n" + legacy + "\n\n## 4.8.0\n\nprev\n",
+            [("b.md", "### Added\n\n- **New flag** (#3).\n"), ("a.md", "### Fixed\n\n- Fix one (#2).\n  More.\n"),
+             ("c.md", "### Fixed\n- Fix two (#4).\n")],
+            "4.9.0", "4.8.0", "- fix: one (#2)\n- feat: two", "\n\nCloses: #2, #3")
+        self.assertEqual(out, head + "## Unreleased\n\n(nothing yet)\n\n## 4.9.0\n\n"
+                         "_Automated release: version and notes generated from pull requests merged since 4.8.0._\n\n"
+                         + legacy + "\n\n### Fixed\n\n- Fix one (#2).\n  More.\n- Fix two (#4).\n\n"
+                         "### Added\n\n- **New flag** (#3).\n- fix: one (#2)\n- feat: two\n\nCloses: #2, #3\n\n## 4.8.0\n\nprev\n")
+        self.assertEqual(re.findall(r"(?m)^### (\w+)", out.split("## 4.8.0")[0]), ["Changed", "Fixed", "Added"])
+        # no fragment, no legacy text: today's output; a headingless fragment is kept, under Changed
+        self.assertIn("since 4.8.0._\n\n- fix: one\n\n", frag.assemble(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n", [], "4.9.0", "4.8.0", "- fix: one"))
+        self.assertIn("### Changed\n\nloose note", frag.assemble(head + "## 4.8.0\n", [("x.md", "loose note\n")], "4.9.0", "4.8.0", "- b"))
+        # the shipped CHANGELOG.md and fragments: every fragment names its section
+        for path in (ROOT / "changelog.d").glob("*.md"):
+            if path.name != "README.md":
+                self.assertIn(frag.split_fragment(path.read_text(encoding="utf-8"))[0], frag.SECTIONS, path.name)
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+            run = lambda *a: subprocess.run(["git", "-C", repo, *a], env=env, check=True, capture_output=True, text=True).stdout
+            root = Path(repo)
+            (root / "docs" / "defect-ledger").mkdir(parents=True)
+            (root / "changelog.d").mkdir()
+            (root / "CHANGELOG.md").write_text(head + "## Unreleased\n\n(nothing yet)\n\n## 4.8.0\n\nprev\n", encoding="utf-8")
+            (root / "changelog.d" / "README.md").write_text("format\n", encoding="utf-8")
+            (root / "docs" / "defect-ledger" / "README.md").write_text("ledger\n", encoding="utf-8")
+            run("init", "-q", "-b", "main"); run("add", "-A"); run("commit", "-q", "-m", "base")
+            for n, section in ((2, "Fixed"), (3, "Added")):
+                run("checkout", "-q", "-b", f"b{n}", "main")
+                (root / "changelog.d" / f"{n}.md").write_text(f"### {section}\n\n- Change {n}.\n", encoding="utf-8")
+                (root / "docs" / "defect-ledger" / f"2026-11-26-{n}.json").write_text("{}\n", encoding="utf-8")
+                run("add", "-A"); run("commit", "-q", "-m", f"change {n}")
+            self.assertTrue(frag.adds_fix(run, "main", "b2"))
+            self.assertFalse(frag.adds_fix(run, "main", "b3"), "an Added fragment is not a fix")
+            run("checkout", "-q", "b2")
+            run("merge", "-q", "--no-edit", "b3")  # check=True: a conflict fails here
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").glob("[0-9]*.md")), ["2.md", "3.md"])
+            # the release step's own call, on this copy: the fragments move into the section and are deleted
+            got = frag.assemble((root / "CHANGELOG.md").read_text(encoding="utf-8"), frag.take_fragments(root / "changelog.d"),
+                                "4.9.0", "4.8.0", "- chore: x")
+            self.assertIn("### Fixed\n\n- Change 2.\n\n### Added\n\n- Change 3.\n- chore: x\n\n## 4.8.0", got)
+            self.assertEqual(sorted(p.name for p in (root / "changelog.d").iterdir()), ["README.md"])
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("take_fragments", release)
+        self.assertIn("git add -A changelog.d", release)
 
     def test_the_632_scripts_read_what_a_change_did(self):
         """Review of #635. revert_proof.changed_tests takes a test whose body alone changed (the
@@ -3873,7 +4131,7 @@ sys.exit(fit.main())
         JPEG are converted to BT.709 by every tool that re-encodes them; a still composited over the
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
-        beside a converted one. A grid of untagged/BT.709 clips plans exactly what it did."""
+        beside a converted or already BT.709 cell. Two untagged cells need no label."""
         s601 = SHARED_OUT / "c_source601.mp4"
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
@@ -3906,7 +4164,10 @@ sys.exit(fit.main())
             ("waveform", [self.src, "--image", png], {"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p": 1}),
             ("grid", [self.src, s601, "--cols", "2", "--rows", "1"], {"colorspace=ispace=smpte170m:": 1, label: 1}),
             ("grid", [s601, self.src, png, s709, "--cols", "2", "--rows", "2"], {"colorspace=ispace=smpte170m:": 1, label: 1, rgb: 1}),
-            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [self.src, s709, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [s709, self.src, "--cols", "2", "--rows", "1"], {label: 1, "colorspace=ispace": 0, "out_color_matrix": 0}),
+            ("grid", [self.src, self.src, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
+            ("grid", [s709, s709, "--cols", "2", "--rows", "1"], {"colorspace=": 0, "out_color_matrix": 0, "setparams": 0}),
         ]
         for n, (name, args, want) in enumerate(cases):
             with self.subTest(tool=name, args=[Path(str(a)).name for a in args]):
@@ -4836,11 +5097,11 @@ sys.exit(fit.main())
         self.assertTrue(doc["edit_list"])
 
     def test_verified_reports_what_the_tool_measured(self):
-        """#189 C: every success document carries `verified` and `verification`. cut: probe and its streams;
+        """#189 C: every success document carries `verified` and `verification`. cut: probe, a copy's keyframe span and its streams;
         loudness: probe + its own after-write measurements (level, and since 2.20 length); export on a raw source: loudness step
         not ok -> verified false while status stays completed; --dry-run verified nothing."""
         doc = json.loads(tool("cut", self.src, "--start", "0", "--end", "1", "-o", self.out("vf_cut.mp4"), "--json").stdout)
-        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("streams", True), ("stream_lengths", True), ("decode", True)]))
+        self.assertEqual((doc["verified"], [(s["step"], s["ok"]) for s in doc["verification"]]), (True, [("probe", True), ("copy_span", True), ("streams", True), ("stream_lengths", True), ("decode", True)]))
         doc = json.loads(tool("loudness", self.src, "-o", self.out("vf_loud.mp4"), "--json").stdout)
         self.assertTrue(doc["verified"]); self.assertEqual([s["step"] for s in doc["verification"]], ["probe", "loudness", "duration"])
         self.assertEqual(doc["verification"][1]["target_lufs"], -14)
@@ -5506,6 +5767,156 @@ sys.exit(fit.main())
         colon = self.work / "clip:1.mp4"
         tool("cut", self.src, "--start", "0", "--end", "0.5", "-o", "./clip:1.mp4", cwd=self.work)
         self.assertTrue(colon.exists())
+
+
+    @staticmethod
+    def _inputs_and_options(argv):
+        """(input, the options before it that apply to it) for each input of one ffmpeg/ffprobe argv."""
+        if os.path.basename(argv[0]) == "ffprobe" and "-i" not in argv[1:-1]:
+            return [] if len(argv) < 2 or argv[-1].startswith("-") else [(argv[-1], argv[1:-1])]
+        found, since = [], 1
+        for i in range(1, len(argv) - 1):
+            if argv[i] == "-i":
+                found.append((argv[i + 1], argv[since:i]))
+                since = i + 2
+        return found
+
+    @unittest.skipIf(os.name == "nt", "the logging stand-ins for ffmpeg and ffprobe are POSIX scripts")
+    def test_every_executed_ffmpeg_and_ffprobe_input_carries_the_protocol_whitelist(self):
+        """#572: every input of every ffmpeg and ffprobe process a tool starts names its protocols
+        (`-protocol_whitelist file`), so a demuxer that finds a URL inside a local file cannot open
+        it through another protocol. Measured where the processes start: stand-ins for ffmpeg and
+        ffprobe first on PATH log each argv and run the real program."""
+        work = self.out("protocol_log"); work.mkdir(exist_ok=True)
+        log, bindir = work / "log", work / "bin"
+        log.mkdir(exist_ok=True); bindir.mkdir(exist_ok=True)
+        for name in ("ffmpeg", "ffprobe"):
+            stand_in = bindir / name
+            stand_in.write_text(f"#!{sys.executable}\nimport json, os, sys, uuid\n"
+                                f"open(os.path.join({str(log)!r}, uuid.uuid4().hex), 'w').write(json.dumps(sys.argv))\n"
+                                f"os.execv({shutil.which(name)!r}, [{shutil.which(name)!r}] + sys.argv[1:])\n", encoding="utf-8")
+            stand_in.chmod(0o755)
+        env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+        frames = work / "frames"; frames.mkdir(exist_ok=True)
+        for i in range(3):
+            ffmpeg("-f", "lavfi", "-i", f"color=c=blue:s=64x64", "-frames:v", "1", frames / f"f{i:03d}.png")
+        listing = work / "clips.txt"; listing.write_text(f"{self.src}\n{self.camb}\n", encoding="utf-8")
+        project = work / "project.json"
+        project.write_text(json.dumps({"output": str(work / "render.mp4"), "clips": [{"src": str(self.src), "in": 0, "out": 1}]}), encoding="utf-8")
+        runs = [("probe", [self.src]), ("cut", [self.src, "--start", "0", "--end", "1", "-o", work / "cut.mp4"]),
+                ("cut", [self.src, "--segments", "0-1,2-3", "-o", work / "parts.mp4"]),
+                ("fit", [self.src, "--aspect", "1:1", "-o", work / "fit.mp4"]),
+                ("join", [self.src, self.camb, "-o", work / "join.mp4"]),
+                ("join", [f"--list={listing}", "--transition", "none", "--copy", "-o", work / "join_copy.mp4"]),
+                ("export", [self.src, "--preset", "youtube", "-o", work / "export.mp4"]),
+                ("check", [self.src, "--platform", "youtube"]), ("loop", [self.src, "--times", "2", "-o", work / "loop.mp4"]),
+                ("overlay", [self.src, "--image", self.logo, "-o", work / "overlay.mp4"]),
+                ("sequence", ["--dir", frames, "--pattern", "*.png", "-o", work / "seq.mp4"]),
+                ("render", [project]), ("silence", [self.src, "--list"])]
+        for name, args in runs:
+            proc = tool(name, *args, "--overwrite", "--json", check=False, env=env)
+            doc = json.loads(proc.stdout)
+            err = (doc[0] if isinstance(doc, list) else doc).get("error") or {}
+            self.assertIn(err.get("kind"), (None, "verification"), (name, err, proc.stderr[-400:]))
+        seen = {"ffmpeg": 0, "ffprobe": 0}
+        for entry in log.iterdir():
+            argv = json.loads(entry.read_text(encoding="utf-8"))
+            for path, opts in self._inputs_and_options(argv):
+                seen[os.path.basename(argv[0])] += 1
+                self.assertIn(("-protocol_whitelist", "file"), list(zip(opts, opts[1:])), (path, argv))
+        self.assertGreater(seen["ffmpeg"], 10, seen)
+        self.assertGreater(seen["ffprobe"], 10, seen)
+
+    def test_a_file_a_demuxer_opens_from_inside_a_local_input_is_kept_to_the_file_protocol(self):
+        """#572, the second guard on its own: a concat list the skill passes as `-f concat` is not
+        read as a playlist (_refuse_playlist), so the protocol list is what stops an entry that
+        names another protocol. FFmpeg's own default for a local file also lets `data:` and
+        `crypto:` through; the command the runner builds does not, and a plain file still opens."""
+        import base64, importlib
+        runner = importlib.import_module("_common.runner")
+        work = self.out("protocol_list"); work.mkdir(exist_ok=True)
+        clip = work / "clip.ts"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10", "-t", "0.5", "-c:v", "mpeg2video", clip)
+        inline = work / "inline.txt"
+        inline.write_text("file 'data:video/mp2t;base64," + base64.b64encode(clip.read_bytes()).decode() + "'\n", encoding="utf-8")
+        plain = work / "plain.txt"
+        plain.write_text(f"file '{clip}'\n", encoding="utf-8")
+        def codecs(listfile, guarded):
+            cmd = ["ffprobe", "-v", "error", "-f", "concat", "-safe", "0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", "-i", str(listfile)]
+            return sh(*(runner.guard_input_names(cmd) if guarded else cmd), check=False)
+        self.assertIn("mpeg2video", codecs(inline, guarded=False).stdout, "FFmpeg's default opens the data: entry")
+        refused = codecs(inline, guarded=True)
+        self.assertNotIn("mpeg2video", refused.stdout)
+        self.assertIn("not on whitelist", refused.stderr)
+        self.assertIn("mpeg2video", codecs(plain, guarded=True).stdout)
+
+    def test_ffmpeg_skill_roots_keeps_every_input_and_output_under_the_named_directories(self):
+        """#572: with FFMPEG_SKILL_ROOTS set, an input or an output that does not resolve under
+        one of its directories is refused as kind input (path_outside_roots), dry runs included,
+        by every tool in tests/sweep.py's table and the ones swept by hand; a symlink inside is
+        followed to where it points. The system temp directory, where the tools keep their
+        intermediates, still works, and unset the variable changes nothing."""
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        # the tools' temp directory is one of their own beside the two, so neither is inside it
+        # wherever OUT is (revert_proof.py runs the suite from a checkout in the system temp dir)
+        inside, outside, tmp = (Path(OUT) / f"roots_{n}" for n in ("inside", "outside", "tmp"))
+        for d in (inside, outside, tmp):
+            shutil.rmtree(d, ignore_errors=True); d.mkdir(parents=True)
+        src = inside / "clip.mp4"; shutil.copy(self.src, src)
+        stray = outside / "clip.mp4"; shutil.copy(self.src, stray)
+        link = inside / "link.mp4"
+        if hasattr(os, "symlink"):
+            os.symlink(stray, link)
+        env = dict(os.environ, FFMPEG_SKILL_ROOTS=os.pathsep.join(["relative/ignored", str(inside)]),
+                   TMPDIR=str(tmp), TEMP=str(tmp), TMP=str(tmp))
+        facts = sweep.facts_for(str(src), str(tmp))
+
+        def refused(name, *args):
+            proc = tool(name, *args, "--dry-run", "--json", check=False, env=env)
+            doc = json.loads(proc.stdout)
+            if name == "verify":  # its steps run as tools of their own; a step's refusal fails the step
+                self.assertIn(f"{str(args[0])!r} resolves to", doc["files"][0]["steps"][0]["error"])
+                return None
+            err = doc.get("error") or {}
+            self.assertEqual((err.get("kind"), err.get("reason")), ("input", "path_outside_roots"), (name, args, proc.stdout[-400:]))
+            self.assertEqual(err["details"]["roots"], [os.path.normcase(os.path.realpath(inside))])
+            self.assertEqual(err["details"]["ignored"], ["relative/ignored"])
+            return err
+
+        for t, (args, ext) in sweep.TABLE.items():
+            name, args = t.split()[0], [a.format(**facts) for a in args]
+            with self.subTest(tool=t):
+                for given in (stray, link) if link.exists() else (stray,):
+                    err = refused(name, given, *args, *(["-o", tmp / f"roots_{name}{ext}"] if ext else []))
+                    if err:
+                        self.assertEqual(err["details"]["resolved"], os.path.normcase(os.path.realpath(stray)))
+                if ext:  # the output, or a side file beside it (caption's .srt), is the path refused
+                    err = refused(name, src, *args, "-o", outside / f"out{ext}")
+                    self.assertEqual(Path(err["details"]["path"]).parent, outside)
+        project = inside / "project.json"
+        project.write_text(json.dumps({"output": str(outside / "render.mp4"), "clips": [{"src": str(src)}]}), encoding="utf-8")
+        frames = outside / "frames"; frames.mkdir()
+        ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x64", "-frames:v", "1", frames / "f000.png")
+        kept_in = inside / "project_in.json"
+        kept_in.write_text(json.dumps({"output": str(inside / "render.mp4"), "clips": [{"src": str(src)}]}), encoding="utf-8")
+        folder = inside / "batch"; folder.mkdir(); shutil.copy(self.src, folder / "a.mp4")
+        recipe = inside / "recipe.json"
+        recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(outside / "batch_out"),
+                                      "steps": [["loudness.py", "{in}", "-o", "{out}"]]}), encoding="utf-8")
+        for name, args in (("join", [src, stray, "-o", inside / "join.mp4"]), ("render", [project]),
+                           ("render", [kept_in, "--work", outside / "work"]), ("batch", [folder, "--recipe", recipe]),
+                           ("sequence", ["--dir", frames, "--pattern", "*.png", "-o", inside / "seq.mp4"]),
+                           ("cut", [src, "--start", "0", "--end", "1", "-o", inside / "cut.mp4", "--plan", outside / "plan.json"])):
+            with self.subTest(tool=name):
+                refused(name, *args)
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), ["clip.mp4", "frames"], "a refused run wrote outside the roots")
+        # inside the roots a real run works, its intermediates in the temp directory included
+        done = tool("cut", src, "--segments", "0-1,2-3", "-o", inside / "parts.mp4", "--json", env=env)
+        self.assertEqual(json.loads(done.stdout)["status"], "completed")
+        self.assertTrue((inside / "parts.mp4").is_file())
+        # unset, a path anywhere is taken as before
+        tool("probe", stray, "--json", env={k: v for k, v in env.items() if k != "FFMPEG_SKILL_ROOTS"})
 
     def test_refusals_at_the_runner_choke_points_carry_a_reason_and_details(self):
         """The runner's guards refused in prose only. Each now names error.reason and the facts in
@@ -9332,6 +9743,52 @@ class EvalRunnerTests(unittest.TestCase):
         task = {"id": 4, "request": "r", "expect": ["render"], "grader_expect": None, "grader_not": None}
         self.assertTrue(run.score("called render.py --template reel", task)[0])
 
+    def test_score_slot_matches_a_whole_name_not_a_word_that_contains_it(self):
+        run = self.evals_run
+        # agent_prompts_24.json's slots are bare stems, and a substring test let any word holding
+        # one fill the slot: "execute" ran cut, "benefit" fit, "looks" look, so a transcript that
+        # never called the script passed its routing check
+        for slot, text in (("cut", "I will execute the plan"), ("fit", "a clear benefit"),
+                           ("look", "The output looks fine"), ("cut", "ran shortcut.py a.mp4"),
+                           ("cut.py", "ran shortcut.py a.mp4"), ("render", "the renderer is ready"),
+                           ("cut.py", "I will cut the clip")):  # a slot written with .py needs the script
+            task = {"id": 7, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # the script on a command line or by path, and the tool name an MCP harness logs, still fill it
+        for slot, text in (("cut", "python3 scripts/cut.py a.mp4"), ("cut.py", "$ cut.py a.mp4"),
+                           ("look", "python3 ~/.claude/skills/ffmpeg-skill/scripts/look.py out.mp4"),
+                           ("cut", "python C:\\skills\\ffmpeg-skill\\scripts\\cut.py a.mp4"),
+                           ("cut", "Ran `cut.py`."), ("cut", "scripts/cut.pyで切り出しました"),
+                           ("look", "mcp__ffmpeg-skill__look"), ("look", 'mcp__ffmpeg-skill__look({"input": "out.mp4"})'),
+                           ("fit|render", "ran render.py project.json"),
+                           ("--dry-run", "cut.py a.mp4 --dry-run"), ("--on-missing skip", "join.py --on-missing skip"),
+                           ("--list", "join.py --list a.mp4")):
+            task = {"id": 8, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertTrue(run.score(text, task)[0], f"{slot!r} in {text!r}")
+
+    def test_score_bare_slot_needs_the_tool_called_not_the_word_written(self):
+        run = self.evals_run
+        # the request is part of the transcript, and a bare slot that took the plain word let a
+        # run that only restated the request pass ("I will cut the clip" filled cut); it takes the
+        # script's file name or the MCP tool name, not prose, another script or another file
+        for slot, text in (("cut", "I will cut the clip"), ("look", "let me look at the output"),
+                           ("check", "check the file first"), ("audio", "the audio is fine"),
+                           ("fit", "fit it to 9:16"), ("look", "tools/call look"),
+                           ("cut", "ran auto_cut.py a.mp4"), ("cut", "ran jump_cut.py a.mp4"),
+                           ("cut", "ran pre-cut.py a.mp4"), ("cut", "wrote cut.mp4"), ("cut", "read cut-list.txt"),
+                           ("cut", "deleted cut.pyc"), ("render", "inspected render.pycache"),
+                           ("cut", "mcp__ffmpeg-skill__cut_list"), ("cut", "mcp__ffmpeg-skill__auto_cut"),
+                           ("cut.py", "ran scripts/shortcut_cut.py a.mp4"), ("cut.py", "ran x.cut.py")):
+            task = {"id": 9, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        # a flag slot is the whole flag: a longer flag that starts with it does not fill it
+        for slot, text in (("--keep-alpha", "fit.py --keep-alpha-matte"), ("--list", "join.py --list-formats"),
+                           ("--dry-run", "cut.py a.mp4 ---dry-run")):
+            task = {"id": 10, "request": "r", "expect": [slot], "grader_expect": None, "grader_not": None}
+            self.assertFalse(run.score(text, task)[0], f"{slot!r} in {text!r}")
+        self.assertTrue(run.score("fit.py --keep-alpha=1", {"id": 11, "request": "r", "expect": ["--keep-alpha"],
+                                                          "grader_expect": None, "grader_not": None})[0])
+
     def test_score_grader_expect_regex_must_match(self):
         run = self.evals_run
         task = {"id": 5, "request": "r", "expect": [], "grader_expect": r"(?i)\d+\s*bpm", "grader_not": None}
@@ -10459,6 +10916,45 @@ class Issue415Tests(unittest.TestCase):
         # an input that is not there yet (a dry run's planned file) counts as having the stream
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _check_container_codecs(line(d / "not_written_yet.mkv"))
+
+    def test_an_mxf_output_of_a_reencode_is_refused_before_ffmpeg_runs(self):
+        """#736: MXF takes PCM sound only, so every tool's AAC line failed in the muxer after the
+        encode started ("Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'",
+        nothing written) and a dry run said completed; the H.264 line writes dts the muxer
+        rejects on a read-back. Refused now through the one check every command passes, real and
+        dry run alike, for the three cut modes and the tools of the sweep that broadcast masters
+        meet; a stream copy of the same MXF still writes a decodable file with its PCM sound."""
+        d = self.dir("mxf_out")
+        mxf = d / "in.mxf"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=5", "-f", "lavfi", "-i", "sine=r=48000:d=5",
+               "-c:v", "mpeg2video", "-g", "12", "-bf", "0", "-c:a", "pcm_s16le", "-timecode", "01:00:00:00", mxf)
+        for name, argv in (("cut", ["--start", "1.5", "--end", "3", "--accurate"]),
+                           ("cut", ["--start", "1.5", "--end", "3", "--smart"]),
+                           ("fit", ["--duration", "2.5", "--method", "speed"]), ("color", ["--correct", "--contrast", "1.1"]),
+                           ("loudness", []), ("audio", ["--voice", "light"]), ("export", ["--preset", "youtube"])):
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(tool=name, argv=argv, dry=bool(dry)):
+                    out = d / f"{name}.mxf"
+                    doc = json.loads(tool(name, mxf, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                    self.assertEqual(doc["status"], "failed")
+                    err = doc["error"]
+                    self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                    self.assertEqual(err["details"]["container"], "mxf")
+                    self.assertTrue(err["details"]["encoders"])
+                    self.assertIn(".mov", err["hint"])
+                    self.assertFalse(out.exists())
+        # a stream copy still writes a decodable MXF with its PCM sound: one range, and a removal whose
+        # parts land on keyframes (a copy join since #739 reads the MXF keyframes right)
+        for name, argv in (("copy", ["--start", "1.5", "--end", "3"]), ("remove", ["--remove", "1-2"])):
+            with self.subTest(copy=name):
+                kept = d / f"{name}.mxf"
+                doc = json.loads(tool("cut", mxf, *argv, "-o", kept, "--json").stdout)
+                self.assertEqual((doc["status"], doc.get("mode")), ("completed", "copy"))
+                probed = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                                         "-of", "csv=p=0", str(kept)], capture_output=True, text=True)
+                self.assertEqual(probed.stdout.strip(), "pcm_s16le")
+                decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
+                self.assertEqual(decoded.stderr.strip(), "")
 
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
@@ -11843,6 +12339,34 @@ def _unused_imports(path: Path) -> "list":
             if isinstance(c, ast.Constant) and isinstance(c.value, str):
                 used.update(n.id for n in ast.walk(ast.parse(c.value, mode="eval")) if isinstance(n, ast.Name))
     return sorted(f"{name} (line {line})" for name, line in bound.items() if name not in used)
+
+
+class PremultipliedMergeMatrix740Tests(unittest.TestCase):
+    """#740: color.py's wide merge leg (a premultiplied ProRes 4444 master's mask kept at 16 bits
+    through the RGB premultiply) converted the graded YUV to RGB with `format=gbrp16le` alone,
+    which is swscale's BT.601 default: a BT.709-tagged source was read as BT.601 and written back
+    tagged BT.709, so opaque pixels came out by the 709->601 shift."""
+
+    def test_the_wide_merge_leg_names_the_matrix_the_grade_leaves(self):
+        from _common.alpha import wide_merge_leg
+        legs = {name: wide_merge_leg("prores4444", meta) for name, meta in (
+            ("bt709", {"video": {"color_space": "bt709"}}),
+            ("bt601", {"video": {"color_space": "smpte170m"}}),
+            ("untagged", {"video": {}}),
+            ("rgb", {"video": {"pix_fmt": "rgba", "color_space": "gbr"}}))}
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["bt709"])
+        self.assertIn("scale=in_color_matrix=bt601,format=gbrp16le", legs["bt601"])
+        self.assertIn("scale=in_color_matrix=bt709,format=gbrp16le", legs["rgb"],
+                      "an RGB source on a YUV line is the BT.709 that line is (#496)")
+        self.assertNotIn("in_color_matrix", legs["untagged"],
+                         "an untagged source has no matrix to name: swscale's own default stands")
+
+    def test_color_py_builds_the_leg_through_the_helper(self):
+        src = (SCRIPTS / "color.py").read_text(encoding="utf-8")
+        self.assertIn("wide_merge_leg(alpha_codec, meta)", src)
+        inline = [i for i, line in enumerate(src.splitlines(), 1)
+                  if "format=gbrp16le" in line and not line.strip().startswith("#")]
+        self.assertEqual(inline, [], f"color.py builds the wide merge leg inline at line {inline}")
 
 
 class Audit467Tests(unittest.TestCase):
@@ -13329,7 +13853,8 @@ class BasicsAudit558Tests(unittest.TestCase):
         for kept in ("take.mp4", "./-take.mp4", "dir/-take.mp4", "/abs/-take.mp4", "-", "C:\\clips\\-take.mp4", "C:/clips/take.mp4"):
             self.assertEqual(runner.file_arg(kept), kept)
         self.assertEqual(runner.guard_input_names(["ffmpeg", "-y", "-i", "-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"]),
-                         ["ffmpeg", "-y", "-i", "./-a.mp4", "-i", "b.mp4", "-map", "0", "out.mp4"])
+                         ["ffmpeg", "-y", "-protocol_whitelist", "file", "-i", "./-a.mp4",
+                          "-protocol_whitelist", "file", "-i", "b.mp4", "-map", "0", "out.mp4"])
         self.assertEqual(runner.guard_input_names(["ffprobe", "-version"]), ["ffprobe", "-version"], "an option stays an option")
         work = self.work / "dash"
         work.mkdir(exist_ok=True)
@@ -13463,6 +13988,32 @@ class StumbleLedgerTests(unittest.TestCase):
                 span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", spec.get("description", ""))
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
+
+    def test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749(self):
+        """#749: a 0 was read as another value without a word. `export.py --duration 0` wrote the
+        whole clip, `--pad-blur 0` blurred with radius 1 in export.py where fit.py refused it,
+        `caption.py --font-size 0` reported size_used 0 for 28 px text, and `--emoji-scale 0` drew
+        the emoji at 1.0 in caption.py and graphics.py. Each help now states its range (> 0, or
+        1..2000 as overlay.py's --font-size) and the shared step refuses what is outside it, in a
+        dry run as well; the values inside it still run."""
+        clip, srt = str(ROOT / "demos" / "footage" / "veo_sea.mp4"), str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", out, "--dry-run", "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            rows = ((("export", "--preset", "youtube"), "--duration", "2", "> 0"),
+                    (("export", "--preset", "tiktok", "--pad-fill", "blur"), "--pad-blur", "5", "> 0"),
+                    (("fit", "--aspect", "9:16", "--fit", "blur"), "--pad-blur", "5", "> 0"),
+                    (("caption", "--srt", srt), "--font-size", "24", "1..2000"),
+                    (("caption", "--srt", srt), "--emoji-scale", "1.5", "> 0"),
+                    (("graphics", "--template", "hook", "--title", "hi"), "--emoji-scale", "1.5", "> 0"))
+            for (tool, *argv), flag, kept, span in rows:
+                with self.subTest(tool=tool, flag=flag):
+                    proc = run(tool, *argv, f"{flag}=0")
+                    self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                    error = json.loads(proc.stdout)["error"]
+                    self.assertEqual(error["message"], f"{flag} 0 is outside what this option takes, {span}")
+                    self.assertEqual(run(tool, *argv, f"{flag}={kept}").returncode, 0)
 
     def test_every_option_has_help_text(self):
         """#558: twenty options (--preset on eight tools, the colour and font options of overlay
@@ -13699,6 +14250,98 @@ class TestOutIsolationTests(unittest.TestCase):
                 proc = subprocess.run([sys.executable, "-m", "unittest", *target],
                                       cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
                 self.assertEqual(proc.returncode, 0, f"{target}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+
+
+class EncodePolicyTests(unittest.TestCase):
+    """#576: $FFMPEG_SKILL_ENCODE sets the encoder flags' defaults and, `locked`, refuses a call that
+    asks for something else before ffmpeg runs; every re-encoding result records the settings it
+    ran with (`encode`) and a --fast one says it is a preview."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_ffmpeg_or_skip("ffmpeg", "ffprobe")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "ep_source.mp4"
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-i", "sine=d=1.2", "-t", "1.2",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", cls.src)
+
+    def run_tool(self, name, *args, policy=None, ok=True):
+        env = {k: v for k, v in os.environ.items() if k != ENCODE_ENV}
+        if policy is not None:
+            env[ENCODE_ENV] = policy
+        out = OUT / f"ep_{name}_{abs(hash((args, policy)))}.mp4"
+        proc = tool(name, *args, "-o", out, "--overwrite", "--json", env=env, check=False)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["status"], "completed" if ok else "failed", proc.stderr)
+        return doc
+
+    def refused(self, doc, key):
+        self.assertEqual((doc["error"]["kind"], doc["error"]["reason"], doc["error"]["details"].get("key")), ("input", "encode_policy", key))
+        self.assertEqual(doc["commands"], [], "refused before any ffmpeg command")
+
+    def test_unset_changes_nothing_and_every_encode_is_recorded(self):
+        self.assertEqual(getattr(sys.modules["_common.runner"], "ENCODE_ENV", None), ENCODE_ENV)
+        doc = self.run_tool("denoise", self.src, "--dry-run")
+        self.assertEqual(doc["encode"], {"codec": "h264", "crf": 18, "preset": "medium", "hw": False, "policy": None})
+        self.assertNotIn("preview", doc)
+        real = self.run_tool("denoise", self.src, "--quality", "30")
+        self.assertEqual((real["encode"]["crf"], real["encode"]["preset"]), (30, "medium"))
+        self.assertIn("-crf 30", real["commands"][-1])
+
+    def test_the_house_settings_are_the_defaults_and_a_flag_still_wins_unlocked(self):
+        house = "codec=hevc, quality=26 ,preset=fast"
+        doc = self.run_tool("denoise", self.src, "--dry-run", policy=house)
+        self.assertEqual(doc["encode"], {"codec": "hevc", "crf": 26, "preset": "fast", "hw": False,
+                                         "policy": {"locked": False, "applied": ["codec", "quality", "preset"]}})
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--quality", "20", "--codec", "h264", policy=house)
+        self.assertEqual((doc["encode"]["codec"], doc["encode"]["crf"], doc["encode"]["preset"]), ("h264", 20, "fast"))
+        self.assertEqual(doc["encode"]["policy"]["applied"], ["preset"])
+        # --fast is a preview, and it says so
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--fast", policy=house)
+        self.assertEqual((doc["preview"], doc["encode"]["preset"]), (True, "veryfast"))
+
+    def test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included(self):
+        house = "codec=h264,quality=20,preset=slow,hw=0,locked"
+        for argv, key in ((["--quality", "18"], "quality"), (["--qual=18"], "quality"), (["--codec", "hevc"], "codec"),
+                          (["--preset", "medium"], "preset"), (["--fast"], "fast"), (["--hw"], "hw")):
+            for dry in (["--dry-run"], []):
+                with self.subTest(argv=argv, dry=dry):
+                    self.refused(self.run_tool("denoise", self.src, *argv, *dry, policy=house, ok=False), key)
+        # the same value, spelled out, is not another choice
+        doc = self.run_tool("denoise", self.src, "--dry-run", "--quality", "20", "--no-hw", policy=house)
+        self.assertEqual(doc["encode"]["policy"], {"locked": True, "applied": ["codec", "preset"]})
+        # without a pinned preset a locked policy leaves --fast previews alone
+        self.assertTrue(self.run_tool("denoise", self.src, "--dry-run", "--fast", policy="quality=20,locked")["preview"])
+
+    def test_an_entry_that_does_not_read_is_refused_where_the_policy_applies(self):
+        for bad in ("quality=high", "codec=vp9", "crf=18", "locked=yes"):
+            with self.subTest(bad=bad):
+                doc = self.run_tool("denoise", self.src, "--dry-run", policy=bad, ok=False)
+                self.assertEqual((doc["error"]["reason"], doc["error"]["details"]["entry"]), ("encode_policy", bad))
+        # a tool with no encoder flag never reads it
+        proc = tool("probe", self.src, env=dict(os.environ, **{ENCODE_ENV: "quality=high"}))
+        self.assertEqual(json.loads(proc.stdout)["file"], str(self.src))
+
+    def test_batch_rows_carry_their_encode_and_the_cache_key_its_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "in"
+            folder.mkdir()
+            shutil.copy(self.src, folder / "a.mp4")
+            recipe = Path(tmp) / "recipe.json"
+            recipe.write_text(json.dumps({"glob": "*.mp4", "output_dir": str(Path(tmp) / "out"),
+                                          "steps": [["denoise.py", "{in}", "-o", "{out}"]]}), encoding="utf-8")
+            env = dict(os.environ, **{ENCODE_ENV: "quality=27"})
+            doc = json.loads(tool("batch", folder, "--recipe", recipe, "--json", env=env).stdout)
+        self.assertEqual(doc["results"][0]["encode"]["crf"], 27)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("batch_576", SCRIPTS / "batch.py")
+        batch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(batch)
+        with unittest.mock.patch.dict(os.environ, {ENCODE_ENV: "quality=27"}):
+            self.assertEqual(batch.gpu_key(), ":encode=quality=27")
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENCODE_ENV, None)
+            self.assertEqual(batch.gpu_key(), "")
 
 
 if __name__ == "__main__":

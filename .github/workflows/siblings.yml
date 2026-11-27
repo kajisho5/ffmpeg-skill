@@ -1,0 +1,31 @@
+# A fix's PR says what was swept for the same defect elsewhere (AGENTS.md; the template's
+# `## Siblings` section). Its own workflow: the verdict depends on the PR's title and body, so it
+# runs again when either is edited, and an edit must not cancel the test matrix or revert proof.
+name: siblings
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  siblings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          python3 .github/scripts/siblings_section.py --base FETCH_HEAD --title "$PR_TITLE"

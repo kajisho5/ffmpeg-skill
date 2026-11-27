@@ -255,7 +255,10 @@ usable from any agent harness that can (a) hand the skill's prompts to an agent 
 3. **Save the transcript.** Capture whatever your harness logs for that turn — the commands it
    ran and the final report it gave the user — to `RESULTS/<id>.txt` (or `<id>.md`). It does not
    need to be a Claude-shaped transcript; `run.py` only checks for substrings and regexes in the
-   text, so any log that shows the tool invocations and the final report works.
+   text, so any log that shows the tool invocations and the final report works. A call counts
+   when the log names the script (`cut.py`, any path to it) or, for a slot written without `.py`,
+   the MCP tool as `mcp__<server>__cut`; the word "cut" on its own does not, since the request
+   text says it too.
 4. **Grade it.**
 
    ```bash
@@ -266,7 +269,7 @@ usable from any agent harness that can (a) hand the skill's prompts to an agent 
    ```
 
    A prompt passes when every `expect` slot (an `a|b` alternation means either satisfies it)
-   appears in the transcript, any `grader_expect` regex the prompt carries also matches, and any
+   is called in the transcript, any `grader_expect` regex the prompt carries also matches, and any
    `grader_not` regex does not.
 
 ### What regex-only grading can and can't tell you

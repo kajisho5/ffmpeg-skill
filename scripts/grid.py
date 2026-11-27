@@ -26,7 +26,7 @@ import os
 import sys
 
 from _common import add_common, apply_common, aac_args, cfr_args, default_output, die, emit, X264_PRESETS, fmt_secs, \
-    as_limited, draws_chroma, drawn_chain, drawtext_text_opts, escape_drawtext, ffmpeg_base, info, label_chain, matrix_chain, range_chain, probe, run, validate_color, video_args
+    as_limited, draws_chroma, drawn_chain, drawtext_text_opts, escape_drawtext, ffmpeg_base, info, mix_color_chains, probe, run, validate_color, video_args
 from _common.fonts import font_choice, record_font_choice
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
@@ -154,20 +154,9 @@ def main() -> int:
     for p, still in zip(args.inputs, stills):
         cmd += (still_loop_args(p, target_duration) if still else []) + ["-i", p]
 
-    # each cell converted by its own tags to the BT.709 the grid is tagged with (a BT.601 or an RGB
-    # input): without it 5.1/6.1 relabelled them, and 7.1+ converted cells to one another's matrix.
-    # Beside a converted cell an untagged one gets a BT.709 label, so 7.1+'s xstack has nothing to
-    # convert; a grid of untagged/BT.709 clips is what it was.
-    # A --background or --font-color with chroma is drawn in the BT.709 the grid is tagged with
-    # (drawn_chain): every untagged cell is labelled for it too, and the gaps are each cell's own
-    # pad instead of xstack's fill, which 5.1/6.1 draw in BT.601 (a grey needs neither).
     colours = [args.background] + ([args.font_color] if args.label == "auto" else [])
     chroma = draws_chroma(colours, None)
-    convert = [matrix_chain(m, None) for m in metas]
-    if any(convert) or chroma:
-        convert = [c or label_chain(m, None) for c, m in zip(convert, metas)]
-    # xstack mixes samples: a full-range cell beside a limited one is taken to limited range (#410)
-    convert = [c + range_chain(m, None) for c, m in zip(convert, metas)]
+    convert = mix_color_chains(metas, None, draws_colour=chroma)
     parts = []
     for i, p in enumerate(args.inputs):
         drawn = [  # (with this colour, with black)

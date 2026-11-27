@@ -76,7 +76,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from export import PRESETS, PLATFORM_OF
 from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
 from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import absent_word, path_denied, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
+from _common.runner import refuse_outside_roots, absent_word, path_denied, ENCODE_ENV, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
 from _common.probe import AUDIO_MEDIA_EXT
@@ -1049,6 +1049,8 @@ def cache_key(stage: str, script: str, argv: "Sequence[Any]", inputs: "Sequence[
         "hw": [os.environ.get(HW_ENV, "").strip().lower() in ("1", "true", "yes", "on"), os.environ.get(HW_FORCED_ENV) == "1"],
         "ffmpeg": CACHE.get("ffmpeg"), "skill": SKILL_VERSION, "contract": CONTRACT_VERSION,
     }
+    if os.environ.get(ENCODE_ENV, "").strip():
+        payload["encode_policy"] = os.environ[ENCODE_ENV].strip()  # the house settings a stage's flags default to (#576)
     named = _brand_files_key(argv)
     if named:
         payload["brand_files"] = named  # only with --brand: every other stage's key is unchanged
@@ -1215,14 +1217,14 @@ def plan_input_status(inputs: Sequence[Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-def run_check(output: str, platform: Optional[str], content: bool) -> Dict[str, Any]:
+def run_check(output: str, platform: Optional[str], content: bool, extra: Sequence[str] = ()) -> Dict[str, Any]:
     """check.py on `output` for a project's "check" stage or a plan's check step: `platform`
     (or none: check.py's youtube assumption, judgement rows WARN) and `content` (--content).
     Returns check.py's own document; when check.py printed none that parses, a failure document
     in its shape -- status failed, error {kind, reason: check_output_unparsed, message,
     exit_code, stderr_tail} -- so a caller never reads a bare string."""
     cp = run_tool([str(HERE / "check.py"), output] + (["--platform", str(platform)] if platform else [])
-                  + (["--content"] if content else []) + ["--json"] + child_args())
+                  + (["--content"] if content else []) + list(extra) + ["--json"] + child_args())
     try:
         doc = json.loads(cp.stdout)
     except ValueError:
@@ -1312,6 +1314,9 @@ def execute_plan(plan: Dict[str, Any], path: str) -> int:
     argv = [str(a) for a in plan["argv"] if not is_output_shape_flag(str(a))]
     expected_frames = plan.get("sequence_frames_sha256")
     replay_env = None
+    if tool == "silence" and "cut_plan" in plan:
+        from _common.pacing_edit import plan_digest
+        replay_env = dict(os.environ, FFMPEG_SKILL_PACING_PLAN_SHA256=plan_digest(plan["cut_plan"]))
     if tool == "sequence" and expected_frames is None:
         warn("this older sequence plan does not bind the ordered frame list; make a new plan to check it",
              "plan_sequence_unbound")
@@ -1613,6 +1618,192 @@ def planned_clip_length(clip: Dict[str, Any], src: str, index: int) -> float:
     return 10.0
 
 
+# --compare-project (#442 phase 4): where the new render may differ from the previous one, read
+# from the two projects. A key moves frames (TIMELINE), changes the whole picture or sound, or
+# changes one layer's or cue's own window; output, check and chapters change no frame or sample.
+TIMELINE = ("clips", "transition", "silence", "fit", "frame", "audiogram", "snap")
+WHOLE = {"brand": ("picture",), "template": ("picture",), "audio": ("sound",), "loudness": ("sound",),
+         "export": ("picture", "sound"), "output": (), "check": (), "chapters": ()}
+
+
+def _fp(value: Any) -> Any:
+    """A project value with each file it names (absolute after the rebase) as that file's
+    fingerprint, so a file replaced under the same name is a difference too."""
+    if isinstance(value, dict):
+        return {k: _fp(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fp(v) for v in value]
+    return file_key(Path(value)) if isinstance(value, str) and os.path.isabs(value) and os.path.isfile(value) else value
+
+
+def _secs(value: Any, default: Optional[float]) -> Optional[float]:
+    from _common.decision import parse_time
+    return default if value is None else parse_time(str(value))
+
+
+def _cues(cap: Any) -> Optional[List[Any]]:
+    """The cues a captions block burns, [start, end, text] in the delivered file's time, as
+    caption.py times them (auto-timed lines 3 s apart, --offset, --min-duration's lengthening at
+    most); None when only caption.py's own run could time them (an ASS file, inline text)."""
+    if not isinstance(cap, dict):
+        return []
+    try:
+        if cap.get("srt"):
+            from _common import parse_srt
+            raw = parse_srt(cap["srt"])
+        elif isinstance(cap.get("text"), str) and os.path.isfile(cap["text"]):
+            from caption import cue_times_match, _cue_time
+            raw, cursor = [], 0.0
+            for line in (x for x in Path(cap["text"]).read_text(encoding="utf-8").split("\n") if x.strip()):
+                m = cue_times_match(line)
+                raw.append((_cue_time(m["a"], None), _cue_time(m["b"], None), m["text"].strip()) if m else (cursor, cursor + 3.0, line.strip()))
+                cursor = raw[-1][1]
+        else:
+            return None
+        off, least = float(cap.get("offset") or 0), float(cap.get("min_duration", 1.0))
+    except (OSError, ValueError, TypeError):
+        return None
+    return [[round(s + off, 6), round(max(e, s + least) + off, 6), t] for s, e, t in raw]
+
+
+def _trim(old: Dict[str, Any], new: Dict[str, Any], end: float) -> "Tuple[List[List[float]], float, Optional[str]]":
+    """The spans of the previous render that a later "in" on the first clip and an earlier "out" on
+    the last cut out and how far the start moved, or the reason any other timeline change is not."""
+    oc, nc = old.get("clips") or [], new.get("clips") or []
+    others = [k for k in TIMELINE if k != "clips" and _fp(old.get(k)) != _fp(new.get(k))]
+    if others or len(oc) != len(nc):
+        return [], 0.0, (", ".join(others) or "clips: a clip added or removed") + " moves frames by more than a declared cut"
+    if new.get("silence") or new.get("audiogram") or new.get("snap") or (new.get("fit") or {}).get("duration") is not None:
+        return [], 0.0, "clips: a trim under a silence cut, an audiogram, a beat snap or a fit duration moves frames by what that stage measures"
+    for i, (a, b) in enumerate(zip(oc, nc)):
+        moved = sorted(k for k in set(a) | set(b) if _fp(a.get(k)) != _fp(b.get(k)))
+        bad = [k for k in moved if k not in ({"in"} if i == 0 else set()) | ({"out"} if i == len(oc) - 1 else set())]
+        if bad:
+            return [], 0.0, f"clips[{i}]: {', '.join(bad)} changed; only a later in on the first clip and an earlier out on the last map to a cut"
+    try:
+        i0, i1, o0, o1 = (_secs(oc[0].get("in"), 0.0), _secs(nc[0].get("in"), 0.0), _secs(oc[-1].get("out"), None), _secs(nc[-1].get("out"), None))
+    except ValueError:
+        return [], 0.0, "clips: an in or out that is not in seconds or H:MM:SS"
+    o0 = probe(oc[-1]["src"]).get("duration") if o0 is None and o1 is not None else o0
+    if i1 < i0 or (o1 is None) != (o0 is None) or (o1 is not None and o1 > o0):
+        return [], 0.0, "clips: the new cut has frames the previous render does not have, so nothing to compare them with"
+    speeds = [float(c.get("speed") or 1) for c in (oc[0], oc[-1])]
+    head, removed = (i1 - i0) / speeds[0], []
+    if head > 0:
+        removed.append([0.0, round(head, 6)])
+    if o1 is not None and o1 < o0:
+        removed.append([round((o1 - i0) / speeds[0] if len(oc) == 1 else end - (o0 - o1) / speeds[1], 6), end])
+    return removed, head, None
+
+
+def derive_scope(old: Dict[str, Any], new: Dict[str, Any], end: float) -> Dict[str, Any]:
+    """check.py's declaration for the change from `old` to `new`: picture and sound spans in the new
+    render's time (`end`, the previous render's length, closes an open one), removed spans in the
+    previous render's, and `not_derivable`, each difference no span states."""
+    diffs: List[Dict[str, Any]] = []
+    why: List[str] = []
+    removed, shift = [], 0.0
+    if any(_fp(old.get(k)) != _fp(new.get(k)) for k in TIMELINE):
+        removed, shift, reason = _trim(old, new, end)
+        (why.append(reason) if reason else diffs.append({"key": "clips", "removed": removed}))
+    spans: Dict[str, List[List[float]]] = {"picture": [], "sound": []}
+
+    def whole(key: str, sides: Sequence[str]) -> None:
+        for side in sides:
+            spans[side].append([0.0, end])
+        diffs.append({"key": key, **{side: "whole" for side in sides}})
+
+    ex = new.get("export") or {}
+    normalizes = new.get("loudness") or (ex.get("normalize") if ex.get("normalize") is not None
+                                         else resolve_platform(str(ex.get("preset") or "")) in PLATFORM_OF)
+    if removed and (new.get("audio") or normalizes):
+        whole("clips", ("sound",))  # a bed, a fade or a level measured over the whole file moves with the cut
+    for key in sorted(set(old) | set(new)):
+        a, b = old.get(key), new.get(key)
+        if key in TIMELINE or key in ("captions", "graphics", "overlays"):
+            continue
+        if key == "brand":
+            a, b = ([a, *brand_asset_files(a)] if a else a), ([b, *brand_asset_files(b)] if b else b)
+        if _fp(a) == _fp(b):
+            continue
+        if key not in WHOLE:
+            why.append(f"{key}: no rule maps it to a span")
+        elif WHOLE[key] or (key == "check" and (old.get("template") or new.get("template"))):
+            whole(key, WHOLE[key] or ("picture",))  # a template's captions and layers are placed for its check.platform
+
+    def changed(key: str, windows: List[Any]) -> None:
+        got = [list(w) for w in sorted({(max(0.0, w[0]), end if w[1] is None else w[1]) for w in windows if w and (w[1] is None or w[1] >= 0)})]
+        spans["picture"].extend(got)
+        if got:  # a cue or layer the cut took out whole changes nothing left (an end is a frame it is drawn on)
+            diffs.append({"key": key, "picture": got})
+
+    ca, cb = old.get("captions"), new.get("captions")
+    if _fp(ca) != _fp(cb) or (removed and cb):
+        qa, qb = _cues(ca), _cues(cb)
+        if qa is None or qb is None:
+            whole("captions", ("picture",))
+        else:
+            qa = [[round(s - shift, 6), round(e - shift, 6), t] for s, e, t in qa]
+            restyled = ca and cb and _fp({k: v for k, v in ca.items() if k not in ("text", "srt")}) != _fp({k: v for k, v in cb.items() if k not in ("text", "srt")})
+            moved = [c for c in qa if restyled or c[0] < 0 or c not in qb] + [c for c in qb if restyled or c not in qa]
+            if moved:
+                changed("captions", [c[:2] for c in moved])
+    for kind in ("graphics", "overlays"):
+        la, lb = old.get(kind) or [], new.get(kind) or []
+        for i in range(max(len(la), len(lb))):
+            a, b = (la[i] if i < len(la) else None), (lb[i] if i < len(lb) else None)
+            try:
+                wa = a and [round(_secs(a.get("start"), 0.0) - shift, 6), None if a.get("end") is None else round(_secs(a["end"], 0.0) - shift, 6)]
+                wb = b and [round(_secs(b.get("start"), 0.0), 6), None if b.get("end") is None else round(_secs(b["end"], 0.0), 6)]
+            except ValueError:
+                why.append(f"{kind}[{i}]: a start or end that is not in seconds or H:MM:SS")
+                continue
+            same = bool(a and b) and _fp({k: v for k, v in a.items() if k not in ("start", "end")}) == _fp({k: v for k, v in b.items() if k not in ("start", "end")})
+            # under a cut a layer is the same over the same frames only when it does not run on its own
+            # clock (a video layer's frames, a graphic that fills to the clip's end, a fade or slide
+            # that the cut starts part way through); a whole-clip overlay that does not fade is
+            if same and all(x.get("start") is None and x.get("end") is None for x in (a, b)):
+                same = not removed or (kind == "overlays" and not b.get("video") and not b.get("fade"))
+            elif same:
+                same = wa == wb and (not removed or (not b.get("video") and b.get("end") is not None and wa[0] >= 0))
+            if not same:
+                changed(f"{kind}[{i}]", [wa, wb])
+    return {"differences": diffs, "not_derivable": why, "removed": removed,
+            **{side: [list(w) for w in sorted({tuple(w) for w in spans[side]})] for side in spans}}
+
+
+def compare_plan(path: str, new: Dict[str, Any]) -> Dict[str, Any]:
+    """--compare-project OLD: the previous render (OLD's output) and the derived declaration, or a
+    refusal before the first stage (--dry-run too): an edit no span states is not checked on a guess."""
+    try:
+        old = read_json(path)
+    except (OSError, ValueError) as exc:
+        die(f"--compare-project: cannot read {path}: {exc}", kind="input")
+    if not isinstance(old, dict) or "plan_version" in old:
+        die(f"--compare-project {path}: not a render.py project", kind="input")
+    validate_project(old)
+    base = Path(path).resolve().parent
+    old = rebase_project_paths(old, base)
+    ref = str(old.get("output") or base / "final.mp4")  # the rebase made a relative output absolute
+    if not os.path.isfile(ref):
+        die(f"--compare-project: the previous render {absent_word(ref)}: {ref}; render {path} first, or name the project that wrote it",
+            kind="input")
+    meta = probe(ref)
+    if not meta.get("duration") or not (meta.get("video") or meta.get("audio")):
+        die(f"--compare-project: the previous render {ref} has no picture or sound of a length ffprobe can read", kind="input")
+    scope = derive_scope(old, new, round(float(meta.get("duration") or 0.0), 3))
+    if scope["not_derivable"]:
+        refuse("input", "project_diff_not_derivable",
+               f"--compare-project {path}: the change cannot be stated as spans: " + "; ".join(scope["not_derivable"]),
+               hint="render without --compare-project, or make the edit one a span states (a layer, a cue, a trim at either end)",
+               project=path, reference=ref, not_derivable=scope["not_derivable"], differences=scope["differences"])
+    flag = lambda spans: [f"{s:.3f}-{e:.3f}" for s, e in spans] or ["none"]
+    return {"project": os.path.abspath(path), "reference": ref, "differences": scope["differences"],
+            "expect_changed": flag(scope["picture"]) if meta.get("video") else None,
+            "expect_audio_changed": flag(scope["sound"]) if meta.get("audio") else None,
+            "expect_removed": flag(scope["removed"])[:len(scope["removed"])], "check": None, "ok": None}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -1638,6 +1829,10 @@ def main() -> int:
                     help="x264/x265 preset of the stages before an encoding export (default superfast: the export "
                          "re-encodes them, and its own preset sets the delivered quality); medium = the stages' own default. "
                          "Not used without an export stage, with --stop-after before it, with --fast, or for a copy export")
+    ap.add_argument("--compare-project", metavar="OLD.json",
+                    help="the project of the previous render (its output is the reference): the change the two projects "
+                         "differ by becomes check.py's --expect-changed/--expect-audio-changed/--expect-removed, checked "
+                         "after the render; an edit no span states is refused before the first stage")
     ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
     tpl = ap.add_argument_group("delivery templates (one command per destination)")
     tpl.add_argument("--template", metavar="NAME", help="render INPUT with a shipped template: " + ", ".join(template_names())
@@ -1663,7 +1858,13 @@ def main() -> int:
     WORK_DIR["path"] = None
     DELIVERY["path"] = None
     STATE.audit_log = os.path.abspath(args.audit_log) if args.audit_log else None
+    for written in (args.work, args.cache, args.audit_log):  # written by this process itself (#572)
+        if written:
+            refuse_outside_roots(written, "output")
 
+    if args.compare_project and (args.stop_after or args.export_timeline or args.write_project or args.init or args.list_templates):
+        die("--compare-project checks a delivered render against the previous one: it does not combine with --stop-after, "
+            "--export-timeline, --write-project, --init or --list-templates, which deliver none")
     if args.list_templates:
         list_templates()
         return 0
@@ -1690,7 +1891,8 @@ def main() -> int:
             # A85: a pack runs one full render per destination and handed none of these to them,
             # so --stop-after did not stop, --cache was not read and --work/--keep kept nothing
             for flag, value in (("--stop-after", args.stop_after), ("--cache", args.cache), ("--from", args.from_stage),
-                                ("--work", args.work), ("--keep", args.keep), ("--export-timeline", args.export_timeline)):
+                                ("--work", args.work), ("--keep", args.keep), ("--export-timeline", args.export_timeline),
+                                ("--compare-project", args.compare_project)):
                 if value:
                     die(f"{flag} applies to one render, and --template {args.template} is a pack of {len(names)} "
                         f"({', '.join(names)}), each a full render of its own: name a single template to use {flag}")
@@ -1711,6 +1913,8 @@ def main() -> int:
         if not isinstance(proj, dict):
             die(f"{args.project}: not a project or plan object (top level is {type(proj).__name__})")
         if "plan_version" in proj:
+            if args.compare_project:
+                die("--compare-project compares two render.py projects; a plan runs one tool")
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
@@ -1752,13 +1956,15 @@ def main() -> int:
     if not clips:
         die("project.clips is empty")
     output = rel(proj.get("output") or "final.mp4")
+    compared = compare_plan(args.compare_project, proj) if args.compare_project else None
+    side = [os.path.abspath(args.compare_project), compared["reference"]] if compared else []
     # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
     # (review 5): every file the project names is passed here, not only the clips, or --overwrite
     # replaced a music bed or a brand file named as the output
     if not args.stop_after or args.stop_after == "export":
         # only a run that ends in the final copy writes `output`; a --stop-after preview writes
         # its stage file inside the work directory and leaves `output` alone
-        refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel))
+        refuse_output_is_input(output, *([os.path.abspath(args.project)] if args.project else []), *side, *project_input_files(proj, rel))
     if _reaches("overlays", args.stop_after):
         # #326: an overlay video is the caller's file, never an earlier stage's output, so a
         # missing one is refused here, under --dry-run too, not after every stage before it ran
@@ -1841,7 +2047,7 @@ def main() -> int:
     if (isinstance(cap_cfg, dict) and cap_cfg.get("text") and _reaches("captions", args.stop_after)
             and (not args.stop_after or args.stop_after == "export")):
         caption_srt = os.path.splitext(output)[0] + ".srt"
-        guard_sidecar(caption_srt, *([os.path.abspath(args.project)] if args.project else []), *project_input_files(proj, rel),
+        guard_sidecar(caption_srt, *([os.path.abspath(args.project)] if args.project else []), *side, *project_input_files(proj, rel),
                       siblings=(output,))
     frame = dict(proj.get("frame") or {})
     trans = proj.get("transition") or {}
@@ -1857,7 +2063,8 @@ def main() -> int:
     # "no encoding export", never a traceback before that refusal
     ex_preset = str(ex_cfg.get("preset") or "") if isinstance(ex_cfg, dict) else ""
     if (ex_preset and "copy" not in PRESETS.get(ex_preset, {}).get("video", [])
-            and args.stop_after in (None, "export") and args.intermediate_preset != "medium" and not STATE.fast):
+            and args.stop_after in (None, "export") and args.intermediate_preset != "medium" and not STATE.fast
+            and "preset" not in STATE.encode_policy):  # a house preset ($FFMPEG_SKILL_ENCODE) is every stage's (#576)
         INTERMEDIATE["preset"] = args.intermediate_preset
     stages_done: List[str] = []
     captioned_srt: Optional[Dict[str, Any]] = None
@@ -2386,6 +2593,25 @@ def main() -> int:
     elif "check" in proj:
         record_skip('the check stage names neither "platform" nor "content": true, so nothing was checked',
                     "check_nothing_to_check", keys=sorted(ck or {}))
+    check_failed = bool(exit_code)
+    scope_rows: List[Dict[str, Any]] = []
+    if compared and STATE.dry_run:
+        record_skip("[dry-run] the --compare-project check is not run: a dry run writes no output to compare",
+                    "check_dry_run", compare_project=compared["project"])
+    elif compared:
+        argv = ["--compare", compared["reference"], "--no-loudness"] + [
+            f"{flag}={v}" for flag, key in (("--expect-changed", "expect_changed"), ("--expect-audio-changed", "expect_audio_changed"),
+                                            ("--expect-removed", "expect_removed")) for v in compared[key] or []]
+        compared["check"] = run_check(output, None, False, argv)
+        err = compared["check"].get("error")
+        if isinstance(err, dict) and err.get("kind") in ("timeout", "interrupted"):  # stopped, not failed, as the check stage
+            die(f"check.py --compare failed: {err.get('message')} ({kept_clause()})", code=int(err.get("exit_code") or 1),
+                kind=err["kind"], stage="check.py", output=output, stages=stages_done)
+        # graded by its own two rows: the format rows of a check with no platform are not this question
+        scope_rows = [r for r in compared["check"].get("checks") or [] if r.get("check") in ("change_scope", "audio_change_scope")]
+        compared["ok"] = bool(scope_rows) and all(r.get("status") != "FAIL" for r in scope_rows)
+        info(f"compare-project: {'OK' if compared['ok'] else 'FAIL'} against {compared['reference']}")
+        exit_code = exit_code or int(not compared["ok"])
 
     if not args.keep and not args.work:
         # Also clean up on --dry-run: a dry run still creates this directory (and some steps,
@@ -2399,10 +2625,14 @@ def main() -> int:
         # spec (or the check itself could not run): a failed delivery, reported as one.
         failed_rows = [r["check"] for r in (check_result or {}).get("checks", []) if r.get("status") == "FAIL"]
         unrun = check_not_run(check_result)
-        die(f"rendered {output} but the {check_label} check "
-            + (f"could not run, so nothing was checked: {unrun}" if unrun else "failed" + (f": {', '.join(failed_rows)}" if failed_rows else "")),
+        why = [f"the {check_label} check " + (f"could not run, so nothing was checked: {unrun}" if unrun else "failed"
+                                               + (f": {', '.join(failed_rows)}" if failed_rows else ""))] if check_failed else []
+        if compared and not compared["ok"]:
+            why.append(f"the check against {compared['reference']} failed: " + ("; ".join(f"{r['check']}: {r['value']}" for r in scope_rows if r.get("status") == "FAIL")
+                                                                                  or "check.py graded no change_scope row"))
+        die(f"rendered {output} but " + " and ".join(why),
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
-            probe=probe(output, role="output"))
+            compare_project=compared, probe=probe(output, role="output"))
     info(f"rendered {output} via {' → '.join(stages_done)}")
     # One entry per snapped clip, `clip` naming which. A single-clip project keeps the shape a
     # caller reads today by also carrying the first entry's keys at the top level.
@@ -2412,8 +2642,9 @@ def main() -> int:
         snap_report["clips"] = snap_reports
     emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report(args.cache),
          caption=caption_report, intermediate_preset=_intermediate_used(), caption_srt=caption_srt,
-         verification=[{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [],
-         **picture_fields)
+         verification=([{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [])
+         + ([{"step": "compare_project", "ok": True}] if compared and compared["ok"] else []),
+         compare_project=compared, **picture_fields)
     return 0
 
 

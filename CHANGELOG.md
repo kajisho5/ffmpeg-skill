@@ -4,10 +4,229 @@
 
 ## Unreleased
 
+(nothing yet)
+
+## 4.20.1
+
+_Automated release: version and notes generated from pull requests merged since 4.20.0._
+
+### Fixed
+
+- A 0 that `export.py --duration`, `--pad-blur`, `caption.py --font-size` and `--emoji-scale` (also in `graphics.py`) cannot take is refused as outside the option's range, instead of being read as the whole clip, radius 1, the default size or scale 1.0 (#749).
+- fix: a zero an option cannot take is refused (#749) (#767)
+
+## 4.20.0
+
+_Automated release: version and notes generated from pull requests merged since 4.19.0._
+
+### Added
+
+- `render.py NEW.json --compare-project OLD.json` (#442, phase 4): the expected change comes from
+  the difference between the two projects, not from what the agent says it did. A changed caption
+  cue, overlay or graphic is its own span, `audio`/`loudness` the whole sound, `brand`/`template`
+  the whole picture, `export` both, and a later `in` on the first clip or an earlier `out` on the
+  last a removed span; after the render, `check.py --compare` runs against OLD's output with those
+  `--expect-changed`/`--expect-audio-changed`/`--expect-removed` values, and a FAIL fails the render.
+  The result's `compare_project` holds the derived values, the differences they came from and
+  check.py's document. A difference no span states (a clip added or removed, a transition, silence,
+  fit, frame, audiogram or snap change) is refused before the first stage
+  (`project_diff_not_derivable`).
+- feat: render.py --compare-project, the change scope read from two projects (#442) (#763)
+
+## 4.19.0
+
+_Automated release: version and notes generated from pull requests merged since 4.18.0._
+
+### Added
+
+- `FFMPEG_SKILL_ENCODE` holds a project's house encoder settings (`codec=h264,quality=18,preset=medium,hw=0`): a call that leaves out `--codec`, `--quality`, an x264 `--preset` or `--hw`/`--no-hw` takes them (`export.py`'s delivery presets keep their own codec and CRF), and with `locked` a call that gives one with another value, or `--fast` where a preset is pinned, is refused before ffmpeg runs (`kind: input`, `error.reason: encode_policy`), dry runs included. Unset, nothing changes (#576).
+- A result whose run encoded video records the settings its last video encode ran with, `encode: {codec, crf, preset, hw, policy}`, beside `encoder` (on `batch.py`'s rows too), and a `--fast` result says `preview: true` (#576).
+- feat: house encoder settings in FFMPEG_SKILL_ENCODE, encode and preview in the result (#576) (#761)
+
+## 4.18.0
+
+_Automated release: version and notes generated from pull requests merged since 4.17.0._
+
+### Added
+
+- `silence.py --audition DIR [--audition-seconds 2]` writes a small clip of each join as the cut sounds there
+  and `DIR/index.json` (`cut_index`, `source_out`, `source_in`, `output_t`, `clip`, `join_at`, the measured
+  `duration`), under `--list` too, so the joins are heard before anything is cut; the result's `audition` (#581).
+- `fit.py --fit crop` reports the window it keeps as `crop` (in source pixels and in the scaled frame) in
+  dry-run JSON, plans and results (#581).
+- feat: silence.py --audition clips of each join, and fit.py's crop window as data (#581) (#760)
+- ci: drop the runner's packages.microsoft.com apt source before installing ffmpeg (#758)
+
+## 4.17.0
+
+_Automated release: version and notes generated from pull requests merged since 4.16.1._
+
+### Added
+
+- Every input of every `ffmpeg` and `ffprobe` command a tool runs carries `-protocol_whitelist file`, a second guard behind the URL and playlist refusals: a file a demuxer finds named inside another file is opened as a local file or not at all (#572).
+- `FFMPEG_SKILL_ROOTS`: optional directories (`os.pathsep`-separated, absolute) that every input and output must resolve under, symlinks followed, else `kind: input`, `error.reason: path_outside_roots`, dry runs included; the system temp directory stays allowed. Unset, nothing changes. README's MCP example sets it (#572).
+- SECURITY.md says what the package installs, what a tool reads, writes and refuses, what uses the network (only third-party speech engines fetching their models, and `npx`/`setup`), and how to run it scoped (#572).
+
+### Changed
+
+- The ffmpeg command lines in a result's `commands` (and in a plan) now carry `-protocol_whitelist file` before each input's own options, because that is what runs (#572).
+- feat: a protocol allow-list on every input and FFMPEG_SKILL_ROOTS (#572) (#757)
+
+## 4.16.1
+
+_Automated release: version and notes generated from pull requests merged since 4.16.0._
+
+### Fixed
+
+- `color.py --keep-alpha --source-alpha-mode premultiplied` on a BT.709-tagged ProRes 4444 master reads the graded colour with BT.709, where it used BT.601 and shifted every opaque pixel (#740). Contributed by @pinewhite in #741.
+- fix(color): the wide ProRes 4444 merge reads the graded YUV with its matrix (#740) (#756)
+- ci: a fix's PR says what was swept in its Siblings section (#755)
+
+## 4.16.0
+
+_Automated release: version and notes generated from pull requests merged since 4.15.0._
+
+### Added
+
+- `fit.py --zoom in|out` makes a timed push-in or pull-out on a video clip: `--zoom-amount` (default 1.3), `--zoom-start` and `--zoom-duration` in output seconds, toward `--crop-x`/`--crop-y` (centre by default), the start zoom before the move and the end zoom held after it. Each frame is scaled and cropped back, so the zoom keeps every frame and its timestamp; the result's `zoom` reports the move and `zoom.check` compares the output's frame count, timestamps, duration and rate with the source's, or says it did not measure them (#647).
+- feat: a timed zoom on video (#647) (#753)
+
+## 4.15.0
+
+_Automated release: version and notes generated from pull requests merged since 4.14.0._
+
+### Added
+
+- An FFmpeg outside the majors the test suite runs (6.x-9.x), a git or vendor build, or one whose
+  version cannot be read now adds one `ffmpeg_version_untested` warning to every tool's result, and
+  `doctor` reports it as `ffmpeg_tested` (#556). Nothing is refused; the run goes on as before.
+- feat: say when the FFmpeg on PATH is not one the test suite runs (#556) (#752)
+
+## 4.14.0
+
+_Automated release: version and notes generated from pull requests merged since 4.13.0._
+
+### Added
+
+- `check.py --content` adds a `frame timing` row (#574): every frame's time, read from the packets,
+  against the file's median step. A gap WARNs with how many frames are missing and where; a repeated
+  time FAILs.
+- feat: check.py --content finds dropped and repeated frames (#574) (#751)
+
+## 4.13.0
+
+_Automated release: version and notes generated from pull requests merged since 4.12.0._
+
+### Added
+
+- `check.py --expect-removed START-END` (with `--expect-changed` or `--expect-audio-changed`): a cut
+  is checked against the reference with the declared spans taken out (#442, phase 3). Both
+  `change_scope` and `audio_change_scope` gain `removed`; spans that do not match the cut FAIL.
+- `check.py --expect-audio-changed` compares Matroska files too: they store no length per track,
+  and the container's now stands for it (before, the row FAILed as not compared).
+- feat: check.py --expect-removed, a cut checked against the reference minus its spans (#442) (#750)
+
+## 4.12.0
+
+_Automated release: version and notes generated from pull requests merged since 4.11.0._
+
+### Added
+
+- `cut.py --words FILE --word-segments 0-4,7-12`: cut on the words of a transcript, by index, joined with `--declick-ms`; `--margin`, `--margin-lead` and `--margin-tail` (no default), the cut on the source's frame grid, and `--onset-search SECONDS`, which moves a start to where the sound measurably rises (`measured: null` and the transcript time when it does not). The result's `word_segments` lists each range's words, transcript times, onset and the times cut (#449). `silence.py` already took `--margin-lead`, `--margin-tail` and the sentence flags.
+- feat: word-timed cuts in cut.py (#449) (#748)
+
+## 4.11.0
+
+_Automated release: version and notes generated from pull requests merged since 4.10.0._
+
+### Added
+
+- `check.py --expect-audio-changed SPAN|none` (with `--compare`): the sound's side of `--expect-changed` (#442, phase 2).
+  An `audio_change_scope` row and document say which 0.1 s windows of the two decoded tracks differ, graded against the
+  declared spans; an untouched AAC re-encode of the same sound at 64 kbps or more is not a change.
+- feat: check.py --expect-audio-changed, the sound's side of --expect-changed (#442) (#747)
+
+## 4.10.0
+
+_Automated release: version and notes generated from pull requests merged since 4.9.0._
+
+### Added
+
+- **A stream copy is verified against the span its keyframes allow, and says where it landed** (#620, the owner's decision of 2026-11-26 as a freeze exception).
+  `cut.py` reports `snapped_segments` (`[[in, out], ...]`, read against `requested_start`/`requested_end`/`requested_segments`),
+  holds the written length to the sum of those spans (the step `copy_span`: one frame plus the source's reorder depth per part,
+  instead of `--tolerance`; a miss is `verified: false`), and adds the warning `copy_drift_large` when a copy's in or out
+  sits more than 0.25 s from the request, naming `--accurate`. `docs/contract.md` states what a post-export mismatch does, tool by tool.
+- feat: a copy cut is verified against its keyframe-snapped span (#620) (#746)
+
+## 4.9.0
+
+_Automated release: version and notes generated from pull requests merged since 4.8.4._
+
+### Added
+
+- **`caption.py`, `overlay.py` and `graphics.py` report where what they drew landed: `placement`** (#547).
+  `{measured, x, y, width, height, frame_width, frame_height, touches_edge, samples}`, measured by rendering the run's own
+  filter graph over a black and a white frame of the written size; a caption is the union of its cues (sampled at each
+  cue's middle), a graphics template the union of four instants of its span. `touches_edge` names the frame edges the
+  box reaches, so a caption that runs off the frame says so. A measured box removes `rendered_placement` from
+  `unverified` (`legibility` stays); `render.py` keeps it.
+- feat: caption, overlay and graphics report the measured box of what they drew (#547) (#745)
+
+## 4.8.4
+
+_Automated release: version and notes generated from pull requests merged since 4.8.3._
+
+### Fixed
+
+- An `.mxf` output of a re-encode (`cut.py --accurate`/`--smart`, fit, color, audio, export and the rest) is refused
+  before ffmpeg runs, as `.webm` is, with `kind: input`, `reason: output_container_codecs` and a hint to `.mov` or `.mkv`. It
+  failed after the encode started with "Codec 'aac' is not supported by the bitstream filter 'pcm_rechunk'" (#736).
+
+### Changed
+
+- A change to the changelog is a file under `changelog.d/` instead of lines under `## Unreleased`, so two open PRs no longer conflict in `CHANGELOG.md`; the release folds the fragments into the new version's section (#678).
+- fix: an .mxf output of a re-encode is refused before ffmpeg runs (#736) (#744)
+- chore: changelog fragments instead of editing ## Unreleased (#678), and the README says the crop window is fixed (#570) (#742)
+
+## 4.8.3
+
+_Automated release: version and notes generated from pull requests merged since 4.8.2._
+
+### Fixed
+
+- A stream-copy `cut` of an MXF keeps its start timecode: the copy's keyframe was read 3/23 s early (0.96 s for
+  `--start 1.5`, where FFmpeg lands on 1.44 s), so the label was withheld and `source_carry` listed it as dropped (#696).
+- fix: a stream-copy cut of an MXF keeps its start timecode (#696) (#739)
+
+## 4.8.2
+
+_Automated release: version and notes generated from pull requests merged since 4.8.1._
+
+### Fixed
+
+- A 10-bit (or deeper) source written as 8-bit now says so in the result's `notes`, for every tool,
+  measured on the written file (#696). A stream copy that keeps the depth, and an 8-bit source, say nothing.
+- fix: a deeper picture written as 8-bit says so in the result (#696) (#737)
+
+## 4.8.1
+
+_Automated release: version and notes generated from pull requests merged since 4.8.0._
+
+- fix(fit): advise on flagged interlaced input (#730)
+- chore: one file per defect-ledger entry, so two open fixes never conflict (#678) (#735)
+
+## 4.8.0
+
+_Automated release: version and notes generated from pull requests merged since 4.7.1._
+
 ### Fixed
 
 - Captions and titles keep text-default pictographs such as 🌡 and 🍽 in the drawn text.
   Adding the emoji presentation selector (U+FE0F) still sends them through emoji handling (#696).
+
+- Keep the colours of BT.709 and untagged SDR clips when mixing them in either order with
+  grid, join, broll or multicam (#696).
 
 ### Added
 
@@ -17,6 +236,17 @@
   `straight` (default) is today's command. The result and its `alpha` step name the mode (`source_alpha_mode`);
   without `--keep-alpha` the flag is refused (`source_alpha_mode_needs_keep_alpha`). The premultiplied write
   (`--alpha-mode premultiplied`, every tool that has it) now multiplies in 16-bit RGB instead of 8-bit.
+- ci: the release reads main's own commits (--first-parent), not a merged branch's (#734)
+- fix: preserve colors when mixing tagged BT.709 and untagged clips (#709)
+- feat: add agents plugin marketplace and Codex plugin (#673)
+- fix: evals/run.py fills a slot with a whole name, not a word that contains it ("execute" ran cut) (#718)
+- feat: measure, apply and verify reference pacing (#733)
+- Test decoding of MP4 sweep outputs (#720)
+- docs: document plugin and extension lifecycle (#726)
+- test: pin selected-channel stereo PCM level and document the upmix (#727)
+- test: check Japanese broadcast audio levels after delivery (#728)
+- fix: preserve text-default pictographs in captions and titles (#725)
+- Merge pull request #715 from kajisho5/claude/ffmpeg-skill-repo-setup-cn8xm4
 
 ## 4.7.1
 

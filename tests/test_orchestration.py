@@ -2305,7 +2305,7 @@ class OrchestrationTests(MediaFixtures):
         before = list(_common.STATE.commands)
         proc = _common.run(["ffmpeg", "-i", "in.mp4", "out.mp4"], quiet=True, ctx=ctx)
         self.assertEqual(proc.returncode, 0, "a dry run plans without executing ffmpeg")
-        self.assertEqual(ctx.commands, ["ffmpeg -i in.mp4 out.mp4"])
+        self.assertEqual(ctx.commands, ["ffmpeg -protocol_whitelist file -i in.mp4 out.mp4"])  # the list since #572
         self.assertEqual(_common.STATE.commands, before, "the global STATE must not have seen this call")
 
     def test_skill_md_stays_within_the_agent_reading_budget(self):
@@ -2466,6 +2466,114 @@ class RenderSourceCarryTests(unittest.TestCase):
         # a second sound source: which one's items the output carries is the project's choice
         doc, _kinds, _tc, _warned = render("music", {"src": str(src)}, audio={"music": str(music)})
         self.assertNotIn("source_carry", doc)
+
+
+class CompareProjectTests(unittest.TestCase):
+    """#442 phase 4: render.py NEW.json --compare-project OLD.json reads the expected change from
+    the two projects (a cue, a layer, a trim at either end, a whole-file setting) and checks the
+    render against OLD's own render with check.py's declaration; an edit no span states is refused."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(parents=True, exist_ok=True)
+        cls.src = OUT / "cmpp_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=25:d=6",
+           "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=6", "-c:v", "libx264", "-preset", "ultrafast",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.src)
+
+    def project(self, name, cues, **more):
+        (OUT / f"cmpp_{name}.txt").write_text(cues, encoding="utf-8")
+        proj = OUT / f"cmpp_{name}.json"
+        proj.write_text(json.dumps({"output": str(OUT / f"cmpp_{name}.mp4"), "clips": [{"src": str(self.src), **more.pop("clip", {})}],
+                                    "captions": {"text": str(OUT / f"cmpp_{name}.txt")}, **more}), encoding="utf-8")
+        return proj
+
+    def render(self, proj, *flags, fail=False):
+        proc = script("render.py", proj, *flags, "--json", expect_fail=fail)
+        return json.loads(proc.stdout)
+
+    def test_the_declaration_comes_from_the_project_diff_and_is_checked(self):
+        cues = "0.5-1.5 One\n2-3 Two\n4-5 Three\n"
+        old = self.project("old", cues, overlays=[{"text": "HI", "start": 1, "end": 2}])
+        self.render(old)
+        # one cue's text: that cue's span, nothing for the sound
+        doc = self.render(self.project("cue", cues.replace("Two", "Changed"), overlays=[{"text": "HI", "start": 1, "end": 2}]),
+                          "--compare-project", old)
+        got = doc["compare_project"]
+        self.assertEqual((got["expect_changed"], got["expect_audio_changed"], got["expect_removed"], got["ok"]),
+                         (["2.000-3.000"], ["none"], [], True), got)
+        rows = {r["check"]: r["status"] for r in got["check"]["checks"]}
+        self.assertEqual((rows["change_scope"], rows["audio_change_scope"]), ("PASS", "PASS"))
+        self.assertIn({"step": "compare_project", "ok": True}, doc["verification"])
+        # 2 s off the head and the tail from 5 s, the cues moved with the cut: two removed spans of the
+        # previous render's time. The overlay at 1-2 s went with the head but for its closed end: the
+        # frame at 2.000 s, the trim's first, had it and has it no longer
+        doc = self.render(self.project("trim", "0-1 Two\n2-3 Three\n", clip={"in": 2, "out": 5}), "--compare-project", old)
+        got = doc["compare_project"]
+        self.assertEqual(got["expect_removed"][0], "0.000-2.000", got)
+        self.assertTrue(got["expect_removed"][1].startswith("5.000-6."), got)  # to the previous render's end
+        self.assertEqual((got["expect_changed"], got["expect_audio_changed"], got["ok"]), (["0.000-0.000"], ["none"], True), got)
+        self.assertEqual([(o["start"], o["frames"]) for o in got["check"]["change_scope"]["observed"]], [(0.0, 1)])
+        self.assertEqual(got["check"]["change_scope"]["frames"], 75)
+        # the reference is not what the old project renders (a stale file): the check FAILs where they differ
+        (OUT / "cmpp_stale.json").write_text(json.dumps({**json.loads(old.read_text(encoding="utf-8")),
+                                                          "output": str(OUT / "cmpp_cue.mp4")}), encoding="utf-8")
+        again = self.project("again", cues, overlays=[{"text": "HI", "start": 1, "end": 2}])
+        doc = self.render(again, "--compare-project", OUT / "cmpp_stale.json", fail=True)
+        self.assertEqual((doc["error"]["kind"], doc["compare_project"]["ok"], doc["compare_project"]["expect_changed"]),
+                         ("verification", False, ["none"]))
+        self.assertEqual([(u["start"], u["end"]) for u in doc["compare_project"]["check"]["change_scope"]["undeclared"]], [(2.0, 3.0)])
+        self.assertIn("change_scope: changed 2.00-3.00", doc["error"]["message"])
+
+    def test_whole_file_settings_and_layers_on_their_own_clock_are_declared_whole(self):
+        """The rules derive_scope() applies, without a render: a level is the whole sound, an export
+        both, and under a trim a layer that runs on its own clock (a video layer, a graphic
+        to the clip's end) is changed where a still overlay with the same window is not."""
+        import render
+        base = {"clips": [{"src": str(self.src)}], "overlays": [{"text": "A", "start": 3, "end": 4}]}
+        got = render.derive_scope(base, {**base, "audio": {"gain": -3}}, 6.0)
+        self.assertEqual((got["picture"], got["sound"], got["not_derivable"]), ([], [[0.0, 6.0]], []))
+        got = render.derive_scope(base, {**base, "export": {"preset": "web"}}, 6.0)
+        self.assertEqual((got["picture"], got["sound"]), ([[0.0, 6.0]], [[0.0, 6.0]]))
+        trim = {"clips": [{"src": str(self.src), "in": 1}],
+                "overlays": [{"text": "A", "start": 2, "end": 3}, {"video": str(self.src), "start": 2, "end": 3}],
+                "graphics": [{"template": "progress"}]}
+        old = {**base, "overlays": [{"text": "A", "start": 3, "end": 4}, {"video": str(self.src), "start": 3, "end": 4}],
+               "graphics": [{"template": "progress"}]}
+        got = render.derive_scope(old, trim, 6.0)
+        self.assertEqual(got["removed"], [[0.0, 1.0]])
+        self.assertEqual([d["key"] for d in got["differences"]], ["clips", "graphics[0]", "overlays[1]"], got["differences"])
+        self.assertEqual(got["picture"], [[0.0, 6.0], [2.0, 3.0]])  # the graphic to the end, the video layer at its window
+        got = render.derive_scope(base, {**base, "transition": {"type": "none"}}, 6.0)
+        self.assertEqual(got["not_derivable"], ["transition moves frames by more than a declared cut"])
+
+    def test_what_no_span_states_is_refused_before_the_first_stage(self):
+        old = self.project("dry_old", "0-1 One\n")
+        self.render(old)
+        cases = ((self.project("speed", "0-1 One\n", clip={"speed": 2}), (), "project_diff_not_derivable", "clips[0]: speed changed"),
+                 (self.project("longer", "0-1 One\n", clip={"in": 1}), (), None, None),
+                 (self.project("dry_old2", "0-1 One\n", output=str(OUT / "cmpp_dry_old.mp4")), (), "output_is_input", None),
+                 (self.project("stop", "0-1 One\n"), ("--stop-after", "clips"), None, "does not combine with --stop-after"))
+        for proj, flags, reason, say in cases:
+            doc = self.render(proj, "--compare-project", old, "--dry-run", *flags, fail=reason is not None or say is not None)
+            if reason is None and say is None:
+                # a later in is a trim: planned, the check itself skipped under --dry-run
+                self.assertEqual((doc["compare_project"]["expect_removed"], doc["compare_project"]["ok"]), (["0.000-1.000"], None))
+                self.assertIn("check_dry_run", [s["code"] for s in doc["diagnostics"]["skipped"]])
+                continue
+            self.assertEqual(doc["error"]["kind"], "input", (proj, doc["error"]))
+            if reason:
+                self.assertEqual(doc["error"]["reason"], reason, doc["error"])
+            if say:
+                self.assertIn(say, doc["error"]["message"])
+        # a clip that starts earlier adds frames the previous render does not have
+        self.render(self.project("earlier", "0-1 One\n", clip={"in": 1}))
+        doc = self.render(old, "--compare-project", OUT / "cmpp_earlier.json", "--dry-run", fail=True)
+        self.assertIn("frames the previous render does not have", doc["error"]["message"])
 
 
 class CommonFacadeTests(unittest.TestCase):

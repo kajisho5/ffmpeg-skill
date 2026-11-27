@@ -32,13 +32,13 @@ import os
 import sys
 from typing import List, Optional
 
-from _common.runner import absent_word, carried_stream_maps, fail_if_classified
+from _common.runner import absent_word, carried_stream_maps, fail_if_classified, refuse_outside_roots
 from _common import STATE, add_common, analyze_levels, LEGAL_RANGE_CHOICES, legal_limits, measure_signal_range, apply_common, emit, aac_args, cfr_args, cfr_at_input, with_cfr, default_output, die, escape_filter_path, ffmpeg_base, ffmpeg_bsfs, info, probe, require_tool, run, run_analysis, run_keeping_subtitles, x264_args, X264_PRESETS, fmt_secs
 from _common.emit import note, refuse, warn
 from _common.color import is_rgb, rgb_to_bt709_filter
 from _common.alpha import (add_alpha_args, audio_line, check_alpha_args, decoder_args_for, default_ext, finish_chain,
                            matrix_label, report as alpha_report, rgb_line, rgb_to_bt709_line, source_alpha, tag_args,
-                           unpremultiply_leg, video_line)
+                           unpremultiply_leg, video_line, wide_merge_leg)
 from _common.decision import keeps_source_tags
 from _common.color import bt2020_sdr_to_bt709_chain, hdr_to_sdr_chain, is_bt2020_sdr  # noqa: E402,F401
 
@@ -616,6 +616,7 @@ def main() -> int:
                 f"tagged BT.709 (sweep F10). Run --to-sdr first (or chain it), or --force if the LUT expects HDR input")
         if not os.path.exists(args.lut):
             die(f"LUT {absent_word(args.lut)}: {args.lut}")
+        refuse_outside_roots(args.lut)  # read by lut3d inside the graph, not as an -i (#572)
         refuse_bad_cube(args.lut)
         if not (0.0 <= args.lut_strength <= 1.0):
             die(f"--lut-strength {args.lut_strength:g} is outside 0..1")
@@ -655,11 +656,11 @@ def main() -> int:
         # converts the graded YUV in front of alphamerge, so the matrix is labelled there too
         un = unpremultiply_leg(meta) if args.source_alpha_mode == "premultiplied" else ""
         # alphamerge negotiates an 8-bit mask. Keep the source mask at 16 bits
-        # through the RGB multiply on a premultiplied ProRes master.
+        # through the RGB multiply on a premultiplied ProRes master; the leg names the graded
+        # YUV's matrix, or format=gbrp16le reads a tagged master by swscale's BT.601 default (#740)
         merge = "[ka_a]alphaextract[ka_m];[ka_g][ka_m]alphamerge"
         if un and alpha_codec == "prores4444":
-            merge = ("[ka_g]format=gbrp16le[ka_rgb];[ka_a]alphaextract,format=gray16le[ka_m];"
-                     "[ka_rgb][ka_m]mergeplanes=map1p=1:map2p=2:map3s=1:format=gbrap16le")
+            merge = wide_merge_leg(alpha_codec, meta)
         fc = (f"[0:v]split[ka_c][ka_a];[ka_c]{un}{vf}{matrix_label(meta)}[ka_g];"
               f"{merge},{finish_chain(alpha_codec, args.alpha_mode, meta, wide=bool(un))}[ka_v]")
         fc = cfr_at_input(fc, meta)  # the conform of a VFR source: the fps filter (#512)

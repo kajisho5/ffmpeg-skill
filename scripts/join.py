@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from _common.probe import SILENT_PEAK_DBFS, signatures_match, stream_signature
 from _common.runner import path_denied, read_text_or_die, run_analysis
-from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, label_chain, matrix_chain, range_chain, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
+from _common import STATE, AUDIO_CODECS, AUDIO_MEDIA_EXT, concat_list_line, refuse_unwritten_output, guard_sidecar, refuse_output_is_input, place_output, refuse, sibling_temp, as_limited, draws_chroma, drawn_chain, mix_color_chains, video_args, aac_args, add_common, apply_common, audio_codec_for, default_output, die, dry_run_input_pending, emit, ffmpeg_base, info, measured_level_dbfs, is_audio_output, probe, require_tool, run, validate_color, X264_PRESETS, fmt_secs
 from _common.emit import note, warn
 from _common.decision import av_clip_length, av_trim, stream_starts, warn_mostly_cropped
 from _common.probe import display_size, square_pixels, square_pixels_note
@@ -947,16 +947,8 @@ def main() -> int:
     hdr_meta = next((m for m in metas if (m.get("video") or {}).get("bt2020_or_hdr")), None)
     pixfmt = "yuv420p10le" if hdr_meta else "yuv420p"
     line = hdr_meta or metas[0]
-    # a BT.601 or RGB clip is converted to the BT.709 the join is tagged with, each clip by its own
-    # tags; beside a converted clip (or under a --pad-color with chroma) an untagged one gets its
-    # BT.709 label, tags only, so 7.1+'s concat/xfade and pad have nothing to convert or misread
-    convert = [matrix_chain(m, line) for m in metas]
     chroma_pad = args.fit != "crop" and draws_chroma([args.pad_color], line)
-    if any(convert) or chroma_pad:
-        convert = [c or label_chain(m, line) for c, m in zip(convert, metas)]
-    # concat/xfade mix samples: a full-range clip (VP9/AV1 full range, 10-bit pc) beside a limited
-    # one is taken to limited range first, or it was shown with the other's range (#410)
-    convert = [c + range_chain(m, line) for c, m in zip(convert, metas)]
+    convert = mix_color_chains(metas, line, draws_colour=chroma_pad)
 
     for p, m in zip(args.inputs, metas):
         if square_pixels(m.get("video")):

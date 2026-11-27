@@ -30,7 +30,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from _common.runner import found_exe  # noqa: E402
+from _common.runner import found_exe, guard_input_protocols  # noqa: E402
 from _common.decision import parse_time  # noqa: E402
 from _common.asr import parse_srt  # noqa: E402
 from _platforms import PLATFORMS  # noqa: E402
@@ -55,7 +55,7 @@ def shot(out: Path, *args: str) -> bool:
         return False
     out.unlink(missing_ok=True)
     try:
-        proc = subprocess.run([found_exe("ffmpeg"), "-v", "error", "-y", *args, str(out)], capture_output=True, timeout=STILL_TIMEOUT)
+        proc = subprocess.run(guard_input_protocols([found_exe("ffmpeg"), "-v", "error", "-y", *args, str(out)]), capture_output=True, timeout=STILL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return False
     return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
@@ -83,8 +83,8 @@ def write_new(path: Path, text: str) -> None:
 def facts(src: str) -> dict:
     """ffprobe's own words about `src` (format duration, each stream's codec, size, rate), or {}."""
     try:
-        proc = subprocess.run([found_exe("ffprobe"), "-v", "error", "-show_entries",
-                               "format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,channels,sample_rate", "-of", "json", src],
+        proc = subprocess.run(guard_input_protocols([found_exe("ffprobe"), "-v", "error", "-show_entries",
+                               "format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,channels,sample_rate", "-of", "json", src]),
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STILL_TIMEOUT)
         doc = json.loads(proc.stdout or "{}")
     except (subprocess.TimeoutExpired, ValueError):

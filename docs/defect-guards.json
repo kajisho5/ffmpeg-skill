@@ -1,5 +1,5 @@
 {
-  "rule": "A class of docs/defect-ledger.jsonl with `threshold` or more entries has a guard: a test that runs every tool and fails wherever the class shows, so a fix of one tool is not the end of a class that keeps coming back. revert_proof.py refuses a fix whose class is due and has no guard (`pending`), and tests/test_guards.py fails when a class becomes due without being listed here.",
+  "rule": "A class of the defect ledger (docs/defect-ledger/) with `threshold` or more entries has a guard: a test that runs every tool and fails wherever the class shows, so a fix of one tool is not the end of a class that keeps coming back. revert_proof.py refuses a fix whose class is due and has no guard (`pending`), and tests/test_guards.py fails when a class becomes due without being listed here.",
   "threshold": 3,
   "classes": {
     "time": {
@@ -29,6 +29,11 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "numeric": {
+      "test": "test_guards.NumericGuard.test_no_tool_takes_a_number_outside_the_range_its_help_states",
+      "also": "test_contract.StumbleLedgerTests.test_a_number_outside_what_its_option_takes_is_refused_on_every_tool",
+      "how": "every numeric option of every tool in tests/sweep.py's table is given, in a dry run, the value just past each end of the range its help states (a..b, or 0 for > 0) and 1000000000; one that is not refused by runner.apply_common (or by argparse's choices) fails. An option whose help states no range is held only to the million cap and the negative rule, so a value with no meaning of its own is refused by writing its range in the help"
     }
   }
 }

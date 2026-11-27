@@ -168,6 +168,18 @@ def _report_dropped_hdr10_metadata(meta: Dict[str, Any], ctx: "Context") -> None
         ctx.notes.append(note_line)
 
 
+def _report_reduced_bit_depth(output: str, meta: Dict[str, Any], ctx: "Context") -> None:
+    # A 10-bit (or deeper) picture written as 8-bit (#696, from #558): the reduction is decided
+    # (docs/design-decisions.md, "After 3.6.0": an SDR H.264 line is 8-bit), saying so was not.
+    # Measured on the written file for every tool; not for several pictures or a still.
+    from .probe import MEDIA_EXT, _STILL_EXT
+    src, out = (list(getattr(STATE, "first_input", None) or ()) + [None] * 4)[3], ((meta or {}).get("video") or {}).get("bit_depth")
+    ext = os.path.splitext(output)[1].lower()
+    if src and out and out < src and src > 8 and ext in MEDIA_EXT and ext not in _STILL_EXT and len(STATE.video_inputs or ()) <= 1:
+        ctx.notes.append(f"the source picture is {src}-bit and this output is {out}-bit: the encoder writes {out} bits "
+                         f"(a ProRes master, --codec prores where the tool offers it, keeps the depth)")
+
+
 # source_carry: the items compared, in report order. The first group is content a viewer or
 # listener notices missing and raises the warning; the second is tags, listed but never warned
 # about (every camera file has a creation_time, so a warning for it would fire on every run).
@@ -475,13 +487,29 @@ def hw_quality_note(enc: Optional[str], line: Optional[str], no_cpu_encoder: boo
             "parity with the CPU encode" + ("" if no_cpu_encoder else "; --no-hw for the CRF encode"))
 
 
+def encode_record(enc: str, line: Optional[str], ctx: "Context") -> Dict[str, Any]:
+    """`encode` (#576): the settings the last video encode ran with, read off its command line, so
+    two runs that drifted show it: {codec, crf (null: prores, VideoToolbox), preset (null where the
+    encoder has none), hw, policy: {locked, applied: the keys it set, the call not giving them} under $FFMPEG_SKILL_ENCODE, else null}."""
+    import re as _re
+    crf, preset = (_re.search(rf"(?:^|\s)-{k}(?::v)?\s+(\S+)", line or "") for k in ("crf", "preset"))
+    codec = {"libx264": "h264", "libx265": "hevc", "libsvtav1": "av1", "libaom-av1": "av1", "prores_ks": "prores"}.get(enc, enc.split("_")[0])
+    policy = ctx.encode_policy
+    return {"codec": codec, "crf": int(crf[1]) if crf and crf[1].isdigit() else None, "preset": preset[1] if preset else None,
+            "hw": enc.endswith("_videotoolbox"), "policy": {"locked": bool(policy.get("locked")), "applied": list(policy.get("applied") or [])} if policy else None}
+
+
 def _encoder_report(ctx: "Context") -> Dict[str, Any]:
     """`encoder`: the last video encoder this run's ffmpeg commands name (after any GPU->CPU
     fallback, since run() rewrites the recorded command), `copy` for a stream copy; absent when no
     command encoded video. `hw` (hw_report): present whenever VideoToolbox was asked for (--hw or
     $FFMPEG_SKILL_HW, a stage's, or the variable a delivery preset does not take)."""
-    enc, _line = _video_encoders(ctx.commands)
+    enc, line = _video_encoders(ctx.commands)
     out: Dict[str, Any] = {"encoder": enc} if enc else {}
+    if enc and enc != "copy":
+        out["encode"] = encode_record(enc, line, ctx)
+    if ctx.fast:
+        out["preview"] = True  # --fast: a draft's encoder settings, never the final (#576)
     if ctx.hw or ctx.hw_stages or ctx.hw_env_ignored or ctx.hw_auto:
         out["hw"] = hw_report(ctx, enc)
     return out
@@ -579,13 +607,13 @@ def steps_encoder_report(steps: Sequence["Tuple[str, Any]"]) -> Dict[str, Any]:
     the encode before it), and their GPU facts as render.py's result carries its stages'."""
     ctx = Context()
     ctx.dry_run = STATE.dry_run
-    enc: Optional[str] = None
+    enc, encode = None, None
     for name, doc in steps:
         step_enc = doc.get("encoder") if isinstance(doc, dict) else None
         if step_enc and (step_enc != "copy" or enc is None):
-            enc = step_enc
+            enc, encode = step_enc, doc.get("encode")
         absorb_stage_hw(name, doc, ctx)
-    out: Dict[str, Any] = {"encoder": enc} if enc else {}
+    out: Dict[str, Any] = {"encoder": enc, **({"encode": encode} if encode else {})} if enc else {}
     if ctx.hw_stages:
         out["hw"] = hw_report(ctx, enc)
         quality = [st["quality_note"] for st in ctx.hw_stages if st.get("quality_note")]
@@ -915,6 +943,7 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
         meta = verify_output(output)  # dies (status: failed, kind: output) if the artifact is unusable
         _report_dropped_audio_tracks(meta, ctx)
         _report_dropped_hdr10_metadata(meta, ctx)
+        _report_reduced_bit_depth(output, meta, ctx)
         carry = source_carry(output, ctx, extra)
         if carry and "source_carry" not in extra:
             extra["source_carry"] = carry
@@ -977,7 +1006,8 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
         doc["verification"] = steps
         tool = os.path.splitext(os.path.basename(sys.argv[0] or ""))[0]
         if output and not ctx.dry_run and tool in UNVERIFIED and "unverified" not in extra:
-            doc["unverified"] = list(UNVERIFIED[tool])
+            measured = (extra.get("placement") or {}).get("measured")  # #547: the box of what was drawn
+            doc["unverified"] = [p for p in UNVERIFIED[tool] if not (measured and p == "rendered_placement")]
             if tool in ("export", "render") and (extra.get("picture") or extra.get("stage_pictures")):
                 doc["unverified"].append("subject_framing")
         doc.update(_encoder_report(ctx))
@@ -1257,6 +1287,8 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     }
     if ctx.sequence_frames_sha256 is not None:
         doc["sequence_frames_sha256"] = ctx.sequence_frames_sha256
+    if tool == "silence" and "cut_plan" in extra:
+        doc["cut_plan"] = extra["cut_plan"]
     if tool == "fit" and "timing" in extra:
         doc["timing"] = extra["timing"]
     try:

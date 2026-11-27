@@ -16,6 +16,7 @@ Examples:
   python3 silence.py talk.mp4 --edl keep.txt                  # also save the kept ranges (START-END per line, cut.py --segments format)
 """
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -28,13 +29,13 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
                      FILLER_PAD, read_text_or_die)
 from _common import asr as _asr
 from _common.emit import warn
-from _common.asr import _dicts
+from _common.words import _words_from_words_file
 from _common.runner import parse_json, replace_checked, same_file
 from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
 from _common.decision import frame_rate, grid_at_or_after, stream_starts
-from _common.probe import PROBED_AUDIO
+from _common.probe import PROBED_AUDIO, display_size
 from _common.emit import input_length
 
 
@@ -62,6 +63,7 @@ def merge_spans(spans: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
 CUT_LEVEL_WINDOW = 0.05
 CUT_SOUND_MARGIN_DB = 10.0
 CUT_LEVEL_RATE = 8000
+AUDITION_HEIGHT, AUDITION_CRF = 360, 30  # --audition clips: at most this many lines, a fast small encode
 CUT_LEVEL_CHANNELS = 2  # measured one by one; a surround source is folded to two first
 DIGITAL_SILENCE_DB = -90.0  # 2.20: at or below this a span is digital silence (16-bit dither sits near -96)
 BREATH_FLOOR = 0.12  # shortest gap silencedetect is asked for under --speech-aware
@@ -364,6 +366,58 @@ def cut_levels(path: str, tm: Dict[str, Any], duration: float,
     return out
 
 
+def audition_plan(held: List[Tuple[float, float]], tm: Dict[str, Any], seconds: float, fps: float,
+                  adir: str, ext: str) -> List[Dict[str, Any]]:
+    """--audition: one clip per join between two kept ranges, `seconds` of the range before the
+    join and `seconds` of the one after it (each side at most its own range), on the frame grid
+    when the cut is, so `join_at` (seconds into the clip) is where the join falls in it. A removed
+    range at the file's start or end joins nothing and has no clip."""
+    out = []
+    for k in range(len(held) - 1):
+        (s0, e0), (s1, e1) = held[k], held[k + 1]
+        if s1 - e0 <= 0.0005:
+            continue
+        lead, tail = min(seconds, e0 - s0), min(seconds, e1 - s1)
+        if fps:
+            lead, tail = (math.floor(x * fps + 1e-6) / fps for x in (lead, tail))
+        out.append({"cut_index": len(out), "source_out": round(e0, 3), "source_in": round(s1, 3),
+                    "output_t": tm["kept"][k]["output_end"], "clip": os.path.join(adir, f"cut_{len(out):03d}{ext}"),
+                    "clip_source": [[e0 - lead, e0], [s1, s1 + tail]], "join_at": round(lead, 3), "duration": None, "audio": None})
+    return out
+
+
+def write_auditions(src: str, cuts: List[Dict[str, Any]], index: str, meta: Dict[str, Any], low: Optional[int],
+                    doc: Dict[str, Any]) -> None:
+    """Each clip cut from the source by the join the cut itself is made with (cut.join_from_source,
+    no fade), at `low` lines and a fast encode, then measured; the index is written last, once
+    every clip it names exists. Nothing is written under --dry-run (the commands are planned)."""
+    import cut as _cut
+    import tempfile
+    _cut.DECLICK_S = 0.0
+    made: List[str] = []
+    codec, STATE.codec = STATE.codec, None  # a preview: the default codec, which .mp4 holds (ProRes it does not)
+    try:
+        for c in cuts:
+            with tempfile.TemporaryDirectory(prefix="ffskill_audition_") as tmp:
+                _cut.join_from_source(src, [tuple(r) for r in c["clip_source"]], c["clip"], meta, AUDITION_CRF,
+                                      "ultrafast", tmp, low=low)
+            c["clip_source"] = [[round(a, 3), round(b, 3)] for a, b in c["clip_source"]]
+            if not STATE.dry_run:
+                made.append(c["clip"])
+                r = probe(c["clip"], role="output")
+                c["duration"], c["audio"] = r.get("duration"), bool(r.get("audio"))
+    except BaseException:
+        for path in made:  # a failed run leaves no part of the set it was writing
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        raise
+    finally:
+        STATE.codec = codec
+    if not STATE.dry_run:
+        write_time_map(index, doc)  # the same staged JSON write as the time map's
+        info(f"wrote {len(cuts)} audition clip(s) and {index}")
+
+
 def _word_list(text: "str") -> "list":
     return [w.strip() for w in str(text or "").replace(",", "\n").splitlines() if w.strip()]
 
@@ -523,45 +577,6 @@ def resolve_filler(args, meta):
     return block, [(s["start"], s["end"]) for s in spans]
 
 
-def _words_from_words_file(path, data):
-    """_words_from_transcript() for a --words file, plus whisper.cpp's own shape: its
-    --output-json-full document (transcription[].tokens[], offsets in milliseconds) is what the
-    refusals here tell a caller to make, and it was then refused for having no word timings (#404).
-    Read as --transcribe reads the same file."""
-    words, had_segments, untimed = _words_from_transcript(data)
-    if not words and isinstance(data, dict) and isinstance(data.get("transcription"), list):
-        words = _asr._words_from_whisper_cpp_json(path)
-        had_segments = had_segments or bool(data["transcription"])
-    return words, had_segments, untimed
-
-
-def _words_from_transcript(data):
-    """([{word,start,end}], whether the document had segments at all, [{word}] of the words
-    that carried no usable timing) from a whisper JSON. The third list lets --filler count a
-    listed word it could not cut instead of dropping it unseen."""
-    raw, had_segments = [], False
-    if isinstance(data, dict):
-        # a "words" or "segments" that is not a list, and a segment that is not an object, carry no
-        # words: the file is then refused for having none, not by a traceback
-        raw = _dicts(data.get("words"))
-        segments = _dicts(data.get("segments"))
-        had_segments = bool(segments)
-        for seg in segments:
-            raw.extend(_dicts(seg.get("words")))
-    elif isinstance(data, list):
-        raw = list(data)
-    out, untimed = [], []
-    for w in raw:
-        if not isinstance(w, dict):
-            continue
-        try:
-            out.append({"word": str(w.get("word") or w.get("text") or ""),
-                        "start": float(w["start"]), "end": float(w["end"])})
-        except (KeyError, TypeError, ValueError):
-            untimed.append({"word": str(w.get("word") or w.get("text") or "")})
-    return out, had_segments, untimed
-
-
 def silence_kinds(path: str, silences: "List[Tuple[float, float]]", duration: float,
                   threshold: float) -> "Dict[str, Any]":
     """Which detected silences are digital silence and which are quiet sound under the threshold
@@ -622,6 +637,11 @@ def main() -> int:
                     help="write the source-to-output time map: every kept range with its source and output "
                          "times and every removed range with the output time it was cut at; .csv for CSV, "
                          "otherwise JSON (re-time subtitles, find a removed sentence again)")
+    ap.add_argument("--audition", metavar="DIR",
+                    help="also write a small clip of each join as the cut sounds, and DIR/index.json (DIR must "
+                         "exist); with --list, before anything is cut")
+    ap.add_argument("--audition-seconds", type=float, default=None, metavar="SECONDS",
+                    help="--audition: seconds on each side of a join, 0.5..10 (default 2)")
     fil = ap.add_argument_group("filler words (1.17)")
     fil.add_argument("--filler", action="store_true",
                      help="also remove filler words. Needs measured word timings: pass --words or "
@@ -658,9 +678,24 @@ def main() -> int:
                           "--filler-list report them without the limit")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
+    ap.add_argument("--profile", help="pacing-profile@1 JSON path or sns-short, youtube-talk, podcast-natural")
+    ap.add_argument("--protect-ranges", help="JSON intervals in source milliseconds to preserve")
+    ap.add_argument("--extract-profile", action="store_true", help="measure a reusable pacing profile, optionally written with -o")
+    ap.add_argument("--references", action="extend", nargs="+", help="additional completed videos for --extract-profile")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
+    if args.audition_seconds is not None and not args.audition:
+        die("--audition-seconds sizes the --audition clips: pass --audition DIR as well", kind="input")
+    if args.audition and (args.filler_list or args.extract_profile or args.references or args.profile or args.protect_ranges):
+        die("--audition writes clips of the cut's joins; --filler-list, --profile, --protect-ranges and "
+            "--extract-profile make no such cut here", kind="input")
+    if args.audition and not os.path.isdir(args.audition):
+        refuse("input", "output_dir_missing", f"--audition {args.audition!r} is not an existing directory; create it "
+               "first (this tool never creates directories)", output=args.audition, directory=args.audition)
+    if args.extract_profile or args.references or args.profile or args.protect_ranges:
+        from _common.pacing_edit import cli
+        return cli(args, checking=False)
     if args.timemap:
         if os.path.splitext(args.timemap)[1].lower() not in (".json", ".csv"):
             die(f"--timemap must end in .json or .csv: {args.timemap}", kind="input")
@@ -851,6 +886,27 @@ def main() -> int:
             "--threshold, --min-silence or the filler list is catching speech. Check them with --list, then "
             "raise --max-cuts if you mean it, or use --min-silence/--filler-pad to merge the short ones.",
             kind="input")
+    auditions: List[Dict[str, Any]] = []
+    if args.audition:
+        ext = ".mp4" if video_out else ".m4a"
+        auditions = audition_plan(held, tm, args.audition_seconds or 2.0, frame_rate(meta) if video_out else 0.0,
+                                  args.audition, ext)
+        index = os.path.join(args.audition, "index.json")
+        if len(auditions) > args.max_cuts:
+            die(f"{len(auditions)} audition clips is above --max-cuts {args.max_cuts}; check the cuts with --list, "
+                "then raise --max-cuts if you mean it", kind="input")
+        sides = (media_out, args.edl, args.timemap, getattr(args, "plan", None))
+        refuse_existing_outputs([media_out])  # the clips come first: an -o the cut would refuse is refused here
+        for path in [index] + [c["clip"] for c in auditions]:
+            guard_sidecar(path, args.input, args.words, args.filler_words, siblings=sides)
+        low = (min(AUDITION_HEIGHT, display_size(meta.get("video"))[1]) // 2 * 2 or None) if video_out else None
+        summary["audition"] = {"dir": args.audition, "index": index, "seconds": args.audition_seconds or 2.0,
+                               "height": low, "count": len(auditions), "cuts": auditions}
+
+    def finish_auditions() -> None:
+        if args.audition:
+            write_auditions(args.input, auditions, summary["audition"]["index"], meta, summary["audition"]["height"],
+                            {"source": args.input, **{k: v for k, v in summary["audition"].items() if k != "index"}})
     points: Any = False  # False: not measured (a dry run over a pending input); None: the decode failed
     if not (STATE.dry_run and not os.path.exists(args.input)):
         points = cut_levels(args.input, tm, duration, list(filler_ranges))
@@ -896,6 +952,7 @@ def main() -> int:
         info(f"wrote {args.edl}")
 
     if args.list or args.filler_list:
+        finish_auditions()  # first: a clip that fails leaves no list beside it
         finish_edl()
         finish_time_map()
         if args.json:
@@ -913,6 +970,8 @@ def main() -> int:
     # the join of more than 32 ranges concats a list of chunks, so its last command never names the
     # source and run()'s own check cannot see -o replace it (#416 review)
     refuse_output_is_input(output, args.input)
+    # before the cut: the clips need no cut (as under --list), and the result's `encoder` stays the cut's
+    finish_auditions()
     # The kept ranges are re-cut from the source as cut.py --segments --accurate cuts them (#409):
     # each range is its own seeked input, both streams cut on the same frame-grid bounds and shifted
     # by one constant, the sound padded to the range's origin, at most 32 ranges per ffmpeg call.

@@ -157,6 +157,7 @@ missing field `null`).
 ```
 cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate | --smart] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
+cut.py INPUT --words words.json --word-segments 0-4,7-12 [--onset-search S] [--margin S] [--margin-lead S] [--margin-tail S]
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
@@ -241,6 +242,20 @@ A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 written file measured against the source) and `segment_end_snap_seconds` (where
 each part's end moved to its keyframe).
 
+**Word-timed cuts (`--words`, `--word-segments`, #449).** `--word-segments 0-4,7-12` keeps inclusive
+0-based word-index ranges of a whisper JSON (every word needs a timing: the indices count them all),
+joined in order with `--declick-ms` like `--segments`, which it does not combine with. A range runs
+from its first word's start less `--margin-lead` to its last word's end plus `--margin-tail`
+(`--margin` is both; no default, so no margin unless asked), the start rounded down and the end up
+to the source's frame grid; two ranges the margins make overlap meet at the middle. `--onset-search S`
+looks `S` seconds either side of a start for where the sound rises (5 ms blocks: a 15 dB rise that
+holds 30 ms, the one nearest the transcript time, never earlier than the previous word's midpoint)
+and cuts from that: engines time a word after a pause early as often as late. With no rise there it
+says `measured: null` and the transcript time stands. `word_segments` lists each range's words and
+text, the transcript's times, the onset (`transcript`, `measured` or `reason`) and `cut`; a dry run
+measures and writes nothing. `silence.py --margin-lead/--margin-tail` and `--sentence-*` already cut
+dead air with a lead and a tail of their own.
+
 **VFR guard (`--vfr-guard`).** `sampled` (default since 3.0.0): `cut.py` samples
 the packet timestamps before every copy (up to five 6 s windows; no decoding) into
 `vfr_check` (`measured`: `sampled_cfr`, `vfr` or `inconclusive`, plus `guard`) and
@@ -254,11 +269,13 @@ Irregular timing between the windows is not seen; `--accurate` is always availab
 
 A source with no B-frames (iPhone "Most Compatible" H.264) cuts its parts as
 every 2.x release did: from the keyframe at (or before) each start to the end
-asked for, each part within `--tolerance`. A multi-segment copy also checks the
-written total in `verification` (`cut_total_duration`). The total's tolerance is
-the smaller of `--tolerance` and the requested length, with a floor of one source
-frame for video. With `--tolerance -1`, the requested length still bounds the
-verification. A miss keeps the written copy with `verified: false` and a note
+asked for, each part within `--tolerance`. A stream copy of video is also checked against the span its keyframes allow
+(`copy_span`, #620): `snapped_segments` is `[[in, out], ...]`, where each copy can land (the
+keyframe it begins at, the end keyframe or the requested end), and the written length is held to the sum of
+those spans within one frame plus the source's reorder depth per part, not to `--tolerance`. A copy whose
+in or out sits more than 0.25 s from the request adds the warning `copy_drift_large`. A multi-segment
+copy also checks the written total against the request (`cut_total_duration`): its tolerance is the
+smaller of `--tolerance` and the requested length, with a floor of one frame. A miss keeps the written copy with `verified: false` and a note
 that suggests `--accurate`. On B-frame video a copied
 `.mp4`/`.mov` part runs from the keyframe at (or before) its start to the first
 keyframe at or after its end (never an earlier one), each end within
@@ -334,6 +351,7 @@ or per clip) to this flag and reports what came back.
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
+             [--zoom in|out [--zoom-amount 1.3] [--zoom-start S] [--zoom-duration S] [--crop-x X] [--crop-y Y]]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`). For
 factors above 1.15 or below 1/1.15, choose an explicit `--method speed`
@@ -374,8 +392,21 @@ below its measurement threshold. A `crop_content_off_centre` warning may suggest
 The warning can flag an individual sample even when most motion stayed in frame.
 Use `look.py OUTPUT --at TIME` for each `crop_check.review_points[].output_time_estimate`
 that is available. To compare a trimmed or retimed output with its input, extract the
-source frame separately using the point's `source_time`.
+source frame separately using the point's `source_time`. The window itself is data before anything
+runs: `crop` (dry run, plan and result) gives `{x, y, width, height}` in source pixels and the
+scaled frame's offset (#581).
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
+`--zoom in|out` (#647) is a timed push-in or pull-out of the delivered frame (after the
+reframe, before the fades): linear from 1 to `--zoom-amount` (in; out goes back), between
+`--zoom-start` (output seconds, default 0) and `--zoom-start + --zoom-duration` (default: the
+end), the start zoom before and the end zoom held after, toward `--crop-x`/`--crop-y` (with
+`--fit crop` the same anchor places the crop). Each frame is scaled (lanczos) and cropped back,
+so every frame keeps its timestamp; the zoomed frame is the delivered one upscaled, with no
+added detail. An amount of 1 or less (or one that scales the frame past 16384 px), a start at
+or past the output's end, a move past it, and
+`--zoom` on a still (`insert.py --zoom` animates one) are refused. The result's `zoom` reports
+the move, and `zoom.check` compares the output's frame count, timestamps, duration and rate with
+the source's packets; it is `measured: false` when the run also trims, retimes or regrids.
 
 ### crop.py — crop to an exact pixel rectangle
 ```
@@ -798,9 +829,13 @@ each shorter clip's last frame (with silence) out to the longest. A still
 picture fills its cell for the grid's length; a grid of stills only is refused.
 
 ### silence.py — remove dead air / jump cuts
+
+To match the pauses in a finished reference, run `silence.py REFERENCE --extract-profile -o editor.json`.
+Preview with `silence.py INPUT --profile editor.json --dry-run`, then supply `-o master.mkv` to render
+and verify. [Presets, protected ranges and saved plans](../docs/contract.md#pacing-profiles-and-the-independent-master-gate).
 ```
 silence.py INPUT [--threshold -35] [--min-silence 0.6] [--margin 0.2] [--margin-lead S] [--margin-tail S] [--min-keep 0.2] [--list]
-           [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--speech-aware] [-o OUT]
+           [--sentence-min-silence S] [--sentence-margin-tail S]  (with --words FILE or --transcribe) [--edl keep.txt] [--timemap map.json|map.csv] [--audition DIR [--audition-seconds 2]] [--speech-aware] [-o OUT]
 silence.py INPUT --filler --words transcript.json [--filler-lang auto|en|ja|ko|zh|es|de|fr|pt|it|nl|pl|ru|tr]
            [--filler-words FILE] [--filler-extra W,W] [--filler-keep W,W] [--filler-pad 0.02]
            [--transcribe] [--engine auto|parakeet-mlx|parakeet.cpp|whisper.cpp|faster-whisper|openai-whisper]
@@ -862,6 +897,17 @@ are computed, not measured on the written file. An existing map is refused witho
 and a missing directory or a directory at the path as `kind: input`, before anything runs (a dry
 run predicts both); the map is written only after the cut is, so a failed or refused encode
 leaves none. A dry run writes nothing.
+
+**`--audition DIR` (#581)** writes, per join between two kept ranges, a short clip of the cut as
+it sounds there: `--audition-seconds` (2, 0.5..10) of the range before the join and of the one
+after it, each side at most its own range, joined the way the cut is (no fade, the default codec), at most 360
+lines high (never enlarged), a fast small encode, `DIR/cut_000.mp4` (`.m4a` for a sound-only
+cut), and `DIR/index.json` listing them: `cut_index`, `source_out`, `source_in`, `output_t`,
+`clip`, `clip_source`, `join_at` (seconds into the clip) and the measured `duration` and `audio`.
+The result's `audition` is the same document. `DIR` must exist; an existing clip or index is
+refused without `--overwrite`. The clips come before the cut; under `--list` they are all that is rendered, so the joins
+are heard before anything is cut; a range removed at the file's start or end joins nothing and
+has no clip. A dry run plans the commands and writes nothing.
 
 **`--filler` (1.17)** removes filler words as well, through the same
 `keep_ranges()` graph with more, shorter ranges. It is **never**
@@ -1032,11 +1078,33 @@ render.py project.json --cache DIR [--from STAGE]    # reuse identical stages fr
 render.py plan.json [--audit-log FILE]       # execute a plan written by <tool> --plan plan.json
 render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the cut for an editor, nothing rendered
 render.py project.json --intermediate-preset medium   # the stages' own encoder preset instead of superfast
+render.py v2.json --compare-project v1.json   # check the render changed only what the project edit changed
 ```
 A real render first runs its own dry run; when that is refused because a stage needs a filter or an
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
 title or captions does the same).
+`--compare-project OLD.json` (#442 phase 4) takes the expected change from the edit instruction,
+not from what the agent says it did: the difference between OLD.json and this project becomes
+`check.py --compare OLD's-output` with `--expect-changed`, `--expect-audio-changed` and
+`--expect-removed`, run after the last stage. Keep the previous project and its render (copy
+`project.json` to `v1.json` before editing, and give the new one another `output`). What maps: a
+caption cue whose text or times changed is its own span (every cue when a style key changed or
+the cues are an ASS file); an overlay or graphic entry added, removed or changed is its old and new
+window (no end: to the end); `brand`/`template` are the whole picture, `audio`/`loudness` the whole
+sound, `export` both; a later `in` on the first clip and an earlier `out` on the last are removed
+spans in the previous render's time, and the cues and layers that moved with the head keep their
+content (a video layer, a graphic running to the end, a fading whole-clip overlay and, under an
+audio block, a loudness stage or a normalising export, the sound do not). Anything else on the
+timeline (a clip added, removed or re-timed otherwise, `transition`, `silence`, `fit`, `frame`,
+`audiogram`, `snap`) is refused before the first stage, `--dry-run` included
+(`project_diff_not_derivable`, each reason in `details.not_derivable`), since the check would rest
+on a guess. The result's `compare_project` holds the derived values, the `differences` they came
+from, check.py's document and `ok`: its `change_scope` and `audio_change_scope` rows; `ok: false`
+fails the render (`kind: verification`, the file kept). Spans are the window as written, ends
+included (an overlay `"end": 2` draws on the frame at 2.000 s, so a 2 s head trim leaves that frame
+changed); the floors and limits are check.py's (below). Not with `--stop-after`,
+`--export-timeline`, `--write-project`, a pack or a plan.
 The optional `stage_pictures` object keeps the fit and export stages' frame geometry under
 their stage names. Each report measures its own stage's frame and counts cropped pixels
 from that stage's input. `picture` carries the last sizing stage's report when available.
@@ -1420,7 +1488,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1474,9 +1542,36 @@ largest channel is above the floor (`--change-floor`, default 24 of 255). The JS
 unchanged part came). Limits: a change much smaller than a tile is diluted (a full-contrast
 change needs about a tenth of a tile, 19x19 px at 1080p); a faint shift over the whole picture
 stays under the floor in every tile, and `similarity` is the row for that; it compares the
-picture only; an edit that changes the length cannot be paired and FAILs as not compared. Compare
+picture only; an edit that changes the length cannot be paired and FAILs as not compared, unless
+`--expect-removed` declares what it cut (below). Compare
 two renders made with the same encoder settings: a different preset alone moved every frame's
 largest tile to 11 in the measurements behind the default.
+`--expect-audio-changed` (#442, with `--compare`) is the same for the sound, same-length edits only
+(or with `--expect-removed`):
+`--expect-audio-changed 2-3` (a span in this file's time, both ends included, repeatable) or `none`;
+a rectangle is refused. Both first audio tracks go to 48 kHz stereo, are subtracted per channel and
+cut into 0.1 s windows; a window changed when the difference is louder than -3 dB against the
+louder file's own level in it (a codec's error is a fraction of the signal; replaced or muted sound
+is 0 dB or more), or the two files' levels in it are more than 2.5 dB apart (a gain change). A
+difference under -70 dBFS and a level under -60 dBFS are not compared. The `audio_change_scope`
+row and document (`declared`, `observed`, `undeclared`, `declared_unchanged`, `window`, `floor`,
+`windows`, `quiet_peak`) follow `change_scope`: FAIL on a change outside the declaration with its
+time, and FAIL when not compared (a length more than 0.1 s apart, a missing track, a failed pass);
+WARN when a declared span did not change, or when codec, sample rate or channels differ. Spans
+are placed on whole windows; a final stretch under one window is not compared. Limits: a gain
+change under about 3 dB, or a change confined to a few milliseconds, stays under the floor; sound
+at 32 kbps stereo AAC or 64 kbps Opus on noise-like material reads as changed (the codec is then
+what is measured); no flag sets the floor.
+`--expect-removed START-END` (#442 phase 3, repeatable, with `--expect-changed` or
+`--expect-audio-changed`) declares a span of the reference's time that the edit cut out. The
+reference is compared with those spans taken out: a reference frame whose time is inside one (start
+included, end not) is dropped, and its sound is cut at the same instants and joined. The declared
+change spans stay in this file's time. The mapping is declared and not detected: when the counts
+still disagree (frames, or a length more than 0.1 s apart) the row FAILs as not compared and says
+how many were left; when they agree but a different part was cut, the picture after the join
+differs and FAILs as an undeclared change. Both documents gain `removed`. A stream-copy cut lands
+on packets: in the measurement its AAC sound came out one packet (21 ms) late, which reads as
+changed throughout on noise-like sound; check the sound of a re-encoded (`cut.py --accurate`) cut.
 `--content` (opt-in, one decode pass) adds three rows: `black` (share of the duration that is
 black: WARN > 10%, FAIL >= 95%), `frozen` (longest frozen span: WARN > max(3 s, 30% of the
 duration), FAIL when it covers >= 95%, i.e. the whole video) and `silence` (share below
@@ -1488,6 +1583,12 @@ both neighbours by >= 12/255 mean luma while the neighbours differ by at most a 
 -- a stray frame at a cut, a decode glitch; WARN when there is any, with the first five times,
 never FAIL, because a camera flash or a strobe is real) and a one-frame decode adds `first frame`
 (WARN when it is one flat colour, luma spread < 4/255: the frame a feed's autoplay shows first).
+Since #574 `frame timing` reads every frame's time from the packets (no decode) and holds the
+steps to the file's own median step, not to the stated rate (a file with dropped frames states
+an average rate the gap has already lowered): a step more than 1.5 median steps long is a gap of
+round(step / median) - 1 missing frames, WARN with the first five times; a repeated time is FAIL;
+one frame PASSes. A phone that lowers its rate in low light makes gaps on purpose, so they are a
+WARN, never a FAIL.
 A render project enables it with `"check": {"platform":
 "reels", "content": true}`.
 `--levels bt709|ebu-r103` (opt-in, one more decode of every frame) adds a `legal levels` row: the
@@ -1676,6 +1777,8 @@ graphics.py INPUT --template lower-third|title|chapter|progress|countdown|bug|st
             [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
             [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+
+`placement` is the union of the template's box over four instants of its own span, measured on the written size (#547); `touches_edge` says which frame edges it reaches (a bar that is full width by design reaches them too).
 `--keep-alpha` draws the template on the input's alpha (a canvas from `background.py --transparent`,
 or any alpha clip) and writes it in an alpha line (see `background.py`; ProRes 4444 by default) with
 the source's colour tags kept (an RGB input that is neither HDR nor BT.2020, on a ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709): boxes and bars are composited as layers with their alpha, drawtext and
@@ -1808,6 +1911,9 @@ so a switch list can be re-rendered with different `--min-shot` values by
 editing `project.json`'s `clips`, not by inventing a second timeline schema.
 
 ### verify.py — real-footage verification kit
+
+For a pacing master, run `verify.py master.mkv --source ORIGINAL --profile editor.json --json`.
+Include the same `--protect-ranges` file used at edit time. A failing measurement exits nonzero.
 ```
 verify.py FILES_OR_FOLDERS [--quick] [--report verify.md] [--out DIR --keep] [--seconds 6] [--json]
 ```
@@ -1865,6 +1971,8 @@ caption.py INPUT --srt FILE[:LANG] | --ass FILE | --text CUES.txt [--write-srt O
            [--emoji auto|color|png|mono|none] [--emoji-assets DIR] [--emoji-scale 1.0] [--emoji-max 60] [-o OUT]
 caption.py --text CUES.txt --write-srt OUT.srt        # generate the SRT only
 ```
+
+A burned caption's `placement` is the union of its cues' boxes (rendered at the middle of each, at most 12 cues and always the longest), `touches_edge` included: a caption that runs off the frame reaches left and right (#547). `legibility` stays in `unverified`.
 **Side files and `--overwrite` (2.2.4).** The files caption.py writes besides the
 video -- the `.srt` from `--text`/`--transcribe` (or `--write-srt`), the generated
 `.ass` (or `--write-ass`), `<output>_adjusted.srt`, `<output>_offset.ass` -- are
@@ -2142,6 +2250,8 @@ overlay.py INPUT --image PNG [--scale W | --scale-percent P] | --text "..." [--f
            [--position top-right|bottom-left|center|X,Y] [--margin N] [--platform NAME] [--start T] [--end T] [--fade S] [--opacity 0-1] [-o OUT]
            [--keep-alpha [--alpha-codec prores4444|qtrle|png|vp9] [--alpha-mode straight|premultiplied] | --drop-alpha]
 ```
+
+The result's `placement` is the box the layer landed in, `{x, y, width, height, frame_width, frame_height, touches_edge}`, measured by rendering the same filter graph over a black and a white frame of the written size at the end of the fade-in (#547): `touches_edge` names the frame edges it reaches. `rendered_placement` leaves `unverified` when it is measured.
 `--keep-alpha` composites onto the input's alpha (a `background.py --transparent` canvas or an alpha
 clip) and writes the result in an alpha line with the source's tags kept (an RGB input that is neither HDR nor BT.2020, on a
 ProRes 4444/VP9 line: BT.709 YUV, tagged BT.709), checked as
