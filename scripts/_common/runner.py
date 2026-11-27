@@ -505,8 +505,9 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
     # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
     wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
     if wrong:
-        # the other word only when it is a choice: strong is high, never the platform nearest to 'high' (ig)
-        fix[wrong[1]] = _OTHER_WORDS[wrong[1].lower()] if f"'{_OTHER_WORDS.get(wrong[1].lower())}'" in wrong[2] else (difflib.get_close_matches(wrong[1], [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
+        # the other word only when it is a choice: strong is high, never the platform nearest to 'high' (ig); Python 3.13 drops the quotes
+        choices = [c.strip(" '") for c in wrong[2].split(",")]
+        fix[wrong[1]] = _OTHER_WORDS[wrong[1].lower()] if _OTHER_WORDS.get(wrong[1].lower()) in choices else (difflib.get_close_matches(wrong[1], choices, 1, 0.6) or [None])[0]
     words: List[str] = []
     for a in ([] if None in fix.values() else sys.argv[1:]):
         name, eq, rest = a.partition("=")
