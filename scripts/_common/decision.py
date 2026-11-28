@@ -13,7 +13,7 @@ from fractions import Fraction
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.color import (as_limited, bt709_label_filter, bt709_line_filter, bt709_matrix_args, bt709_matrix_filter, bt709_tag_args, drawn_stream_format,
-                           hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709)
+                           hdr_line_matrix, hdr_rgb_matrix_args, hdr_rgb_matrix_filter, is_neutral_color, limited_range_filter, rgb_island, rgb_to_bt709_filter, _sdr_bt709, _SWS_OUT_MATRIX, is_rgb)
 from _common.alpha import rgb_to_bt709_line
 from _common.emit import die, input_length, note, record_fallback, refuse, warn
 from _common.runner import absent_word, file_arg, read_json, refuse_outside_roots
@@ -882,6 +882,17 @@ def delivered_rate(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) 
 # keyframe still decodes from the keyframe BEFORE it; the margin is dropped on the output side
 # (cut.py, sync.py --trim-second)
 SEEK_MARGIN = 1.0
+# MPEG-TS (.ts, .m2ts, .mts) and MPEG-PS (.mpg, .vob) are seeked by timestamp onto whatever packet
+# is there, not back to a keyframe: a seek lands inside a GOP and nothing decodes before the next
+# keyframe, so a frame grab showed a later frame or none, and a cut lost its picture (#696)
+TIMESTAMP_SEEK_MARGIN = 10.0
+
+
+def seek_margin(meta: Optional[Dict[str, Any]], at: float, keyframe_seek: float = SEEK_MARGIN) -> float:
+    """How far before `at` an input seek into the file `meta` probes starts, the decode dropping
+    the rest: TIMESTAMP_SEEK_MARGIN for a demuxer that seeks by timestamp, else `keyframe_seek`."""
+    by_timestamp = {"mpegts", "mpeg"} & set(str((meta or {}).get("format") or "").split(","))
+    return max(0.0, min(TIMESTAMP_SEEK_MARGIN if by_timestamp else keyframe_seek, at))
 
 
 # ------------------------------------------------------- VideoToolbox (--hw)
@@ -1310,7 +1321,7 @@ def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:
     """The chain in front of the picture `meta` probes where converted RGB layers (rgb_chain_to_bt709:
     a still, an emoji PNG, a box of chroma) are overlaid on it: an untagged picture's BT.709 label
     (label_chain) and, for a full-range one, its conversion to the limited range the layers are
-    made in (range_chain). "" when the line converts no layer (HDR, prores)."""
+    made in (range_chain). "" when the line converts no layer (HDR) or keeps the main as it is (prores)."""
     if not rgb_chain_to_bt709(meta):
         return ""
     return label_chain(meta, meta) + range_chain(meta, meta)
@@ -1319,8 +1330,8 @@ def layer_base_chain(meta: Optional[Dict[str, Any]]) -> str:
 def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva420p") -> str:
     """For a picture the tool's own graph has made RGB(A) -- a still's `format=rgba` chain
     (overlay.py --image, an emoji PNG) or an RGBA composite (waveform.py's --image plate) -- that
-    is encoded through video_args(line_meta): "," + the conversion to BT.709 YUV to end that chain
-    with (rgb_to_bt709_filter), or "" when the line does not tag BT.709 (the lines matrix_chain()
+    is encoded through video_args(line_meta): "," + the conversion to BT.709 YUV (on the ProRes line
+    the main's own matrix) to end that chain with (rgb_to_bt709_filter), or "" when the line does not tag BT.709 (the lines matrix_chain()
     leaves alone). Without it the graph's own RGB-to-YUV step used FFmpeg's BT.601 default."""
     v = (line_meta or {}).get("video") or {}
     if (STATE.alpha_line is not None and (v.get("color_space") == "bt709" or rgb_to_bt709_line(line_meta))
@@ -1329,6 +1340,12 @@ def rgb_chain_to_bt709(line_meta: Optional[Dict[str, Any]], pix_fmt: str = "yuva
         # BT.709 too (FFmpeg 6.1's own conversion is BT.601), in 4:4:4 with its alpha plane. An
         # RGB source on a YUV line is a BT.709 picture as well (alpha.rgb_to_bt709_line, #496)
         return "," + rgb_to_bt709_filter("yuva444p")
+    if STATE.codec == "prores" and STATE.alpha_line is None and v and not v.get("bt2020_or_hdr") and not is_rgb(line_meta):
+        # a ProRes master keeps the main's tags: the layer is made YUV in the main's own matrix
+        # (untagged read as BT.709) and range, or overlay's format=auto took the whole main
+        # picture through RGB for an RGBA still (an 8-bit H.264 source: Y 372 came out 406, #696)
+        r = "pc" if v.get("color_range") == "pc" else "tv"
+        return f",scale=out_color_matrix={_SWS_OUT_MATRIX.get(v.get('color_space'), 'bt709')}:out_range={r},format={pix_fmt}"
     if keeps_source_tags() or v.get("bt2020_or_hdr"):
         return ""
     return "," + rgb_to_bt709_filter(pix_fmt)

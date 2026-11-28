@@ -7146,6 +7146,30 @@ class HdrLevelsAndDepthTests(unittest.TestCase):
                 got = self._yuv_at(out, 0.1, [point], depth=10)[0]
                 self.assertLessEqual(max(abs(a - b) for a, b in zip(got, want)), 1, f"{tool}: {got} vs {want}")
 
+    def test_an_rgba_still_on_the_prores_line_leaves_an_8_bit_main_alone(self):
+        """#470/#696: on --codec prores an 8-bit main and an RGBA still met in overlay's
+        format=auto, which composited the whole picture in RGB: C03028 (Y 93 / Cb 103 / Cr 192 in
+        BT.709) came out of the 10-bit ProRes as 406/386/772 for 372/412/768 away from the logo.
+        The still is made YUV in the main's own matrix (untagged read as BT.709) and the main is
+        only widened; the logo's colour is the same as on the H.264 line's BT.709 conversion."""
+        logo = OUT / "pr8_logo.png"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x2878C8:s=60x30,format=rgba",
+           "-frames:v", "1", logo)
+        for tag in ([], ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]):
+            with self.subTest(tagged=bool(tag)):
+                src = OUT / f"pr8_src{len(tag)}.mp4"
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0xC03028:s=320x180:r=25:d=1",
+                   "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p", "-c:v", "libx264", "-qp", "0", *tag, src)
+                want = self._yuv_at(src, 0.1, [(300, 170)])[0]
+                out = OUT / f"pr8_out{len(tag)}.mov"
+                doc = json.loads(script("overlay.py", src, "--image", logo, "--position", "top-left", "--codec", "prores",
+                                        "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], doc["verification"])
+                main, inked = self._yuv_at(out, 0.1, [(300, 170), (66, 40)], depth=10)
+                self.assertEqual(main, tuple(4 * c for c in want), f"the main picture widened, not converted: {main} vs {want}")
+                # BT.709 limited 4:2:0 of 0x2878C8 is 108/171/90 (8 bit); the BT.601 one is 106/175/87
+                self.assertLessEqual(max(abs(a - 4 * b) for a, b in zip(inked, (108, 171, 90))), 8, inked)
+
 
 class CaptionDrawingAuditTests(unittest.TestCase):
     """Audit #457 (captions and text drawing) and #505: what the caption route draws, measured on

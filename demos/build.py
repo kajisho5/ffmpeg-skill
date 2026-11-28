@@ -230,7 +230,7 @@ def build_fixtures(force=False):
     path = need("life.mp4")
     if path:
         ffmpeg("-f", "lavfi", "-i",
-               "life=size=80x45:rate=12:mold=32:ratio=0.1:death_color=#101030:life_color=#39ff88",
+               "life=size=80x45:rate=12:mold=32:ratio=0.1:seed=1:death_color=#101030:life_color=#39ff88",
                "-f", "lavfi", "-i", "aevalsrc='%s':s=48000" % MUSIC,
                "-t", "6", "-vf", "scale=1280:720:flags=neighbor,fps=30", "-c:v", "libx264",
                "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
@@ -534,7 +534,7 @@ def make_wave_compare(before, after, dest, font, labels=("BEFORE", "AFTER")):
     for idx, (src, c0, c1) in enumerate(((before, "0x6B7280", "0x9CA3AF"), (after, "0x17D16A", "0x38BDF8"))):
         pic = OUT / ("%s_wave%d.png" % (dest.stem, idx))
         ffmpeg("-i", str(src),
-               "-f", "lavfi", "-i", "gradients=s=%dx%d:c0=%s:c1=%s:x0=0:y0=%d:x1=%d:y1=%d:n=2:speed=0.00001:d=1"
+               "-f", "lavfi", "-i", "gradients=s=%dx%d:c0=%s:c1=%s:x0=0:y0=%d:x1=%d:y1=%d:n=2:speed=0.00001:seed=1:d=1"
                % (CELL_W, CELL_H, c0, c1, CELL_H // 2, CELL_W - 1, CELL_H // 2),
                "-f", "lavfi", "-i", "color=c=0x0B0C0F:s=%dx%d:d=1" % (CELL_W, CELL_H),
                "-filter_complex",

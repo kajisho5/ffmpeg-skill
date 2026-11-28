@@ -31,7 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from _common.runner import found_exe, guard_input_protocols  # noqa: E402
-from _common.decision import parse_time  # noqa: E402
+from _common.decision import parse_time, seek_margin  # noqa: E402
 from _common.asr import parse_srt  # noqa: E402
 from _platforms import PLATFORMS  # noqa: E402
 
@@ -61,9 +61,11 @@ def shot(out: Path, *args: str) -> bool:
     return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
 
 
-def still(folder: Path, name: str, src: str, at: "float | None") -> "str | None":
-    """A 320 px wide JPEG of `src` at `at` seconds, as the name the page loads, or None."""
-    ok = at is not None and shot(folder / STILLS / name, "-ss", f"{max(at, 0):.3f}", "-i", src, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4")
+def still(folder: Path, name: str, src: str, at: "float | None", fmt: "str | None" = None) -> "str | None":
+    """A 320 px wide JPEG of `src` at `at` seconds, as the name the page loads, or None. `fmt`, the
+    source's format name: an MPEG-TS seek starts seek_margin() early and drops the rest (#696)."""
+    m = seek_margin({"format": fmt}, max(at or 0, 0), 0.0)
+    ok = at is not None and shot(folder / STILLS / name, "-ss", f"{max(at, 0) - m:.3f}", "-i", src, "-ss", f"{m:.3f}", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4")
     return f"{STILLS}/{name}" if ok else None
 
 
@@ -84,7 +86,7 @@ def facts(src: str) -> dict:
     """ffprobe's own words about `src` (format duration, each stream's codec, size, rate), or {}."""
     try:
         proc = subprocess.run(guard_input_protocols([found_exe("ffprobe"), "-v", "error", "-show_entries",
-                               "format=duration:stream=codec_type,codec_name,width,height,r_frame_rate,channels,sample_rate", "-of", "json", src]),
+                               "format=duration,format_name:stream=codec_type,codec_name,width,height,r_frame_rate,channels,sample_rate", "-of", "json", src]),
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STILL_TIMEOUT)
         doc = json.loads(proc.stdout or "{}")
     except (subprocess.TimeoutExpired, ValueError):
@@ -130,7 +132,8 @@ def clips_and_sources(project: dict, folder: Path) -> "tuple[list, list]":
         end = seconds(clip.get("out"), fps)
         end = end if end is not None else total
         at = [] if end is None else [start, (start + end) / 2, max(end - 0.05, start)]
-        clips.append({"s": seen[path], "a": start, "b": end, "stills": [still(folder, f"clip{i}_{k}.jpg", path, t) for k, t in enumerate(at)]})
+        clips.append({"s": seen[path], "a": start, "b": end, "stills": [still(folder, f"clip{i}_{k}.jpg", path, t, (sources[seen[path]]["probe"].get("format") or {}).get("format_name"))
+                                                                     for k, t in enumerate(at)]})
     return clips, sources
 
 
@@ -144,7 +147,7 @@ def output_media(result: dict, folder: Path) -> dict:
     wave = (result.get("probe") or {}).get("audio") and shot(folder / STILLS / "wave.png", "-i", path, "-filter_complex",
                                                              "showwavespic=s=2400x96:colors=0xa3a9b4:scale=sqrt", "-frames:v", "1")
     return {"video": Path(path).as_uri(), "wave": f"{STILLS}/wave.png" if wave else None,
-            "stills": [{"t": dur * (k + 0.5) / 6, "file": still(folder, f"out_{k}.jpg", path, dur * (k + 0.5) / 6)} for k in range(6)] if dur else []}
+            "stills": [{"t": dur * (k + 0.5) / 6, "file": still(folder, f"out_{k}.jpg", path, dur * (k + 0.5) / 6, result["probe"].get("format"))} for k in range(6)] if dur else []}
 
 
 def cues(project: dict, result: "dict | None") -> "tuple[str | None, list]":

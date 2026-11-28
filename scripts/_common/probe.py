@@ -132,6 +132,17 @@ MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m
              ".png", ".jpg", ".jpeg", ".webp"} | AUDIO_MEDIA_EXT
 
 
+def seek_args(path: str, at: float) -> "Tuple[List[str], List[str]]":
+    """The input and output options of a decode of `path` from `at`: an input seek, and on a
+    demuxer that seeks by timestamp (decision.seek_margin) one that starts earlier and an output
+    seek that drops the margin. An MPEG-TS window read from a mid-GOP landing decoded nothing."""
+    from _common.decision import seek_margin
+    fmt = run([require_tool("ffprobe"), "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", path],
+              quiet=True, check=False).stdout if at > 0 else ""
+    m = seek_margin({"format": (fmt or "").strip()}, at, 0.0)
+    return (["-ss", f"{at - m:.6f}"] if at > 0 else []), (["-ss", f"{m:.6f}"] if m > 0 else [])
+
+
 def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start: float = 0.0,
                        seconds: "Optional[float]" = None, check: bool = True) -> "List[bytes]":
     """Decode `path` to raw 8-bit grayscale frames at a low `fps`/`width`x`height`, one ffmpeg
@@ -140,10 +151,8 @@ def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start:
     but at 1.18.0's resolutions (tens of pixels a side, a few fps) a whole shot is a few KB, so
     piping raw frames through Python stays cheap and needs no extra dependency."""
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
-    if start:
-        cmd += ["-ss", f"{start:.3f}"]
-    cmd += ["-i", path]
+    pre, post = seek_args(path, start)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", *pre, "-i", path, *post]
     if seconds is not None:
         cmd += ["-t", f"{max(0.0, seconds):.3f}"]
     cmd += ["-map", f"0:{PROBED_VIDEO}", "-vf", f"fps={fps:g},scale={width}:{height}:flags=area,format=gray",

@@ -34,6 +34,7 @@ from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 from _common import add_common, apply_common, die, emit, info, print_json, probe, require_tool, run_analysis, decode_gray_frames
+from _common.probe import seek_args
 from _common.emit import note, warn
 from _common.probe import PROBED_VIDEO, display_size, square_pixels, square_pixels_note
 
@@ -74,8 +75,11 @@ def detect(path: str, seconds: float, samples: int, limit: float, round_to: int,
     for i in range(samples):
         start = 0.0 if duration <= 0 else (duration - per_window) * i / max(1, samples - 1) if samples > 1 else 0.0
         start = max(0.0, start)
-        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-ss", f"{start:.3f}", "-i", path, "-t", f"{per_window:.3f}",
-               "-map", f"0:{PROBED_VIDEO}", "-vf", (square + "," if square else "") + f"cropdetect=limit={limit:g}:round=2:reset=1", "-f", "null", "-"]
+        pre, post = seek_args(path, round(start, 3))  # an MPEG-TS seek starts early (#696)
+        # the margin is trimmed ahead of the filter as well: the output seek drops it after the
+        # graph, and cropdetect would log readings of the 10 s before the window
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", *pre, "-i", path, *post, "-t", f"{per_window:.3f}",
+               "-map", f"0:{PROBED_VIDEO}", "-vf", (f"trim=start={post[1]}," if post else "") + (square + "," if square else "") + f"cropdetect=limit={limit:g}:round=2:reset=1", "-f", "null", "-"]
         proc = run_analysis(cmd, check=False)
         if proc.returncode != 0:
             # One window ffmpeg cannot decode (a damaged stretch) is skipped; the other windows
