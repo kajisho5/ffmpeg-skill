@@ -7,6 +7,7 @@
 import array
 import os
 import platform
+import importlib
 import json
 import math
 import re
@@ -3729,6 +3730,42 @@ class EditingTests(MediaFixtures):
         self.assertEqual(doc["error"]["kind"], "input")
         self.assertTrue(doc["error"]["message"])
         self.assertNotIn("summary", doc)
+
+    def test_json_brief_keeps_what_a_caller_decides_from_on_ordinary_edits(self):
+        """#682: SKILL.md sends an ordinary edit to --json-brief, measured at 0.16-0.43 of
+        --json's bytes on these eight edits. That is only safe while the brief document of each
+        one keeps what the caller reports and branches on: status, output, wrote, verified,
+        unverified and the warning codes, and is still at most half the bytes."""
+        edits = (("cut", ["--start", "2", "--end", "6"], ".mp4"), ("fit", ["--aspect", "9:16"], ".mp4"),
+                 ("export", ["--preset", "youtube"], ".mp4"), ("caption", ["--text", str(self.cues)], ".mp4"),
+                 ("audio", ["--voice", "light"], ".mp4"), ("loudness", ["--target", "-14"], ".mp4"),
+                 ("silence", [], ".mp4"), ("look", ["--at", "2"], ".png"))
+        for tool, args, ext in edits:
+            with self.subTest(tool=tool):
+                docs = {}
+                for flag in ("--json", "--json-brief"):
+                    out = OUT / f"brief682_{tool}{flag.replace('-', '_')}{ext}"
+                    docs[flag] = script(f"{tool}.py", self.src, *args, "-o", out, "--overwrite", flag).stdout
+                full, brief = (json.loads(docs[f]) for f in ("--json", "--json-brief"))
+                self.assertEqual(brief["status"], "completed")
+                for key in ("output", "wrote", "verified", "unverified", "output_identity"):
+                    self.assertEqual(key in brief, key in full, f"{tool}: {key}")
+                self.assertEqual(brief["verified"], full["verified"])
+                codes = lambda d: sorted(w["code"] for w in (d.get("diagnostics") or {}).get("warnings") or [])
+                self.assertEqual(codes(brief), codes(full), f"{tool}: the warning codes survive the diet")
+                self.assertLessEqual(len(docs["--json-brief"]), len(docs["--json"]) / 2, f"{tool}: at most half")
+
+    def test_json_brief_keeps_the_verification_step_that_did_not_pass(self):
+        """#682: the brief form drops the per-step list because `verified` is its verdict; when
+        the verdict is false, the step that failed is the reason, and the caller SKILL.md now
+        sends to --json-brief would otherwise have to run the edit again to read it."""
+        emit = importlib.import_module("_common.emit")  # `_common.emit` the attribute is the function
+        bad = {"step": "decode", "ok": False, "attribution": "unresolved", "message": "decode error"}
+        doc = {"status": "completed", "output": "x.mp4", "dry_run": False, "verified": False, "commands": ["ffmpeg"],
+               "verification": [{"step": "probe", "ok": True}, bad]}
+        self.assertEqual(emit._brief(doc, {})["verification"], [bad])
+        doc.update(verified=True, verification=[{"step": "probe", "ok": True}])
+        self.assertNotIn("verification", emit._brief(doc, {}))
 
     # --------------------------------------------------- 1.17: beat-snapped cuts (cut.py --snap)
     def test_cut_snap_beats_moves_the_points_to_measured_beats(self):

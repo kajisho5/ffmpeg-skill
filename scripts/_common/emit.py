@@ -1029,7 +1029,8 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
 
 
 # Keys the brief document replaces or drops: the full probe (summarised), the command lines
-# (counted) and the per-step verification list (its verdict stays as `verified`).
+# (counted) and the per-step verification list (its verdict stays as `verified`; a step that
+# did not pass is kept, #682).
 _BRIEF_DROP = ("probe", "commands", "verification")
 
 
@@ -1076,6 +1077,10 @@ def _brief(doc: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in doc.items():
         if key not in brief and key not in _BRIEF_DROP:
             brief[key] = value
+    # #682: a passing list is dropped (`verified` is its verdict); a step that did not pass is why
+    # `verified` is false, so it stays: the caller of the brief form reports it without a re-run
+    if failed := [s for s in doc.get("verification") or [] if s.get("ok") is not True]:
+        brief["verification"] = failed
     # the emoji report is a full inventory in the long document; brief keeps the two fields a
     # caller branches on (did colour happen, and how many)
     if isinstance(brief.get("emoji"), dict):
