@@ -47,7 +47,7 @@ wc -c SKILL.md                                            # must be < 30000
 - [ ] a `changelog.d/<slug>.md` fragment has the entry (never an edit to `## Unreleased`)
 - [ ] `feat`: a demo in `demos/build.py` (or an `INSPECTION` row), `docs/demos.md`
       regenerated with `python3 demos/build.py --docs`
-- [ ] `SKILL.md` stayed under 30,000 bytes; the PR names the line it trimmed
+- [ ] `SKILL.md` stayed under 16,000 bytes and 180 lines; the PR names the line it trimmed
 - [ ] Release PR moved `docs/roadmap.md`'s "released version today" line
 
 ## 3. Scope and rules
