@@ -2418,7 +2418,7 @@ class EditingTests(MediaFixtures):
             self.assertEqual((err["kind"], err["reason"]), ("input", "join_copy_mismatch"), err)
             self.assertIn(what, err["message"])
             self.assertFalse(bad.exists())
-        proc = script("join.py", *clips[:2], "--copy", "-o", OUT / "copy_fade.mp4", "--json", expect_fail=True)
+        proc = script("join.py", *clips[:2], "--copy", "--transition", "fade", "-o", OUT / "copy_fade.mp4", "--json", expect_fail=True)
         self.assertIn("--transition none", json.loads(proc.stdout)["error"]["message"])
         proc = script("join.py", *clips[:2], "--copy", "--transition", "none", "--channels", "1", "-o", OUT / "copy_mono.mp4",
                       "--json", expect_fail=True)
@@ -2659,6 +2659,29 @@ class EditingTests(MediaFixtures):
             self.assertClose(self._tone_onset(out, f), start, 0.1, f"the {f} Hz clip's sound starts with its picture")
         self.assertClose(probe(str(out))["video"]["duration"], 14.0, 0.05)
 
+    def test_join_default_is_end_to_end_and_a_crossfade_is_asked_for(self):
+        """#681: "join these" is the clips' summed length. join.py's default was a 0.5 s crossfade,
+        so a 2 s and a 3 s clip came out 4.5 s long, blended across the cut. The default is now
+        --transition none; --transition fade still overlaps, and a --duration with no transition
+        is refused rather than ignored (it was the length of the crossfade the default made)."""
+        d = OUT / "join_default"
+        d.mkdir(exist_ok=True)
+        a = self._av_clip(d / "a.mp4", 2, 2, 700)
+        b = self._av_clip(d / "b.mp4", 3, 3, 1900)
+        plain = json.loads(script("join.py", a, b, "--preset", "ultrafast", "--json", "-o", d / "plain.mp4").stdout)
+        self.assertEqual((plain["transition"], plain["transition_frames"]), ("none", 0))
+        self.assertEqual(plain["expected_duration"], 5.0)
+        self.assertTrue(plain["verified"], plain["verification"])
+        self.assertClose(probe(str(d / "plain.mp4"))["video"]["duration"], 5.0, 0.05)
+        self.assertClose(self._tone_onset(d / "plain.mp4", 1900), 2.0, 0.1)
+        fade = json.loads(script("join.py", a, b, "--transition", "fade", "--preset", "ultrafast", "--json", "-o", d / "fade.mp4").stdout)
+        self.assertEqual((fade["transition"], fade["transition_frames"], fade["expected_duration"]), ("fade", 15, 4.5))
+        self.assertClose(probe(str(d / "fade.mp4"))["video"]["duration"], 4.5, 0.05)
+        for extra in ([], ["--transition", "none"]):
+            proc = script("join.py", a, b, *extra, "--duration", "1", "--json", "-o", d / "refused.mp4", expect_fail=True)
+            self.assertIn("--transition fade", json.loads(proc.stdout)["error"]["hint"], extra)
+            self.assertFalse((d / "refused.mp4").exists())
+
     def test_join_transition_keeps_a_picture_shorter_than_its_sound(self):
         """Audio past the picture: the clip lasts as long as its sound (the last frame held), so
         the next clip's picture is neither lost nor started early, and `verified` measures the
@@ -2668,7 +2691,7 @@ class EditingTests(MediaFixtures):
         a = self._av_clip(d / "a.mp4", 2, 3, 700)
         b = self._av_clip(d / "b.mp4", 2, 2, 1900)
         out = d / "long.mp4"
-        doc = json.loads(script("join.py", a, b, "--duration", "0.5", "--preset", "ultrafast", "--json", "-o", out).stdout)
+        doc = json.loads(script("join.py", a, b, "--transition", "fade", "--duration", "0.5", "--preset", "ultrafast", "--json", "-o", out).stdout)
         self.assertEqual(doc["expected_duration"], 4.5)
         self.assertTrue(doc["verified"], doc["verification"])
         self.assertClose(probe(str(out))["video"]["duration"], 4.5, 0.05)
@@ -2800,7 +2823,7 @@ class EditingTests(MediaFixtures):
         both together, a value as long as the clip it takes from, and on audio alone (#675)."""
         red, blue = self._cut_pair(OUT / "join_cut_refusals")
         base = ("join.py", red, blue, "--dry-run", "--json")
-        for flags, reason in ((("--audio-lead", "0.5"), "audio_cut_transition"),
+        for flags, reason in ((("--audio-lead", "0.5", "--transition", "fade"), "audio_cut_transition"),
                               (("--audio-lag", "0.5", "--transition", "dissolve"), "audio_cut_transition"),
                               (("--audio-lead", "0.5", "--transition", "none", "--copy"), "audio_cut_copy"),
                               (("--audio-lead", "0.5", "--audio-lag", "0.5", "--transition", "none"), "audio_cut_both_flags"),
@@ -3563,7 +3586,7 @@ class EditingTests(MediaFixtures):
         self.assertNotIn("not_yet.mp4", err["message"])
         # nothing written yet at all: the extensions decide, and .wav plans an audio join
         (d / "later.txt").write_text("gen_01.wav\ngen_02.wav\n", encoding="utf-8")
-        doc = json.loads(script("join.py", "--list", d / "later.txt", "--dry-run", "--json", "-o", d / "later.wav").stdout)
+        doc = json.loads(script("join.py", "--list", d / "later.txt", "--transition", "fade", "--dry-run", "--json", "-o", d / "later.wav").stdout)
         self.assertEqual((doc["mode"], len(doc["pending"]), doc["expected_duration"]), ("audio", 2, None))
         self.assertFalse(any("libx264" in c for c in doc["commands"]), doc["commands"])
         self.assertIn("acrossfade", doc["commands"][0])
@@ -3584,14 +3607,14 @@ class EditingTests(MediaFixtures):
         # and xfade offsets built on it are named as placeholders, and the audio layout comes
         # from the clips that exist (the stub's 0 channels made a mono join stereo)
         (d / "cam_later.mp4").unlink(missing_ok=True)
-        proc = script("join.py", d / "cam_later.mp4", self.src, self.src, "--dry-run", "--json", "-o", d / "cams.mp4")
+        proc = script("join.py", d / "cam_later.mp4", self.src, self.src, "--transition", "fade", "--dry-run", "--json", "-o", d / "cams.mp4")
         doc = json.loads(proc.stdout)
         self.assertEqual((doc["status"], doc["mode"]), ("completed", "video"))
         self.assertTrue(any("first input is pending" in n and "placeholders" in n for n in doc["notes"]), doc["notes"])
         self.assertTrue(any("xfade offsets" in n for n in doc["notes"]), doc["notes"])
         self.assertIn("channel_layouts=mono", doc["commands"][0])
         self.assertNotIn("channel counts differ", proc.stderr)
-        doc = json.loads(script("join.py", self.src, self.src, d / "cam_later.mp4", "--dry-run", "--json", "-o", d / "cams.mp4").stdout)
+        doc = json.loads(script("join.py", self.src, self.src, d / "cam_later.mp4", "--transition", "fade", "--dry-run", "--json", "-o", d / "cams.mp4").stdout)
         self.assertFalse(any("placeholders" in n or "xfade offsets" in n for n in doc["notes"]),
                          "a pending LAST clip changes neither the frame nor an offset")
         # the real run is unchanged: the missing line is skipped (or refused), never pending
@@ -3609,7 +3632,7 @@ class EditingTests(MediaFixtures):
         mic_dur = probe(str(self.mic))["duration"]
         # crossfade -> flac: rate of the first clip, widest layout
         out = OUT / "j_audio.flac"
-        data = json.loads(script("join.py", self.mic, st, mp3, "-o", out, "--json").stdout)
+        data = json.loads(script("join.py", self.mic, st, mp3, "--transition", "fade", "-o", out, "--json").stdout)
         self.assertEqual(data["mode"], "audio")
         self.assertEqual((data["sample_rate"], data["channels"]), (48000, 2))
         self.assertIsNone(data["probe"]["video"])
@@ -3630,7 +3653,7 @@ class EditingTests(MediaFixtures):
         self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
         # dry-run plans the audio join and writes nothing
         planned = OUT / "j_dry.wav"
-        data = json.loads(script("join.py", self.mic, mp3, "-o", planned, "--dry-run", "--json").stdout)
+        data = json.loads(script("join.py", self.mic, mp3, "--transition", "fade", "-o", planned, "--dry-run", "--json").stdout)
         self.assertTrue(data["dry_run"])
         self.assertIn("acrossfade", data["commands"][0])
         self.assertFalse(planned.exists())

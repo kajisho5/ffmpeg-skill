@@ -82,7 +82,8 @@ variant it does not show.
 | "add chapters", "chapter markers for YouTube" | `metadata.py episode.mp4 --chapters chapters.txt` (`TIME TITLE` per line; streams copied; in a project: `"chapters"`). `--auto-chapters` proposes them from measured pauses/scene cuts (`Chapter N`) |
 | "set the title / artist / comment" | `metadata.py episode.mp4 --title "Episode 12" --artist "Studio"` |
 | "put these videos in a 4x2 grid" | `grid.py t1.mp4 ... t8.mp4 --cols 4 --rows 2` |
-| "stitch these clips", "add a crossfade" | `join.py a.mp4 b.mp4 c.mp4 --transition fade --duration 0.5` (TTS: `--list parts.txt`, `--on-missing skip`, `--on-silent fail`; no re-encode: `--copy --transition none`) |
+| "stitch these clips", "put b after a" | `join.py a.mp4 b.mp4 c.mp4` (end to end, the clips' summed length; TTS: `--list parts.txt`, `--on-missing skip`, `--on-silent fail`; no re-encode: `--copy --transition none`) |
+| "add a crossfade", "dissolve between them" | `join.py a.mp4 b.mp4 --transition fade --duration 0.5` (`dissolve`, `fadeblack`, ...; each boundary overlaps by the duration, so the join is that much shorter) |
 | "J-cut", "L-cut" | `join.py a.mp4 b.mp4 --transition none --audio-lead 0.5` (J: the next sound starts 0.5 s before its picture) / `--audio-lag 0.5` (L: the last sound runs 0.5 s past the picture change); sync is kept, so each boundary costs 0.5 s of a clip and the value applies at every boundary; not with a transition, `--copy`, or both flags |
 | "several changes to one edit", 3+ steps | `render.py --init project.json`, edit, `render.py project.json` |
 | "I changed one stage, don't redo the rest" | `render.py project.json --cache DIR` — identical stages reused (`--from STAGE` starts there) |
