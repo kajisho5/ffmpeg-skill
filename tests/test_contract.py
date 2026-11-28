@@ -2560,7 +2560,10 @@ sys.exit(fit.main())
         self.assertEqual(removed, [], f"tools removed/renamed since the 1.x snapshot: {removed}")
         for name, was in frozen_by_name.items():
             now = live_by_name[name]
-            gone = sorted(set(was["properties"]) - set(now["properties"]))
+            # 4.x's beta rule removes a beta tool's argument in a minor, and the contract lists it in `removed`
+            allowed = {e["what"].split(" --", 1)[1].replace("-", "_") for e in _contract.REMOVED
+                       if e["where"] == "cli" and e["what"].startswith(f"{name}.py --")}
+            gone = sorted(set(was["properties"]) - set(now["properties"]) - allowed)
             self.assertEqual(gone, [], f"{name}: arguments removed/renamed since the 1.x snapshot: {gone}")
             newly_required = sorted(set(now["required"]) - set(was["required"]))
             self.assertEqual(newly_required, [], f"{name}: arguments made required since the 1.x snapshot: {newly_required}")
@@ -2617,7 +2620,9 @@ sys.exit(fit.main())
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
-            self.assertIn(entry["removed_in"], ("2.0.0", "3.0.0"))
+            # a major's removals, or a beta tool's argument removed in a minor (4.x's beta rule)
+            if not (entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta):
+                self.assertIn(entry["removed_in"], ("2.0.0", "3.0.0"))
             self.assertLessEqual(int(entry["removed_in"].split(".")[0]), pkg_major)
         for surface in ("cli", "json", "mcp", "behaviour"):
             self.assertIn(surface, [e["where"] for e in removed])
@@ -3958,9 +3963,30 @@ sys.exit(fit.main())
             running = skills / f"ffmpeg-skill.tmp-{os.getpid()}"
             running.mkdir()
             (running / "SKILL.md").write_text("being copied", encoding="utf-8")
+            # a run killed between its two renames (or whose restore rename failed) left the
+            # previous install at <name>.bak-<pid>: a whole skill whose SKILL.md says
+            # name: ffmpeg-skill, so an agent scanning the folder saw the skill twice, and neither
+            # a re-install nor --uninstall removed it
+            # and a live pid's <name>.bak-<pid> is that install's previous copy mid-swap: it stays too
+            running_bak = skills / f"ffmpeg-skill.bak-{os.getpid()}"
+            running_bak.mkdir()
+            (running_bak / "SKILL.md").write_text("---\nname: ffmpeg-skill\n---\n", encoding="utf-8")
+            kept = sorted([running.name, running_bak.name, "ffmpeg-skill.tmp-notes", "ffmpeg-skill.bak-notes"])
+            (skills / "ffmpeg-skill.bak-notes").mkdir()
+
+            def leave_scratch():
+                for name in (f"ffmpeg-skill.tmp-{ended.pid}", f"ffmpeg-skill.bak-{ended.pid}"):
+                    (skills / name).mkdir(exist_ok=True)
+                    (skills / name / "SKILL.md").write_text("---\nname: ffmpeg-skill\n---\n", encoding="utf-8")
+            leave_scratch()
+            sh("node", installer, env=env)
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), sorted(kept + ["ffmpeg-skill"]),
+                             "a finished install removes the <name>.tmp-<pid> and <name>.bak-<pid> an ended run left")
+            leave_scratch()
             sh("node", installer, "--uninstall", env=env)
-            self.assertEqual(sorted(p.name for p in skills.iterdir()), sorted([running.name, "ffmpeg-skill.tmp-notes"]),
-                             "only the installer's own <name>.tmp-<pid> folders are removed, and only when that pid is gone")
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), kept,
+                             "only the installer's own <name>.tmp-<pid> and <name>.bak-<pid> folders are removed, "
+                             "and only when that pid is gone")
 
     # ------------------------------------------------------------------ integration: claims hold at run time
     def test_every_1_17_flag_is_reachable_off(self):
