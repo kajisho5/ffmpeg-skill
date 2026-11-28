@@ -686,7 +686,7 @@ self-test and a proposed (unapplied) SKILL.md fix for multicam's cut-list `--edl
 ## After 4.x — what #633 leaves open (planned, not started)
 
 Issue #633 listed ways to make the tools cheaper to use after 4.0. Most of it shipped or is in an
-open pull request. The items below are the ones that are neither, written down so the issue can
+open pull request (as of 2026-11-28). The items below are the ones that are neither, written down so the issue can
 close. Nothing here exists in any released version.
 
 Two facts apply to every item:
@@ -716,8 +716,8 @@ Two facts apply to every item:
     delivery, so the caller does not choose among the tools and does not forget the final check.
   - Known: most parts exist. `render.py --template` fills a project from a few arguments, saved
     plans are refused when their inputs changed (`plan_inputs_changed`), the review page shows
-    plan and result (4.0.0), and the template's `check` stage runs last. `render.py --preview` is
-    in #783. What is missing is the one entry point that ties them together and waits for a yes.
+    plan and result (4.0.0), and the template's `check` stage runs last. `render.py --preview`
+    shipped in 4.23.0 (#783). What is missing is the one entry point that ties them together and waits for a yes.
   - Done when: one call writes the project and returns the plan and a preview without encoding
     the delivery; a second call with the same plan runs it and ends with `check.py`; a changed
     input between the two is refused.
@@ -731,7 +731,7 @@ Two facts apply to every item:
 
 ### Rendering
 
-- **One encode for a whole project** (#633 idea 2, #357). #785 renders a `--template` project
+- **One encode for a whole project** (#633 idea 2, #357). #785 (merged 2026-11-28) renders a `--template` project
   with fit, captions and loudness as one encode. Projects with cuts or joins, silence, graphics,
   overlays or an audio stage, and sources that are variable frame rate, rotated, HDR or carry
   several audio tracks, still render in stages there (each has a named `render_path_reason`).
