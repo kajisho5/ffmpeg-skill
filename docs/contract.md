@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.22.3`) | any release |
+| `skill.version` | the npm / package.json version (`4.23.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -187,7 +187,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.22.3", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.23.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -461,6 +461,40 @@ written before the cut, which they do not need. `--max-cuts` bounds the number o
 writes nothing. `--audition-seconds` without `--audition`, and
 `--audition` with `--filler-list`, `--profile`, `--protect-ranges` or `--extract-profile`, are
 refused.
+
+With `fit.py --fit pad` or `--fit blur` and a source whose size is known, the same documents carry
+`placed` (#581 part 2): where the picture lands in the frame, `{x, y, width, height, frame_width,
+frame_height, scale, source_width, source_height}`, from the filters' own rules (scale rounds half
+away from zero; pad floors the picture's size and offset to the chroma grid of the line written,
+4:2:0, or 4:2:2 for `--codec prores`; the blur graph floors only the offset, to the source's grid).
+`picture`, after a real run, is the measurement.
+
+`cut.py --audition DIR [--audition-seconds S]` (#581 part 2) writes the same clips and index for the
+joins of a `--segments`, `--remove` or `--word-segments` cut, but cut from the file the cut wrote,
+after it: a stream copy joins where its keyframes landed (`source_in` is the keyframe, as in
+`snapped_segments`) and a re-encode on the frame, so a clip is the join as it was made. The result's
+`audition` adds `path` (the cut's `mode`), `made_from` (the output) and `commands` (the clips'
+lines; the result's `commands` and `encoder` stay the cut's); `clip_source` is the range of the
+written cut a clip holds. One range has no join and is refused, as is `--audition-seconds` without
+`--audition`; `DIR` must exist (`output_dir_missing`), and every clip and the index are guarded
+before the cut. A dry run plans the clips (`duration` null) and writes nothing.
+
+`render.py` results, dry runs included, carry `clips` (#581 part 2): per project clip `{clip, src,
+speed_factor, crop, placed}`. `speed_factor` is that clip's speed stage's (1.0 with none); in a dry
+run whose clip is cut first it is computed from the planned length the stage's `--duration` is built
+from. `crop` and `placed` are the fit stage's for a one-clip project (in a dry run whose fit input is
+not written yet, from `fit.py`'s own dry run of the clip's picture, which the cut and the speed stage
+keep); with several clips `join.py` frames each and they are `null`. The fit stage's `timing` is
+passed on as `timing`.
+
+`render.py --preview` (#581 part 2) renders the whole project at its own frame, every stage at the
+`--fast` preset, so captions, graphics and overlays are laid out as the final's, then makes the
+delivered picture small with `proxy.py` (the short side 540, never enlarged, quality 30) into
+`<output>_preview.mp4` beside the output; the project's output is not written, the export (when the
+project has one) writes into the work directory, the check stage is not run (`check_preview`), and
+the result has `preview: true` and no `picture` (that was the full frame). It refuses `--stop-after`,
+`--export-timeline`, `--write-project`, `--init`, `--list-templates`, `--compare-project` (it checks a
+full-size render), a saved plan, a template pack and an audio-only output.
 
 New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
 in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
@@ -936,6 +970,7 @@ Per-tool keys added in 1.17, all additive:
 | `timeline` | `render.py --export-timeline FILE` | `{format, rate, duration, frames, clips, transition, transition_frames, music, markers, notes, not_exported}`: the written timeline's own numbers (`rate` is exact, `"30000/1001"` for 29.97) and what the project asked for that an editor timeline cannot carry. Nothing is encoded (`commands: []`); `verified` means the file was written and reads back as its format (`verification` step `parse`) -- not that an editor opened it |
 | `templates` | `render.py --list-templates --json` | one row per shipped template: `{template, destination, frame: {width, height} or null for an audio destination, fit, max_duration, lufs, safe: {top, bottom, left, right}}` (unreleased: before, the table was printed under `--json` too). `render.py --init FILE --json` prints the plain success document with `output` the file it wrote |
 | `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, miss_reasons, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. `miss_reasons` (unreleased, additive): `[{stage, reason, ...}]`, `reason` one of `not_cached`, `sidecar_missing`, `artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`, `destination_not_owned` (a file already at the stage's path in `--work` is not one this render wrote). The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
+| `render_path`, `render_path_reason` | `render.py` (#357) | `fused` when the picture and the sound were encoded once, `staged` when every stage wrote a file of its own (`--staged` asks for it). Fused needs one uncut clip whose stages are `fit`, `captions` and `loudness` (each optional) before a platform `export`: fit, caption and loudness are run as themselves up to their encode, against the frame fit plans (an internal variable between `render.py` and its children, not a flag), and the export reads the source through their filters, the loudness measured on the source. `render_path_reason` is `null` when fused, else one code: `staged_requested`, `cache`, `stop_after`, `preview` (a preview never writes the final), `no_encoding_export`, `export_not_a_platform_preset`, `clips_cut_or_joined`, `audiogram_stage`, `silence_stage`, `graphics_stage`, `overlays_stage`, `audio_stage`, `source_variable_frame_rate`, `source_rotated_or_anamorphic`, `source_hdr`, `source_subtitle_or_data_streams`, `source_several_audio_tracks`, `fit_not_planned`, `captions_not_planned`, `loudness_not_planned` (the stage refused its plan: the staged path runs it and says why), `fit_not_one_picture_chain` (a retime, trim or fade), `fit_changes_frame_rate`, `captions_not_one_picture_chain` (emoji drawn as overlays). Fused, `stage_pictures` has no `fit` entry (fit wrote no file to measure) and the loudness stage's check is made on the delivery the export measured. On a result that reached the delivery |
 | `intermediate_preset` | `render.py` | The x264/x265 preset the stages before an encoding export ran at: `--intermediate-preset`, default `superfast` since 2.16 (`veryfast` in 2.15). `null` when no stage received it: no encoding export was reached, `--fast`, `--stop-after` before the export, a `copy` export, or nothing but the export encoded. Present on every render result, early stops included |
 
 Per-tool keys added in 1.17.1, all additive:

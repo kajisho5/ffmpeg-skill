@@ -6,6 +6,48 @@
 
 (nothing yet)
 
+## 4.23.0
+
+_Automated release: version and notes generated from pull requests merged since 4.22.5._
+
+### Added
+
+- `render.py --preview`: the whole project laid out at its own frame (every stage at the `--fast` preset), then
+  made small by `proxy.py` (the short side 540, never enlarged) as `<output>_preview.mp4`; the output itself is
+  not written, the check stage is not run, and the result says `preview: true` (#581). It refuses
+  `--compare-project`, which checks a full-size delivered render.
+- `cut.py --audition DIR [--audition-seconds 2]`: a small clip of each join and `DIR/index.json`, cut from the
+  written cut, so a stream copy is heard at the keyframes it joined on; `audition.path` names the cut's mode (#581).
+- `render.py` results and dry runs list `clips`: each clip's `speed_factor` and, for a one-clip project, the fit
+  stage's `crop` or `placed`; the fit stage's `timing` too (#581).
+- `fit.py --fit pad` and `--fit blur` report where the picture lands in the frame as `placed` in dry-run JSON,
+  plans and results (#581).
+- feat: render.py --preview, cut.py --audition, each clip's decisions and fit's placed (#581) (#783)
+- chore(deps): codeql-action 4.39.5 (init, analyze, upload-sarif) and scorecard-action 2.6.0 together (#799)
+
+## 4.22.5
+
+_Automated release: version and notes generated from pull requests merged since 4.22.4._
+
+### Fixed
+
+- `caption.py` ends a cue with the picture: the default `--min-duration` no longer lengthens a short last cue past the input's picture, and a cue whose own end is past it is held there too, so `--mode mux` no longer writes a container longer than its picture (a 3.13 s picture was muxed into 3.8 s) and a burn's adjusted SRT names no time past the last frame. Each held cue is named in a note (#776).
+- fix: a cue the minimum duration would carry past the picture ends with the picture (#776) (#798)
+
+## 4.22.4
+
+_Automated release: version and notes generated from pull requests merged since 4.22.3._
+
+### Fixed
+
+- `caption.py` keeps a cue whose text is only full-width or other non-ASCII digits before a timing
+  line with no blank line above it; it was taken for the next cue's index and lost from every copy
+  the tool wrote (#765). A timing line written in such digits, which FFmpeg's SRT reader cannot
+  read, is refused as `kind: input` before any command, dry runs included, with a hint to write
+  the times in ASCII digits. A `--color` alpha and a `.cube` LUT written in such digits are
+  refused the same way instead of failing inside FFmpeg.
+- fix: subtitle and timing readers take ASCII digits only, as FFmpeg does (#765) (#796)
+
 ## 4.22.3
 
 _Automated release: version and notes generated from pull requests merged since 4.22.2._

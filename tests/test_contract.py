@@ -711,7 +711,7 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("already_released", block[block.index("        run:"):])
         self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
-        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5", scorecard)
         self.assertIn("publish_results: true", scorecard)
         self.assertIn("branch_protection_rule:", scorecard)
         self.assertIn("security-events: write", scorecard)
@@ -2469,9 +2469,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 76_000),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_500),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_700),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
+            ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_800),  # +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -8203,9 +8203,9 @@ class BatchSourcePathTests(unittest.TestCase):
         leaves = {k for _, k in PROJECT_PATH_KEYS}
         src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
         # project_input_files()'s add(value) and the audiogram stage read keys named around them;
-        # `brand` is the brand key, `ov[k]` an overlay's font_file
+        # `brand` is the brand key, `ov[k]` an overlay's font_file, `cap[key]` caption_argv's text, srt or ass
         indirect = {"au[k]": {"music", "replace", "effects"}, "ch": {"chapters"}, "p: Any": set(),
-                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}}
+                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}, "cap[key]": {"text", "srt", "ass"}}
         for arg in re.findall(r"\brel\(((?:[^()]|\([^()]*\))+)\)", src):
             named = re.findall(r"[\"'](\w+)[\"']", arg)
             keys = {named[-1]} if named else indirect.get(arg.strip())
@@ -11499,6 +11499,45 @@ class TextAndJsonReaderTests(unittest.TestCase):
         for case, body, want in self.SRT_CASES:
             with self.subTest(case):
                 self.assertEqual(asr.parse_srt(str(self.write(f"{case}.srt", body))), want)
+
+    def test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it(self):
+        """#765: before a timing line with no blank line above it, a cue whose text was "１２３" was
+        taken for the next cue's index (str.isdigit() takes full-width digits) and lost. ffmpeg's
+        SRT reader takes an index in 0-9 only and burns the line as text; so does parse_srt()."""
+        from _common import asr
+        src = self.write("full_width_text.srt", "1\n00:00:01,000 --> 00:00:02,000\n１２３\n"
+                                                "00:00:03,000 --> 00:00:04,000\nWorld\n")
+        want = [(1.0, 2.0, "１２３"), (3.0, 4.0, "World")]
+        self.assertEqual(asr.parse_srt(str(src)), want)
+        as_ffmpeg_reads_it = self.write("full_width_text_ffmpeg.srt",
+                                        sh("ffmpeg", "-v", "error", "-i", src, "-f", "srt", "-").stdout)
+        self.assertEqual(asr.parse_srt(str(as_ffmpeg_reads_it)), want)
+
+    def test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs(self):
+        """#765: a timing line written in full-width digits read as valid to parse_srt() and to the
+        shared-grammar check, so the file went to ffmpeg, which refused it ("Invalid data found")
+        after the run had started, or burned the line as the previous cue's text. It is refused as
+        input before any command, dry run or not, with the way out. The same digits slipped through
+        two other checks of a caller's text that ffmpeg reads: a colour's @alpha and a .cube LUT."""
+        fw = "００:００:０３,０００ --> ００:００:０４,０００"
+        caption, clip = str(SCRIPTS / "caption.py"), str(self.clip)
+        for case, body in (("first", f"1\n{fw}\nHello\n"),
+                           ("after_a_blank", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n\n2\n{fw}\nHello\n"),
+                           ("no_blank_line", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n{fw}\nHello\n")):
+            for dry in (["--dry-run"], []):
+                with self.subTest(case=case, dry=bool(dry)):
+                    doc = self.refused_as_input(case, caption, clip, "--srt", f"{case}.srt", "--fast", "-o",
+                                                f"fw_{case}.mp4", *dry, files=[(f"{case}.srt", body)])
+                    self.assertIn("ASCII digits", doc["error"]["hint"])
+                    self.assertFalse(doc.get("commands"), "refused before any ffmpeg command")
+        rows = "\n".join(f"{r} {g} {b}" for b in (0, 1) for g in (0, 1) for r in (0, 1))
+        color, pad = str(SCRIPTS / "color.py"), str(SCRIPTS / "pad.py")
+        for case, argv, files in (
+                ("cube_size", [color, clip, "--lut", "s.cube"], [("s.cube", "LUT_3D_SIZE ２\n" + rows + "\n")]),
+                ("cube_rows", [color, clip, "--lut", "r.cube"], [("r.cube", "LUT_3D_SIZE 2\n" + rows.replace("1", "１") + "\n")]),
+                ("alpha", [pad, clip, "--end", "0.5", "--color", "red@0.５"], [])):
+            with self.subTest(case=case):
+                self.refused_as_input(case, *argv, "-o", f"{case}.mp4", "--dry-run", files=files)
 
     def test_a_cue_line_of_spaces_does_not_split_the_srt_it_is_written_to(self):
         from _common import asr

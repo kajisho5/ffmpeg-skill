@@ -189,7 +189,7 @@ come out soft (a 1280x720 source fit to 9:16 is 406x720 until export scales it t
 Cue length and timing are handled for you since 1.12: `caption.py` wraps every
 cue to the safe area by measured width at the chosen `--size`, splits a cue past
 `--max-lines` (default 2) into consecutive cues, holds a cue shorter than
-`--min-duration` (default 1.0 s) — never past the next cue — and shifts
+`--min-duration` (default 1.0 s) — never past the next cue or the picture's end — and shifts
 everything by `--offset SECONDS`. It reports what it changed on one `cues:` line
 and writes the adjusted copy next to the output, never over the file you passed
 in. Wrapping needs the input video (the line width comes from its real frame
