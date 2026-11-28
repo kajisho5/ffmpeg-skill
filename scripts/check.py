@@ -48,7 +48,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, TP_TOLERANCE_DB, spec_of, upload_limit_note, resolve as resolve_platform
-from _common.probe import (AUDIO_LEVEL_DB, AUDIO_REL_DB, AUDIO_WINDOW, audio_change_windows, CHANGE_FLOOR, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
+from _common.probe import (AUDIO_LEVEL_DB, AUDIO_REL_DB, AUDIO_WINDOW, audio_change_windows, CHANGE_FLOORS, CHANGE_GRID, change_mask_tiles, change_tiles, LEGAL_RANGE_CHOICES, measure_signal_range, COMPARE_SSIM_WARN, CONTENT_FLAT_STD, SILENT_PEAK_DBFS, compare_pictures, detect_content,
                            detect_flashes, first_frame_stats, presentation_times, measured_level_dbfs)
 from _common.emit import file_identity, own_length
 from _common.probe import PROBED_AUDIO
@@ -171,12 +171,12 @@ def _runs(frames: "List[int]") -> "List[Tuple[int, int]]":
 
 
 def change_scope(tiles: "Dict[str, Any]", declared: "List[Dict[str, Any]]", times: "List[float]",
-                 size: "Tuple[int, int]", floor: int) -> "Dict[str, Any]":
+                 size: "Tuple[int, int]", floor: int, grid: "Tuple[int, int]" = CHANGE_GRID) -> "Dict[str, Any]":
     """The measured tiles against the declaration. `times` has one more entry than there are
     frames (frame n is shown from times[n] until times[n+1]). A declared span is closed at both
     ends and widened to whole frames: frame n is inside when its interval touches the span.
     Inside a span with a rectangle, only the tiles the rectangle touches may change."""
-    gw, gh = CHANGE_GRID
+    gw, gh = grid
     w, h = size
     tw, th = w / gw, h / gh
 
@@ -195,7 +195,7 @@ def change_scope(tiles: "Dict[str, Any]", declared: "List[Dict[str, Any]]", time
             union = 0
             for n in range(first, last + 1):
                 union |= frames[n]
-            hit = change_mask_tiles(union)
+            hit = change_mask_tiles(union, grid)
             c0, c1 = min(c for c, _ in hit), max(c for c, _ in hit)
             r0, r1 = min(r for _, r in hit), max(r for _, r in hit)
             x0, y0, x1, y1 = int(c0 * tw), int(r0 * th), int(round((c1 + 1) * tw)), int(round((r1 + 1) * th))
@@ -303,6 +303,11 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     if size != shown_size(rv):
         return not_compared("%dx%d against %dx%d (as displayed)" % (size + shown_size(rv)),
                             "compare two renders of the same frame size")
+    grid = getattr(args, "grid", CHANGE_GRID)
+    if grid != CHANGE_GRID and min(size[0] / grid[0], size[1] / grid[1]) < 30:
+        # under 30 px a re-encode alone passed the floors (newer libsvtav1: 143 on one 20 px tile)
+        die(f"--change-grid {grid[0]}: the {size[0]}x{size[1]} picture in {grid[0]}x{grid[1]} tiles is "
+            f"{min(size[0] / grid[0], size[1] / grid[1]):.0f} px a tile, and the floors hold from 30 px: use a coarser grid")
     for d in declared:
         if d["rect"] and (d["rect"][0] + d["rect"][2] > size[0] or d["rect"][1] + d["rect"][3] > size[1]):
             # a rectangle that runs past the edge is a wrong size or a wrong file, and clipping it
@@ -326,7 +331,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         return not_compared(f"{nout} frames against the reference's {nref}" + (" left after --expect-removed" if removed else ""),
                             "declare the removed spans with --expect-removed START-END (the reference's time)" if not removed
                             else "the removed spans do not match the cut: give them in the reference's time, as the edit was asked")
-    tiles = change_tiles(args.input, args.compare, args.change_floor, squares=(square_pixels(v), square_pixels(rv)),
+    tiles = change_tiles(args.input, args.compare, args.change_floor, grid, squares=(square_pixels(v), square_pixels(rv)),
                          removed=[(s + ref_origin, e + ref_origin) for s, e in removed])
     if tiles is None:
         return not_compared("the comparison pass failed", look + "0")
@@ -340,7 +345,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
         # rate would put a frame near a span's edge on the wrong side of it, and is simply wrong
         # on variable-rate video. `none` too: its FAIL names where the change is
         return not_compared("the frame times could not be read", "remux the file (export.py --preset copy) and check it again")
-    doc = change_scope(tiles, declared, times, size, args.change_floor)
+    doc = change_scope(tiles, declared, times, size, args.change_floor, grid)
     if removed:
         doc["removed"] = [{"start": s, "end": e} for s, e in removed]
 
@@ -356,7 +361,7 @@ def change_scope_row(args: Any, declared: "List[Dict[str, Any]]", meta: Dict[str
     if differ:
         STATE_NOTES.append("--expect-changed: the two files are not encoded alike (" + ", ".join(differ) + "), so part of "
                            "what was measured is the encoder's difference, not the edit")
-    floor_note = f"floor {doc['floor']}, largest unchanged tile {doc['quiet_peak']}"
+    floor_note = f"floor {doc['floor']} on {grid[0]}x{grid[1]} tiles, largest unchanged tile {doc['quiet_peak']}"
     if doc["undeclared"]:
         first = doc["undeclared"][0]
         more = len(doc["undeclared"]) - 1
@@ -512,9 +517,12 @@ def main() -> int:
                          "an audio_change_scope row FAILs on a change elsewhere (same length only)")
     ap.add_argument("--expect-removed", action="append", metavar="SPAN",
                     help="a span START-END of REFERENCE's time the edit cut out (repeatable), taken out before comparing")
-    ap.add_argument("--change-floor", type=int, default=CHANGE_FLOOR, metavar="N",
-                    help="--expect-changed: a 60x60-ish tile (the frame in %dx%d) counts as changed when its largest "
-                         "channel difference is above N of 255 (default %%(default)d)" % CHANGE_GRID)
+    ap.add_argument("--change-grid", type=int, metavar="N",
+                    help="--expect-changed: the frame in N tiles across and N*9/16 down, %s (default 32; 64 needs "
+                         "1920 px across, 96 needs 2880): a finer grid finds a smaller change" % ", ".join(map(str, CHANGE_FLOORS)))
+    ap.add_argument("--change-floor", type=int, metavar="N",
+                    help="--expect-changed: a tile counts as changed when its largest channel difference is above N "
+                         "of 255 (default per --change-grid: %s)" % ", ".join(f"{k}: {v}" for k, v in CHANGE_FLOORS.items()))
     ap.add_argument("--expect-identity", metavar="SIZE:MTIME_NS",
                     help="the output_identity a writing tool reported ({size}:{mtime_ns}): an identity row FAILs when "
                          "the file at INPUT is not that file (a later run replaced it, or a failed run left an older one)")
@@ -566,6 +574,12 @@ def main() -> int:
         if any(e <= s for s, e in spans):
             die("--expect-removed: a removed span ends after its start")
         args.removed = spans
+    if declared_changes is None and (args.change_grid, args.change_floor) != (None, None):
+        die("--change-grid and --change-floor set how --expect-changed measures, so they need --expect-changed")
+    if args.change_grid not in (None, *CHANGE_FLOORS):
+        die(f"--change-grid {args.change_grid}: the grid is %s tiles across" % ", ".join(map(str, CHANGE_FLOORS)))
+    args.grid = (args.change_grid, args.change_grid * 9 // 16) if args.change_grid else CHANGE_GRID
+    args.change_floor = CHANGE_FLOORS[args.grid[0]] if args.change_floor is None else args.change_floor
     if not 1 <= args.change_floor <= 254:
         die(f"--change-floor {args.change_floor} is outside 1..254 (a difference of 0-255 per channel)")
 

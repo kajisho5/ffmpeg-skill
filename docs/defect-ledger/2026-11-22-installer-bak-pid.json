@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-22",
+  "issue": null,
+  "class": "leftovers",
+  "what": "an upgrade killed between its two renames (or whose restore rename failed) left the previous install at <name>.bak-<pid> next to the target: a whole skill whose SKILL.md says name: ffmpeg-skill, so Claude Code, Cursor and Codex found the skill twice, and neither a re-install nor --uninstall removed it",
+  "escaped": "#467 A29 named the installer's scratch folder <name>.tmp-<pid> and the sweep was written for that name only; the swap's backup folder is the installer's other scratch name and no test left one behind",
+  "mechanism": "staleScratchDirs() names every scratch folder the installer makes (<name>.tmp-<pid> and <name>.bak-<pid>, pid no longer running) and a finished install sweeps it as --uninstall does; test_installer_copies_the_shipped_set_refuses_unknown_arguments_and_leaves_no_scratch leaves both for an ended pid and checks that a re-install and an uninstall remove them, while a live pid's <name>.tmp-<pid> and <name>.bak-<pid> and a non-pid name stay (a dead install's pid reused by an unrelated process keeps its folder: the safe direction)"
+}

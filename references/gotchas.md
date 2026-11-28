@@ -189,7 +189,7 @@ come out soft (a 1280x720 source fit to 9:16 is 406x720 until export scales it t
 Cue length and timing are handled for you since 1.12: `caption.py` wraps every
 cue to the safe area by measured width at the chosen `--size`, splits a cue past
 `--max-lines` (default 2) into consecutive cues, holds a cue shorter than
-`--min-duration` (default 1.0 s) — never past the next cue — and shifts
+`--min-duration` (default 1.0 s) — never past the next cue or the picture's end — and shifts
 everything by `--offset SECONDS`. It reports what it changed on one `cues:` line
 and writes the adjusted copy next to the output, never over the file you passed
 in. Wrapping needs the input video (the line width comes from its real frame
@@ -325,7 +325,8 @@ directory of PNGs — and on most builds only the second one exists.
 - **`--animate` moves the PNG too.** The overlay gets a matching alpha fade, so
   the emoji arrives and leaves with the line instead of popping in.
 - `overlay.py --text` has no PNG route: `--emoji png|color` there names
-  `caption.py`/`graphics.py` instead.
+  `caption.py`/`graphics.py` instead. It took `--emoji-assets`, `--emoji-scale` and `--emoji-max`
+  without reading them; 4.22.3 removed them, and it refuses them as unknown options.
 
 ### Reframing, fps and duration
 `--fit crop` to reach 9:16 from 16:9 throws away 70 % of the width: a wide shot
@@ -434,7 +435,7 @@ commands work with `talk.wav` in place of `talk.mp4`. What changes:
 | "clean up the noise in this M4A" | `audio.py talk.m4a --voice -o talk_clean.m4a` (speech) or `--denoise` |
 | "convert this WAV to MP3" | `audio.py talk.wav -o talk.mp3` |
 | "trim this audio from 00:30 to 02:00" | `cut.py talk.wav --start 0:30 --end 2:00 -o talk_cut.wav` (`--accurate` for sample-exact) |
-| "join these recordings", "intro + episode + outro" | `join.py intro.wav episode.m4a outro.wav -o full.flac` (`--transition none` for a butt join) |
+| "join these recordings", "intro + episode + outro" | `join.py intro.wav episode.m4a outro.wav -o full.flac` (end to end; `--transition fade` crossfades) |
 | "extract the audio from the video" | `audio.py talk.mp4 -o talk.wav` (`--voice -o talk.m4a` to clean it on the way) |
 | "compress / limit / gate the voice" | `audio.py talk.wav --compress --comp-threshold -20 --comp-ratio 4 --limit --limit-ceiling -1 -o talk_dyn.wav` |
 | "is this loud enough for Apple Podcasts?" | `check.py talk.m4a --platform podcast` |

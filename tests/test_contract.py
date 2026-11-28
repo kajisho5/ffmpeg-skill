@@ -28,6 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
+# #690: one request end to end per page; every command on them is run under --dry-run below
+USE_CASE_PAGES = sorted(p for p in (ROOT / "docs" / "use-cases").glob("*.md") if p.name != "README.md")
 CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
@@ -222,9 +224,13 @@ class ContractTests(unittest.TestCase):
         one so a new/removed tool that forgets to update one of them fails CI instead of
         drifting silently -- see #50, filed after README said 28 twice, 22 once (stale), and
         package.json's description said 21, all at the same time."""
-        real_count = len(self.contract["tools"])
+        # an alias (#683: crop, folded into fit) is described but not counted
+        real_count = len([t for t in self.contract["tools"] if "alias_of" not in t])
+        self.assertEqual(real_count, 41)
         checks = [
             (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|names)\b|\ball (?P<n>\d+) by\b")),
+            # #690: the Japanese README states it as "N 個のツール"
+            (ROOT / "README.ja.md", re.compile(r"(\d+)\s*個のツール")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
             (ROOT / "package.json", re.compile(r"(\d+)\s+FFmpeg tools\b")),
             # SKILL.md is the one file the agent actually reads, and it phrases the count as
@@ -273,7 +279,7 @@ class ContractTests(unittest.TestCase):
             seen_core |= core
             seen_all += names
         self.assertEqual(seen_core, set(_contract.MCP_CORE_TOOLS))
-        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"]))
+        self.assertEqual(sorted(seen_all), sorted(t["name"] for t in self.contract["tools"] if "alias_of" not in t))
         self.assertEqual(set(groups), {r.strip("|").split("|")[0].strip() for r in rows[:-1]})
         total_name, total_counts, _ = [c.strip() for c in rows[-1].strip("|").split("|")]
         self.assertEqual(total_name, "**Total**")
@@ -709,7 +715,7 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("already_released", block[block.index("        run:"):])
         self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
-        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5", scorecard)
         self.assertIn("publish_results: true", scorecard)
         self.assertIn("branch_protection_rule:", scorecard)
         self.assertIn("security-events: write", scorecard)
@@ -997,6 +1003,13 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(build_pages._rewrite_prose('[c](docs/contract.md "API") `](no.png)`', "README.md", set()),
                              '[c](docs/contract.html "API") `](no.png)`')
             self.assertTrue((out / "_layouts" / "default.html").is_file())
+            # #690: the use-case pages and the Japanese README are published pages too; a page's
+            # clip in site/media is linked where site/ is served (the site root), not copied twice
+            for page in ("readme.ja.md", "docs/use-cases/index.md", *(f"docs/use-cases/{p.name}" for p in USE_CASE_PAGES)):
+                self.assertTrue((out / page).is_file(), page)
+            self.assertIn("lang: ja\n", (out / "readme.ja.md").read_text(encoding="utf-8"))
+            self.assertIn('src="../../media/showcase_short_en.jpg"', (out / "docs/use-cases/vertical-short.md").read_text(encoding="utf-8"))
+            self.assertFalse((out / "site").exists())
             for page in out.rglob("*.md"):
                 text = page.read_text(encoding="utf-8")
                 self.assertTrue(text.startswith("---\nlayout: default\n"), page)
@@ -1004,6 +1017,112 @@ class ContractTests(unittest.TestCase):
                     url = (src[0] or src[1]).split()[0]
                     if not re.match(r"^[a-z]+:", url):
                         self.assertTrue((page.parent / url).is_file(), f"{page.relative_to(out)}: {url}")
+
+    def test_use_case_pages_commands_are_accepted_by_the_tools(self):
+        """#690. Each use-case page under docs/use-cases/ shows the commands one request runs, on the
+        clips in demos/footage/. A page whose command no longer parses is a failing test, as a
+        README example is: every `python3 scripts/` line in a page's bash blocks runs here, in
+        order, under --dry-run, from a scratch directory (demos/... resolves to the checkout).
+        A dry run writes nothing, so a later line that reads an earlier line's output sees no file;
+        most tools plan against a missing input, and the few that must open it (look, crop,
+        multicam, render) are run once more with a stand-in of the same kind: the talk clip for a
+        video, its sound for an .m4a, a slide for a .png. Every page is linked from the top of
+        README and published by build_pages.py."""
+        sys.path.insert(0, str(ROOT / ".github" / "scripts"))
+        try:
+            import build_pages
+        finally:
+            sys.path.pop(0)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        top = readme[:readme.index("\n### Review page\n")]
+        self.assertGreaterEqual(len(USE_CASE_PAGES), 5)
+        names = {t["name"] for t in self.contract["tools"]}
+        footage = ROOT / "demos" / "footage"
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            sound = work / "_standin.m4a"
+            sh(sys.executable, SCRIPTS / "audio.py", footage / "veo_talk_en.mp4", "-o", sound)
+            standins = {".mp4": footage / "veo_talk_en.mp4", ".mov": footage / "veo_talk_en.mp4",
+                        ".m4a": sound, ".png": footage / "slide_en_1.png"}
+            for page in USE_CASE_PAGES:
+                rel = page.relative_to(ROOT).as_posix()
+                self.assertIn(f'href="{rel}"', top, f"{rel} is not linked from the top of README")
+                self.assertIn(rel, build_pages.PAGES, f"{rel} is not published by build_pages.py")
+                text = page.read_text(encoding="utf-8")
+                lines = [line for block in re.findall(r"^```bash\n(.*?)^```", text, re.M | re.S)
+                         for line in block.splitlines() if line.startswith("python3 scripts/")]
+                self.assertTrue(lines, f"{rel} shows no command")
+                written = set()
+                for line in lines:
+                    argv = shlex.split(line)[1:]
+                    tool_name = Path(argv[0]).stem
+                    self.assertIn(tool_name, names, f"{rel}: {line}")
+                    argv = [str(SCRIPTS / f"{tool_name}.py")] + [
+                        str(ROOT / a) if a.startswith("demos/") else a for a in argv[1:]]
+                    run = lambda: subprocess.run([sys.executable, *argv, "--dry-run"], cwd=work,  # noqa: E731
+                                                 capture_output=True, text=True, timeout=600)
+                    proc = run()
+                    missing = [a for a in argv[1:] if a in written and not (work / a).exists()]
+                    if proc.returncode != 0 and missing:
+                        for a in missing:
+                            (work / a).parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy(standins[Path(a).suffix], work / a)
+                        proc = run()
+                    self.assertEqual(proc.returncode, 0, f"{rel}: {line}\n{proc.stderr[-1500:]}")
+                    for flag, value in zip(argv, argv[1:]):
+                        if flag in ("-o", "--output"):
+                            written.add(value)
+            # a dry run writes no media: only the stand-ins this test made are there
+            made = {p.name for p in work.rglob("*") if p.suffix in (".mp4", ".m4a") and p.name != sound.name}
+            self.assertTrue(made <= {"late.mp4", "cam_b.mp4", "multicam.mp4", "audiogram.mp4",
+                                     "episode_podcast.m4a", "tight.mp4", "social_short.mp4",
+                                     "steady.mp4", "clean.mp4", "talk_reels.mp4", "master.mp4"}, made)
+
+    def test_readme_ja_keeps_the_english_headings_and_commands(self):
+        """#690. README.ja.md translates README.md's prose and is kept in step by what can be
+        compared without reading Japanese: every heading of README.md, in order and at its level,
+        has its translation behind an anchor with the English heading's GitHub id (so #install
+        and the other links work in both files); every bash and JSON block is README's, with the
+        comments translated and the commands not; every inline code span is one README uses; the
+        tool count is the contract's; and each file links to the other.
+        Exempt, with the reason: the "Development" section (maintainers only; README.ja.md links to
+        the English one), and the rows of the agent-eval history in "Tested on real footage"
+        (prose with per-iteration numbers; the translation points to the English table). Neither
+        holds a heading other than Development or a command block the test would compare."""
+        en = (ROOT / "README.md").read_text(encoding="utf-8")
+        ja = (ROOT / "README.ja.md").read_text(encoding="utf-8")
+        exempt = {"Development"}
+        fence = re.compile(r"^```(\w*)\n(.*?)^```", re.M | re.S)
+
+        def prose(text):
+            return fence.sub("", text)
+
+        def slug(heading):
+            return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+        def commands(text):
+            out = set()
+            for lang, body in fence.findall(text):
+                if lang in ("bash", "json", ""):
+                    lines = [re.sub(r"(^|\s)#(\s.*)?$", "", line).rstrip() for line in body.splitlines()]
+                    out.add("\n".join(line for line in lines if line))
+            return out
+
+        def spans(text):
+            return set(re.findall(r"(``[^\n]*?``|`[^`\n]*`)", prose(text)))
+
+        en_heads = [(len(h), slug(t)) for h, t in re.findall(r"^(#{2,4}) (.+)$", prose(en), re.M) if t not in exempt]
+        ja_heads = [(len(h), a) for a, h in re.findall(r'^<a id="([^"]+)"></a>\n\n(#{2,4}) ', ja, re.M)]
+        self.assertEqual(ja_heads, en_heads, "README.ja.md's anchors and heading levels must follow README.md's headings")
+        self.assertEqual(len(re.findall(r"^#{2,4} ", prose(ja), re.M)), len(ja_heads), "a README.ja.md heading without its anchor")
+        dev = en.split("\n## Development\n", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual(commands(ja), commands(en) - commands(dev), "README.ja.md's command blocks differ from README.md's")
+        self.assertEqual(spans(ja) - spans(en), set(), "inline code in README.ja.md that README.md does not have")
+        counts = {int(n) for n in re.findall(r"(\d+)\s*個のツール", ja)}
+        # an alias (#683: crop, folded into fit) is described but not counted, as in README.md
+        self.assertEqual(counts, {len([t for t in self.contract["tools"] if "alias_of" not in t])})
+        self.assertIn('href="README.ja.md"', en[:en.index("\n### Review page\n")])
+        self.assertIn('href="README.md"', ja[:ja.index('<a id="review-page">')])
 
     def test_claude_plugin_marketplace_lists_the_plugin(self):
         """Without .claude-plugin/marketplace.json, `claude plugin install` and `claude plugin
@@ -1117,12 +1236,12 @@ class ContractTests(unittest.TestCase):
     def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
         """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
         (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
-        Every one of the 42 tools is named in that table somewhere, so every tool has at least
-        one example; a row's markdown backticks are stripped from `command`, and a row with
+        Every tool but an alias (#683: crop, out of the table) is named in that table somewhere, so
+        it has at least one example; a row's markdown backticks are stripped from `command`, and a row with
         several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
         `prompts` list rather than one string."""
         by_name = {t["name"]: t for t in self.contract["tools"]}
-        missing = [name for name, t in by_name.items() if not t.get("examples")]
+        missing = [name for name, t in by_name.items() if not t.get("examples") and "alias_of" not in t]
         self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
         cut = next(e for e in by_name["cut"]["examples"] if "cut from 1:20 to 2:05" in e["prompts"])
         self.assertEqual(cut, {"prompts": ["cut from 1:20 to 2:05", "trim the first 10 s"],
@@ -1680,6 +1799,7 @@ sys.exit(fit.main())
         # references/flags.md (#466) left out metadata, cut, render and batch.
         docs = {"SKILL.md": ROOT / "SKILL.md", "references/scripts.md": ROOT / "references" / "scripts.md",
                 "docs/contract.md": ROOT / "docs" / "contract.md", "README.md": ROOT / "README.md",
+                "README.ja.md": ROOT / "README.ja.md",
                 "references/flags.md": ROOT / "references" / "flags.md"}
         for label, path in docs.items():
             text = path.read_text(encoding="utf-8")
@@ -2396,14 +2516,15 @@ sys.exit(fit.main())
     # ------------------------------------------------------------------ consistency: MCP and installer
     def test_mcp_tools_match_contract(self):
         """FFMPEG_SKILL_MCP_FULL=1 is the escape hatch back to the pre-1.18.3 behaviour: every
-        contract tool listed. This test proves that view is still byte-for-byte the full set."""
+        contract tool listed but an alias (#683). This test proves that view is still the full set."""
+        advertised = [n for n, s in self.tools.items() if "alias_of" not in s]
         saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
         os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
         try:
             mcp_names = [t["name"] for t in mcp_server.tool_list()]
-            self.assertEqual(sorted(mcp_names), sorted(self.tools), "MCP tools/list (full) == contract tools")
+            self.assertEqual(sorted(mcp_names), sorted(advertised), "MCP tools/list (full) == contract tools but the aliases")
             listed = [l.split()[0] for l in sh(sys.executable, ROOT / "mcp" / "server.py", "--list", env={**os.environ}).stdout.splitlines() if l.strip()]
-            self.assertEqual(sorted(listed), sorted(self.tools))
+            self.assertEqual(sorted(listed), sorted(advertised))
         finally:
             os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
             if saved is not None:
@@ -2413,7 +2534,11 @@ sys.exit(fit.main())
             self.assertEqual(spec["mcp"]["positional"], mcp_server.POSITIONAL.get(name, ["input"]) if spec["mcp"]["positional"] else spec["mcp"]["positional"])
         # a real JSON-RPC round trip, full surface
         resp = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]
-        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(self.tools))
+        self.assertEqual(sorted(t["name"] for t in resp["result"]["tools"]), sorted(advertised))
+        # an alias is not listed and is still called by name (#683)
+        self.assertEqual({n: s["alias_of"] for n, s in self.tools.items() if "alias_of" in s}, _contract.ALIASES)
+        self.assertEqual(_contract.ALIASES, {"crop": "fit"})
+        self.assertIn("usage:", mcp_server.call_tool("crop", {"argv": ["--help"]})["content"][0]["text"].lower())
 
     def test_mcp_tools_list_defaults_to_the_core_12(self):
         """roadmap P1-7 (docs/design-decisions.md): tools/list defaults to _contract.MCP_CORE_TOOLS,
@@ -2445,7 +2570,7 @@ sys.exit(fit.main())
             listed = sh(sys.executable, ROOT / "mcp" / "server.py", "--list").stdout
             self.assertEqual([line.split()[0] for line in listed.splitlines()], expected)
             full = self._rpc([request], full=True)[0]
-            self.assertEqual([t["name"] for t in full["result"]["tools"]], list(self.tools))
+            self.assertEqual([t["name"] for t in full["result"]["tools"]], [n for n, s in self.tools.items() if "alias_of" not in s])
 
     def test_mcp_reports_unknown_advertised_tool_names(self):
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
@@ -2462,9 +2587,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 75_600),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 42, 197_200),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_300),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured)
+            ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_900),  # +100 for join.py --transition none by default (#681, 194826 measured), +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
@@ -2539,17 +2664,11 @@ sys.exit(fit.main())
         all 42 tools, so this reads tool_list() under FFMPEG_SKILL_MCP_FULL=1 -- the default's
         core-12 filter is a separate, tested concern (test_mcp_tools_list_defaults_to_the_core_12)."""
         snapshot_path = ROOT / "tests" / "fixtures" / "mcp_tools.json"
-        saved = os.environ.get("FFMPEG_SKILL_MCP_FULL")
-        os.environ["FFMPEG_SKILL_MCP_FULL"] = "1"
-        try:
-            live = [{"name": t["name"],
-                     "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
-                     "required": sorted(t["inputSchema"].get("required", []))}
-                    for t in mcp_server.tool_list()]
-        finally:
-            os.environ.pop("FFMPEG_SKILL_MCP_FULL", None)
-            if saved is not None:
-                os.environ["FFMPEG_SKILL_MCP_FULL"] = saved
+        # every tool callable by name, an alias too (#683: crop is not listed and keeps its arguments)
+        live = [{"name": t["name"],
+                 "properties": sorted(t["inputSchema"].get("properties", {}).keys()),
+                 "required": sorted(t["inputSchema"].get("required", []))}
+                for t in map(_contract.mcp_tool, mcp_server.specs().values())]
         if os.environ.get("UPDATE_MCP_SNAPSHOT"):
             snapshot_path.write_text(json.dumps(live, indent=1) + "\n", encoding="utf-8")
         frozen = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -2559,7 +2678,10 @@ sys.exit(fit.main())
         self.assertEqual(removed, [], f"tools removed/renamed since the 1.x snapshot: {removed}")
         for name, was in frozen_by_name.items():
             now = live_by_name[name]
-            gone = sorted(set(was["properties"]) - set(now["properties"]))
+            # 4.x's beta rule removes a beta tool's argument in a minor, and the contract lists it in `removed`
+            allowed = {e["what"].split(" --", 1)[1].replace("-", "_") for e in _contract.REMOVED
+                       if e["where"] == "cli" and e["what"].startswith(f"{name}.py --")}
+            gone = sorted(set(was["properties"]) - set(now["properties"]) - allowed)
             self.assertEqual(gone, [], f"{name}: arguments removed/renamed since the 1.x snapshot: {gone}")
             newly_required = sorted(set(now["required"]) - set(was["required"]))
             self.assertEqual(newly_required, [], f"{name}: arguments made required since the 1.x snapshot: {newly_required}")
@@ -2601,12 +2723,24 @@ sys.exit(fit.main())
                     self.assertEqual(sorted(entry), ["removed_in", "replacement", "since", "what", "where"])
                     self.assertIn(entry["where"], ("cli", "json", "mcp", "behaviour"))
                     self.assertTrue(entry["replacement"])
+        version = tuple(int(x) for x in json.loads((ROOT / "package.json").read_text())["version"].split("."))
+        beta = {t["name"] for t in self.contract["tools"] if t["stability"] == "beta"}
         for entry in self.contract["deprecated"]:
-            self.assertGreater(int(entry["removed_in"].split(".")[0]), pkg_major)
+            removed_in, since = (tuple(int(x) for x in entry[k].split(".")) for k in ("removed_in", "since"))
+            if entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta:
+                # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it,
+                # so one listed from a patch (since 4.20.2) waits out 4.21 and goes in 4.22
+                self.assertEqual((removed_in[0], removed_in[2], removed_in[0] == since[0]), (since[0], 0, True), entry["what"])
+                self.assertEqual(removed_in[1], since[1] + (2 if since[2] else 1), entry["what"])
+                self.assertGreater(removed_in, version, entry["what"])
+            else:
+                self.assertGreater(removed_in[0], pkg_major)
         removed = self.contract["removed"]
         self.assertTrue(removed)
         for entry in removed:
-            self.assertIn(entry["removed_in"], ("2.0.0", "3.0.0"))
+            # a major's removals, or a beta tool's argument removed in a minor (4.x's beta rule)
+            if not (entry["where"] == "cli" and entry["what"].split(".py ")[0] in beta):
+                self.assertIn(entry["removed_in"], ("2.0.0", "3.0.0"))
             self.assertLessEqual(int(entry["removed_in"].split(".")[0]), pkg_major)
         for surface in ("cli", "json", "mcp", "behaviour"):
             self.assertIn(surface, [e["where"] for e in removed])
@@ -2636,7 +2770,7 @@ sys.exit(fit.main())
     # are what that major's own PR is checked against.
     # None: not released yet. Set it to the tag date when that version ships; a major bump fails
     # while it is None, because the 90-day window cannot be counted from an unknown date.
-    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24"}
+    DEPRECATION_RELEASE_DATES = {"1.10.0": "2026-09-13", "2.10.9": "2026-10-22", "2.14.0": "2026-10-24", "4.20.2": None}
     # A major released before step 2's 90 days had passed, by the maintainer's decision. Each one
     # must be stated in docs/contract.md (the needle below), so it is a written waiver, not a slip.
     WINDOW_WAIVERS = {2: "**2.0.0 waived the 90-day half of step 2.**", 3: "**3.0.0 waived the 90-day half of step 2.**"}
@@ -2655,7 +2789,9 @@ sys.exit(fit.main())
             with self.subTest(what=entry["what"]):
                 self.assertIn(entry["since"], self.DEPRECATION_RELEASE_DATES,
                               f"add {entry['since']}'s release date to DEPRECATION_RELEASE_DATES")
-                self.assertGreater(int(entry["removed_in"].split(".")[0]), major,
+                # a beta tool's argument (4.x's beta rule) goes in a minor: the same check, at the minor
+                at = 2 if entry["since"].split(".")[0] == entry["removed_in"].split(".")[0] else 1
+                self.assertGreater(tuple(int(x) for x in entry["removed_in"].split(".")[:at]), tuple(int(x) for x in pkg["version"].split(".")[:at]),
                                    f"package.json is {pkg['version']} but {entry['what']!r} is still "
                                    f"deprecated, not removed: remove it, then drop the entry")
         for entry in _contract.REMOVED:
@@ -2843,7 +2979,7 @@ sys.exit(fit.main())
 
     def test_mcp_input_schema_equals_translated_contract_schema(self):
         listed = self._rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], full=True)[0]["result"]["tools"]
-        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"]], "MCP order == contract order")
+        self.assertEqual([t["name"] for t in listed], [t["name"] for t in self.contract["tools"] if "alias_of" not in t], "MCP order == contract order")
         for entry in listed:
             spec = self.tools[entry["name"]]
             self.assertEqual(self._norm(entry["inputSchema"]), self._norm(_contract.mcp_input_schema(spec)), entry["name"])
@@ -3243,7 +3379,7 @@ sys.exit(fit.main())
         """3.0.0 settles the 2.10.9 (Python 3.9) and 2.14.0 (FFmpeg 5.x) deprecations: both move from
         `deprecated` to `removed`, the floors are 3.10 and 6.1, doctor and the npx installer print
         the same FFmpeg line, and CI no longer runs 3.9 or a 5.x build."""
-        self.assertEqual(self.contract["deprecated"], [])
+        self.assertEqual([e for e in self.contract["deprecated"] if "Python" in e["what"] or "FFmpeg" in e["what"]], [])
         removed = {e["what"]: e for e in self.contract["removed"] if e["removed_in"] == "3.0.0"}
         py = next(e for w, e in removed.items() if "Python 3.9" in w)
         ff = next(e for w, e in removed.items() if "FFmpeg 5.x" in w)
@@ -3945,9 +4081,30 @@ sys.exit(fit.main())
             running = skills / f"ffmpeg-skill.tmp-{os.getpid()}"
             running.mkdir()
             (running / "SKILL.md").write_text("being copied", encoding="utf-8")
+            # a run killed between its two renames (or whose restore rename failed) left the
+            # previous install at <name>.bak-<pid>: a whole skill whose SKILL.md says
+            # name: ffmpeg-skill, so an agent scanning the folder saw the skill twice, and neither
+            # a re-install nor --uninstall removed it
+            # and a live pid's <name>.bak-<pid> is that install's previous copy mid-swap: it stays too
+            running_bak = skills / f"ffmpeg-skill.bak-{os.getpid()}"
+            running_bak.mkdir()
+            (running_bak / "SKILL.md").write_text("---\nname: ffmpeg-skill\n---\n", encoding="utf-8")
+            kept = sorted([running.name, running_bak.name, "ffmpeg-skill.tmp-notes", "ffmpeg-skill.bak-notes"])
+            (skills / "ffmpeg-skill.bak-notes").mkdir()
+
+            def leave_scratch():
+                for name in (f"ffmpeg-skill.tmp-{ended.pid}", f"ffmpeg-skill.bak-{ended.pid}"):
+                    (skills / name).mkdir(exist_ok=True)
+                    (skills / name / "SKILL.md").write_text("---\nname: ffmpeg-skill\n---\n", encoding="utf-8")
+            leave_scratch()
+            sh("node", installer, env=env)
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), sorted(kept + ["ffmpeg-skill"]),
+                             "a finished install removes the <name>.tmp-<pid> and <name>.bak-<pid> an ended run left")
+            leave_scratch()
             sh("node", installer, "--uninstall", env=env)
-            self.assertEqual(sorted(p.name for p in skills.iterdir()), sorted([running.name, "ffmpeg-skill.tmp-notes"]),
-                             "only the installer's own <name>.tmp-<pid> folders are removed, and only when that pid is gone")
+            self.assertEqual(sorted(p.name for p in skills.iterdir()), kept,
+                             "only the installer's own <name>.tmp-<pid> and <name>.bak-<pid> folders are removed, "
+                             "and only when that pid is gone")
 
     # ------------------------------------------------------------------ integration: claims hold at run time
     def test_every_1_17_flag_is_reachable_off(self):
@@ -6016,7 +6173,7 @@ sys.exit(fit.main())
             kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout.split()
             self.assertEqual(kinds.count("subtitle"), 2, f"{name}: expected both source subtitle tracks, got {kinds}")
         drop = [
-            ("join", [self.subbed, self.subbed, "--duration", "0.3", "-o", self.out("policy_join.mp4"), "--json"]),
+            ("join", [self.subbed, self.subbed, "--transition", "fade", "--duration", "0.3", "-o", self.out("policy_join.mp4"), "--json"]),
             ("broll", [self.subbed, "--insert", self.src, "--at", "1", "--duration", "1", "-o", self.out("policy_broll.mp4"), "--json"]),
             ("speedramp", [self.subbed, "--segment", "0-3:2", "--segment", "3-6:1", "-o", self.out("policy_ramp.mp4"), "--json"]),
         ]
@@ -6518,8 +6675,6 @@ def garbage_payload(p):
                 doc = json.loads(tool(name, *args, "-o", out, "--overwrite", "--json").stdout)
                 self.assertEqual(doc["status"], "completed", doc)
                 lens = {k: float(v) for k, v in probe_streams(out).items()}
-                if name == "join":  # the default crossfade overlaps the clips by its own length
-                    want -= doc["transition_shortening"]
                 self.assertAlmostEqual(lens["audio"], want, delta=0.25, msg=f"{name}: audio is {lens['audio']}s, wanted {want}s")
                 self.assertAlmostEqual(lens["audio"], lens["video"], delta=0.25)
                 if name in ("cut", "join", "export"):
@@ -6673,13 +6828,13 @@ def garbage_payload(p):
         """join.py's expected length is derived from the transition it applied, so a check against
         it alone hid that a fade took time out of the material (15 s of clips as 14 s). The clips'
         own total is reported beside it, with a note when the transitions shortened the join."""
-        doc = json.loads(tool("join", self.src, self.src, "-o", self.out("len_join.mp4"), "--overwrite", "--json").stdout)
+        doc = json.loads(tool("join", self.src, self.src, "--transition", "fade", "-o", self.out("len_join.mp4"), "--overwrite", "--json").stdout)
         step = next(s for s in doc["verification"] if s["step"] == "duration")
         self.assertAlmostEqual(doc["inputs_duration"], step["inputs_total"], places=2)
         self.assertAlmostEqual(doc["transition_shortening"], doc["inputs_duration"] - doc["expected_duration"], places=3)
         self.assertGreater(doc["transition_shortening"], 0)
         self.assertTrue(any("transitions overlap the clips" in n for n in doc.get("notes") or []))
-        cut = json.loads(tool("join", self.src, self.src, "--transition", "none", "-o", self.out("len_join_cut.mp4"),
+        cut = json.loads(tool("join", self.src, self.src, "-o", self.out("len_join_cut.mp4"),
                               "--overwrite", "--json").stdout)
         self.assertEqual(cut["transition_shortening"], 0.0)
         self.assertFalse(any("transitions overlap" in n for n in cut.get("notes") or []))
@@ -8164,9 +8319,9 @@ class BatchSourcePathTests(unittest.TestCase):
         leaves = {k for _, k in PROJECT_PATH_KEYS}
         src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
         # project_input_files()'s add(value) and the audiogram stage read keys named around them;
-        # `brand` is the brand key, `ov[k]` an overlay's font_file
+        # `brand` is the brand key, `ov[k]` an overlay's font_file, `cap[key]` caption_argv's text, srt or ass
         indirect = {"au[k]": {"music", "replace", "effects"}, "ch": {"chapters"}, "p: Any": set(),
-                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}}
+                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}, "cap[key]": {"text", "srt", "ass"}}
         for arg in re.findall(r"\brel\(((?:[^()]|\([^()]*\))+)\)", src):
             named = re.findall(r"[\"'](\w+)[\"']", arg)
             keys = {named[-1]} if named else indirect.get(arg.strip())
@@ -9643,6 +9798,14 @@ class DoctorDetectionTests(unittest.TestCase):
                                  ("the stage cache", ("render.py", "--cache"))):
             for needle in needles:
                 self.assertIn(needle, table, f"{feature}: the routing table never names {needle}")
+
+    def test_skill_md_sends_an_ordinary_edit_to_json_brief(self):
+        """#682: the brief document measured 0.29 of --json's bytes over eight ordinary edits
+        (docs/design-decisions.md, "After 4.18.0"), so the one-call paragraph asks for it and
+        names --json for the probe and the commands it leaves out."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        paragraph = " ".join(text.split("**One ordinary edit is one call.**", 1)[1].split("\n\n", 1)[0].split())
+        self.assertIn("run it with `--json-brief` (`--json` for the probe or commands)", paragraph)
 
     def test_skill_md_sanctions_one_label_for_a_partial_result(self):
         """1.17.1: a partial result is `Done:` with the shortfall in `Notes:`. Agents were
@@ -11519,6 +11682,45 @@ class TextAndJsonReaderTests(unittest.TestCase):
         for case, body, want in self.SRT_CASES:
             with self.subTest(case):
                 self.assertEqual(asr.parse_srt(str(self.write(f"{case}.srt", body))), want)
+
+    def test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it(self):
+        """#765: before a timing line with no blank line above it, a cue whose text was "１２３" was
+        taken for the next cue's index (str.isdigit() takes full-width digits) and lost. ffmpeg's
+        SRT reader takes an index in 0-9 only and burns the line as text; so does parse_srt()."""
+        from _common import asr
+        src = self.write("full_width_text.srt", "1\n00:00:01,000 --> 00:00:02,000\n１２３\n"
+                                                "00:00:03,000 --> 00:00:04,000\nWorld\n")
+        want = [(1.0, 2.0, "１２３"), (3.0, 4.0, "World")]
+        self.assertEqual(asr.parse_srt(str(src)), want)
+        as_ffmpeg_reads_it = self.write("full_width_text_ffmpeg.srt",
+                                        sh("ffmpeg", "-v", "error", "-i", src, "-f", "srt", "-").stdout)
+        self.assertEqual(asr.parse_srt(str(as_ffmpeg_reads_it)), want)
+
+    def test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs(self):
+        """#765: a timing line written in full-width digits read as valid to parse_srt() and to the
+        shared-grammar check, so the file went to ffmpeg, which refused it ("Invalid data found")
+        after the run had started, or burned the line as the previous cue's text. It is refused as
+        input before any command, dry run or not, with the way out. The same digits slipped through
+        two other checks of a caller's text that ffmpeg reads: a colour's @alpha and a .cube LUT."""
+        fw = "００:００:０３,０００ --> ００:００:０４,０００"
+        caption, clip = str(SCRIPTS / "caption.py"), str(self.clip)
+        for case, body in (("first", f"1\n{fw}\nHello\n"),
+                           ("after_a_blank", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n\n2\n{fw}\nHello\n"),
+                           ("no_blank_line", f"1\n00:00:00,500 --> 00:00:01,000\nHi\n{fw}\nHello\n")):
+            for dry in (["--dry-run"], []):
+                with self.subTest(case=case, dry=bool(dry)):
+                    doc = self.refused_as_input(case, caption, clip, "--srt", f"{case}.srt", "--fast", "-o",
+                                                f"fw_{case}.mp4", *dry, files=[(f"{case}.srt", body)])
+                    self.assertIn("ASCII digits", doc["error"]["hint"])
+                    self.assertFalse(doc.get("commands"), "refused before any ffmpeg command")
+        rows = "\n".join(f"{r} {g} {b}" for b in (0, 1) for g in (0, 1) for r in (0, 1))
+        color, pad = str(SCRIPTS / "color.py"), str(SCRIPTS / "pad.py")
+        for case, argv, files in (
+                ("cube_size", [color, clip, "--lut", "s.cube"], [("s.cube", "LUT_3D_SIZE ２\n" + rows + "\n")]),
+                ("cube_rows", [color, clip, "--lut", "r.cube"], [("r.cube", "LUT_3D_SIZE 2\n" + rows.replace("1", "１") + "\n")]),
+                ("alpha", [pad, clip, "--end", "0.5", "--color", "red@0.５"], [])):
+            with self.subTest(case=case):
+                self.refused_as_input(case, *argv, "-o", f"{case}.mp4", "--dry-run", files=files)
 
     def test_a_cue_line_of_spaces_does_not_split_the_srt_it_is_written_to(self):
         from _common import asr
@@ -14048,6 +14250,32 @@ class StumbleLedgerTests(unittest.TestCase):
                 if span and isinstance(spec.get("default"), (int, float)) and spec.get("type") in ("integer", "number"):
                     self.assertTrue(float(span[1]) <= spec["default"] <= float(span[2]), f"{t['name']} {name}: default {spec['default']} is outside {span[0]}")
 
+    def test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749(self):
+        """#749: a 0 was read as another value without a word. `export.py --duration 0` wrote the
+        whole clip, `--pad-blur 0` blurred with radius 1 in export.py where fit.py refused it,
+        `caption.py --font-size 0` reported size_used 0 for 28 px text, and `--emoji-scale 0` drew
+        the emoji at 1.0 in caption.py and graphics.py. Each help now states its range (> 0, or
+        1..2000 as overlay.py's --font-size) and the shared step refuses what is outside it, in a
+        dry run as well; the values inside it still run."""
+        clip, srt = str(ROOT / "demos" / "footage" / "veo_sea.mp4"), str(ROOT / "demos" / "footage" / "veo_talk_en.srt")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "o.mp4")
+            run = lambda tool, *argv: subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *argv, "-o", out, "--dry-run", "--json"],
+                                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            rows = ((("export", "--preset", "youtube"), "--duration", "2", "> 0"),
+                    (("export", "--preset", "tiktok", "--pad-fill", "blur"), "--pad-blur", "5", "> 0"),
+                    (("fit", "--aspect", "9:16", "--fit", "blur"), "--pad-blur", "5", "> 0"),
+                    (("caption", "--srt", srt), "--font-size", "24", "1..2000"),
+                    (("caption", "--srt", srt), "--emoji-scale", "1.5", "> 0"),
+                    (("graphics", "--template", "hook", "--title", "hi"), "--emoji-scale", "1.5", "> 0"))
+            for (tool, *argv), flag, kept, span in rows:
+                with self.subTest(tool=tool, flag=flag):
+                    proc = run(tool, *argv, f"{flag}=0")
+                    self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                    error = json.loads(proc.stdout)["error"]
+                    self.assertEqual(error["message"], f"{flag} 0 is outside what this option takes, {span}")
+                    self.assertEqual(run(tool, *argv, f"{flag}={kept}").returncode, 0)
+
     def test_every_option_has_help_text(self):
         """#558: twenty options (--preset on eight tools, the colour and font options of overlay
         and graphics, ...) had no help, the text `--help` and every MCP tool description show an
@@ -14111,6 +14339,79 @@ class StumbleLedgerTests(unittest.TestCase):
         for tool, argv in (("cut", ("--start", "1", "--end", "2", "--bogus")), ("export", ("--codec", "hevc")), ("stabilize", ("--zoom=5%", "--wat"))):
             with self.subTest(tool=tool, argv=argv):
                 self.assertNotIn("try:", run(tool, *argv))
+
+    def test_a_try_line_is_a_command_the_tool_accepts(self):
+        """`speedramp.py IN --ramp 3:6:0.5` ended with `try: ... --segment 3:6:0.5`, which speedramp
+        refuses (START-END:FACTOR): --segment was the one option whose help mentions 'ramp', and the
+        value went with it. Every rule that writes a `try:` is run on every tool of tests/sweep.py's
+        table, and each command it prints is run with --dry-run: a misspelt option of the tool (with
+        the value it was given), a choice misspelt or given a common other word, a number with its
+        unit. A flag that another tool takes, or one that only shares a word or a mention in the
+        help, has no single answer here: the hint names the options and no command follows."""
+        import argparse
+        import concurrent.futures
+        sys.path.insert(0, str(ROOT / "tests"))
+        import sweep
+        from _common import runner
+
+        def taught(tool, argv):
+            parser, saved, err = parsers[tool], sys.argv, io.StringIO()
+            sys.argv = [str(SCRIPTS / f"{tool}.py"), *argv]
+            try:
+                with contextlib.redirect_stderr(err):
+                    parser.parse_args(argv)
+            except SystemExit:
+                pass
+            finally:
+                sys.argv = saved
+            return err.getvalue()
+
+        with tempfile.TemporaryDirectory() as work:
+            clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+            facts = sweep.facts_for(clip, work)
+            parsers = {p.stem: _contract._capture_parser(p) for p in sorted(SCRIPTS.glob("[!_]*.py"))}
+            self.assertNotIn("\ntry:", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            self.assertIn("--segment", taught("speedramp", [clip, "--ramp", "3:6:0.5", "-o", "x.mp4"]))
+            commands, foreign = {}, []
+            for name, (base, ext) in sweep.TABLE.items():
+                tool = name.split()[0]
+                if tool == "verify":  # it runs its steps for real and ignores --dry-run
+                    continue
+                base, out = [b.format(**facts) for b in base], (["-o", str(Path(work) / f"o{ext}")] if ext else [])
+                acts = {o: a for a in parsers[tool]._actions for o in a.option_strings if o.startswith("--")}
+                cases = []
+                for i, word in enumerate(base):
+                    action = acts.get(word)
+                    if action and len(word) > 5:
+                        cases.append(("option", base[:i] + [word[:3] + word[4] + word[3] + word[5:]] + base[i + 1:]))
+                    if action and action.choices:
+                        cases += [("choice", base[:i + 1] + [w] + base[i + 2:]) for w in (base[i + 1][:-1], *runner._OTHER_WORDS)]
+                    if re.fullmatch(r"\d+(\.\d+)?", word):
+                        cases += [("unit", base[:i] + [word + unit] + base[i + 1:]) for unit in ("s", "px")]
+                for other, parser in parsers.items():
+                    for flag, action in {o: a for a in parser._actions for o in a.option_strings if o.startswith("--")}.items():
+                        if other != tool and not any(o.startswith(flag) for o in acts) and flag not in runner.SHARED:
+                            said = taught(tool, [clip, *base, flag, *([] if action.nargs == 0 else ["2"]), *out])
+                            foreign += [f"{name}: {flag} ({other}.py)"] if "\ntry:" in said else []
+                for rule, argv in cases:
+                    line = re.search(r"\ntry: (.*)", taught(tool, [clip, *argv, *out]))
+                    if line:
+                        commands[line[1]] = rule
+            self.assertEqual(foreign, [], "another tool's option was answered with a command")
+            self.assertEqual(sorted(set(commands.values())), ["choice", "option", "unit"], "every rule was run")
+
+            def refused(line):
+                # the try: line is quoted for the shell it is printed on: list2cmdline on Windows, shlex.join elsewhere
+                cmd = [w.strip('"') for w in shlex.split(line, posix=False)] if os.name == "nt" else shlex.split(line)
+                proc = subprocess.run([sys.executable, *cmd[1:], "--dry-run", "--json", "--overwrite"], capture_output=True,
+                                      text=True, encoding="utf-8", timeout=300, cwd=work)
+                try:
+                    # check.py runs the command and fails a check of the clip (kind verification): accepted
+                    return None if proc.returncode == 0 or json.loads(proc.stdout)["error"]["kind"] == "verification" else line
+                except ValueError:
+                    return line + " :: " + proc.stderr[-200:]
+            with concurrent.futures.ThreadPoolExecutor(4) as pool:
+                self.assertEqual([r for r in pool.map(refused, commands) if r], [])
 
     def test_three_things_most_models_asked_for_are_options_now(self):
         """Nine models were given the same blind tasks; these three shapes came from most of them and

@@ -13,12 +13,12 @@ output of an audio join must be an audio extension; mixing audio and video
 inputs is refused.
 
 Examples:
-  python3 join.py a.mp4 b.mp4 c.mp4 -o final.mp4                      # 0.5 s crossfade, size/fps from the first clip
+  python3 join.py a.mp4 b.mp4 c.mp4 -o final.mp4                      # end to end, size/fps from the first clip
   python3 join.py *.mp4 --transition fadeblack --duration 1 -o reel.mp4
   python3 join.py a.mov b.mp4 --transition none --width 1920 --height 1080 --fps 30
-  python3 join.py intro.wav talk.m4a outro.wav -o episode.flac            # audio join, 0.5 s crossfade
-  python3 join.py part1.wav part2.wav --transition none -o full.wav       # butt join, sample rate of part1
-  python3 join.py --list parts.txt --transition none -o voice.wav          # the segments a TTS step wrote, in order
+  python3 join.py intro.wav talk.m4a outro.wav --transition fade -o episode.flac   # audio join, 0.5 s crossfade
+  python3 join.py part1.wav part2.wav -o full.wav                         # butt join, sample rate of part1
+  python3 join.py --list parts.txt -o voice.wav                           # the segments a TTS step wrote, in order
   python3 join.py --list parts.txt --on-missing skip -o voice.wav          # join what is there, report the rest
 
 Every input is checked before anything is joined: a missing, empty or unreadable segment is
@@ -698,8 +698,8 @@ def main() -> int:
     ap.add_argument("--silence-threshold", type=float, default=SILENT_PEAK_DBFS, metavar="DB",
                     help="peak level in dBFS at or below which an input counts as silent (default -50)")
     ap.add_argument("-o", "--output", help="output file (default: <first>_joined.mp4)")
-    ap.add_argument("--transition", choices=TRANSITIONS, default="fade", help="transition between clips (default fade)")
-    ap.add_argument("--duration", type=float, default=0.5, help="transition length in seconds (default 0.5)")
+    ap.add_argument("--transition", choices=TRANSITIONS, default="none", help="transition between clips (default none: end to end; a crossfade is fade)")
+    ap.add_argument("--duration", type=float, help="transition length in seconds (default 0.5; not with --transition none)")
     ap.add_argument("--width", type=int, help="output width (default: first clip); a size or resolution WxH is --width W --height H")
     ap.add_argument("--height", type=int, help="output height (default: first clip)")
     ap.add_argument("--fps", type=float, help="output frame rate (default: first clip)")
@@ -729,6 +729,10 @@ def main() -> int:
         die(f"--fps must be positive, got {args.fps:g}")
     # nan and inf are refused by the parser (finite_float) and a negative length by apply_common: it
     # was taken as the one-frame minimum and the join succeeded with a transition nobody asked for
+
+    if args.duration is not None and args.transition == "none":
+        die(f"--duration {args.duration:g} is a transition's length, and this join has none (--transition none, the default)", hint="--transition fade --duration S crossfades; without --duration the clips play end to end")
+    args.duration = 0.5 if args.duration is None else args.duration
 
     cut_flag = "--audio-lead" if args.audio_lead is not None else "--audio-lag" if args.audio_lag is not None else None
     hint = "a J-cut or an L-cut is a plain cut: --transition none, no --copy, one of the two flags"

@@ -86,8 +86,11 @@ class Transcription:
 # A line that starts a cue even with no blank line before it: a clock time, "-->", a clock time,
 # then nothing or whitespace (ffmpeg's position fields, X1:.. Y1:..). ffmpeg's SRT demuxer starts
 # an event at every such line; the first line of a block holding "-->" is a timing line whatever
-# its shape.
-_SRT_CUE_START = re.compile(r"^\s*\d+:\d+[\d:.,]*\s*-->\s*\d+:\d+[\d:.,]*(\s|$)")
+# its shape. ASCII digits only: ffmpeg's reader takes 0-9, where Python's \d also takes full-width
+# and other digits (#765); _SRT_CUE_ANY_DIGITS finds such a line to refuse it.
+_SRT_CUE_SHAPE = r"^\s*\d+:\d+[\d:.,]*\s*-->\s*\d+:\d+[\d:.,]*(\s|$)"
+_SRT_CUE_START = re.compile(_SRT_CUE_SHAPE, re.ASCII)
+_SRT_CUE_ANY_DIGITS = re.compile(_SRT_CUE_SHAPE)
 
 
 def srt_blocks(text: str) -> List[Tuple[str, List[str]]]:
@@ -107,7 +110,7 @@ def srt_blocks(text: str) -> List[Tuple[str, List[str]]]:
         timing, body = lines[first], []
         for ln in lines[first + 1:]:
             if _SRT_CUE_START.match(ln):
-                if body and body[-1].strip().isdigit():
+                if body and re.fullmatch(r"[0-9]+", body[-1].strip()):
                     body.pop()
                 out.append((timing, body))
                 timing, body = ln, []
@@ -115,6 +118,20 @@ def srt_blocks(text: str) -> List[Tuple[str, List[str]]]:
                 body.append(ln)
         out.append((timing, body))
     return out
+
+
+def srt_file_blocks(path: str) -> Tuple[str, List[Tuple[str, List[str]]]]:
+    """The text and srt_blocks() of the SRT at `path`, refused (kind input) when a timing line is
+    written in digits other than 0-9: ffmpeg refuses such a file or burns that line as text (#765)."""
+    source = read_text_or_die(path, "--srt")
+    blocks = srt_blocks(source)
+    for times, body in blocks:
+        bad = times if any(c.isdigit() and not c.isascii() for c in "".join(srt_timing_times(times))) else next(
+            (ln for ln in body if _SRT_CUE_ANY_DIGITS.match(ln)), None)
+        if bad is not None:
+            die(f"{path}: the timing line {bad.strip()!r} is not written in the digits 0-9, the only ones "
+                "ffmpeg's SRT reader takes", kind="input", hint="write the times in ASCII digits: 00:00:01,000 --> 00:00:02,000")
+    return source, blocks
 
 
 def srt_timing_times(line: str) -> Tuple[str, str]:
@@ -133,11 +150,11 @@ _VTT_INLINE = re.compile(r"<\d{1,2}:\d{2}(?::\d{2})?\.\d{3}>|</?(?:c|v|lang)(?:[
 
 def parse_srt(path: str) -> List[Tuple[float, float, str]]:
     cues: List[Tuple[float, float, str]] = []
-    source = read_text_or_die(path, "--srt")
+    source, blocks = srt_file_blocks(path)
     # only in a file that says it is WebVTT: ffmpeg's own WebVTT reader drops these tags, and the
     # cues this function returns were burned with them in the text (#404)
     vtt = source.lstrip().upper().startswith("WEBVTT")
-    for times, body in srt_blocks(source):
+    for times, body in blocks:
         a, b = srt_timing_times(times)
         text = "\n".join(body).strip()
         if vtt:
@@ -1046,8 +1063,11 @@ def engine_wav(ffmpeg: str, video: str, audio_stream: int, wav: str) -> None:
     --dry-run gate, not recorded); it keeps the time limit and reports an unreadable input as
     kind ffmpeg instead of a CalledProcessError traceback."""
     from _common import run_analysis
-    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", video,
-                  "-map", f"0:a:{audio_stream}", "-vn", "-af", "aresample=async=1:first_pts=0",
+    from _common.probe import probe as probe_meta, sound_clock
+    # -copyts and the shift: on an MPEG-TS/PS a sound-only decode would count from the sound's own
+    # first sample instead of the file's start (#787)
+    run_analysis([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-copyts", "-i", video,
+                  "-map", f"0:a:{audio_stream}", "-vn", "-af", sound_clock(probe_meta(video, required=False)),
                   "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
 
 
