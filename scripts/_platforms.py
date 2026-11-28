@@ -26,10 +26,10 @@ the description bar. This module is the single table the delivery tools read:
 Read by check.py (SPECS), export.py (PRESETS/PLATFORM_OF), render.py (templates),
 caption.py and graphics.py (--platform margins) and look.py (--safe).
 
-Safe zones are the app's own overlay, measured from each platform's published
-design guidance: TikTok's caption/description block and the like/comment column,
-Instagram's Reels UI, the Shorts player. They are deliberately generous -- a
-caption 2 % too high is readable, a caption under the share button is not. The
+Safe zones are the app's own overlay on a phone (status bar, header, caption block,
+like/comment column); no app publishes pixel margins for a post, so each edge is at
+least every figure measured on 1080x1920 (docs/design-decisions.md, "After 4.25.0").
+Deliberately generous: a caption 2 % too high is readable, one under the share button is not. The
 feed destinations (YouTube, X, LinkedIn, Facebook) have no persistent overlay, so
 they carry the conventional 5 % title-safe border instead.
 

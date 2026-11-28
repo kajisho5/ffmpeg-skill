@@ -2023,7 +2023,7 @@ edge, in ASS units against the 288-line script grid (default 30; with
 of the frame height = 63 units for TikTok's description bar). It is the ASS
 Style's `MarginV` and nothing else. The **side** margins come from the
 destination's horizontal safe zone — `safe.left` / `safe.right` in
-`scripts/_platforms.py`, 5 % and 14 % for TikTok, so a line stays off the
+`scripts/_platforms.py`, 6 % and 17 % for TikTok, so a line stays off the
 like/share rail — and with no `--platform` from the conventional
 `(1 - SAFE_WIDTH_FRACTION)/2 = 5 %` border per side. The wrapper and `--fit-size`
 measure against exactly that column (`play_w - MarginL - MarginR`), so the line

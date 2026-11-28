@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-28",
+  "issue": null,
+  "class": "geometry",
+  "what": "--platform reels placed text inside the UI Instagram draws over a Reel on a current phone: the safe zone's top (8 %, 154 of 1920 px) ended above the status bar, notch and Reels header (about 250 px), and its right edge (12 %, 130 px) inside the like/comment/share column (about 180 px). Shorts' top (6 %) and TikTok's top (10 %) and right (14 %) were short of the same UI.",
+  "escaped": "the table's fractions were written once from published guidance and never compared with the app as it is drawn now; the tests pinned that the tools read the table, not what the table says",
+  "mechanism": "test_a_vertical_apps_safe_zone_clears_the_ui_it_draws_on_a_phone holds each edge of the three vertical apps at or above the smallest figure measured on a 1080x1920 frame; the reasons and sources are in docs/design-decisions.md, 'After 4.25.0'"
+}

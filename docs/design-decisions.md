@@ -144,6 +144,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.18.0 — a preview of the whole project, joins of a cut to listen to, and each clip's decisions (#581)](#after-4180--a-preview-of-the-whole-project-joins-of-a-cut-to-listen-to-and-each-clips-decisions-581)
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
+- [After 4.25.0 — the vertical apps' safe zones clear the UI a phone draws](#after-4250--the-vertical-apps-safe-zones-clear-the-ui-a-phone-draws)
 <!-- contents:end -->
 
 ## Time limits
@@ -7598,3 +7599,29 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
   `test_json_brief_keeps_what_a_caller_decides_from_on_ordinary_edits`,
   `test_json_brief_keeps_the_verification_step_that_did_not_pass` (tests/test_editing.py),
   `test_skill_md_sends_an_ordinary_edit_to_json_brief` (tests/test_contract.py).
+
+## After 4.25.0 — the vertical apps' safe zones clear the UI a phone draws
+
+- **What changed.** `scripts/_platforms.py`'s `safe` fractions for the three vertical apps
+  (top/bottom/left/right): TikTok 12.5/22/6/17 % (was 10/22/5/14), Reels 13/22/6/17 % (was
+  8/20/5/12), Shorts 15/22/5/15 % (was 6/18/5/12). On 1080x1920, Reels' top went from 154 px to
+  250 px and its right edge from 130 px to 184 px: the old top ended above the status bar, notch
+  and Reels header, and the old right edge inside the like/comment/share column, so a title or a
+  logo placed by `--platform reels` sat under them.
+- **Where the numbers come from.** No app publishes pixel margins for an ordinary post. Meta's
+  Reels figure (14 % top, 35 % bottom, 6 % sides) is for ads, which carry a call-to-action under
+  the caption; TikTok and Google ship downloadable templates without numbers; third-party
+  measurements of 1080x1920 put the top at 240-288 px, the bottom at 300-672 px and the right
+  column at 150-210 px, and they disagree with each other. Reels takes the standard lines of a
+  1080x1920 guide the owner checked against the app (250/420/60/180 px). TikTok and Shorts were
+  raised wherever an edge sat below every figure found, and left where it was already inside
+  them (TikTok's bottom). The ads figure is not used: a caption 35 % up the frame is a choice for
+  an ad, not the house default for every post.
+- **The table may be more generous, never less.** `test_a_vertical_apps_safe_zone_clears_the_ui_it_draws_on_a_phone`
+  (tests/test_delivery.py) holds each edge at or above the figure above. The shipped templates
+  take their caption margin from the table (`test_every_template_caption_block_is_the_tables_safe_zone`),
+  and `look.py --safe`'s test reads the table instead of restating it.
+- **What it moves.** Every caller of `--platform tiktok|reels|shorts` (caption.py, graphics.py,
+  overlay.py, render.py templates) places text further from the edges; the caption's bottom
+  margin for Reels and Shorts is now TikTok's (63 ASS units). A caller's explicit `--margin` still
+  wins.

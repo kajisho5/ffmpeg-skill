@@ -20,7 +20,7 @@ The one-line form each section below starts from (SKILL.md keeps a shorter line 
 - Emoji need `--emoji-assets DIR` (a PNG per glyph) to render in colour; without it they come out monochrome, reported. -> [#emoji](#emoji)
 - Non-Latin text picks a font by script (`graphics.py` shapes Devanagari, Bengali, Tamil, Thai via libass; drawtext cannot); no font = failed job. -> [#fonts-by-script](#fonts-by-script)
 - `--fit crop` 16:9→9:16 throws away 70% of the width; "60 seconds" by speed or by trim are different answers — say which and why. -> [#reframing-fps-and-duration](#reframing-fps-and-duration)
-- TikTok/Reels cover the bottom fifth and right column with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](#platform-safe-zones)
+- TikTok/Reels/Shorts cover the bottom fifth, the right column and the top eighth with their own UI — templates keep text out of those zones; `look.py --safe tiktok` shows them. -> [#platform-safe-zones](#platform-safe-zones)
 - `scenes.py --highlights` ranks by loudness (or duration), never by meaning: check the sheet before trusting picks. -> [#highlights](#highlights)
 - CPU re-encodes: x264 `medium`. -> [#chaining-and-speed](#chaining-and-speed)
 
@@ -342,9 +342,10 @@ trim it drops two thirds of the words. Ask which, or propose a highlight cut wit
 `scenes.py`.
 
 ### Platform safe zones
-Every vertical app draws its own UI over the delivery: TikTok covers roughly the
-bottom 22 % (description and caption block), the right 14 % (like/comment/share
-column) and the top 10 % (status bar and tabs); Reels 20/12/8 %; Shorts 18/12/6 %.
+Every vertical app draws its own UI over the delivery: on a 1080x1920 frame the
+bottom 22 % (description, caption and sound), the right 15-17 % (like/comment/share
+column) and the top 12.5-15 % (status bar, notch and tabs). Per app, top/bottom/right:
+TikTok 12.5/22/17 %, Reels 13/22/17 %, Shorts 15/22/15 %; the left edge keeps 5-6 %.
 The feed destinations (YouTube, X, LinkedIn, Facebook) have no persistent overlay
 and use the conventional 5 % title-safe border instead. A file can pass every
 `check.py` row and still be unreadable because the caption sits under the
