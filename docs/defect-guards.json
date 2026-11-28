@@ -4,7 +4,8 @@
   "classes": {
     "time": {
       "test": "test_guards.TimeGuard.test_no_tool_leaves_chapters_at_the_source_times",
-      "how": "emit.source_carry says chapters_not_retimed for any output of another length whose chapters were carried by a tool that declared no time map (runner.with_mapped_chapters, runner.declare_time_map)"
+      "also": "test_guards.TimeGuard.test_a_sound_read_alone_counts_from_the_files_start",
+      "how": "emit.source_carry says chapters_not_retimed for any output of another length whose chapters were carried by a tool that declared no time map (runner.with_mapped_chapters, runner.declare_time_map); and a sound read or rendered alone counts from the file's start on a .ts as on an .mp4 of the same content whose sound starts late (probe.sound_clock, #787): the reads in test_a_late_sounds_place_is_the_same_in_every_sound_only_read, the renders of cut, loudness, audio and silence and check's dropouts in the guard named here"
     },
     "claim": {
       "test": "test_guards.SweepGuards.test_a_result_never_says_less_than_the_output_lost",
@@ -29,6 +30,16 @@
       "test": "test_guards.ColorGuard.test_no_output_mixes_sdr_and_hdr_colour_tags",
       "also": "test_picture.HdrRgbSourceTests.test_an_hdr_rgb_source_on_a_bt709_line_is_converted_with_the_bt709_matrix",
       "how": "every tool that writes video, and export's youtube and prores presets, grid and join by hand, run on an HDR RGB source; an output whose matrix, primaries and transfer mix SDR and HDR names fails. The matrix the pixels were made with (#559's form) is pinned by the HdrRgbSourceTests pixel readback, not by this guard"
+    },
+    "ignored_flag": {
+      "test": "test_guards.IgnoredFlagGuard.test_every_declared_option_of_every_tool_is_read",
+      "also": "test_contract.StumbleLedgerTests.test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept",
+      "how": "every tool's parser is read against its code: an option no tool or shared module reads by name fails (cut --keep-hevc is kept on purpose and listed). A flag that one mode of a tool ignores while another mode reads it (waveform --at's form of the class) is not seen by it"
+    },
+    "numeric": {
+      "test": "test_guards.NumericGuard.test_no_tool_takes_a_number_outside_the_range_its_help_states",
+      "also": "test_contract.StumbleLedgerTests.test_a_number_outside_what_its_option_takes_is_refused_on_every_tool",
+      "how": "every numeric option of every tool in tests/sweep.py's table is given, in a dry run, the value just past each end of the range its help states (a..b, or 0 for > 0) and 1000000000; one that is not refused by runner.apply_common (or by argparse's choices) fails. An option whose help states no range is held only to the million cap and the negative rule, so a value with no meaning of its own is refused by writing its range in the help"
     }
   }
 }

@@ -431,9 +431,10 @@ def color_hex(value: str) -> str:
 
 # Six or eight hex digits, with 0x, with # or bare (#535: bare ones starting with a digit, 0B1D2A,
 # were refused, and seven passed with a prefix and failed inside ffmpeg), or a word that starts
-# with a letter; alpha is 0..1 ("red@2" used to reach ffmpeg). Nothing else reaches the graph.
+# with a letter; alpha is 0..1 ("red@2" used to reach ffmpeg) in the digits 0-9 (#765: a full-width
+# digit passed, and av_parse_color refused it). Nothing else reaches the graph.
 _HEX_DIGITS = r"(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6})"
-_COLOR_TOKEN_RE = re.compile(r"^((?:0[xX]|#)?%s|[A-Za-z][A-Za-z0-9]*)(@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?$" % _HEX_DIGITS)
+_COLOR_TOKEN_RE = re.compile(r"^((?:0[xX]|#)?%s|[A-Za-z][A-Za-z0-9]*)(@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?$" % _HEX_DIGITS, re.ASCII)
 
 
 def validate_color(value: str, flag: str = "--color") -> str:

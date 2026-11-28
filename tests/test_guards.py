@@ -9,6 +9,7 @@ so a fix of one tool cannot be the end of a class that keeps coming back.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,81 @@ class TimeGuard(unittest.TestCase):
     whenever an output of another length carries chapters and its tool declared no time map
     (emit.source_carry, runner.declare_time_map); this runs every tool on a chaptered clip and
     fails on any tool that says it."""
+
+    def test_a_late_sounds_place_is_the_same_in_every_sound_only_read(self):
+        """#787's class on a sound-only read: the demuxer rewrites an MPEG-TS/PS timeline to start
+        at the earliest stream it reads, so every read of a file's sound without its picture counted
+        from the sound's own first sample. The guard remuxes a take whose sound starts 0.3 s late to
+        .ts and fails wherever a tool reads that sound elsewhere than the .mp4 does: the sweep rows
+        of the tools that read sound only, and sync.py --replace-audio's written sound."""
+        from _fixtures import make_tones_take, sh
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = make_tones_take(Path(tmp) / "late.mp4", start=0.0, audio_late=0.3, dur=7)
+            ts = Path(tmp) / "late.ts"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp4), "-c", "copy", "-f", "mpegts", str(ts))
+            differs = {}
+            a, b = sweep.facts_for(str(mp4), tmp), sweep.facts_for(str(ts), tmp)
+            for tool in ("silence", "scenes", "waveform", "cut", "loop", "caption"):
+                if tool not in sweep.TABLE:
+                    continue
+                rm, rt = sweep.row_for(tool, str(mp4), a, tmp), sweep.row_for(tool, str(ts), b, tmp)
+                if {k: v for k, v in rm.items() if k not in ("tool",)} != {k: v for k, v in rt.items() if k not in ("tool",)}:
+                    differs[tool] = (rm, rt)
+            ref = make_tones_take(Path(tmp) / "ref.mp4", dur=8)
+            out = Path(tmp) / "replaced.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(ts), "--replace-audio", "-o", str(out))
+            again = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ref), str(out), "--json").stdout)
+            if abs(again["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio"] = again["offset_seconds"]
+            # -copyts is global and -ss preserves timestamps: a .ts reference kept its picture at
+            # 1.467 s beside a sound at 0, and a trim of the second's head was padded back
+            rstart = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=start_time", "-of", "json", str(ts)).stdout)["format"]["start_time"]
+            out2 = Path(tmp) / "replaced_ts_ref.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(ts), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out2))
+            starts = json.loads(sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", str(out2)).stdout)["streams"]
+            got = {s["codec_type"]: float(s.get("start_time") or 0) for s in starts}
+            if got.get("video") != 0.0 or got.get("audio") != 0.0:
+                differs["sync --replace-audio (ts reference)"] = (rstart, got)
+            late2 = make_tones_take(Path(tmp) / "early.mp4", start=2.0, dur=8)
+            out3 = Path(tmp) / "trimmed.mp4"
+            sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(Path(tmp) / "late.mp4"), "--replace-audio", "-o", str(out3))
+            measured = json.loads(sh(sys.executable, str(ROOT / "scripts" / "sync.py"), str(late2), str(out3), "--json").stdout)
+            if abs(measured["offset_seconds"]) > 0.01:
+                differs["sync --replace-audio (trimmed head)"] = measured["offset_seconds"]
+            self.assertEqual(differs, {}, "these sound-only reads counted the .ts from its sound's first sample")
+
+    def test_a_sound_read_alone_counts_from_the_files_start(self):
+        """#787's render half, beside the reads above: a sound-only render of an MPEG-TS/PS (and
+        check.py's dropout pass) counted from the sound's own first sample, so a .wav cut, levelled
+        or mixed from a .ts lost the sound's lead, and silence.py cut a plan made on the file's
+        clock on the sound's. The same content as .ts and .mp4, its sound 0.28 s after its picture:
+        every sound-only render puts its first burst, and check.py its dropout, at the same time."""
+        def first_burst(path):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000",
+                                  "-f", "s16le", "-"], capture_output=True).stdout
+            return next((i / 8000 for i in range(len(raw) // 2) if abs(int.from_bytes(raw[2 * i:2 * i + 2], "little", signed=True)) > 1600), None)
+        with tempfile.TemporaryDirectory() as tmp:
+            read = {}
+            for ext in ("mp4", "ts"):
+                src = Path(tmp) / f"late.{ext}"
+                # bursts at 1.0-1.2 and 2.0-2.7 s on the file's clock: the 0.8 s between is a dropout
+                subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
+                                "-itsoffset", "0.3", "-f", "lavfi", "-i",
+                                "aevalsrc='if(between(t+0.3,1,1.2)+between(t+0.3,2,2.7),0.8*sin(2*PI*1000*t),0)':s=48000:d=3.7",
+                                "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                                str(src)], check=True)
+                tool = lambda name, *a: sweep.run_json([sys.executable, str(ROOT / "scripts" / f"{name}.py"), str(src), *a, "--json"])[0] or {}
+                dropouts = [c.get("value") for c in tool("check", "--content").get("checks", []) if c.get("check") == "dropouts"]
+                got = {"check --content: dropouts": [re.sub(r"\(\d+ ms\)", "", v or "") for v in dropouts]}
+                for name, argv in (("cut", ["--start", "0.5", "--end", "3"]), ("loudness", []), ("audio", ["--gain", "0"]), ("silence", [])):
+                    out = Path(tmp) / f"{name}_{ext}.wav"
+                    tool(name, *argv, "-o", str(out))
+                    got[f"{name} -o .wav: first burst"] = round(first_burst(out), 2) if out.exists() else "not written"
+                read[ext] = got
+            self.assertEqual(read["mp4"]["check --content: dropouts"], ["1: 1.20s "], "the fixture has its dropout")
+            differ = {k: (v, read["ts"][k]) for k, v in read["mp4"].items()
+                      if json.dumps(v) != json.dumps(read["ts"][k]) and not (isinstance(v, (int, float)) and abs(v - read["ts"][k]) <= 0.01)}
+            self.assertEqual(differ, {}, "these rendered or read the sound of a .ts on another clock than the .mp4's (mp4, ts)")
 
     def test_no_tool_leaves_chapters_at_the_source_times(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -366,6 +442,80 @@ def judged_without_a_file(node, path=""):
         for i, v in enumerate(node):
             found += judged_without_a_file(v, f"{path}[{i}]")
     return found
+
+
+class IgnoredFlagGuard(unittest.TestCase):
+    """ignored_flag (waveform.py --at's video flags, freeze.py --time read as --timeout, #749): a
+    flag is taken and does nothing. This catches the part of the class that the parser and the code
+    show by themselves, on every tool and on one written after this test: an option declared and
+    never read, unless contract --json `deprecated` lists it, which says it goes. A flag that one
+    mode of a tool ignores while another reads it is not seen here."""
+
+    # A dest nothing reads by name, kept on purpose: `--keep-hevc` is the 3.0.0 default, accepted so
+    # a 2.x command line runs unchanged (docs/design-decisions.md), and argparse refuses it beside
+    # `--no-keep-hevc`.
+    UNREAD_BY_DESIGN = {("cut", "keep_hevc")}
+
+    def test_every_declared_option_of_every_tool_is_read(self):
+        """#749: overlay.py declared --emoji-assets, --emoji-scale and --emoji-max and never read
+        them, so a caller's value was accepted and did nothing. Every dest of every tool's parser is
+        read: as `<name>.<dest>` or a "<dest>" string in the tool, or as `args.<dest>` /
+        `getattr(args, "<dest>")` in the shared modules the tools hand their args to. An option
+        `_contract.DEPRECATED` lists ("<tool>.py --flag", where cli) is known: it still has to go."""
+        import argparse
+        import re
+        scripts = ROOT / "scripts"
+        sys.path.insert(0, str(scripts))
+        import _contract
+        shared = "\n".join(p.read_text(encoding="utf-8") for p in sorted(scripts.glob("_*.py")) + sorted((scripts / "_common").glob("*.py"))
+                           if p.name != "_contract.py")
+        deprecated = {d["what"] for d in _contract.DEPRECATED if d["where"] == "cli"}
+        unread = []
+        for tool in sorted(scripts.glob("[!_]*.py")):
+            src = tool.read_text(encoding="utf-8")
+            if tool.stem in _contract.ALIASES:  # an alias hands its args to the tool it names (crop.py -> fit.crop_rect)
+                src += (scripts / f"{_contract.ALIASES[tool.stem]}.py").read_text(encoding="utf-8")
+            for action in _contract._capture_parser(tool)._actions:
+                if isinstance(action, argparse._HelpAction) or (tool.stem, action.dest) in self.UNREAD_BY_DESIGN \
+                        or any(f"{tool.name} {o}" in deprecated for o in action.option_strings):
+                    continue
+                d = re.escape(action.dest)
+                if not (re.search(rf"\b\w+\.{d}\b|[\"']{d}[\"']", src)
+                        or re.search(rf"\bargs\.{d}\b|getattr\(\s*args\s*,\s*[\"']{d}[\"']", shared)):
+                    unread.append(f"{tool.stem}: {'/'.join(action.option_strings) or action.dest}")
+        self.assertEqual(unread, [], "options declared and never read")
+
+
+class NumericGuard(unittest.TestCase):
+    """numeric (#749, #645, #630): a number an option cannot take was taken and read as another
+    one. Every numeric option of every tool in the sweep's table is given, in a dry run, the value
+    just past each end of the range its help states (a..b, or 0 for "> 0") and 1000000000; each
+    must be refused before anything is planned: by the shared step, which names the option, or by
+    argparse where the option has choices."""
+
+    def test_no_tool_takes_a_number_outside_the_range_its_help_states(self):
+        import edge_values
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        taken = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            facts = sweep.facts_for(clip, tmp)
+            by_tool = edge_values.options()
+            for entry, (base, ext) in sweep.TABLE.items():
+                tool = entry.split()[0]
+                if " " in entry:
+                    continue
+                out = ["-o", str(Path(tmp) / f"edge{ext}")] if ext else []
+                for flag, text in by_tool.get(tool, {}).items():
+                    span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
+                    values = ([] if flag == "--length-samples" else ["1000000000"]) + (
+                        ["0"] if span and span[0] == "> 0" else [f"{float(span[1]) - 1:g}", f"{float(span[2]) + 1:g}"] if span else [])
+                    for value in values:
+                        proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{tool}.py"), clip, *[a.format(**facts) for a in base],
+                                               f"{flag}={value}", *out, "--dry-run", "--overwrite"], capture_output=True, text=True,
+                                              encoding="utf-8", errors="replace", timeout=60)
+                        if proc.returncode == 0 or not (f"{flag} {float(value):g} is outside what this option takes" in proc.stderr or "invalid choice" in proc.stderr):
+                            taken[f"{tool} {flag}={value}"] = next((l for l in proc.stderr.splitlines() if l.startswith("error:")), "ran")[:160]
+        self.assertEqual(taken, {})
 
 
 class GuardRegistryTests(unittest.TestCase):
