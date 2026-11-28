@@ -80,6 +80,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.14.0 — an FFmpeg the test suite does not run is said, not refused (#556)](#after-4140--an-ffmpeg-the-test-suite-does-not-run-is-said-not-refused-556)
 - [After 4.14.0 — a timed zoom on video (#647)](#after-4140--a-timed-zoom-on-video-647)
 - [After 4.14.0 — a protocol allow-list on every input and FFMPEG_SKILL_ROOTS (#572)](#after-4140--a-protocol-allow-list-on-every-input-and-ffmpeg_skill_roots-572)
+- [After 4.17.0 — join.py joins without a crossfade by default (#681)](#after-4170--joinpy-joins-without-a-crossfade-by-default-681)
 - [After 3.3.0 — non-finite numbers are refused in one place](#after-330--non-finite-numbers-are-refused-in-one-place)
 - [After 3.4.3 — the MCP Registry entry is published by the release, not by hand](#after-343--the-mcp-registry-entry-is-published-by-the-release-not-by-hand)
 - [After 3.6.0 — a fold-down, a tone map and an overlay keep the source's levels and depth](#after-360--a-fold-down-a-tone-map-and-an-overlay-keep-the-sources-levels-and-depth)
@@ -3881,6 +3882,37 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `test_ffmpeg_skill_roots_keeps_every_input_and_output_under_the_named_directories` (every tool
   in `tests/sweep.py`'s table, plus `join`, `render` (an output and a `--work` outside), `batch` (an `output_dir` outside), `sequence` and a `--plan`).
 
+## After 4.17.0 — join.py joins without a crossfade by default (#681)
+
+- **`join.py`'s default is `--transition none`: "join these" is the clips' summed length.** It was
+  `--transition fade --duration 0.5`, so a request to join, stitch or put one clip after another
+  came out 0.5 s shorter per boundary with the clips blended across each cut, and a caller that
+  read `expected_duration` read the shortened length back as what was asked. In the 24-request
+  benchmark behind #681 one small model reported `join_mixed` done on a short file for this reason
+  (one run: a pointer, not a rate). A crossfade is a creative choice the caller names
+  (`--transition fade`, `dissolve`, `fadeblack`, ...), as the skill's boundary says it should be;
+  the default no longer makes it for them.
+- **It changes what an existing call writes, and that was decided, not slipped in.** The issue
+  offered keeping the default and splitting the routing (no behaviour change); the owner chose
+  the change on 2026-11-27. The changelog says it under `### Changed` with the way back
+  (`--transition fade`), and `docs/contract.md`'s 4.x promise names it as the one owner's exception
+  to "behaviour changes only to fix a defect or track an FFmpeg change".
+- **`--duration` with no transition is refused, not ignored.** Its default is no longer 0.5 but
+  unset (0.5 s when a transition is named). Without `--transition` it used to be the crossfade's
+  length, so a caller that wrote `join.py a b --duration 1` meant a fade; after the change it would
+  have joined end to end with `verified: true`. With `--transition none` it was already ignored.
+  Both are a `kind: input` refusal whose hint names `--transition fade`.
+- **Callers inside the repository keep their output.** `render.py` reads its project's
+  `transition` (a 0.5 s fade unless the project says otherwise) and always
+  passed `--transition` to join.py by name; it now passes `--duration` only with a transition. The
+  timeline export (`_common/timeline.py`) reads the same project default. Every demo
+  (`demos/build.py`, `demos/showcase.py`, `demos/pages_videos.py`) already names its transition.
+- Code: `join.main()` (the two `add_argument` calls and the refusal after `apply_common`),
+  `render.py`'s join stage. Test: `test_join_default_is_end_to_end_and_a_crossfade_is_asked_for`
+  (tests/test_editing.py): two clips of 2 s and 3 s joined with no flag are 5 s, `expected_duration`
+  5.0 and `transition_frames` 0; `--transition fade` is 4.5 s; `--duration` alone and with
+  `--transition none` are refused.
+
 ## After 3.3.0 — non-finite numbers are refused in one place
 
 - **`add_common()` registers `finite_float` for every `type=float`; `parse_time()` refuses a
@@ -4175,7 +4207,7 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `anullsrc -t {:.3f}` for a part without sound is padded and trimmed to that part's sample
   count like every other part (`apad=whole_len=N,atrim=end_sample=N`), and silence padded with
   silence is the same silence: two 37-frame parts at 30000/1001 came out as 94494 samples for 59
-  frames (the default transition) under `-t 1.235`, and a 31-frame part ahead of a 37-frame one
+  frames (a 0.5 s fade, join.py's default until #681) under `-t 1.235`, and a 31-frame part ahead of a 37-frame one
   as 84885 samples for 53 frames under `-t 1.034`. `insert.py` and `background.py` have no
   sound, and their `-t` is applied in the 1/fps time base of the picture they generate, where
   FFmpeg rounds it to the nearest frame:
