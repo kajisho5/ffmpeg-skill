@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 4.22.3
+
+_Automated release: version and notes generated from pull requests merged since 4.22.2._
+
+### Changed
+
+- `overlay.py` no longer takes `--emoji-assets`, `--emoji-scale` or `--emoji-max`: they never had an effect there (it draws text with drawtext), were deprecated in 4.20.2, and are removed after one whole minor as the beta rule says. `caption.py` and `graphics.py` keep them (#749). The warning code `deprecated_option`, which only they recorded, leaves `contract --json`'s `diagnostic_codes`.
+- fix: overlay.py's three emoji options are removed, as the beta rule set for 4.22 (#749) (#797)
+
 ## 4.22.2
 
 _Automated release: version and notes generated from pull requests merged since 4.22.1._
