@@ -158,6 +158,7 @@ missing field `null`).
 cut.py INPUT [--start T] [--end T | --duration T] [--segments A-B,C-D,... | --remove A-B,C-D,...] [--accurate | --smart] [--declick-ms 20 | --no-declick] [--edit-list | --no-edit-list] [--keep-hevc | --no-keep-hevc] [--vfr-guard sampled|average|off] [-o OUT]
 cut.py INPUT --start T --end T --snap beats [--snap-tolerance 0.12] [--snap-source FILE] [--min-confidence 0.5]
 cut.py INPUT --words words.json --word-segments 0-4,7-12 [--onset-search S] [--margin S] [--margin-lead S] [--margin-tail S]
+cut.py INPUT --segments A-B,C-D [--audition DIR [--audition-seconds 2]]   # also a small clip of each join, cut from the written cut
 ```
 Times accept `12.5`, `1:30`, `00:01:30.250`. Default is `-c copy` (snaps to
 keyframes, instant, lossless); if the snapped result deviates more than
@@ -241,6 +242,12 @@ A `--segments` video copy join adds `join_check` (`packets`, `expected_packets`,
 `max_step_seconds`, `audio_offset_ms` per part, `audio_parts_checked`, `ok`: the
 written file measured against the source) and `segment_end_snap_seconds` (where
 each part's end moved to its keyframe).
+
+**`--audition DIR` (#581)** writes, after the cut, a clip of each join cut from the written file (so a
+stream copy's join is heard at the keyframes it landed on, a re-encode's on the frame) and
+`DIR/index.json`: silence.py's document (below), plus `path` (the cut's `mode`), `made_from` and the
+clips' `commands`; `source_in` is where the next part begins on the source (its keyframe for a copy).
+It needs two or more ranges and an existing `DIR`; a dry run writes nothing.
 
 **Word-timed cuts (`--words`, `--word-segments`, #449).** `--word-segments 0-4,7-12` keeps inclusive
 0-based word-index ranges of a whisper JSON (every word needs a timing: the indices count them all),
@@ -395,7 +402,8 @@ Use `look.py OUTPUT --at TIME` for each `crop_check.review_points[].output_time_
 that is available. To compare a trimmed or retimed output with its input, extract the
 source frame separately using the point's `source_time`. The window itself is data before anything
 runs: `crop` (dry run, plan and result) gives `{x, y, width, height}` in source pixels and the
-scaled frame's offset (#581).
+scaled frame's offset (#581). `--fit pad` and `--fit blur` state `placed` the same way: the picture's
+`{x, y, width, height}` in the frame, `scale`, and the source size, which `picture` measures after a run.
 `--duration` on a still picture is refused (it has no length: `insert.py` makes a clip of it).
 `--zoom in|out` (#647) is a timed push-in or pull-out of the delivered frame (after the
 reframe, before the fades): linear from 1 to `--zoom-amount` (in; out goes back), between
@@ -1086,6 +1094,7 @@ render.py project.json --export-timeline edit.fcpxml|edit.edl|edit.otio   # the 
 render.py project.json --intermediate-preset medium   # the stages' own encoder preset instead of superfast
 render.py v2.json --compare-project v1.json   # check the render changed only what the project edit changed
 render.py project.json --staged               # every stage writes its own file (the default before #357)
+render.py project.json --preview              # the whole project as laid out, small and fast: <output>_preview.mp4
 ```
 One encode (#357): a project of one uncut clip whose stages are `fit`, `captions` and `loudness`
 (any of them) before a platform `export`, as every video `--template` with `--cues` and no logo,
@@ -1093,8 +1102,17 @@ title or graphics, is encoded once. fit, caption and loudness run as themselves 
 (captions laid out against the frame fit plans, loudness measured on the source) and the export
 reads the source through their filters: one lossy generation instead of three, and on a 30 s 1080p
 reels render about half the time (docs/design-decisions.md has the measurement). `render_path` says `fused` or `staged`, `render_path_reason` why
-a project was staged (`--staged`, `--cache`, `--stop-after`, a cut, a graphics/overlay/audio/silence
+a project was staged (`--staged`, `--cache`, `--stop-after`, `--preview`, a cut, a graphics/overlay/audio/silence
 stage, a VFR, rotated, HDR or multi-track source, a fit that retimes or trims, emoji drawn as overlays).
+`--preview` (#581) runs every stage at the project's own frame with the `--fast` preset, so captions,
+graphics and overlays sit where the final's do, then `proxy.py` makes the delivered picture small (the
+short side 540, never enlarged) as `<output>_preview.mp4`; the output itself is not written and no
+check runs; the result says `preview: true`. It refuses `--stop-after`, `--export-timeline`,
+`--write-project`, `--compare-project`, a plan, a template pack and an audio-only output.
+Every result (a dry run's too) has `clips`: each clip's `speed_factor` and, for a one-clip project,
+the fit stage's `crop` or `placed` (#581); a dry run takes the window from fit.py's own dry run of the
+clip's picture when the fit stage's input is a cut not yet written. Several clips are framed by
+join.py and have none.
 A real render first runs its own dry run; when that is refused because a stage needs a filter or an
 encoder this build lacks (`filter_missing`, `encoder_missing`), the real run is refused with the dry
 run's document before the first stage encodes, not after the stages before it (`waveform.py` with a
@@ -2143,7 +2161,8 @@ dictionary, so the break goes where you put a space or a `|`, and a run with
 none stays long on its own line — `caption.py` counts such lines as `overlong`
 and says so. A cue that would need more than `--max-lines` (default 2) is split
 into consecutive cues sharing its time; a cue shorter than `--min-duration`
-(default 1.0 s) is held longer, never past the next cue's start; `--offset
+(default 1.0 s) is held longer, never past the next cue's start or the end of
+the picture (a cue that runs past it ends there, with a note); `--offset
 TIME` shifts every cue (seconds, `mm:ss`, `hh:mm:ss.ms` or `hh:mm:ss:ff`, a
 leading `-` for earlier) for `--text`, `--srt` and `--ass`. One `cues:` info line reports what changed;
 with `--ass`, `caption.ass_shifted` / `ass_unshifted` count the Dialogue lines moved and those whose

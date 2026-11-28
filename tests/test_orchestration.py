@@ -266,6 +266,81 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(len(again["snap"]["clips"]), 2)
         self.assertEqual(again["snap"]["clips"][0]["source"], "cache")
 
+    def test_render_preview_is_the_whole_project_small_and_never_the_final(self):
+        """#581 part 2: --preview renders every stage at the project's own frame, so the captions are
+        laid out as the final's, then writes a small fast copy with the short side at 540 beside the
+        output, preview: true, and never the final itself; a flag it cannot honour is refused."""
+        src = OUT / "render_preview_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+           "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+           "-shortest", src)
+        cues = OUT / "render_preview_cues.txt"
+        cues.write_text("0:00 0:02 Hello there\n0:02 0:03 Second line\n", encoding="utf-8")
+        final = OUT / "render_preview_final.mp4"
+        final.unlink(missing_ok=True)
+        proj = OUT / "render_preview.json"
+        proj.write_text(json.dumps({"output": str(final), "frame": {"aspect": "9:16", "width": 720}, "fit": {"fit": "crop"},
+                                    "clips": [{"src": str(src), "in": 0.5, "out": 3.5}],
+                                    "captions": {"text": str(cues)}}), encoding="utf-8")
+        planned, previewed = (json.loads(script("render.py", proj, *extra, "--dry-run", "--json").stdout)
+                              for extra in ([], ["--preview"]))
+        norm = lambda d: [re.sub(r"\S*_work_\d+_\w+", "W", re.sub(r"-preset \S+ ", "", c))  # noqa: E731
+                          for c in d["commands"] if c.startswith("[dry-run] $")]
+        # the stages are the final's own commands (only the encoder preset is the fast one), then the small copy
+        self.assertEqual(norm(previewed)[:-1], norm(planned))
+        self.assertIn("scale=540:-2", norm(previewed)[-1])
+        doc = json.loads(script("render.py", proj, "--preview", "--json").stdout)
+        self.assertEqual((doc["preview"], doc["output"]), (True, str(OUT / "render_preview_final_preview.mp4")))
+        self.assertFalse(final.exists(), "a preview wrote the final output")
+        got = probe(doc["output"])
+        self.assertEqual((got["video"]["width"], got["video"]["height"]), (540, 960))
+        self.assertTrue(got["audio"])
+        self.assertLess(abs(got["duration"] - 3.0), 0.1, got["duration"])
+        self.assertIn("preview", doc["stages"])
+        for extra in (["--stop-after", "fit"], ["--export-timeline", str(OUT / "render_preview.otio")]):
+            err = json.loads(script("render.py", proj, "--preview", *extra, "--json", expect_fail=True).stdout)["error"]
+            self.assertIn("--preview", err["message"])
+
+    def test_render_preview_refuses_compare_project_before_anything_runs(self):
+        """#581 part 2 with #442 phase 4: --compare-project checks a full-size delivered render, and a
+        preview is a small one no check runs on, so the pair is refused before any stage, dry runs included."""
+        proj, old = OUT / "render_preview_cmp.json", OUT / "render_preview_cmp_old.json"
+        for p in (proj, old):
+            p.write_text(json.dumps({"output": str(OUT / "render_preview_cmp.mp4"),
+                                     "clips": [{"src": str(OUT / "render_preview_cmp_src.mp4")}]}), encoding="utf-8")
+        for extra in ([], ["--dry-run"]):
+            res = script("render.py", proj, "--preview", "--compare-project", old, *extra, "--json", expect_fail=True)
+            doc = json.loads(res.stdout)
+            self.assertEqual(doc["error"]["kind"], "input")
+            self.assertIn("--compare-project", doc["error"]["message"])
+            self.assertIn("full-size", doc["error"]["message"])
+            self.assertEqual(doc["commands"], [])
+
+    def test_render_dry_run_states_each_clips_speed_and_crop(self):
+        """#581 part 2: a dashboard shows "clip 0: 1.5x, crop x=438" without parsing ffmpeg lines.
+        The dry run's fit stage reads a cut that is not written yet, so its window comes from fit.py's
+        own dry run of the clip's picture; the real run's from the stage itself, and they agree."""
+        src = OUT / "render_decisions_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+           "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", src)
+        proj = OUT / "render_decisions.json"
+        proj.write_text(json.dumps({"output": str(OUT / "render_decisions.mp4"), "frame": {"aspect": "9:16", "width": 360},
+                                    "fit": {"fit": "crop"}, "clips": [{"src": str(src), "in": 0.5, "out": 3.5, "speed": 1.5}]}),
+                        encoding="utf-8")
+        plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        clip = plan["clips"][0]
+        self.assertEqual((clip["clip"], clip["speed_factor"]), (0, 1.5), clip)
+        self.assertEqual({k: clip["crop"][k] for k in ("x", "width", "source_width")}, {"x": 438, "width": 404, "source_width": 1280})
+        real = json.loads(script("render.py", proj, "--fast", "--json").stdout)["clips"][0]
+        self.assertAlmostEqual(real["speed_factor"], 1.5, places=2)
+        self.assertEqual(real["crop"], clip["crop"])
+        # several clips: each is framed by join.py, which states no window; each speed is still its own
+        two = OUT / "render_decisions_two.json"
+        two.write_text(json.dumps({"output": str(OUT / "render_decisions_two.mp4"), "frame": {"aspect": "9:16", "width": 360},
+                                   "clips": [{"src": str(src), "in": 0, "out": 2, "speed": 2}, {"src": str(src)}]}), encoding="utf-8")
+        plan = json.loads(script("render.py", two, "--dry-run", "--json").stdout)
+        self.assertEqual([(c["speed_factor"], c["crop"]) for c in plan["clips"]], [(2.0, None), (1.0, None)])
+
     def test_render_without_snap_builds_the_same_command_as_before(self):
         proj = OUT / "nosnap_project.json"
         proj.write_text(json.dumps({
@@ -2421,7 +2496,7 @@ class OnePassRenderTests(MediaFixtures):
 
         cases = {
             "staged_requested": ({}, ["--staged"]), "cache": ({}, ["--cache", OUT / "onepass_cache"]),
-            "stop_after": ({}, ["--stop-after", "export"]), "no_encoding_export": ({"export": {"preset": "copy"}}, []),
+            "stop_after": ({}, ["--stop-after", "export"]), "preview": ({}, ["--preview"]), "no_encoding_export": ({"export": {"preset": "copy"}}, []),
             "export_not_a_platform_preset": ({"export": {"preset": "h265"}}, []),
             "clips_cut_or_joined": ({"clips": [{"src": str(self.flat), "in": 0, "out": 2}]}, []),
             "silence_stage": ({"silence": {"threshold": -40}}, []),

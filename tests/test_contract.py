@@ -711,7 +711,7 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("already_released", block[block.index("        run:"):])
         self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
-        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5", scorecard)
         self.assertIn("publish_results: true", scorecard)
         self.assertIn("branch_protection_rule:", scorecard)
         self.assertIn("security-events: write", scorecard)
@@ -2469,9 +2469,9 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 76_200),  # +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +200 for render.py --staged (#357, 76171 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_500),  # +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
-            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 26_700),  # +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
+            ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_800),  # +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):

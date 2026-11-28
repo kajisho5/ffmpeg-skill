@@ -4664,6 +4664,71 @@ class EditingTests(MediaFixtures):
         # the planned window and the measured margins are one rectangle
         self.assertEqual((crop["x"], 1920 - crop["x"] - crop["width"]), (cut["left"], cut["right"]), doc)
 
+    def test_fit_pad_and_blur_state_where_the_picture_lands(self):
+        """#581 part 2: --fit pad and --fit blur say where the picture sits in the frame as data, in
+        the dry run already, and it is the rectangle the run's own measurement finds: pad on the 4:2:0
+        grid of the line written (size and offset), the blur graph's overlay offset on the source's."""
+        src = OUT / "fit_placed_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1000x566:rate=30",
+           "-t", "0.5", "-c:v", "libx264", "-preset", "ultrafast", src)
+        keys = ("x", "y", "width", "height", "frame_width", "frame_height")
+        for fit, aspect, want in (("pad", "9:16", (0, 202, 334, 188)), ("blur", "9:16", (0, 202, 334, 189)),
+                                  ("pad", "4:3", (0, 30, 334, 188))):
+            argv = (src, "--aspect", aspect, "--width", "333", "--fit", fit)
+            plan = json.loads(script("fit.py", *argv, "--dry-run", "--json").stdout)
+            self.assertEqual(tuple(plan["placed"][k] for k in keys[:4]), want, (fit, aspect, plan["placed"]))
+            self.assertEqual((plan["placed"]["source_width"], plan["placed"]["source_height"]), (1000, 566))
+            doc = json.loads(script("fit.py", *argv, "-o", OUT / f"fit_placed_{fit}.mp4", "--json").stdout)
+            self.assertEqual({k: doc["placed"][k] for k in keys}, {k: doc["picture"][k] for k in keys}, (fit, aspect))
+        crop = json.loads(script("fit.py", src, "--aspect", "9:16", "--fit", "crop", "--dry-run", "--json").stdout)
+        self.assertNotIn("placed", crop)  # a crop states its window as `crop`
+
+    def test_cut_audition_is_cut_from_the_written_cut_on_the_path_it_took(self):
+        """#581 part 2: a stream-copy join is made at the keyframes, so a clip of the join made any
+        other way would be heard where the cut is not. Each clip is cut from the written file: the
+        copy's starts on the keyframe at 6.0 and keeps the beep before the asked 6.1; the
+        re-encode's starts at 6.1 and has none. The result says which path the cut took."""
+        src = OUT / "cut_audition_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*880*t)*between(t\\,5.9\\,6.09)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=30", "-t", "10", "-c:v", "libx264", "-preset", "veryfast",
+           "-g", "30", "-bf", "0", "-c:a", "aac", src)
+        adir = OUT / "cut_audition_dir"
+        heard = {}
+        for extra, path in (([], "copy"), (["--accurate"], "accurate")):
+            shutil.rmtree(adir, ignore_errors=True)
+            adir.mkdir()
+            argv = (src, "--segments", "1.2-3.1,6.1-8.2", "--audition", adir, "--audition-seconds", "1", *extra)
+            if not extra:
+                plan = json.loads(script("cut.py", *argv, "-o", OUT / "cut_audition_plan.mp4", "--dry-run", "--json").stdout)
+                self.assertEqual((plan["audition"]["count"], plan["audition"]["cuts"][0]["duration"]), (1, None), plan)
+                self.assertEqual(list(adir.iterdir()), [], "a dry run wrote audition files")
+            doc = json.loads(script("cut.py", *argv, "-o", OUT / f"cut_audition_{path}.mp4", "--json").stdout)
+            au, c = doc["audition"], doc["audition"]["cuts"][0]
+            if not extra:
+                # the sides are whole frames of the source's 30 fps grid, the dry run's and the run's alike:
+                # not of ffprobe's r_frame_rate guess for the written copy (240/1 on 6.1, a 0.984 s side on 9.0)
+                self.assertEqual([p["join_at"] for p in plan["audition"]["cuts"]], [r["join_at"] for r in au["cuts"]],
+                                 (plan["audition"], au))
+            self.assertEqual((doc["mode"], au["path"], doc["encoder"]), (path, path, "copy" if path == "copy" else "libx264"))
+            self.assertEqual(json.loads((adir / "index.json").read_text(encoding="utf-8"))["cuts"], au["cuts"])
+            self.assertEqual((c["source_in"], c["join_at"]), (6.0 if path == "copy" else 6.1, 1.0), c)
+            v = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                              "-of", "json", c["clip"]).stdout)["streams"][0]
+            self.assertEqual((v["width"], v["height"]), (480, 360))
+            self.assertTrue(c["audio"])
+            self.assertClose(c["duration"], 2.0, 0.05)
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", c["clip"], "-af", "volumedetect", "-f", "null", "-")
+            heard[path] = float(re.search(r"max_volume: (-?[\d.]+|-inf) dB", proc.stderr).group(1).replace("-inf", "-200"))
+        self.assertGreater(heard["copy"], -20, heard)
+        self.assertLess(heard["accurate"], -60, heard)
+        for extra, reason in ((["--segments", "1-3", "--audition", adir], None), (["--segments", "1-3,5-6", "--audition-seconds", "1"], None),
+                              (["--segments", "1-3,5-6", "--audition", OUT / "cut_audition_missing"], "output_dir_missing")):
+            proc = sh(sys.executable, SCRIPTS / "cut.py", src, *extra, "-o", OUT / "cut_audition_refused.mp4", "--json",
+                      expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual((err["kind"], err.get("reason", reason)), ("input", reason), extra)
+
     def test_stream_span_falls_back_when_the_tail_was_not_read(self):
         """#566: a head+tail ffprobe can exit 0 with only the head packets, so a non-empty
         result is not proof that the tail was observed; fall back to the full packet scan."""
