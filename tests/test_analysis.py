@@ -2902,8 +2902,11 @@ class TimestampSeekTests(unittest.TestCase):
                 pts = self._frame_pts(src)
                 want = next(i for i, p in enumerate(pts) if p >= origin + 2.499)
                 got = self._psnr_first(out, src, want)
-                if got <= 30.0:  # which source frame the cut did start on, for a run on another FFmpeg
-                    near = {n: round(self._psnr_first(out, src, n), 2) for n in (want - 1, want + 1)}
+                near = {n: round(self._psnr_first(out, src, n), 2) for n in (want - 1, want + 1)}
+                # by margin over the neighbours, not by a fixed PSNR: Debian's FFmpeg 7.1 libx264
+                # re-encodes this 160x90 testsrc2 at 26 dB, on the right frame by 3 dB; a wrong
+                # frame or a lost picture leaves no neighbour 2 dB behind
+                if got <= max(near.values()) + 2.0:
                     self.fail(f"the cut starts on the frame at 2.5 s: PSNR {got:.2f} against frame {want} (pts "
                               f"{pts[want]:.6f}, file start {origin:.6f}); against frames {want - 1} (pts {pts[want - 1]:.6f}) "
                               f"and {want + 1} (pts {pts[want + 1]:.6f}): {near}; the cut's first frame pts "
