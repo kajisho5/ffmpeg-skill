@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.25.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.26.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -70,6 +70,12 @@ become beta before 5.0.
 | `contract_version` (`2.0`) | unchanged; a ToolSpec shape change is a major |
 | MCP `tools/list` names and `inputSchema` property names | derived from the above, so covered by the same promise |
 | Behaviour of a tool for the same input and arguments | may change only to fix a defect or to track an FFmpeg change, and every such change gets a CHANGELOG line |
+
+One behaviour change in 4.x is the owner's decision rather than a defect fix (2026-11-27, #681):
+`join.py` (a `beta` tool) joins end to end when no `--transition` is given, the clips' summed
+length; up to 4.17.0 its default was a 0.5 s `fade`. `--transition fade` writes what the old default
+wrote, and `--duration` without a transition is refused (`kind: input`) instead of ignored.
+`render.py` projects keep their 0.5 s fade default and render as before.
 
 Not covered: the exact wording of `--help` text, descriptions, stderr messages, and the
 `details`/`notes` free-text fields of JSON output; the internals under `scripts/_*.py`;
@@ -187,7 +193,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.25.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.26.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
