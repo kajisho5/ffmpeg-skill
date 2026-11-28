@@ -544,7 +544,6 @@ DIAGNOSTIC_CODES = {
     "emoji_monochrome": ("warnings", "caption.py / graphics.py: emoji drawn monochrome through libass (no colour path here). overlay.py --text: emoji left to the one font drawtext loads, which has no fallback, so a font without the glyph draws an empty box"),
     "words_outside_input": ("warnings", "silence.py --filler --words: word timings that start at or after the end of the input (a transcript of another file, or times in milliseconds); {count, words, duration}"),
     "emoji_stripped": ("warnings", "overlay.py --emoji none: emoji removed from the drawn text; {mode}"),
-    "deprecated_option": ("warnings", "an option listed in contract --json `deprecated` was given; the run goes on as before; {option}"),
     "emoji_assets_missing": ("warnings", "--emoji-assets has no PNG for these clusters; they stay in the text for libass, and the message says whether libass draws an emoji glyph on this build; {missing}"),
     "drawtext_newline_glyph": ("warnings", "graphics.py --text-render drawtext on FFmpeg 8.0-8.0.1/8.1.0: a box is drawn at each line break of a multi-line label; {text_render}"),
     "timeline_parse_failed": ("warnings", "render.py --export-timeline: the written file does not read back as its format (the parse step is ok: false); {path, format, error}"),
