@@ -526,6 +526,16 @@ def probe(path: str, role: str = "input", *, required: bool = True, advise_deint
             "language": (a.get("tags") or {}).get("language"),
             "title": (a.get("tags") or {}).get("title"),
         } for n, a in enumerate(s for s in streams if s.get("codec_type") == "audio")]
+    if fmt.get("format_name") in ("nut", "flv", "mpegts"):
+        # NUT and FLV state no stream length, MPEG-TS one from a PES timestamp several AAC frames
+        # before the sound's end (#762): each stream ends where its last packet does
+        ends = _packet_ends(ffprobe, path, fmt)
+        for key, s in (("video", video), ("audio", audio)):
+            start = (out.get(key) or {}).get("start_time")
+            if s and start is not None and ends.get(s.get("index"), start) > start:
+                out[key]["duration"] = round(ends[s["index"]] - start, 6)
+        if ends and not any(_to_float(s.get("duration")) for s in streams):  # NUT's is its last pts, not a length
+            out["duration"] = round(max(ends.values()) - (out["start_time"] or 0.0), 6)
     if role == "input" and out.get("video") and out["video"].get("codec") \
             and os.path.splitext(path)[1].lower() not in _STILL_EXT:
         # a still (an overlay's logo, an insert card) is not a second picture source (#412 review)
@@ -1037,6 +1047,26 @@ def analyze_levels(path: str, seconds: float = 20.0) -> Dict[str, Any]:
         "note": ("flat, low-contrast, desaturated picture tagged as SDR: probably a Log profile (S-Log/V-Log/C-Log). "
                  "Apply the camera's conversion LUT with color.py --lut" if looks_log else "contrast and saturation look like normal display-referred SDR"),
     }
+
+
+def _packet_ends(ffprobe: str, path: str, fmt: Dict[str, Any]) -> Dict[int, float]:
+    """Where each stream's packets end (the largest pts plus duration) in the file's last 10 s, by
+    stream index; {} when the file states no length or the read fails."""
+    start, length = _to_float(fmt.get("start_time")) or 0.0, _to_float(fmt.get("duration"))
+    if length is None:
+        return {}
+    proc = run([ffprobe, "-v", "error", "-read_intervals", "%.3f%%" % max(0.0, start + length - 10.0), "-show_entries",
+                "packet=stream_index,pts_time,duration_time", "-of", "csv=p=0", path], quiet=True, check=False)
+    ends: Dict[int, float] = {}
+    for line in (proc.stdout or "").splitlines() if proc.returncode == 0 else ():
+        try:
+            index, pts, dur = line.split(",")[:3]
+            index, end = int(index), float(pts) + (float(dur) if dur not in ("", "N/A") else 0.0)
+        except ValueError:
+            continue
+        if math.isfinite(end):
+            ends[index] = max(end, ends.get(index, end))
+    return ends
 
 
 def _tag_seconds(value: Any) -> "Optional[float]":

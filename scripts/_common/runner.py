@@ -1565,6 +1565,9 @@ _CONTAINER_ENCODERS = {
 _CONTAINER_ENCODERS[".mpg"] = _CONTAINER_ENCODERS[".mpeg"] = (re.compile(""), re.compile(r"^(?:mp2|libtwolame|libmp3lame|mp3|ac3|dca|pcm_dvd|pcm_s16be)$"),
     "MPEG-PS, which holds MP1/MP2/MP3, AC-3, DTS and DVD PCM sound", "name a .mp4, .mov, .mkv or .ts output")
 _CONTAINER_ENCODERS[".asf"] = _CONTAINER_ENCODERS[".wmv"]
+# FLV keeps the pts, but a seek to the start of B-frame H.264/HEVC fails and reading resumes past the keyframe (#762)
+_CONTAINER_ENCODERS[".flv"] = (_CONTAINER_ENCODERS[".avi"][0], re.compile(""), "FLV, where a seek to the start of B-frame "
+                               "H.264/HEVC fails, so a reader that seeks (ffmpeg -ss 0 included) decodes no picture from it", _NO_PTS_HINT)
 
 
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
@@ -1618,10 +1621,10 @@ def _copies_reordered_video(cmd: Sequence[str]) -> bool:
 
 
 def _check_container_codecs(cmd: Sequence[str]) -> None:
-    """A `.webm`, `.mxf`, `.avi`, `.wmv`/`.asf` or `.mpg` output whose command encodes what the muxer cannot
-    hold (the tools' H.264/HEVC and AAC lines) is refused before anything runs, dry runs included, not
-    after the encode started (#488, MXF #736, AVI/ASF/MPEG-PS #754). A stream copy is left to the muxer,
-    except a copy of B-frame video into AVI/ASF (_copies_reordered_video())."""
+    """A `.webm`, `.mxf`, `.avi`, `.wmv`/`.asf`, `.flv` or `.mpg` output whose command encodes what the muxer
+    cannot hold (the tools' H.264/HEVC and AAC lines) is refused before anything runs, dry runs included, not
+    after the encode started (#488, MXF #736, AVI/ASF/MPEG-PS #754, FLV #762). A stream copy is left to the
+    muxer, except a copy of B-frame video into AVI/ASF/FLV (_copies_reordered_video())."""
     output = cmd[-1]
     rule = _CONTAINER_ENCODERS.get(os.path.splitext(output)[1].lower())
     if not rule:
