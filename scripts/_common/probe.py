@@ -61,9 +61,10 @@ def fingerprint(path: str, *, complete: bool = False) -> Dict[str, Any]:
     return result
 
 
-def sound_clock(meta: "Optional[Dict[str, Any]]", start: float = 0.0) -> str:
-    """A sound-only decode's filter, to keep its samples on the file's clock under `-copyts` (#787)."""
-    return f"asetpts=PTS-{float((meta or {}).get('start_time') or 0.0) + start:.6f}/TB,aresample=async=1:first_pts=0"
+def sound_clock(meta: "Optional[Dict[str, Any]]", start: float = 0.0, *, pad: bool = True) -> str:
+    """A sound-only decode's filter, to keep its samples on the file's clock under `-copyts` (#787);
+    `pad=False` keeps the timestamps and leaves a late sound's lead unpadded (audio.py's beds)."""
+    return f"asetpts=PTS-{float((meta or {}).get('start_time') or 0.0) + start:.6f}/TB" + ",aresample=async=1:first_pts=0" * pad
 
 def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
                     *, check: bool = True) -> "Sequence[float]":
@@ -1280,8 +1281,9 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
     is padded with CONTENT_DROPOUT_PAD s of zeros first: a silent tail of audio that ends before
     the container does then runs into the pad and is too long to count, instead of closing at
     the audio's EOF and passing the container-duration edge test."""
-    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-map", "0:a:0", "-af",
-                         f"apad=pad_dur={CONTENT_DROPOUT_PAD:g},"
+    # -copyts and the shift: on an MPEG-TS/PS a sound-only decode counts from the sound's own start (#787)
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", "0:a:0", "-af",
+                         f"{sound_clock(probe(path, required=False))},apad=pad_dur={CONTENT_DROPOUT_PAD:g},"
                          f"silencedetect=noise={CONTENT_DROPOUT_DB:g}dB:d={CONTENT_DROPOUT_MIN}", "-f", "null", "-"],
                         check=False, record=True)
     if proc.returncode != 0:
@@ -1532,7 +1534,9 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
 
 # check.py --compare --expect-changed (#439): where the picture differs from the reference.
 CHANGE_GRID = (32, 18)   # tiles across and down: one is 60x60 px at 1080p
-CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area mean) is above this changed
+# a tile whose largest channel difference (0-255, area mean) is above this changed, per --change-grid
+# (tiles across; down is 9/16 of it): 60, 30 and 20 px at 1080p, from the survey in tests/change_floor_survey.py
+CHANGE_FLOORS = {32: 24, 64: 32, 96: 48}
 
 
 def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID,

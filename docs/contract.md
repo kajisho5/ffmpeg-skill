@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.21.1`) | any release |
+| `skill.version` | the npm / package.json version (`4.22.3`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -103,9 +103,10 @@ thing the next major removes (or, for a beta tool's argument, the next minor), `
 naming the surface (`cli`, `json`, `mcp`, `behaviour`). It was empty in 2.0.0, and it is empty again
 in 3.0.0: its two 2.x entries, **running on Python 3.9** (`since: 2.10.9`) and **running on
 FFmpeg 5.x** (`since: 2.14.0`), were settled by 3.0.0 and moved to `removed`
-(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. Since 4.20.2 it lists `overlay.py --emoji-assets`,
-`--emoji-scale` and `--emoji-max` (`removed_in: 4.22.0`, the beta rule): overlay draws text with drawtext
-and never read them, so each still parses, does nothing, and says so with the warning `deprecated_option` (#749). 3.0.0 requires Python 3.10+ and
+(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. From 4.20.2 to 4.22.0 it listed `overlay.py --emoji-assets`,
+`--emoji-scale` and `--emoji-max` (the beta rule): overlay draws text with drawtext and never read them, so
+each parsed, did nothing and said so with the warning `deprecated_option` (#749); 4.22.3 removes them, and
+overlay.py now refuses them as unknown options. 3.0.0 requires Python 3.10+ and
 FFmpeg 6.1+: every tool refuses an `ffmpeg`/`ffprobe` whose version it can read as older than 6.1
 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git or vendor build whose version is
 unreadable is not refused), `doctor` names an unsupported Python or FFmpeg in `unsupported` and
@@ -186,7 +187,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.21.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.22.3", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -301,7 +302,9 @@ the two files could not be compared, and WARNs when a declared span did not chan
 SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
 decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
 `--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
-then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
+then compared with those spans removed; both documents gain `removed`. `--change-grid 32|64|96`
+(#442) sets the tiles across (60, 30 or 20 px at 1080p; down is 9/16 of it), each with its own surveyed floor,
+and is refused where a tile would be under 30 px (64 needs 1920 px across, 96 needs 2880); `change_scope`'s `tile` names the grid used. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
@@ -813,7 +816,7 @@ it never moves `ok` or any tool's `usable`.
 
 `caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,
 `--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15 (`overlay.py` never read the last
-three: they are deprecated since 4.20.2 and go in 4.22.0, #749); `graphics.py` also gained
+three: deprecated in 4.20.2 and removed in 4.22.3, #749); `graphics.py` also gained
 `--text-render auto|ass|drawtext` and `--write-ass PATH`. New success keys: `emoji`
 (`{"mode", "count", "clusters", "assets", "missing", "overlays"}`) on `caption.py` and
 `graphics.py`, and `text_renderer` (`"ass"`|`"drawtext"`), `script` and `ass` (the generated file,
