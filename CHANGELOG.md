@@ -6,6 +6,19 @@
 
 (nothing yet)
 
+## 4.22.1
+
+_Automated release: version and notes generated from pull requests merged since 4.22.0._
+
+### Fixed
+
+- A sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start, as the picture does since #766: `decode_pcm_mono` (so `sync.py`, `scenes.py`, `multicam.py`), silencedetect times (`silence.py`'s cut levels, `metadata.py --auto-chapters`), `waveform.py`'s stills, `caption.py`'s karaoke energy split and the WAV an ASR engine transcribes all read the file's clock now (#787).
+- `sync.py --replace-audio` counts the second file's sound from the file's start too, and `-copyts` no longer drags the reference's own start into the written picture: a `.ts` reference at 1.467 s kept its picture there beside a sound at 0, and a trimmed head was padded back (#787).
+- A sound-only render of an MPEG-TS or MPEG-PS counts from the file's start too: on a `.ts`, `.m2ts` or `.mpg` whose sound starts after its picture, `cut.py`, `loudness.py`, `audio.py` and `silence.py` wrote a `.wav` without the sound's lead (a burst at 1.0 s came out at 0.72 s), and `check.py --content` put each dropout that much early (#787).
+- `loop.py` on an MPEG-PS whose sound starts late keeps its first repeat whole: the concat demuxer gives such a file's video no start time, so the sound's lead was cut off the first repeat (15.72 s for 16 s, `verified: false`) (#787).
+- fix: a sound-only render of MPEG-TS or MPEG-PS counts from the file's start too (#787) (#793)
+- docs: troubleshoot the installed skill copy (carries #719) (#795)
+
 ## 4.22.0
 
 _Automated release: version and notes generated from pull requests merged since 4.21.1._
