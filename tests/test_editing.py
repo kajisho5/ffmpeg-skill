@@ -1313,8 +1313,9 @@ class EditingTests(MediaFixtures):
         def first_sound(doc, name):
             cmd = shlex.split(doc["commands"][-1])
             at = cmd.index("aac")
-            self.assertEqual((cmd[at - 1], cmd[at + 1]), ("-c:a", "-b:a"))
-            cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(OUT / name)
+            end = at + 3 if cmd[at + 1:at + 2] == ["-aac_coder"] else at + 1  # named on 9.1 and later (#659)
+            self.assertEqual((cmd[at - 1], cmd[end]), ("-c:a", "-b:a"))
+            cmd[at:end + 2], cmd[-1] = ["pcm_s16le"], str(OUT / name)
             sh(*cmd)
             raw = subprocess.run(["ffmpeg", "-v", "error", "-i", cmd[-1], "-map", "0:a:0", "-ac", "1", "-f", "s16le", "-"],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
