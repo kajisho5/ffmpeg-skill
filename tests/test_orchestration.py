@@ -367,6 +367,12 @@ class OrchestrationTests(MediaFixtures):
         self.assertEqual(len(join_cmd), 1, data["commands"])
         self.assertNotIn("libx264", join_cmd[0])
         self.assertTrue(any("clip00.wav does not exist yet" in c for c in data["commands"]), data["commands"])
+        # a project with no transition still crossfades 0.5 s: join.py's own default became none
+        # (#681), and render.py names the project's fade to it (and passes no --duration with none)
+        proj.write_text(json.dumps({"output": str(OUT / "render_pending_audio.wav"),
+                                    "clips": [{"src": str(self.mic), "in": "0.5", "out": "2"}, {"src": str(self.mic)}]}), encoding="utf-8")
+        data = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        self.assertEqual(len([c for c in data["commands"] if "acrossfade=" in c]), 1, data["commands"])
         # a trimmed video clip (clip00.mp4, pending) next to an untrimmed .wav is the audio/video
         # mix the real run refuses: the plan refuses it too, for that reason, not as an audio join
         # that cannot fill render's joined.mp4
