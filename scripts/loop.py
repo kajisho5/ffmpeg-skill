@@ -109,13 +109,15 @@ def concat_first_frame(listfile: str) -> float:
     """Where the first frame sits on the clock ffmpeg reads a concat list on: the list's first video
     start minus its start_time. The concat demuxer counts an MP4's hidden AAC priming packet into its
     start (-0.021 s) where the MP4 demuxer does not, so ffmpeg moves both streams 21 ms later, and a
-    frame-rate time base then rounded the picture's move to 33 ms (12 ms off). 0.0 when unmeasured."""
-    proc = run([require_tool("ffprobe"), "-v", "error", "-f", "concat", "-safe", "0", "-i", listfile,
-                "-select_streams", "v:0", "-show_entries", "stream=start_time:format=start_time", "-of", "json"],
-               quiet=True, check=False)
+    frame-rate time base then rounded the picture's move to 33 ms (12 ms off). An MPEG-PS gives its
+    video no start there (#787), so the first frame's own time stands in. 0.0 when unmeasured."""
+    proc = run([require_tool("ffprobe"), "-v", "error", "-f", "concat", "-safe", "0", "-i", listfile, "-select_streams", "v:0",
+                "-read_intervals", "%+#1", "-show_entries", "stream=start_time:format=start_time:frame=best_effort_timestamp_time",
+                "-of", "json"], quiet=True, check=False)
     try:
         doc = json.loads(proc.stdout or "")
-        return float(doc["streams"][0]["start_time"]) - float(doc["format"]["start_time"])
+        start = doc["streams"][0].get("start_time") or doc["frames"][0]["best_effort_timestamp_time"]
+        return float(start) - float(doc["format"]["start_time"])
     except (ValueError, KeyError, IndexError, TypeError):
         return 0.0
 

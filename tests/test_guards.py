@@ -89,6 +89,39 @@ class TimeGuard(unittest.TestCase):
                 differs["sync --replace-audio (trimmed head)"] = measured["offset_seconds"]
             self.assertEqual(differs, {}, "these sound-only reads counted the .ts from its sound's first sample")
 
+    def test_a_sound_read_alone_counts_from_the_files_start(self):
+        """#787's render half, beside the reads above: a sound-only render of an MPEG-TS/PS (and
+        check.py's dropout pass) counted from the sound's own first sample, so a .wav cut, levelled
+        or mixed from a .ts lost the sound's lead, and silence.py cut a plan made on the file's
+        clock on the sound's. The same content as .ts and .mp4, its sound 0.28 s after its picture:
+        every sound-only render puts its first burst, and check.py its dropout, at the same time."""
+        def first_burst(path):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000",
+                                  "-f", "s16le", "-"], capture_output=True).stdout
+            return next((i / 8000 for i in range(len(raw) // 2) if abs(int.from_bytes(raw[2 * i:2 * i + 2], "little", signed=True)) > 1600), None)
+        with tempfile.TemporaryDirectory() as tmp:
+            read = {}
+            for ext in ("mp4", "ts"):
+                src = Path(tmp) / f"late.{ext}"
+                # bursts at 1.0-1.2 and 2.0-2.7 s on the file's clock: the 0.8 s between is a dropout
+                subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
+                                "-itsoffset", "0.3", "-f", "lavfi", "-i",
+                                "aevalsrc='if(between(t+0.3,1,1.2)+between(t+0.3,2,2.7),0.8*sin(2*PI*1000*t),0)':s=48000:d=3.7",
+                                "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                                str(src)], check=True)
+                tool = lambda name, *a: sweep.run_json([sys.executable, str(ROOT / "scripts" / f"{name}.py"), str(src), *a, "--json"])[0] or {}
+                dropouts = [c.get("value") for c in tool("check", "--content").get("checks", []) if c.get("check") == "dropouts"]
+                got = {"check --content: dropouts": [re.sub(r"\(\d+ ms\)", "", v or "") for v in dropouts]}
+                for name, argv in (("cut", ["--start", "0.5", "--end", "3"]), ("loudness", []), ("audio", ["--gain", "0"]), ("silence", [])):
+                    out = Path(tmp) / f"{name}_{ext}.wav"
+                    tool(name, *argv, "-o", str(out))
+                    got[f"{name} -o .wav: first burst"] = round(first_burst(out), 2) if out.exists() else "not written"
+                read[ext] = got
+            self.assertEqual(read["mp4"]["check --content: dropouts"], ["1: 1.20s "], "the fixture has its dropout")
+            differ = {k: (v, read["ts"][k]) for k, v in read["mp4"].items()
+                      if json.dumps(v) != json.dumps(read["ts"][k]) and not (isinstance(v, (int, float)) and abs(v - read["ts"][k]) <= 0.01)}
+            self.assertEqual(differ, {}, "these rendered or read the sound of a .ts on another clock than the .mp4's (mp4, ts)")
+
     def test_no_tool_leaves_chapters_at_the_source_times(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, sil = Path(tmp) / "chaptered.mkv", Path(tmp) / "chaptered_pause.mkv"
