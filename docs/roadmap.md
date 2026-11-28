@@ -20,7 +20,7 @@ minor and `fix` PRs into a patch, so each block below is one or two `feat` PRs p
   later used for an unrelated release (the table above), and the items of it that did ship are
   listed there under the release that shipped them.
 
-The released version today is **4.23.0** (notes in CHANGELOG.md); **4.0.0** (notes in CHANGELOG.md), the third deliberate break: the 12 core tools keep
+The released version today is **4.24.0** (notes in CHANGELOG.md); **4.0.0** (notes in CHANGELOG.md), the third deliberate break: the 12 core tools keep
 the stable promise and the rest are `beta`; a platform export meets its loudness by default (`--no-normalize` keeps
 3.x's report-only); a stream-copy join of AAC clips that would drift more than 50 ms is refused; and a standalone
 review page shows a project's plan and result (docs/contract.md "What 4.0 changed"). Tool count still 42.
@@ -682,6 +682,98 @@ missing segment, tl1 hand a project to Resolve, tl2 a multicam edit for Premiere
 prompts did **not** run (the sandbox refused headless tool-using agents), so routing is still
 unmeasured; `evals/results/iteration-25.json` records the hand-run tool check, the grader
 self-test and a proposed (unapplied) SKILL.md fix for multicam's cut-list `--edl` vs a CMX EDL.
+
+## After 4.x — what #633 leaves open (planned, not started)
+
+Issue #633 listed ways to make the tools cheaper to use after 4.0. Most of it shipped or is in an
+open pull request (as of 2026-11-28). The items below are the ones that are neither, written down so the issue can
+close. Nothing here exists in any released version.
+
+Two facts apply to every item:
+
+- **The feature freeze holds** (`.github/code-budget.json`, `feature_freeze`, since 2026-11-19). Each
+  item needs the owner's decision as a freeze exception before it is built, and that decision is
+  recorded in the code budget, as the other exceptions are.
+- **Measure first.** The benchmark of 2026-11-21 (#633's last comment) found that tool choice was
+  not where small models went wrong: the misses were requests no tool took in one call, and the
+  extra calls came from the workflow. Items that exist to fix routing wait until a run shows
+  routing failures.
+
+### Finding and choosing a tool
+
+- **A `find` lookup.** One tool (and one command) that takes a request in plain words and returns
+  the tool, the flags and an example command from the contract.
+  - Why: the MCP server lists 12 tools by default. The other tools can be called by name, but a
+    caller that has not seen them cannot find them. Other agent hosts load tool definitions on
+    demand in the same way (#633, comment of 2026-11-19).
+  - Known: `contract --json` carries `examples` for every tool, and the request table covers each
+    tool. The answer would be read from those, not written again by hand.
+  - Done when: every request row returns a command that passes its tool's own parser under
+    `--dry-run`, a test runs them all, and the MCP advertisement budget does not grow by more than
+    the one tool.
+- **One front door: goal, plan, preview, approval, run, check** (#633 idea 1).
+  - Why: one call from a goal (source, platform, what to keep, captions or not) to a checked
+    delivery, so the caller does not choose among the tools and does not forget the final check.
+  - Known: most parts exist. `render.py --template` fills a project from a few arguments, saved
+    plans are refused when their inputs changed (`plan_inputs_changed`), the review page shows
+    plan and result (4.0.0), and the template's `check` stage runs last. `render.py --preview`
+    shipped in 4.23.0 (#783). What is missing is the one entry point that ties them together and waits for a yes.
+  - Done when: one call writes the project and returns the plan and a preview without encoding
+    the delivery; a second call with the same plan runs it and ends with `check.py`; a changed
+    input between the two is refused.
+- **Fewer verbs on the surface** (#633 idea 3). About eight verbs (trim, frame, sound, text, look,
+  check, deliver, assemble), with the existing tools as their modes.
+  - Why: fewer routing mistakes and less context spent on tool lists.
+  - Known: the contract already has aliases (`alias_of`, used when `crop` became `fit --rect` in
+    #769), and the MCP core set is a first grouping. #777 shortens SKILL.md's request table.
+  - Done when: the contract states each verb and the tools it maps to, every old tool name keeps
+    working, SKILL.md and the MCP listing present the verbs, and SKILL.md is shorter, not longer.
+
+### Rendering
+
+- **One encode for a whole project** (#633 idea 2, #357). #785 (merged 2026-11-28) renders a `--template` project
+  with fit, captions and loudness as one encode. Projects with cuts or joins, silence, graphics,
+  overlays or an audio stage, and sources that are variable frame rate, rotated, HDR or carry
+  several audio tracks, still render in stages there (each has a named `render_path_reason`).
+  - Why: each stage removed saves about one encode and one generation of quality loss.
+  - Known: this needs each tool to state what it reads, writes and applies, so a chain can be
+    checked before it runs. #785's planning step (each stage stops at the command that would write
+    its file) is the starting point.
+  - Done when: a project with cuts and overlays renders in one encode where its steps allow it,
+    falls back with a named reason where they do not, and a test compares it with the staged
+    render the way #785's test does.
+- **Edit on a proxy, conform at the end** (#633 idea 5).
+  - Why: on long or 4K sources most of the time goes to waiting on full-size encodes.
+  - Known: `proxy.py` makes the small copy, and #783's `render.py --preview` renders a project
+    small. Project and brand sizes are pixels of the final frame (#783), so decisions taken on a
+    proxy must be stored in source time and final-frame units, not proxy pixels.
+  - Done when: a project whose cuts, crops and caption positions were set against a proxy renders
+    against the original with the same decisions, and a test checks the cut points and the crop
+    box on both.
+
+### Delivery
+
+- **The rest of "deliver as one step"** (#633 idea 4). A template already exports the preset,
+  meets the loudness by default (#579, 4.0.0), and runs the platform check with content rows
+  (#575, 4.0.0; frame timing in #751). Two parts are left.
+  - A size limit: `export.py --max-mb` exists, but a project's `export` block takes only
+    `preset`, `fit`, `crf` and `normalize`, so a template cannot ask for one.
+  - A contact sheet in the result: the review page shows six stills of the output, but it is for
+    standalone use only, and the render's own result names no contact sheet.
+  - Done when: a project states a size limit and the result says whether it was met, and the
+    render's result names a contact sheet of the output.
+
+### The edit's record
+
+- **The project file as the memory of an edit** (#633 idea 6).
+  - Why: after a lost context, or when the edit passes to a person or another agent, the work
+    starts from one file instead of a chat history. It also makes review possible (#581).
+  - Known: `render.py` and `multicam.py --write-project` write projects, and the review page saves
+    an edited one. None of them records what was asked, what ran and what was measured. The usage
+    record in #781 is a different thing: it is per machine and keeps no values.
+  - Done when: each step appends what was asked, what ran and what was measured to the project;
+    re-running or undoing one step starts from that file; a test hands the file to a fresh run
+    and gets the same output.
 
 ## Not planned
 

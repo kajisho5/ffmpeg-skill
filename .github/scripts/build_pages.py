@@ -31,12 +31,23 @@ REPO_URL = "https://github.com/kajisho5/ffmpeg-skill"
 # between two published documents stays relative.
 PAGES = {
     "README.md": ("readme.md", "README"),
+    "README.ja.md": ("readme.ja.md", "README（日本語）"),
+    "docs/use-cases/README.md": ("docs/use-cases/index.md", "Use cases"),
+    "docs/use-cases/vertical-short.md": ("docs/use-cases/vertical-short.md", "A vertical short with captions"),
+    "docs/use-cases/audiogram.md": ("docs/use-cases/audiogram.md", "A podcast episode as an audiogram"),
+    "docs/use-cases/phone-clip.md": ("docs/use-cases/phone-clip.md", "Cleaning up a phone clip"),
+    "docs/use-cases/cut-down.md": ("docs/use-cases/cut-down.md", "A cut-down of a long recording"),
+    "docs/use-cases/platforms.md": ("docs/use-cases/platforms.md", "One master, several platforms"),
+    "docs/use-cases/two-cameras.md": ("docs/use-cases/two-cameras.md", "A talk from two cameras"),
     "docs/demos.md": ("docs/demos.md", "Demo gallery"),
     "docs/contract.md": ("docs/contract.md", "Contract"),
     "docs/design-decisions.md": ("docs/design-decisions.md", "Design decisions"),
     "docs/roadmap.md": ("docs/roadmap.md", "Roadmap"),
     "CHANGELOG.md": ("CHANGELOG.md", "Changelog"),
 }
+
+# a page written in another language than English says so to the layout (<html lang>)
+LANG = {"README.ja.md": "ja"}
 
 # ](target) in Markdown, and src= / href= / srcset= in the inline HTML the README uses.
 MD_LINK = re.compile(r"""(\]\()([^)\s]+)((?:\s+(?:"[^"]*"|'[^']*'))?\))""")  # also [t](url "title")
@@ -69,6 +80,9 @@ def _rewrite(target: str, page_repo: str, assets: set) -> str:
     if rel in PAGES:
         site = Path(PAGES[rel][0]).with_suffix(".html")
         return _relative(site, page_dir) + anchor
+    if rel.startswith("site/") and resolved.is_file():
+        # site/ is copied to the site root as it is, so site/media/x.mp4 is served at media/x.mp4
+        return _relative(Path(rel[len("site/"):]), page_dir) + anchor
     if resolved.is_file() and resolved.suffix.lower() in {".png", ".gif", ".svg", ".jpg", ".jpeg", ".webp"}:
         assets.add(rel)
         return _relative(Path(rel), page_dir) + anchor
@@ -107,7 +121,8 @@ def render(page_repo: str, assets: set) -> str:
     text = "".join(c if i % 2 else _rewrite_prose(c, page_repo, assets) for i, c in enumerate(chunks))
     title = PAGES[page_repo][1]
     # {% raw %} keeps Liquid from reading a `{{` or `{%` that a code sample may contain.
-    return f"---\nlayout: default\ntitle: {title}\n---\n{{% raw %}}\n{text}\n{{% endraw %}}\n"
+    lang = f"lang: {LANG[page_repo]}\n" if page_repo in LANG else ""
+    return f"---\nlayout: default\ntitle: {title}\n{lang}---\n{{% raw %}}\n{text}\n{{% endraw %}}\n"
 
 
 SITE = ROOT / "site"

@@ -28,6 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
+# #690: one request end to end per page; every command on them is run under --dry-run below
+USE_CASE_PAGES = sorted(p for p in (ROOT / "docs" / "use-cases").glob("*.md") if p.name != "README.md")
 CORPUS = ROOT / "tests" / "corpus"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(ROOT / "mcp"))
@@ -227,6 +229,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(real_count, 41)
         checks = [
             (ROOT / "README.md", re.compile(r"\b(\d+)\s+(?:public )?(?:tools|names)\b|\ball (?P<n>\d+) by\b")),
+            # #690: the Japanese README states it as "N 個のツール"
+            (ROOT / "README.ja.md", re.compile(r"(\d+)\s*個のツール")),
             (ROOT / "docs" / "contract.md", re.compile(r"\b(\d+)\s+tools\b")),
             (ROOT / "package.json", re.compile(r"(\d+)\s+FFmpeg tools\b")),
             # SKILL.md is the one file the agent actually reads, and it phrases the count as
@@ -1044,6 +1048,13 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(build_pages._rewrite_prose('[c](docs/contract.md "API") `](no.png)`', "README.md", set()),
                              '[c](docs/contract.html "API") `](no.png)`')
             self.assertTrue((out / "_layouts" / "default.html").is_file())
+            # #690: the use-case pages and the Japanese README are published pages too; a page's
+            # clip in site/media is linked where site/ is served (the site root), not copied twice
+            for page in ("readme.ja.md", "docs/use-cases/index.md", *(f"docs/use-cases/{p.name}" for p in USE_CASE_PAGES)):
+                self.assertTrue((out / page).is_file(), page)
+            self.assertIn("lang: ja\n", (out / "readme.ja.md").read_text(encoding="utf-8"))
+            self.assertIn('src="../../media/showcase_short_en.jpg"', (out / "docs/use-cases/vertical-short.md").read_text(encoding="utf-8"))
+            self.assertFalse((out / "site").exists())
             for page in out.rglob("*.md"):
                 text = page.read_text(encoding="utf-8")
                 self.assertTrue(text.startswith("---\nlayout: default\n"), page)
@@ -1051,6 +1062,112 @@ class ContractTests(unittest.TestCase):
                     url = (src[0] or src[1]).split()[0]
                     if not re.match(r"^[a-z]+:", url):
                         self.assertTrue((page.parent / url).is_file(), f"{page.relative_to(out)}: {url}")
+
+    def test_use_case_pages_commands_are_accepted_by_the_tools(self):
+        """#690. Each use-case page under docs/use-cases/ shows the commands one request runs, on the
+        clips in demos/footage/. A page whose command no longer parses is a failing test, as a
+        README example is: every `python3 scripts/` line in a page's bash blocks runs here, in
+        order, under --dry-run, from a scratch directory (demos/... resolves to the checkout).
+        A dry run writes nothing, so a later line that reads an earlier line's output sees no file;
+        most tools plan against a missing input, and the few that must open it (look, crop,
+        multicam, render) are run once more with a stand-in of the same kind: the talk clip for a
+        video, its sound for an .m4a, a slide for a .png. Every page is linked from the top of
+        README and published by build_pages.py."""
+        sys.path.insert(0, str(ROOT / ".github" / "scripts"))
+        try:
+            import build_pages
+        finally:
+            sys.path.pop(0)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        top = readme[:readme.index("\n### Review page\n")]
+        self.assertGreaterEqual(len(USE_CASE_PAGES), 5)
+        names = {t["name"] for t in self.contract["tools"]}
+        footage = ROOT / "demos" / "footage"
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            sound = work / "_standin.m4a"
+            sh(sys.executable, SCRIPTS / "audio.py", footage / "veo_talk_en.mp4", "-o", sound)
+            standins = {".mp4": footage / "veo_talk_en.mp4", ".mov": footage / "veo_talk_en.mp4",
+                        ".m4a": sound, ".png": footage / "slide_en_1.png"}
+            for page in USE_CASE_PAGES:
+                rel = page.relative_to(ROOT).as_posix()
+                self.assertIn(f'href="{rel}"', top, f"{rel} is not linked from the top of README")
+                self.assertIn(rel, build_pages.PAGES, f"{rel} is not published by build_pages.py")
+                text = page.read_text(encoding="utf-8")
+                lines = [line for block in re.findall(r"^```bash\n(.*?)^```", text, re.M | re.S)
+                         for line in block.splitlines() if line.startswith("python3 scripts/")]
+                self.assertTrue(lines, f"{rel} shows no command")
+                written = set()
+                for line in lines:
+                    argv = shlex.split(line)[1:]
+                    tool_name = Path(argv[0]).stem
+                    self.assertIn(tool_name, names, f"{rel}: {line}")
+                    argv = [str(SCRIPTS / f"{tool_name}.py")] + [
+                        str(ROOT / a) if a.startswith("demos/") else a for a in argv[1:]]
+                    run = lambda: subprocess.run([sys.executable, *argv, "--dry-run"], cwd=work,  # noqa: E731
+                                                 capture_output=True, text=True, timeout=600)
+                    proc = run()
+                    missing = [a for a in argv[1:] if a in written and not (work / a).exists()]
+                    if proc.returncode != 0 and missing:
+                        for a in missing:
+                            (work / a).parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy(standins[Path(a).suffix], work / a)
+                        proc = run()
+                    self.assertEqual(proc.returncode, 0, f"{rel}: {line}\n{proc.stderr[-1500:]}")
+                    for flag, value in zip(argv, argv[1:]):
+                        if flag in ("-o", "--output"):
+                            written.add(value)
+            # a dry run writes no media: only the stand-ins this test made are there
+            made = {p.name for p in work.rglob("*") if p.suffix in (".mp4", ".m4a") and p.name != sound.name}
+            self.assertTrue(made <= {"late.mp4", "cam_b.mp4", "multicam.mp4", "audiogram.mp4",
+                                     "episode_podcast.m4a", "tight.mp4", "social_short.mp4",
+                                     "steady.mp4", "clean.mp4", "talk_reels.mp4", "master.mp4"}, made)
+
+    def test_readme_ja_keeps_the_english_headings_and_commands(self):
+        """#690. README.ja.md translates README.md's prose and is kept in step by what can be
+        compared without reading Japanese: every heading of README.md, in order and at its level,
+        has its translation behind an anchor with the English heading's GitHub id (so #install
+        and the other links work in both files); every bash and JSON block is README's, with the
+        comments translated and the commands not; every inline code span is one README uses; the
+        tool count is the contract's; and each file links to the other.
+        Exempt, with the reason: the "Development" section (maintainers only; README.ja.md links to
+        the English one), and the rows of the agent-eval history in "Tested on real footage"
+        (prose with per-iteration numbers; the translation points to the English table). Neither
+        holds a heading other than Development or a command block the test would compare."""
+        en = (ROOT / "README.md").read_text(encoding="utf-8")
+        ja = (ROOT / "README.ja.md").read_text(encoding="utf-8")
+        exempt = {"Development"}
+        fence = re.compile(r"^```(\w*)\n(.*?)^```", re.M | re.S)
+
+        def prose(text):
+            return fence.sub("", text)
+
+        def slug(heading):
+            return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+        def commands(text):
+            out = set()
+            for lang, body in fence.findall(text):
+                if lang in ("bash", "json", ""):
+                    lines = [re.sub(r"(^|\s)#(\s.*)?$", "", line).rstrip() for line in body.splitlines()]
+                    out.add("\n".join(line for line in lines if line))
+            return out
+
+        def spans(text):
+            return set(re.findall(r"(``[^\n]*?``|`[^`\n]*`)", prose(text)))
+
+        en_heads = [(len(h), slug(t)) for h, t in re.findall(r"^(#{2,4}) (.+)$", prose(en), re.M) if t not in exempt]
+        ja_heads = [(len(h), a) for a, h in re.findall(r'^<a id="([^"]+)"></a>\n\n(#{2,4}) ', ja, re.M)]
+        self.assertEqual(ja_heads, en_heads, "README.ja.md's anchors and heading levels must follow README.md's headings")
+        self.assertEqual(len(re.findall(r"^#{2,4} ", prose(ja), re.M)), len(ja_heads), "a README.ja.md heading without its anchor")
+        dev = en.split("\n## Development\n", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual(commands(ja), commands(en) - commands(dev), "README.ja.md's command blocks differ from README.md's")
+        self.assertEqual(spans(ja) - spans(en), set(), "inline code in README.ja.md that README.md does not have")
+        counts = {int(n) for n in re.findall(r"(\d+)\s*個のツール", ja)}
+        # an alias (#683: crop, folded into fit) is described but not counted, as in README.md
+        self.assertEqual(counts, {len([t for t in self.contract["tools"] if "alias_of" not in t])})
+        self.assertIn('href="README.ja.md"', en[:en.index("\n### Review page\n")])
+        self.assertIn('href="README.md"', ja[:ja.index('<a id="review-page">')])
 
     def test_claude_plugin_marketplace_lists_the_plugin(self):
         """Without .claude-plugin/marketplace.json, `claude plugin install` and `claude plugin
@@ -1727,6 +1844,7 @@ sys.exit(fit.main())
         # references/flags.md (#466) left out metadata, cut, render and batch.
         docs = {"SKILL.md": ROOT / "SKILL.md", "references/scripts.md": ROOT / "references" / "scripts.md",
                 "docs/contract.md": ROOT / "docs" / "contract.md", "README.md": ROOT / "README.md",
+                "README.ja.md": ROOT / "README.ja.md",
                 "references/flags.md": ROOT / "references" / "flags.md"}
         for label, path in docs.items():
             text = path.read_text(encoding="utf-8")
