@@ -2816,13 +2816,12 @@ def stream_copy_output(ctx: Context, output: str) -> bool:
                 and owned_identity(output) == identity)
 
 
-# FFmpeg 9.1 made a new coder (`nmr`) the AAC encoder's default, and it never returns on some
-# sound: mono at 192k behind 0.1 s or 2.5 s of silence ran until the time limit, a file of 48
-# bytes (#659; 64k to 160k, 256k, stereo and no silence all ended). From 9.1 on, every AAC track is
-# written with the coder that was the default until then, as on every older build; a command that
-# names a coder keeps it. `version` is for the test: the build on PATH otherwise.
+# FFmpeg 9.1's AAC encoder never returns on some mono sound with its new default coder (`nmr`)
+# and with `twoloop`, the default until 9.0 (a retimed track led by silence, at 160k and 192k;
+# #659). `fast` ended on every case measured, so from 9.1 on every AAC track names it; a command
+# that names a coder keeps it. `version` is for the test: the build on PATH otherwise.
 def pin_aac_coder(cmd: Sequence[str], version: "Optional[Tuple[int, int]]" = None) -> List[str]:
-    return [x for i, a in enumerate(cmd) for x in ([a, "-aac_coder", "twoloop"] if a == "aac" and i and "-aac_coder" not in cmd and (version or ffmpeg_version()) >= (9, 1) and re.fullmatch(r"-(c|codec):a(:\d+)?|-acodec", cmd[i - 1]) else [a])]
+    return [x for i, a in enumerate(cmd) for x in ([a, "-aac_coder", "fast"] if a == "aac" and i and "-aac_coder" not in cmd and (version or ffmpeg_version()) >= (9, 1) and re.fullmatch(r"-(c|codec):a(:\d+)?|-acodec", cmd[i - 1]) else [a])]
 
 
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:
