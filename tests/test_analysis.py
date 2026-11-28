@@ -277,6 +277,26 @@ class AnalysisTests(MediaFixtures):
         again = json.loads(script("sync.py", ref, out, "--json").stdout)
         self.assertAlmostEqual(again["offset_seconds"], 0.0, delta=0.01, msg=again)
 
+    def test_a_late_sound_on_mpeg_ts_keeps_its_place_on_the_files_clock(self):
+        """#787: a sound-only decode of an MPEG-TS or MPEG-PS counted from the sound's first sample,
+        because the demuxer rewrote the timestamps to start at the earliest stream it read. The same
+        take remuxed to .ts measured its beep 0.28 s early and silencedetect reported every silence
+        that far off; with -copyts and the shift both read the file's clock, as the MP4 does."""
+        mp4 = make_tones_take(OUT / "ts_clock.mp4", start=0.0, audio_late=0.3, dur=3)
+        ts = OUT / "ts_clock.ts"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", mp4, "-c", "copy", "-f", "mpegts", ts)
+        self.assertGreater(probe(str(ts))["start_time"], 0.5, "the fixture's TS starts late")
+
+        def first_loud(path):
+            pcm = content_probe.decode_pcm_mono(path, 8000)
+            return next(i for i, v in enumerate(pcm) if abs(v) > 0.05) / 8000
+
+        def silences(path):
+            return [(round(a, 2), round(b, 2)) for a, b in content_probe.detect_silences(path, -40.0, 0.2)]
+
+        self.assertAlmostEqual(first_loud(str(ts)), first_loud(str(mp4)), delta=0.01)
+        self.assertEqual(silences(str(ts)), silences(str(mp4)))
+
     def test_sync_replace_audio_stream_copy_writes_faststart_mp4(self):
         """Same shape as #275/#277: --replace-audio stream-copies the reference's video with
         -c:v copy while only the audio is rebuilt, and must write -movflags +faststart on the
@@ -906,6 +926,107 @@ class AnalysisTests(MediaFixtures):
         # a dry run measures nothing, as --compare does for a file an earlier stage would write
         code, doc, row = check(OUT / "scope_not_written_yet.mp4", "--expect-changed", "none", "--dry-run")
         self.assertEqual((code, row), (0, None), doc)
+
+    def test_check_change_grid_finds_a_logo_smaller_than_a_tile_442(self):
+        """#442: --change-grid 64 (30 px tiles at 1080p) or 96 (30 px at 2880x1620) finds a 24x24 logo
+        that the default 32x18 grid dilutes under its floor, places it to the finer tile, and uses that
+        grid's own floor; the grid is in the row and the document, and a value outside the
+        surveyed ones, a grid without --expect-changed and tiles too small to have a floor are refused."""
+        x264 = ["-c:v", "libx264", "-crf", "18", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-an"]
+        src = "color=c=gray:size=1920x1080:rate=10,noise=alls=10:allf=u"
+        logo = ("drawbox=x=1083:y=543:w=24:h=24:color=white:t=fill:enable='between(t,0.5,1.5)',"
+                "drawbox=x=1089:y=549:w=12:h=12:color=0x2050c0:t=fill:enable='between(t,0.5,1.5)'")
+        old, new, small = (OUT / n for n in ("grid_old.mp4", "grid_new.mp4", "grid_small.mp4"))
+        big_old, big_new = OUT / "grid_old_2880.mp4", OUT / "grid_new_2880.mp4"
+        lavfi = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]
+        sh(*lavfi, src, "-t", "2", *x264, old)
+        sh(*lavfi, src + "," + logo, "-t", "2", *x264, new)
+        big = src.replace("1920x1080", "2880x1620")  # 96 tiles of 30 px; the logo sits in the same 30 px tile
+        sh(*lavfi, big, "-t", "2", *x264, big_old)
+        sh(*lavfi, big + "," + logo, "-t", "2", *x264, big_new)
+
+        def check(path, ref, *extra):
+            proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(path), "--platform", "custom", "--no-loudness",
+                                   "--json", "--compare", str(ref), *extra], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            doc = json.loads(proc.stdout)
+            return doc, {r["check"]: r for r in doc.get("checks", [])}.get("change_scope")
+
+        doc, row = check(new, old, "--expect-changed", "none")
+        self.assertEqual(row["status"], "PASS", row)  # the default grid misses it: 16 % of a 60x60 tile
+        self.assertEqual((doc["change_scope"]["tile"], doc["change_scope"]["floor"]), ([32, 18], 24))
+        self.assertIn("on 32x18 tiles", row["value"])
+        for grid, tile, (new_, old_) in ((64, 30, (new, old)), (96, 30, (big_new, big_old))):
+            with self.subTest(grid=grid):
+                doc, row = check(new_, old_, "--expect-changed", "none", "--change-grid", str(grid))
+                self.assertEqual(row["status"], "FAIL", row)
+                scope = doc["change_scope"]
+                self.assertEqual((scope["tile"], scope["floor"]), ([grid, grid * 9 // 16], content_probe.CHANGE_FLOORS[grid]))
+                self.assertIn(f"on {grid}x{grid * 9 // 16} tiles", row["value"])
+                # placed to the finer tile: one 30 px tile (the logo is 24 px)
+                (seen,) = scope["observed"]
+                self.assertEqual((seen["start"], seen["frames"], seen["rect"][:3]), (0.5, 11, [1080, 540, tile]), seen)
+                doc, row = check(new_, old_, "--expect-changed", "0.5-1.5@1080,540,30,30", "--change-grid", str(grid))
+                self.assertEqual(row["status"], "PASS", row)
+        # an explicit floor still wins over the grid's
+        self.assertEqual(check(new, old, "--expect-changed", "none", "--change-grid", "64", "--change-floor", "200")[1]["status"], "PASS")
+        # a finer grid needs 30 px tiles: 96 needs 2880 px across, so a 1080p or a 960x540 picture is refused
+        sh(*lavfi, "testsrc2=size=960x540:rate=10", "-t", "1", *x264, small)
+        for path, px in ((small, "10 px"), (new, "20 px")):
+            doc, _ = check(path, path, "--expect-changed", "none", "--change-grid", "96")
+            self.assertEqual(doc["error"]["kind"], "input", doc)
+            self.assertIn(px, doc["error"]["message"])
+        for bad, say in ((["--expect-changed", "none", "--change-grid", "48"], "32, 64, 96"),
+                         (["--expect-changed", "none", "--change-grid", "0"], "32, 64, 96"),
+                         (["--change-grid", "64"], "need --expect-changed"),
+                         (["--change-floor", "30"], "need --expect-changed")):
+            for dry in ([], ["--dry-run"]):
+                doc, _ = check(new, old, *bad, *dry)
+                self.assertEqual(doc["error"]["kind"], "input", (bad, dry, doc))
+                self.assertIn(say, doc["error"]["message"], bad)
+
+    def test_check_change_floor_holds_for_every_available_encoder_442(self):
+        """#442's floor survey, pinned: an untouched clip and the same clip with a 60x60 logo, both
+        encoded with one encoder at a common setting, compare as "changed only where the logo is"
+        on every grid the picture is large enough for, for each encoder this build has (the
+        survey's software encoders; hardware ones cannot be measured here). The logo is found;
+        nothing else is."""
+        encoders = sh("ffmpeg", "-hide_banner", "-encoders").stdout
+        settings = {
+            "libx264": ["-c:v", "libx264", "-crf", "23", "-preset", "medium"],
+            "libx265": ["-c:v", "libx265", "-crf", "28", "-preset", "fast", "-x265-params", "log-level=error"],
+            "libsvtav1": ["-c:v", "libsvtav1", "-crf", "35", "-preset", "10", "-svtav1-params", "svt-log-level=0"],
+            "libaom-av1": ["-c:v", "libaom-av1", "-crf", "35", "-usage", "realtime", "-cpu-used", "8", "-row-mt", "1"],
+            "libvpx-vp9": ["-c:v", "libvpx-vp9", "-crf", "33", "-b:v", "0", "-deadline", "realtime", "-cpu-used", "8"],
+            "prores": ["-c:v", "prores", "-profile:v", "0"],
+        }
+        # 30 px tiles, the smallest a finer grid is allowed, are the worst case of each grid: 64 at 1080p, 96 at 2880x1620
+        cases = {(1280, 720): (32,), (1920, 1080): (64,), (2880, 1620): (96,)}
+        tried = []
+        for name, args in settings.items():
+            if not re.search(rf"^ V\S* {re.escape(name)} ", encoders, re.M):
+                continue
+            tried.append(name)
+            for (w, h), grids in cases.items():
+                x, y, s = w * 63 // 100, h * 57 // 100, h // 18  # a 60x60 logo at 1080p, off the tile grid
+                src = f"testsrc2=size={w}x{h}:rate=24"
+                logo = (f"drawbox=x={x}:y={y}:w={s}:h={s}:color=white:t=fill:enable='between(n,8,15)',"
+                        f"drawbox=x={x + s // 4}:y={y + s // 4}:w={s // 2}:h={s // 2}:color=0x2050c0:t=fill:enable='between(n,8,15)'")
+                ext = ".mov" if name == "prores" else ".mkv"
+                old, new = OUT / f"floor_{name}_{h}_old{ext}", OUT / f"floor_{name}_{h}_new{ext}"
+                for path, graph in ((old, src), (new, src + "," + logo)):
+                    sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", graph, "-frames:v", "24", *args, path)
+                for grid in grids:
+                    with self.subTest(encoder=name, size=h, grid=grid):
+                        proc = subprocess.run([sys.executable, str(SCRIPTS / "check.py"), str(new), "--platform", "custom", "--no-loudness",
+                                               "--json", "--compare", str(old), "--expect-changed", f"0.33-0.67@{x},{y},{s},{s}",
+                                               "--change-grid", str(grid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        doc = json.loads(proc.stdout)
+                        row = {r["check"]: r for r in doc["checks"]}["change_scope"]
+                        self.assertEqual(row["status"], "PASS", {"row": row, "change_scope": doc["change_scope"]})  # the peaks, to set a floor from
+                        self.assertEqual(doc["change_scope"]["undeclared"], [])
+                        self.assertTrue(doc["change_scope"]["observed"], doc["change_scope"])
+        if not tried:
+            self.skipTest("this build has none of the surveyed encoders")
 
     def test_check_expect_audio_changed_finds_the_edited_windows_and_not_a_re_encode(self):
         """#442 phase 2: --compare --expect-audio-changed SPAN|none. A gain change in 2-3 s and a

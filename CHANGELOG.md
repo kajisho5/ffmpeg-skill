@@ -6,6 +6,213 @@
 
 (nothing yet)
 
+## 4.26.0
+
+_Automated release: version and notes generated from pull requests merged since 4.25.0._
+
+### Changed
+
+- **`join.py` joins end to end by default (#681).** The default transition was a 0.5 s `fade`, so
+  "join these" wrote a file 0.5 s shorter per boundary than the clips together, with the two clips
+  blended across each cut. The default is now `--transition none`: the join is the clips' summed
+  length, and `expected_duration` says so. This changes what an existing call without
+  `--transition` writes. **To keep the old output, pass `--transition fade`** (with `--duration`
+  for another length; 0.5 s is still its default). `--duration` with no transition is now refused
+  (`kind: input`, the hint names `--transition fade`): with no `--transition` it was the length of
+  the default crossfade, and with `--transition none` it was ignored. `render.py` projects are unchanged: a project's
+  `transition` is still a 0.5 s fade unless it says otherwise, and render.py passes it to join.py
+  by name.
+- feat!: join.py joins without a crossfade by default (#681) (#780)
+
+Closes: #681
+
+## 4.25.0
+
+_Automated release: version and notes generated from pull requests merged since 4.24.0._
+
+### Added
+
+- Six use-case pages on the site, linked from the top of README (#690): a vertical short with
+  captions, a podcast episode as an audiogram, cleaning up a phone clip, a cut-down of a long
+  recording, one master to several platforms, and a talk from two cameras. Each is one request end
+  to end: what you say, the commands the skill runs on the clips in `demos/footage/`, what came back,
+  the result (clips and GIFs already in the repository) and what to check.
+  `test_use_case_pages_commands_are_accepted_by_the_tools` runs every command on them under
+  `--dry-run`, so a renamed flag fails CI.
+- `README.ja.md`, a Japanese translation of README, linked both ways and published on the site
+  (#690). `test_readme_ja_keeps_the_english_headings_and_commands` keeps its headings, command
+  blocks, inline code and tool count in step with README.md; the Development section and the
+  agent-eval history rows stay English only.
+
+### Changed
+
+- SKILL.md asks for `--json-brief` on an ordinary edit (`--json` for the probe or the command lines): over eight
+  ordinary edits the brief document is 0.29 of `--json`'s bytes. The brief document keeps a verification step
+  that did not pass, so `verified: false` carries its reason (#682).
+- feat: ordinary edits ask for --json-brief, which keeps a failed verification step (#682) (#784)
+- docs: the roadmap lists what #633 leaves open after 4.x (#800)
+- docs: use-case pages and a Japanese README (#690) (#773)
+
+Closes: #682
+
+## 4.24.0
+
+_Automated release: version and notes generated from pull requests merged since 4.23.0._
+
+### Changed
+
+- `render.py` encodes a project of one uncut clip whose stages are fit, captions and loudness before a
+  platform export (a `--template` render with `--cues`) once instead of once per stage: fit, caption and
+  loudness plan their own filters, the captions against the frame fit plans and the loudness on the
+  source, and the export reads the source through them. One lossy generation instead of three, and on a
+  30 s 1080p reels render 56 % of the time with the machine loaded (31 % in two runs on a quieter machine). The result's `render_path` says `fused` or `staged`
+  and `render_path_reason` why a project was staged; `--staged` keeps one file per stage (#357).
+- feat: render.py encodes a template render in one pass (#357) (#785)
+
+## 4.23.0
+
+_Automated release: version and notes generated from pull requests merged since 4.22.5._
+
+### Added
+
+- `render.py --preview`: the whole project laid out at its own frame (every stage at the `--fast` preset), then
+  made small by `proxy.py` (the short side 540, never enlarged) as `<output>_preview.mp4`; the output itself is
+  not written, the check stage is not run, and the result says `preview: true` (#581). It refuses
+  `--compare-project`, which checks a full-size delivered render.
+- `cut.py --audition DIR [--audition-seconds 2]`: a small clip of each join and `DIR/index.json`, cut from the
+  written cut, so a stream copy is heard at the keyframes it joined on; `audition.path` names the cut's mode (#581).
+- `render.py` results and dry runs list `clips`: each clip's `speed_factor` and, for a one-clip project, the fit
+  stage's `crop` or `placed`; the fit stage's `timing` too (#581).
+- `fit.py --fit pad` and `--fit blur` report where the picture lands in the frame as `placed` in dry-run JSON,
+  plans and results (#581).
+- feat: render.py --preview, cut.py --audition, each clip's decisions and fit's placed (#581) (#783)
+- chore(deps): codeql-action 4.39.5 (init, analyze, upload-sarif) and scorecard-action 2.6.0 together (#799)
+
+## 4.22.5
+
+_Automated release: version and notes generated from pull requests merged since 4.22.4._
+
+### Fixed
+
+- `caption.py` ends a cue with the picture: the default `--min-duration` no longer lengthens a short last cue past the input's picture, and a cue whose own end is past it is held there too, so `--mode mux` no longer writes a container longer than its picture (a 3.13 s picture was muxed into 3.8 s) and a burn's adjusted SRT names no time past the last frame. Each held cue is named in a note (#776).
+- fix: a cue the minimum duration would carry past the picture ends with the picture (#776) (#798)
+
+## 4.22.4
+
+_Automated release: version and notes generated from pull requests merged since 4.22.3._
+
+### Fixed
+
+- `caption.py` keeps a cue whose text is only full-width or other non-ASCII digits before a timing
+  line with no blank line above it; it was taken for the next cue's index and lost from every copy
+  the tool wrote (#765). A timing line written in such digits, which FFmpeg's SRT reader cannot
+  read, is refused as `kind: input` before any command, dry runs included, with a hint to write
+  the times in ASCII digits. A `--color` alpha and a `.cube` LUT written in such digits are
+  refused the same way instead of failing inside FFmpeg.
+- fix: subtitle and timing readers take ASCII digits only, as FFmpeg does (#765) (#796)
+
+## 4.22.3
+
+_Automated release: version and notes generated from pull requests merged since 4.22.2._
+
+### Changed
+
+- `overlay.py` no longer takes `--emoji-assets`, `--emoji-scale` or `--emoji-max`: they never had an effect there (it draws text with drawtext), were deprecated in 4.20.2, and are removed after one whole minor as the beta rule says. `caption.py` and `graphics.py` keep them (#749). The warning code `deprecated_option`, which only they recorded, leaves `contract --json`'s `diagnostic_codes`.
+- fix: overlay.py's three emoji options are removed, as the beta rule set for 4.22 (#749) (#797)
+
+## 4.22.2
+
+_Automated release: version and notes generated from pull requests merged since 4.22.1._
+
+### Fixed
+
+- The installer removes the `ffmpeg-skill.bak-<pid>` an interrupted upgrade left next to the skill, which agents loaded as a second copy (#717, thanks @thejesh23).
+- fix: the installer removes an interrupted upgrade's ffmpeg-skill.bak-<pid> (carries #717) (#794)
+
+## 4.22.1
+
+_Automated release: version and notes generated from pull requests merged since 4.22.0._
+
+### Fixed
+
+- A sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start, as the picture does since #766: `decode_pcm_mono` (so `sync.py`, `scenes.py`, `multicam.py`), silencedetect times (`silence.py`'s cut levels, `metadata.py --auto-chapters`), `waveform.py`'s stills, `caption.py`'s karaoke energy split and the WAV an ASR engine transcribes all read the file's clock now (#787).
+- `sync.py --replace-audio` counts the second file's sound from the file's start too, and `-copyts` no longer drags the reference's own start into the written picture: a `.ts` reference at 1.467 s kept its picture there beside a sound at 0, and a trimmed head was padded back (#787).
+- A sound-only render of an MPEG-TS or MPEG-PS counts from the file's start too: on a `.ts`, `.m2ts` or `.mpg` whose sound starts after its picture, `cut.py`, `loudness.py`, `audio.py` and `silence.py` wrote a `.wav` without the sound's lead (a burst at 1.0 s came out at 0.72 s), and `check.py --content` put each dropout that much early (#787).
+- `loop.py` on an MPEG-PS whose sound starts late keeps its first repeat whole: the concat demuxer gives such a file's video no start time, so the sound's lead was cut off the first repeat (15.72 s for 16 s, `verified: false`) (#787).
+- fix: a sound-only render of MPEG-TS or MPEG-PS counts from the file's start too (#787) (#793)
+- docs: troubleshoot the installed skill copy (carries #719) (#795)
+
+## 4.22.0
+
+_Automated release: version and notes generated from pull requests merged since 4.21.1._
+
+### Added
+
+- `check.py --change-grid 32|64|96` (with `--expect-changed`): the frame in finer tiles, 30 or 20 px
+  at 1080p, each grid with its own floor (24, 32, 48), so a change smaller than a 60x60 tile is
+  found; the row names the grid (`floor 32 on 64x36 tiles`) and `change_scope.tile` holds it. A
+  grid whose tiles would be under 20 px is refused (#442).
+- The change floor surveyed across libx264, libx265, libsvtav1, libaom-av1, libvpx-vp9 and ProRes
+  at 1080p, 720p and 480p (`tests/change_floor_survey.py`, `docs/design-decisions.md`): the
+  default of 24 stays. Hardware encoders were not measured.
+
+### Changed
+
+- `check.py --change-floor` without `--expect-changed` is refused, as `--change-grid` is: neither is
+  used without it (before, the floor was taken and ignored) (#442).
+- feat: check.py --change-grid and the change floor surveyed across encoders (#442) (#768)
+
+## 4.21.1
+
+_Automated release: version and notes generated from pull requests merged since 4.21.0._
+
+### Fixed
+
+- A sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start, as the picture does since #766: `decode_pcm_mono` (so `sync.py`, `scenes.py`, `multicam.py`), silencedetect times (`silence.py`'s cut levels, `metadata.py --auto-chapters`), `waveform.py`'s stills, `caption.py`'s karaoke energy split and the WAV an ASR engine transcribes all read the file's clock now (#787).
+- `sync.py --replace-audio` counts the second file's sound from the file's start too, and `-copyts` no longer drags the reference's own start into the written picture: a `.ts` reference at 1.467 s kept its picture there beside a sound at 0, and a trimmed head was padded back (#787).
+- fix: a sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start (#787) (#792)
+
+## 4.21.0
+
+_Automated release: version and notes generated from pull requests merged since 4.20.3._
+
+### Changed
+
+- `crop.py` is folded into `fit.py` (#683): `fit.py --rect W:H:X:Y` cuts an exact pixel box with no scaling (`--rect W:H` is centred) and writes the file `crop.py` writes. `crop.py` stays as an alias (`alias_of: fit` in the contract): every command, its MCP name and its arguments keep working, and it leaves the tool count (now 41), SKILL.md's table and `tools/list`. `crop.py` also takes `--rect W:H:X:Y`, and `--width W --height H` without `--x/--y` (or with `--center`) is a centred box (#676). `cropdetect.py` now hands its rectangle on as `fit.py --rect`.
+- feat: fold crop.py into fit.py as fit.py --rect, crop an alias (#683) (#769)
+
+## 4.20.3
+
+_Automated release: version and notes generated from pull requests merged since 4.20.2._
+
+### Fixed
+
+- `render.py --export-timeline` no longer names FCPXML formats like `FFVideoFormat1080p` (a name with no frame rate, which Final Cut Pro 13 warned about on import). Each format states its source's colour space instead: Rec. 2020 PQ or HLG from the transfer, Rec. 709 otherwise (#731).
+- fix: FCPXML formats carry no name without a frame rate (#731) (#732)
+
+## 4.20.2
+
+_Automated release: version and notes generated from pull requests merged since 4.20.1._
+
+### Fixed
+
+- `overlay.py` no longer takes `--emoji-assets`, `--emoji-scale` or `--emoji-max` silently: it draws text with drawtext and never read them, so a value given there did nothing and nothing said so. Each now prints one warning and adds `deprecated_option` to the result's `diagnostics.warnings`. A guard test (tests/test_guards.py) reads every tool's parser and fails on an option nothing reads that `deprecated` does not list (#749).
+- A usage error's `try:` line is a command the tool accepts. `speedramp.py IN --ramp 3:6:0.5` suggested `--segment 3:6:0.5`, which speedramp refuses (`START-END:FACTOR`): an option whose help only mentions the word, one that only shares a word with the flag, and one spelt like a flag another tool takes (`export.py --alpha-codec png` became `--alpha-mode png`, `pad.py --smart` became `--start` with no value) are named in the hint and no longer printed as the answer. A common other word for a choice is used only when it is a choice (`check.py --platform strong` suggested `ig`, the platform nearest to "high").
+
+### Changed
+
+- deprecated: `overlay.py --emoji-assets`, `--emoji-scale` and `--emoji-max`, which have no effect (`caption.py` and `graphics.py` keep theirs). They are listed in `contract --json` `deprecated` and go in 4.22.0 under the beta rule; remove them from overlay command lines (#749).
+- fix: overlay.py's emoji options say they do nothing, and a try: line is a command the tool accepts (#749) (#764)
+
+## 4.20.1
+
+_Automated release: version and notes generated from pull requests merged since 4.20.0._
+
+### Fixed
+
+- A 0 that `export.py --duration`, `--pad-blur`, `caption.py --font-size` and `--emoji-scale` (also in `graphics.py`) cannot take is refused as outside the option's range, instead of being read as the whole clip, radius 1, the default size or scale 1.0 (#749).
+- fix: a zero an option cannot take is refused (#749) (#767)
+
 ## 4.20.0
 
 _Automated release: version and notes generated from pull requests merged since 4.19.0._

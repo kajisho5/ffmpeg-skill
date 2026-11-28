@@ -38,7 +38,7 @@ SHARED = {"timeout", "quality", "crf"}
 
 def options():
     doc = json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / "_contract.py"), "--json", "--static"],
-                                    capture_output=True, text=True, check=True).stdout)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout)
     return {t["name"]: {spec["cli"][0]: spec.get("description", "") for name, spec in t["input_schema"]["properties"].items()
                         if spec.get("type") in ("integer", "number") and name not in SHARED and spec.get("cli")}
             for t in doc["tools"]}
@@ -64,7 +64,7 @@ def main():
                 for value in EDGES:
                     cmd = [sys.executable, str(ROOT / "scripts" / f"{tool}.py"), args.clip, *base, f"{flag}={value}", *out, "--dry-run", "--overwrite"]
                     try:
-                        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=HUNG_S)
+                        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=HUNG_S)
                         how, last = ("ran" if proc.returncode == 0 else "refused"), (proc.stderr.strip().splitlines() or [""])[-1]
                     except subprocess.TimeoutExpired:
                         how, last = "hung", f"no answer after {HUNG_S} s"

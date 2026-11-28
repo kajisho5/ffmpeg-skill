@@ -1,6 +1,6 @@
-# OpenSSF Scorecard. Pins match ossf/scorecard's own scorecard-analysis.yml
-# (actions/checkout v7.0.1, ossf/scorecard-action v2.5.0, actions/upload-artifact v7.0.2,
-# github/codeql-action/upload-sarif v4.38.3). branch_protection_rule is the trigger the
+# OpenSSF Scorecard. The pins started from ossf/scorecard's own scorecard-analysis.yml and
+# Dependabot moves them (2026-11-28: ossf/scorecard-action v2.6.0,
+# github/codeql-action/upload-sarif v4.39.5). branch_protection_rule is the trigger the
 # Branch-Protection check documents:
 # https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
 name: Scorecard supply-chain security
@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Run analysis
-        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        uses: ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5 # v2.6.0
         with:
           results_file: results.sarif
           results_format: sarif
@@ -45,6 +45,6 @@ jobs:
           retention-days: 5
 
       - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
         with:
           sarif_file: results.sarif
