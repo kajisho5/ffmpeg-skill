@@ -1907,9 +1907,11 @@ sys.exit(fit.main())
         silently fall back to -map 0:v:0 -map 0:a:0 only, dropping every other audio track,
         subtitles, chapters and attached pictures with no signal in --json that this happened.
         Force that fallback (mov_text subtitles copied into MKV, which -c copy can't carry) and
-        confirm the fallback now tries to keep the extra audio track + subtitle stream too, and
-        that --json honestly reports whether a re-encode/drop occurred instead of a bare
-        "completed" that looks identical to the lossless path."""
+        confirm --json honestly reports whether a re-encode/drop occurred instead of a bare
+        "completed" that looks identical to the lossless path. Decided on 4.19 (#696, #539):
+        dropped_non_av_streams speaks for subtitle and data streams only, as its contract entry
+        says; the second audio track the re-encode leaves out is the audio_tracks_dropped warning
+        and its notes line, so a subtitle that survives the re-encode is not reported dropped."""
         multi = self.work / "retag_multitrack.mp4"
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=10", "-f", "lavfi", "-i", f"aevalsrc='{TONE}':s=48000",
                "-f", "lavfi", "-i", "aevalsrc=0.4*sin(2*PI*220*t):s=48000", "-t", "1.5",
@@ -1925,8 +1927,10 @@ sys.exit(fit.main())
         # whichever fallback tier actually succeeded, the JSON must say plainly whether streams
         # beyond video+selected-audio were dropped -- never silently
         self.assertIn("dropped_non_av_streams", doc)
-        self.assertEqual(len(r["audio_streams"]) < 2 or r["subtitle_streams"] == 0, doc["dropped_non_av_streams"],
-                          "dropped_non_av_streams must accurately reflect what actually made it into the output")
+        self.assertEqual(r["subtitle_streams"] == 0, doc["dropped_non_av_streams"],
+                          "dropped_non_av_streams must accurately reflect the subtitles that made it into the output")
+        audio_warned = any(w["code"] == "audio_tracks_dropped" for w in (doc.get("diagnostics") or {}).get("warnings", []))
+        self.assertEqual(len(r["audio_streams"]) < 2, audio_warned, "a second audio track left out is said by its own warning")
         # and the re-encode carries the tags it was asked for (setparams on the frames: 7.1+'s
         # negotiation ignored the old output options), checked by the tool itself
         v = r["video"]
@@ -3531,6 +3535,27 @@ sys.exit(fit.main())
                       "siblings_refused", "leftovers", "state", "escaping", "generator", "automation",
                       "ffmpeg_version", "color", "text_presentation", "new")
 
+    def test_no_fixture_draws_from_an_unseeded_random_source_696(self):
+        """#558 item 12, #696: a fixture made from noise that changes every run makes a test pass
+        or fail by chance. FFmpeg's random sources (anoisesrc, life, cellauto, sierpinski,
+        gradients) pick a fresh seed unless given `seed=`, and gradients a random colour for each
+        of c0 and c1 not given, seed or no seed (FFmpeg 6.1); Python's module-level random functions,
+        a Random made without a seed and os.urandom draw a fresh one too. `noise` and expression
+        random() are fixed generators and are not flagged. Every file under tests/ and demos/."""
+        source = re.compile(r"""(?:["',;\]]|f["'])(anoisesrc|life|cellauto|sierpinski|gradients)(=[^"',;\[\s]+|(?=["']))""")
+        python = re.compile(r"\brandom\.(?!Random\(\w)\w+\(|\bos\.urandom\(")
+        found = []
+        for path in sorted([*(ROOT / "tests").glob("*.py"), *(ROOT / "demos").glob("*.py")]):
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                code = line.split("#")[0] if not line.lstrip().startswith(("'", '"', "f'", 'f"')) else line
+                for m in source.finditer(code):
+                    opts = m.group(2) or ""
+                    if "seed=" not in opts or m.group(1).startswith("grad") and not ("c0=" in opts and "c1=" in opts):
+                        found.append(f"{path.name}:{n}: {m.group(0).lstrip(chr(34) + chr(39) + 'f,;]')}")
+                if python.search(code):
+                    found.append(f"{path.name}:{n}: {line.strip()[:80]}")
+        self.assertEqual(found, [], "give each random source a fixed seed")
+
     def test_a_fonts_folder_that_cannot_be_listed_is_unknown_coverage_review_of_636(self):
         """A fonts folder that exists but cannot be listed is coverage unknown (None), as an
         fc-scan that fails is, never an exception that stops the caption; an empty folder that
@@ -4323,7 +4348,9 @@ sys.exit(fit.main())
             ("overlay", [self.src, "--image", jpg], {still: 1, label: 1, bt601: 0}),
             ("overlay", [s709, "--image", self.logo], {still: 1, label: 0}),
             ("overlay", [s601, "--image", self.logo], {still: 1, label: 0, "colorspace=ispace=smpte170m:": 1}),
-            ("overlay", [self.src, "--image", self.logo, "--codec", "prores"], {still: 0, label: 0}),
+            # #696: on the ProRes line the still is made YUV in the main's matrix (here BT.709), so
+            # overlay's format=auto does not take the whole main picture through RGB
+            ("overlay", [self.src, "--image", self.logo, "--codec", "prores"], {still: 1, label: 0}),
             ("waveform", [self.src, "--image", png], {"scale=out_color_matrix=bt709:out_range=tv,format=yuv420p": 1}),
             ("grid", [self.src, s601, "--cols", "2", "--rows", "1"], {"colorspace=ispace=smpte170m:": 1, label: 1}),
             ("grid", [s601, self.src, png, s709, "--cols", "2", "--rows", "2"], {"colorspace=ispace=smpte170m:": 1, label: 1, rgb: 1}),
@@ -6199,21 +6226,24 @@ sys.exit(fit.main())
         the seek point: the burned-in labels were half a slice early (8 s, 3x2: a tile showing
         0.667 s labelled 0.000). 1.x added the seek back, which an MPEG-TS's seek does not reset
         the same way (#411): the sheet now keeps the file's own timestamps counted from its start
-        (-copyts -start_at_zero) and stamps the plain pts; a sheet that starts at 0 (a clip with
-        only a handful of frames) does the same."""
+        (-copyts and a setpts to the file's start_time: -start_at_zero counted an MPEG-TS from its
+        picture's start, #766) and stamps the plain pts; a sheet that starts at 0 (a clip with only
+        a handful of frames) does the same, with no seek."""
         doc = json.loads(tool("look", self.src, "--tiles", "3x2", "--dry-run", "--json",
                               "-o", self.out("tc_sheet.png")).stdout)
         cmd = doc["commands"][0]
         seek = re.search(r"-ss (\d+\.\d+) ", cmd).group(1)
         self.assertGreater(float(seek), 0)
-        self.assertIn("-copyts -start_at_zero -ss", cmd)
+        self.assertIn("-copyts -ss", cmd)
+        self.assertIn("setpts=PTS-0.000000/TB,trim=start=", cmd)
         self.assertIn("pts\\:hms}", cmd)
         one = self.out("tc_one_frame.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-frames:v", "1", "-c:v", "libx264",
                "-preset", "veryfast", "-pix_fmt", "yuv420p", one)
         cmd = json.loads(tool("look", one, "--tiles", "2x2", "--dry-run", "--json",
                               "-o", self.out("tc_one.png")).stdout)["commands"][0]
-        self.assertIn("-ss 0.000000 ", cmd)
+        self.assertIn("-copyts -i ", cmd)
+        self.assertNotIn("-ss ", cmd)
         self.assertIn("pts\\:hms}", cmd)
 
     def test_boundary_sweep_p3_regressions(self):
@@ -12163,7 +12193,7 @@ class NotMeasuredIsNotAValueTests(unittest.TestCase):
             said = re.search(r'"normalization_type"\s*:\s*"(\w+)"', err).group(1)
             self.assertEqual(_loudness.loudnorm_mode(stats, -14, -1, 11), said, stats)
         spiky = self.work / "spiky.wav"
-        ffmpeg("-f", "lavfi", "-i", "anoisesrc=d=8:a=0.02,volume='if(lt(mod(t,1),0.05),30,1)':eval=frame", "-ar", "48000", str(spiky))
+        ffmpeg("-f", "lavfi", "-i", "anoisesrc=d=8:a=0.02:seed=1,volume='if(lt(mod(t,1),0.05),30,1)':eval=frame", "-ar", "48000", str(spiky))
         doc, _ = self.doc("loudness", spiky, "-o", "spiky_n.wav")
         self.assertEqual(doc["result"]["loudnorm_mode"], "dynamic")
         self.assertIn("dynamic mode", doc["result"].get("note", ""))

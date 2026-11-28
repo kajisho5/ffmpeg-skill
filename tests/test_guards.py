@@ -126,6 +126,68 @@ class TimeGuard(unittest.TestCase):
                       if json.dumps(v) != json.dumps(read["ts"][k]) and not (isinstance(v, (int, float)) and abs(v - read["ts"][k]) <= 0.01)}
             self.assertEqual(differ, {}, "these rendered or read the sound of a .ts on another clock than the .mp4's (mp4, ts)")
 
+    def test_a_picture_read_alone_counts_from_the_files_start(self):
+        """#766, the picture's side of #787: FFmpeg counts a decode of an MPEG-TS/PS's picture
+        alone from the picture's own first frame, while a cut counts from the file's start (the
+        earlier of the two streams). On a .ts whose sound leads by 21 ms look.py --at 2.5 showed the
+        frame after the one cut.py --start 2.5 starts on; with a 0.3 s lead every picture-only read
+        was 0.3 s off. The same take as .mp4 (the control), .ts and .mpg, its picture 0.3 s after
+        its sound: the frame look.py --at and the review page's still show at T, the time scenes.py
+        puts its cut and check.py --levels its worst frame are the frame the file's own clock has
+        there (the frame's pts less the file's start_time, where cut.py --start counts)."""
+        spec = importlib.util.spec_from_file_location("review_page", ROOT / "scripts" / "_review.py")
+        review = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(review)
+
+        def frames(path, extra=()):
+            """Every decoded frame (or a picture's one) as RGB bytes, in presentation order."""
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", *extra, "-vf", "scale=160:90,setparams=colorspace=bt709:range=tv",
+                                  "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+            return [raw[i:i + 160 * 90 * 3] for i in range(0, len(raw), 160 * 90 * 3)]
+
+        def which(src_frames, picture):
+            one = frames(picture)[0]
+            return min(range(len(src_frames)), key=lambda k: sum(abs(a - b) for a, b in zip(src_frames[k][::5], one[::5])))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # a black stretch from 2.0 s and one over-white frame at 4.0 s of the picture's own time
+            pic = ("testsrc2=s=160x90:r=25:d=6,drawbox=c=black:t=fill:enable='between(t,2,2.39)',"
+                   "lutyuv=y=254:enable='between(t,3.99,4.01)'")
+            made = {"mp4": ["-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-c:a", "aac"],
+                    "ts": ["-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-c:a", "aac", "-f", "mpegts"],
+                    "mpg": ["-c:v", "mpeg2video", "-q:v", "2", "-g", "25", "-c:a", "mp2"]}
+            said = {}
+            for ext, enc in made.items():
+                src = Path(tmp) / f"lead.{ext}"
+                subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-itsoffset", "0.3", "-f", "lavfi", "-i", pic,
+                                "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=6.3", "-map", "0:v", "-map", "1:a",
+                                "-pix_fmt", "yuv420p", "-fps_mode", "passthrough", *enc, str(src)], check=True)
+                doc = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                                 "format=start_time:stream=start_time:frame=best_effort_timestamp_time", "-of", "json", str(src)],
+                                                capture_output=True, text=True, check=True).stdout)
+                origin = float(doc["format"]["start_time"])
+                clock = [float(f["best_effort_timestamp_time"]) - origin for f in doc["frames"]]
+                self.assertGreater(float(doc["streams"][0]["start_time"]) - origin, 0.25, f"fixture: the {ext} picture starts after its sound")
+                src_frames = frames(src)
+                at = lambda t: next(k for k, c in enumerate(clock) if c >= t - 0.0005)
+                got, want = {}, {}
+                for t in (1.5, 3.0):
+                    png = Path(tmp) / f"look_{ext}_{t}.png"
+                    sweep.run_json([sys.executable, str(ROOT / "scripts" / "look.py"), str(src), "--at", str(t), "--no-timecode", "-o", str(png), "--json"])
+                    got[f"look --at {t}"], want[f"look --at {t}"] = which(src_frames, png) if png.exists() else "not written", at(t)
+                    (Path(tmp) / review.STILLS).mkdir(exist_ok=True)
+                    name = review.still(Path(tmp), f"{ext}_{t}.jpg", str(src), t, review.facts(str(src)).get("format"))
+                    got[f"review still {t}"], want[f"review still {t}"] = which(src_frames, Path(tmp) / name) if name else "not written", at(t)
+                scenes = sweep.run_json([sys.executable, str(ROOT / "scripts" / "scenes.py"), str(src), "--json"])[0] or {}
+                got["scenes: the cut"] = [round(s["start"], 2) for s in scenes.get("scenes") or []][1:2]
+                want["scenes: the cut"] = [round(clock[next(k for k, f in enumerate(src_frames) if max(f[::97]) < 40)], 2)]
+                levels = sweep.run_json([sys.executable, str(ROOT / "scripts" / "check.py"), str(src), "--levels", "bt709", "--json"])[0] or {}
+                worst = ((levels.get("levels") or {}).get("worst_frame") or {}).get("time")
+                got["check --levels: worst frame"] = None if worst is None else round(worst, 2)
+                want["check --levels: worst frame"] = round(clock[max(range(len(clock)), key=lambda k: sum(src_frames[k][::97]))], 2)
+                said.update({f"{ext} {k}": (got[k], want[k]) for k in got if got[k] != want[k]})
+            self.assertEqual(said, {}, "these read the picture of a file on another clock than a cut's (got, want)")
+
     def test_no_tool_leaves_chapters_at_the_source_times(self):
         with tempfile.TemporaryDirectory() as tmp:
             src, sil = Path(tmp) / "chaptered.mkv", Path(tmp) / "chaptered_pause.mkv"

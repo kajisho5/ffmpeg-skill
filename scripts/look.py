@@ -20,6 +20,7 @@ from typing import List, Optional
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
 from _common import still_input_args  # noqa: E402
+from _common.decision import picture_seek  # noqa: E402
 from _common import STATE, require_tool, add_common, apply_common, default_font_file, die, emit, escape_drawtext, ffmpeg_base, info, probe, run, run_analysis, time_arg
 from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
@@ -92,10 +93,11 @@ def _refuse_past_end(t: str, sec: float, meta: dict, path: str, whose: str = "")
         die(f"--at {t} is beyond {of}duration ({dur:.2f}s)")
 
 
-def _seek(sec: float, meta: dict) -> List[str]:
-    """The input seek to `sec`, none for a still (its one picture is at 0): image2 given `-ss 0.000`
+def _seek(sec: float, meta: dict) -> "tuple":
+    """picture_seek() to `sec`, the frame a cut at `sec` starts on (#766; early on MPEG-TS, #696),
+    none for a still (its one picture is at 0): image2 given `-ss 0.000`
     drops a TGA's only frame, which image2 gives a duration, and nothing was written (#531)."""
-    return [] if is_still_input(meta) else ["-ss", f"{sec:.3f}"]
+    return ([], "") if is_still_input(meta) else picture_seek(meta, sec)
 
 
 def _half_height(half: int, size: "tuple") -> int:
@@ -378,9 +380,10 @@ def main() -> int:
                 # Each side starts at its own first selected frame, even if the frame grids differ.
                 return (f"scale={half}:{box_h}:force_original_aspect_ratio=decrease{conv}{pre},"
                         f"pad={half}:{box_h}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1{stamp},setpts=PTS-STARTPTS")
-            fc = (f"[0:{PROBED_VIDEO}]{lab}{sq}{fit(tm, sec)}[a];[1:{PROBED_VIDEO}]{lab2}{csq}{fit(tm2, compare_sec)}[b];"
+            (seek1, trim1), (seek2, trim2) = _seek(sec, meta), _seek(compare_sec, cmeta)
+            fc = (f"[0:{PROBED_VIDEO}]{trim1}{lab}{sq}{fit(tm, sec)}[a];[1:{PROBED_VIDEO}]{trim2}{lab2}{csq}{fit(tm2, compare_sec)}[b];"
                   f"[a][b]hstack=inputs=2[out]")
-            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, *_seek(compare_sec, cmeta), *still_input_args(args.compare), "-i", args.compare,
+            cmd = ffmpeg_base() + [*seek1, *still_input_args(args.input), "-i", args.input, *seek2, *still_input_args(args.compare), "-i", args.compare,
                                    "-filter_complex", fc, "-map", "[out]", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
@@ -395,7 +398,8 @@ def main() -> int:
                 # several frames, or -o given as a stem/prefix without an image extension
                 out = os.path.join(outdir, f"{args.output and Path(args.output).stem or stem}_{sec:.3f}s.png")
             stamp = "" if args.no_timecode else f",drawtext=text='{escape_drawtext(fmt_hms(sec))}':{font_prefix}{FONT}"
-            cmd = ffmpeg_base() + [*_seek(sec, meta), *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{lab}{sq}scale='min({args.width},iw)':-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
+            seek, trim = _seek(sec, meta)
+            cmd = ffmpeg_base() + [*seek, *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", f"{trim}{lab}{sq}scale='min({args.width},iw)':-2{tc.replace(',' + timecode_filter(font_prefix), '')}{stamp}", "-frames:v", "1", "-update", "1", out]
             run(cmd)
             outputs.append(out)
     else:
@@ -426,14 +430,13 @@ def main() -> int:
         # sample at the middle of each slice so the first/last tiles are not black lead-in/out frames
         # with only a handful of frames a mid-slice seek skips past them all: start at 0 instead
         seek = 0.0 if frames_avail < 4 else step / 2
-        # -copyts -start_at_zero keeps each frame's own timestamp through the seek, counted from
-        # the file's start, so the stamp is the frame's pts as it is. What an input -ss alone
-        # resets pts to differs by container: an MPEG-TS (which starts at 1.4 s) came out
-        # labelled one seek late when the seek was added back (#411)
-        tc_sheet = tc
-        vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',{lab}{sq}scale={tile_w}:-2{tc_sheet},"
+        # each frame keeps its own time on the file's clock (picture_seek), so the stamp is its pts as
+        # it is: an input -ss alone reset an MPEG-TS's pts one seek late (#411), -start_at_zero to the
+        # picture's start (#766); on MPEG-TS the seek starts early (#696)
+        pre, head = picture_seek(meta, seek, 0.0)
+        vf = (f"{head}select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step * 0.98:.6f})',{lab}{sq}scale={tile_w}:-2{tc},"
               f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        cmd = ffmpeg_base() + ["-copyts", "-start_at_zero", "-ss", f"{seek:.6f}", *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", vf, "-frames:v", "1", "-update", "1", out]
+        cmd = ffmpeg_base() + [*pre, *still_input_args(args.input), "-i", args.input, "-map", f"0:{PROBED_VIDEO}", "-vf", vf, "-frames:v", "1", "-update", "1", out]
         run(cmd)
         outputs.append(out)
         info(f"contact sheet: {n} frames every {step:.2f}s")

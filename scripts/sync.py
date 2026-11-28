@@ -35,7 +35,7 @@ from typing import Dict, List
 from _common.runner import fail_if_classified, refuse_output_is_input
 from _common import STATE, video_args, add_common, apply_common, emit, aac_args, audio_codec_for, default_output, die, ffmpeg_base, info, probe, run, decode_pcm_mono, rms_envelope
 from _common.emit import record_skip, warn
-from _common.decision import SEEK_MARGIN, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
+from _common.decision import seek_margin, frame_rate, grid_at_or_after, length_output_t, silence_filter, stream_starts
 from _common.probe import sound_clock
 from _common.timeline import output_timecode_args
 from _common.runner import default_selection_maps
@@ -450,7 +450,7 @@ def main() -> int:
                 cmd = ffmpeg_base()
                 out_seek: List[str] = []
                 if head_trim > 0:
-                    m = min(SEEK_MARGIN, head_trim)
+                    m = seek_margin(second_meta, head_trim)
                     cmd += ["-ss", f"{head_trim - m:.6f}"]
                     if m > 0:
                         out_seek = ["-ss", f"{m / (drift_ratio if drift_af else 1.0):.6f}"]

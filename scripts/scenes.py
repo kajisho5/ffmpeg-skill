@@ -30,7 +30,7 @@ from _common import drawtext_fontfile  # noqa: E402
 from _common import ffmpeg_filters, filter_missing_hint  # noqa: E402
 from _common.emit import note, record_fallback  # noqa: E402
 from _common.color import bt709_label_filter  # noqa: E402
-from _common.probe import PROBED_VIDEO, square_pixels  # noqa: E402
+from _common.probe import PROBED_VIDEO, seek_args, square_pixels  # noqa: E402
 from _common import dry_run_input_pending  # noqa: E402
 from _common.emit import input_length  # noqa: E402
 
@@ -412,9 +412,10 @@ def main() -> int:
         lab = bt709_label_filter(meta)
         square = square_pixels(meta["video"])
         thumb = (lab + "," if lab else "") + (square + "," if square else "") + f"scale={tile_w}:-2{stamp}"
-        graph = sheet_graph([sc["start"] for sc in scenes], f"[0:{PROBED_VIDEO}]", thumb,
+        pre, head = seek_args(args.input, 0.0)  # the scenes' starts are on the file's clock (#766)
+        graph = sheet_graph([sc["start"] for sc in scenes], f"[0:{PROBED_VIDEO}]{head}", thumb,
                             f"tile={cols}x{rows}:padding=2:margin=2:color=0x202020")
-        run(ffmpeg_base() + ["-i", args.input, "-filter_complex", graph, "-map", "[sheet]", "-an",
+        run(ffmpeg_base() + [*pre, "-i", args.input, "-filter_complex", graph, "-map", "[sheet]", "-an",
                              "-frames:v", "1", "-fps_mode", "vfr", "-update", "1", args.sheet])
         info(f"wrote {args.sheet}")
         result["sheet"] = args.sheet

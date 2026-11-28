@@ -57,12 +57,12 @@ from fractions import Fraction
 from typing import Any, List, Optional
 
 from _common.runner import require_tool, run_analysis, with_mapped_chapters
-from _common.decision import SEEK_MARGIN, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
+from _common.decision import seek_margin, enlarge_args, warn_mostly_cropped, atempo_chain_with_lead, line_matrix_filter, delivered_rate, frame_durations, frame_rate, grid_at_or_after, length_output_t, ntsc_rate, stream_starts
 from _common.placement import bbox
 from _common.timeline import exact_rate, output_timecode_args
 from _common import video_args, STATE, add_common, apply_common, emit, aac_args, aspect_ratio, cfr_args, cfr_filter, default_output, die, ffmpeg_base, info, probe, run, run_keeping_subtitles, validate_color, pad_filters, add_pad_fill_args, X264_PRESETS, time_arg, fmt_secs, frame_size, display_size, square_pixels, square_pixels_note, note, with_cfr
 from _common.emit import input_length, own_length, refuse, refuse_still, warn
-from _common.probe import fingerprint, presentation_times, probed_maps
+from _common.probe import fingerprint, presentation_times, probed_maps, seek_args
 BLUR_DARKEN = 0.15  # how much --fit blur dims the blurred background copy (eq brightness)
 SPEED_WARN_FACTOR = 1.15  # a --method speed retime beyond this, in either direction, is
 # reported in the result's diagnostics (large_speed_change): the whole picture and sound
@@ -206,10 +206,10 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
         if seek == previous_seek:
             continue
         previous_seek = seek
-        remaining = start + length - float(seek)
-        chain = ",".join([f"trim=end={remaining:.6f}"] + filters)
+        pre, head = seek_args(path, float(seek), start + length - float(seek))  # the file's clock, early on MPEG-TS (#696, #766)
+        chain = head + ",".join(filters)
         cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-               "-ss", seek, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
+               *pre, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
                "-vf", chain, "-frames:v", "2", "-f", "rawvideo", "-"]
         proc = run_analysis(cmd, check=False, text=False, timeout_is_fatal=False)
         out = proc.stdout or b""
@@ -646,7 +646,7 @@ def main() -> int:
                 # an input seek straight to `start` can land on a keyframe whose picture comes
                 # after it (a B-frame HEVC source) and lose the frames before it, so the first
                 # picture would not be the one the start timecode below names
-                m = min(SEEK_MARGIN, round(start, 3))
+                m = seek_margin(meta, round(start, 3))
                 # a trim from the start seeks nowhere: no -ss, so the timeline stays where it is and
                 # a subtitle/data track is kept below (`-ss 0.000` dropped it, A158)
                 pre_input += ["-ss", f"{start - m:.3f}"] if round(start, 3) > 0 else []
@@ -804,8 +804,10 @@ def main() -> int:
                          "end": round(z_start + z_len, 6), "anchor": {"x": args.crop_x, "y": args.crop_y},
                          "frame": {"width": zw, "height": zh}}
 
-    # ---- fades: last, so they are drawn on the frame that is delivered, over its final length
-    for kind, secs, at in (("in", args.fade_in, 0.0), ("out", args.fade_out, total - args.fade_out)):
+    # ---- fades: last, so they are drawn on the frame that is delivered, over its final length, on
+    # the clock the output-side seek drops its margin from (as the zoom's t0): the fades ran inside
+    # the dropped margin, and a 10 s MPEG-TS margin left a --fade-out output black
+    for kind, secs, at in (("in", args.fade_in, out_seek), ("out", args.fade_out, out_seek + max(total - args.fade_out, 0))):
         if secs > 0 and total > 0:
             vf.append(f"fade=t={kind}:st={max(at, 0):.3f}:d={secs:g}")
             af += [f"afade=t={kind}:st={max(at, 0):.3f}:d={secs:g}"] if has_audio else []

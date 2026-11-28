@@ -1234,7 +1234,7 @@ class AnalysisTests(MediaFixtures):
             path = OUT / name
             if not path.exists():
                 sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x64:r=10:d=6",
-                   "-f", "lavfi", "-i", "sine=f=440:d=6", "-f", "lavfi", "-i", "anoisesrc=a=0.001:d=6",
+                   "-f", "lavfi", "-i", "sine=f=440:d=6", "-f", "lavfi", "-i", "anoisesrc=a=0.001:d=6:seed=1",
                    "-filter_complex", audio_graph, "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-c:a", "aac", "-t", "6", path)
             return path
         gap = "volume='if(between(t,2,2.2),0,1)':eval=frame"
@@ -2069,7 +2069,7 @@ class AnalysisTests(MediaFixtures):
         expr = (TONES + "+0.25*sin(2*PI*(165+30*sin(2*PI*0.031*t))*t)*gt(sin(2*PI*0.113*t+0.4)\\,0.55)"
                 "+0.3*sin(2*PI*(520+80*sin(2*PI*0.017*t+1))*t)*gt(sin(2*PI*0.29*t+2.1)*sin(2*PI*0.073*t)\\,0.35)")
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc='{expr}':s=48000",
-           "-f", "lavfi", "-i", "anoisesrc=a=0.02:c=pink:r=48000", "-t", "200", "-filter_complex", "amix=inputs=2:duration=first:normalize=0", "-c:a", "pcm_s16le", loop)
+           "-f", "lavfi", "-i", "anoisesrc=a=0.02:c=pink:r=48000:seed=1", "-t", "200", "-filter_complex", "amix=inputs=2:duration=first:normalize=0", "-c:a", "pcm_s16le", loop)
         ref = OUT / "loop_ref.wav"
         sec = OUT / "loop_sec.wav"
         # 28 s offset inside a 120 s analysis window (the documented rule: window >= 4x max offset)
@@ -2843,6 +2843,131 @@ class BeatGridTests(unittest.TestCase):
             self.assertEqual(len(snap_points([1.0], g["beats"], 0.1)), 1)
 
 
+class TimestampSeekTests(unittest.TestCase):
+    """#696: MPEG-TS (.ts, .m2ts, .mts) and MPEG-PS (.mpg) are seeked by timestamp onto whatever
+    packet is there, not back to a keyframe, so an input -ss lands inside a GOP and nothing decodes
+    before the next keyframe. `look.py --at` on a TS with one keyframe wrote nothing (kind output),
+    and on a TS with a keyframe every 2 s showed the next keyframe's picture; `cut.py --accurate`
+    lost the picture or started on the wrong frame. Every seek that decodes from a time starts
+    decision.seek_margin() early on such a demuxer. The fixture has one keyframe, at 0; MP4 is
+    the control."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
+        OUT.mkdir(exist_ok=True)
+        cls.mp4 = OUT / "tsseek.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
+           "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=4", "-c:v", "libx264", "-preset", "ultrafast", "-g", "250",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", cls.mp4)
+        cls.files = {".mp4": cls.mp4}
+        for ext, opts in ((".ts", []), (".m2ts", ["-mpegts_m2ts_mode", "1"]), (".mts", ["-mpegts_m2ts_mode", "1"])):
+            cls.files[ext] = OUT / f"tsseek{ext}"
+            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.mp4, "-c", "copy", *opts, "-f", "mpegts", cls.files[ext])
+        cls.files[".mpg"] = OUT / "tsseek.mpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", cls.mp4, "-c:v", "mpeg2video", "-g", "250", "-q:v", "2",
+           "-c:a", "mp2", cls.files[".mpg"])
+
+    @staticmethod
+    def _rgb(path, at=None):
+        """The frame at `at` on the file's clock (its pts less the file's start_time, where cut.py
+        --start counts), decoded from the start, or a PNG's one picture, as RGB bytes. A select on
+        FFmpeg's own clock of a picture-only decode counted from the picture's start, 21 ms after
+        the TS's sound, and picked the frame after the cut's (#766)."""
+        origin = probe(str(path))["start_time"] or 0.0 if at is not None else 0.0
+        pick = ["-vf", f"setpts=PTS-{origin:.6f}/TB,select=gte(t\\,{at - 0.001}),setparams=colorspace=bt709:range=tv"] if at is not None else []
+        return subprocess.run(["ffmpeg", "-v", "error", "-copyts", "-i", str(path), "-map", "0:V:0", *pick, "-frames:v", "1",
+                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+
+    def test_a_frame_grab_and_a_cut_start_on_the_frame_asked_for(self):
+        self.assertGreater(probe(str(self.files[".ts"]))["start_time"], 1.0, "fixture: the TS starts after 0")
+        keys = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=flags", "-of", "csv=p=0",
+                               str(self.files[".ts"])], capture_output=True, text=True, encoding="utf-8").stdout.count("K")
+        self.assertEqual(keys, 1, "fixture: one keyframe")
+        for ext, src in self.files.items():
+            for at in (1.3, 2.5):
+                with self.subTest(ext=ext, at=at, tool="look --at"):
+                    out = OUT / f"tsseek_{ext[1:]}_{at}.png"
+                    doc = json.loads(script("look.py", src, "--at", str(at), "--no-timecode", "-o", out, "--json").stdout)
+                    self.assertEqual(doc["status"], "completed")
+                    want, got = self._rgb(src, at), self._rgb(out)
+                    self.assertEqual(len(want), len(got))
+                    self.assertLess(sum(abs(a - b) for a, b in zip(want, got)) / len(want), 2.0, "the frame at --at")
+            with self.subTest(ext=ext, tool="look --compare and the sheet"):
+                script("look.py", src, "--at", "2.5", "--compare", self.mp4, "-o", OUT / f"tsseek_cmp_{ext[1:]}.png")
+                script("look.py", src, "--tiles", "3x1", "-o", OUT / f"tsseek_sheet_{ext[1:]}.png")
+            with self.subTest(ext=ext, tool="cut --accurate"):
+                out = OUT / f"tsseek_cut_{ext[1:]}.mp4"
+                doc = json.loads(script("cut.py", src, "--start", "2.5", "--end", "3.5", "--accurate", "-o", out, "--json").stdout)
+                self.assertTrue(doc["verified"], [s for s in doc["verification"] if not s.get("ok")])
+                # the source's first frame at or after 2.5 s from the file's start, chosen by the
+                # pts ffprobe decodes (its own timestamps: the picture starts 21 ms after the sound
+                # on the TS), not by a seek or a select on FFmpeg's clock, and compared by index
+                origin = probe(str(src))["start_time"]
+                pts = self._frame_pts(src)
+                want = next(i for i, p in enumerate(pts) if p >= origin + 2.499)
+                got = self._psnr_first(out, src, want)
+                near = {n: round(self._psnr_first(out, src, n), 2) for n in (want - 1, want + 1)}
+                # by margin over the neighbours, not by a fixed PSNR: Debian's FFmpeg 7.1 libx264
+                # re-encodes this 160x90 testsrc2 at 26 dB, on the right frame by 3 dB; a wrong
+                # frame or a lost picture leaves no neighbour 2 dB behind
+                if got <= max(near.values()) + 2.0:
+                    self.fail(f"the cut starts on the frame at 2.5 s: PSNR {got:.2f} against frame {want} (pts "
+                              f"{pts[want]:.6f}, file start {origin:.6f}); against frames {want - 1} (pts {pts[want - 1]:.6f}) "
+                              f"and {want + 1} (pts {pts[want + 1]:.6f}): {near}; the cut's first frame pts "
+                              f"{self._frame_pts(out)[:1]}; {subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True).stdout.splitlines()[:1]}; the cut ran {doc.get('commands')}")
+
+    def test_a_trim_s_fades_are_drawn_on_the_frames_it_delivers(self):
+        """#696 review: fit.py --method trim --from-center seeks a margin early and drops it on the
+        output side, and the fades ran on the margin's clock: --fade-in ended inside the dropped
+        margin, and --fade-out darkened the middle and left the end black (on a TS, with a 10 s
+        margin, the whole output). The first and last frames are dark and the middle is not."""
+        def luma(path, at):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:V:0", "-vf", f"select=gte(t\\,{at}),scale=32:18",
+                                  "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+            self.assertEqual(len(raw), 32 * 18, f"no frame at {at} s in {path}")
+            return sum(raw) / len(raw)
+        for ext in (".mp4", ".ts"):
+            with self.subTest(ext=ext):
+                out = OUT / f"tsseek_fade_{ext[1:]}.mp4"
+                doc = json.loads(script("fit.py", self.files[ext], "--duration", "2", "--method", "trim", "--from-center",
+                                        "--fade-in", "0.5", "--fade-out", "0.5", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                first, middle, last = luma(out, 0.0), luma(out, 1.0), luma(out, 1.95)
+                self.assertGreater(middle, 40, f"the middle is not faded: {first:.1f} / {middle:.1f} / {last:.1f}")
+                self.assertLess(first, middle / 3, f"the fade-in is on the first frame: {first:.1f} / {middle:.1f}")
+                self.assertLess(last, middle / 3, f"the fade-out is on the last frame: {middle:.1f} / {last:.1f}")
+
+    def test_cropdetect_does_not_read_the_margin_before_its_window(self):
+        """#696 review: an MPEG-TS window is decoded from 10 s before it and the output seek drops
+        that margin after the filter graph, so cropdetect logged the margin's readings too. Bars
+        only between the two windows (1.5-11 s of 13 s) are not in either window."""
+        src = OUT / "tsseek_bars.ts"
+        bars = ",".join(f"drawbox=x=0:y={y}:w=iw:h=40:color=black:t=fill:enable='between(t,1.5,11)'" for y in ("0", "ih-40"))
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=13", "-vf", bars,
+           "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-f", "mpegts", src)
+        doc = json.loads(script("cropdetect.py", src, "--samples", "2", "--seconds", "1", "--json").stdout)
+        self.assertEqual((doc["crop"]["width"], doc["crop"]["height"]), (320, 180), doc["crop"])
+
+    @staticmethod
+    def _frame_pts(path):
+        """Every decoded video frame's pts in seconds, in output order, from the file's start."""
+        rows = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                               "-of", "csv=p=0", str(path)], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+        return [float(r.split(",")[0]) for r in rows.split() if r.split(",")[0] not in ("", "N/A")]
+
+    @staticmethod
+    def _psnr_first(cut, src, n):
+        """PSNR of the cut's first frame against the source's frame `n` (decoded from the start)."""
+        err = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(cut), "-i", str(src), "-filter_complex",
+                              f"[0:v]trim=end_frame=1,setpts=PTS-STARTPTS[a];[1:v]select=eq(n\\,{n}),setpts=PTS-STARTPTS,"
+                              "trim=end_frame=1[b];[a][b]psnr", "-f", "null", "-"], capture_output=True, text=True, encoding="utf-8").stderr
+        return float(re.search(r"average:([0-9.]+|inf)", err).group(1))
+
+
 class GeometryAuditAnalysisTests(unittest.TestCase):
     """Issue #411 (audit H) for look.py and scenes.py: the contact sheet's stamp on a source that
     does not start at 0, scenes --sheet on a variable-frame-rate source, --compare keeping each
@@ -2889,7 +3014,7 @@ class GeometryAuditAnalysisTests(unittest.TestCase):
     def test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts(self):
         """An input -ss resets an MPEG-TS's timestamps differently from an MP4's, so the stamp
         (pts + seek) came out one seek late on TS. The sheet now keeps the file's own timestamps
-        counted from its start (-copyts -start_at_zero) and stamps each frame's pts as it is.
+        counted from its start (-copyts and a setpts to its start_time, #766) and stamps each frame's pts as it is.
         The stamp is drawn text, so the test reads the pts the stamp is drawn from: the same
         graph with showinfo in place of drawtext and tile."""
         self.assertGreater(probe(str(self.ts))["start_time"], 1.0)

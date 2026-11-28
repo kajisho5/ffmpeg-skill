@@ -146,6 +146,8 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
+- [After 4.19.0 — the items of #696 closed here](#after-4190--the-items-of-696-closed-here)
+- [After 4.25.0 — a picture read alone counts from the file's start (#766)](#after-4250--a-picture-read-alone-counts-from-the-files-start-766)
 <!-- contents:end -->
 
 ## Time limits
@@ -4678,7 +4680,8 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   as `audio.py` does in its graph, ended the track on the sample on 6.1.1, 7.1 and 9.0.2 and
   never ended on FFmpeg 8.0.1 (`atempo=...,aformat,apad=whole_len=N,atrim=end_sample=N,atrim=end=T`
   with `-t`: every such run in CI was killed at the 1800 s limit, #514). It is not shipped; the
-  3.8.3 behaviour stays and the item stays open on #470.
+  3.8.3 behaviour stays and the item stays open on #470. `audio.py --tempo` is a different graph
+  (the same chain inside `-filter_complex`, after `amix`) and ends on 8.0.1: see "After 4.19.0".
 - **`sync.py --trim-second` delays to the sample.** The 3.8.3 entry kept `adelay=<ms>` because
   "its `-af` reaches every audio track the second file has". That sentence is wrong: the command
   maps the default selection, or with several streams the probed picture and sound
@@ -7727,3 +7730,100 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
 - Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
   `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
   `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
+## After 4.19.0 — the items of #696 closed here
+
+- **`audio.py --tempo` ends on FFmpeg 8.0.1.** The chain that never ended there was fit.py's
+  `-af` form (above, "the millisecond in fit.py"). `audio.py` runs `atempo` and then
+  `conform_to_length()` (`aformat,apad=whole_len=N,atrim=end_sample=N,atrim=end=T`) inside
+  `-filter_complex`, after `amix` when there is a music bed, and with `-shortest`. An outside
+  contributor ran it on 8.0.1 (Linux arm64, 2026-11-22): `--tempo 1.25 --music` returned in 1.25 s
+  with 115,200 samples, 0.5x and 2x with 288,000 and 72,000. CI's `ubuntu-latest` job is Ubuntu
+  26.04's FFmpeg 8.0.1 (`.github/workflows/ci.yml`), and it runs
+  `test_audio_tempo_under_a_music_bed_ends_on_the_sample`, the same three runs with those counts,
+  and `test_audio_tempo_keeps_the_pitch_and_length_samples_is_exact` (atempo then
+  `conform_filter`). fit.py's retimed track stays at atempo's length, as decided there.
+- **A test fixture draws from no unseeded random source.** `anoisesrc`, `life`, `cellauto`,
+  `sierpinski` and `gradients` pick a new seed each run unless given `seed=` (two `anoisesrc` runs
+  measured different on 6.1.1). Every one in `tests/` and `demos/` has a seed now. `noise` (a fixed
+  default seed) and the expression `random(1)` in the variable-frame-rate fixture are not chance:
+  `random()` is a linear congruential generator whose state starts at 0, and two runs of the VFR
+  fixture's `select` kept the same frames. `os.urandom` in a batch-key test became fixed bytes.
+  Test: `test_no_fixture_draws_from_an_unseeded_random_source_696`, which reads every file under
+  `tests/` and `demos/`.
+- **`color.py --retag`'s `dropped_non_av_streams` speaks for subtitle and data streams only**
+  (#539, re-checked on 4.19). The fallback re-encode writes one audio track, as every tool does; the
+  second one it leaves out is the `audio_tracks_dropped` warning and its notes line, which the
+  result writer adds for every tool. The field says only whether a subtitle or data stream was
+  left out, as its contract entry says, so a subtitle that survives the re-encode is not reported
+  as dropped. Still not changed: the re-encode's last rung drops subtitles and data together.
+  Test: `test_color_retag_fallback_keeps_extra_audio_and_subtitles_when_it_can`, which now
+  checks the field against the subtitles alone and the warning against the audio tracks.
+- **An RGB layer on the ProRes line is made YUV in the main picture's matrix** (#470). On
+  `--codec prores` `rgb_chain_to_bt709()` returned nothing, so `overlay --image`'s RGBA still met
+  an 8-bit main in overlay's `format=auto`, which composited the whole picture in RGB: C03028
+  tagged BT.709 came out of the ProRes as Y/Cb/Cr 356/413/771 (10-bit) for 320/440/768 away from
+  the logo, and an untagged one as 316/440/769. The layer is converted with the main's own matrix
+  (an untagged one read as BT.709, as every encoder line here reads it) and range, so the main is
+  only widened to 10 bits. A 10-bit main was already composited at 10 bits (`overlay_format`); its
+  still now gets the same matrix instead of swscale's BT.601. The same helper converts the emoji
+  PNGs of `caption.py` and `graphics.py` on that line (not measured here: no emoji assets on this
+  machine). Not changed: an alpha line, an HDR line, an RGB main. Code:
+  `decision.rgb_chain_to_bt709()`. Test: `test_an_rgba_still_on_the_prores_line_leaves_an_8_bit_main_alone`.
+- **A seek into MPEG-TS or MPEG-PS starts `seek_margin()` early** (#696). Those demuxers seek by
+  timestamp onto whatever packet is there; they do not go back to a keyframe. So an input `-ss`
+  lands inside a GOP, and nothing decodes before the next keyframe. On a `.ts`, `.m2ts`, `.mts` or
+  `.mpg` with one keyframe, `look.py --at`, `--compare` and the contact sheet wrote nothing
+  (`kind: output`), and `cut.py --accurate` wrote a file with no picture (`verified: false`). With
+  a keyframe every 2 s, `look.py --at 3` showed the frame at 4 s, and `cut.py --accurate --start
+  3.2` started on another frame with `verified: true` (18 dB against the frame asked for). The
+  review page's stills were missing, and `cropdetect.py --motion-centre` measured 3 of 15 windows,
+  saying nothing. `decision.seek_margin(meta, t)` is the one place that knows this: 10 s
+  (`TIMESTAMP_SEEK_MARGIN`) on those demuxers, else `SEEK_MARGIN` (1 s) where cut, sync and fit
+  already used it. The decode drops the margin: an output `-ss`, a `trim` (look), or a `select` on
+  the file's own clock (the contact sheet). `look.py --at` and `--compare` take at least the 1 s margin
+  on every container (10 s on MPEG-TS and MPEG-PS), which also covers an MP4 seek that lands on a keyframe after its time. The contact
+  sheet, the review page's stills and the analysis decodes (`probe.seek_args`: cropdetect's
+  windows, its motion centre, fit's crop check, `scenes.py --shots`) take the 10 s margin on
+  those demuxers only, so their MP4 commands are
+  unchanged. A GOP longer than 10 s still decodes nothing before its next keyframe. Where the
+  decode of the picture alone counts from (the file's start, as a cut does) is #766, below.
+  Tests: `TimestampSeekTests` (`.ts`, `.m2ts`, `.mts`,
+  `.mpg` and an MP4 control, one keyframe: look's frame against the decoded one, compare, sheet,
+  the cut's first frame).
+
+## After 4.25.0 — a picture read alone counts from the file's start (#766)
+
+- **A time named for the picture is on the file's clock, the one a cut's `--start` counts on.**
+  FFmpeg counts an MPEG-TS or MPEG-PS decode that reads the picture without the sound from the
+  picture's own first frame (measured on 6.1.1), while a decode of both streams, which every cut
+  is, counts from the file's start (`probe.start_time`, the earlier stream); `-start_at_zero`, which
+  the contact sheet used, counts from the picture too. On a `.ts` whose sound starts 21 ms before
+  its picture, at 25 fps, `look.py --at 2.5` showed frame 63 and `cut.py --start 2.5` started on 62.
+  With a 0.3 s lead, `look.py --at` and the review page's stills were 8 frames late (a still of an
+  `.mpg` 18), `scenes.py` put its cut 0.33-0.34 s early, and `check.py --levels` put its worst frame
+  0.32-0.34 s early on every container, MP4 included, because it counted from the picture's first frame.
+  `decision.picture_seek(meta, at, ..., seconds)` is the one decode of the picture from a time:
+  `-copyts`, the input seek `seek_margin()` early (#696), and `setpts=PTS-<start_time>/TB` with a
+  `trim` from `at` at the head of the chain. Its callers: `look.py` (`--at`, `--compare`, the
+  sheet), the review page's stills, `probe.seek_args` (cropdetect's windows and `--motion-centre`,
+  fit's crop check, `scenes.py --shots`, loop's seam check), `probe.detect_scenes` (`scenes.py`,
+  `metadata.py --auto-chapters --from scenes`) and `scenes.py --sheet`, and
+  `probe.measure_signal_range` (`check.py --levels`). MP4 with an edit-listed picture start and
+  Matroska with an offset already agreed with the cut, and still do; their commands now carry
+  `-copyts` and a `setpts` too. What changes on every container: `check.py --levels`' worst frame
+  and windows count from the file's start, where a picture that starts late was counted from its
+  own first frame. Tests: `test_guards.TimeGuard.test_a_picture_read_alone_counts_from_the_files_start`
+  (look, the review still, scenes, levels on `.mp4`, `.ts` and `.mpg` whose picture starts 0.3 s
+  after the sound, against the frame the file's own clock has there),
+  `TimestampSeekTests.test_a_frame_grab_and_a_cut_start_on_the_frame_asked_for` (its reference
+  frame is now picked on the file's clock: the 21 ms `.ts`, `.m2ts` and `.mts` failed it before).
+- **Seen in the sweep and not changed.** A stream copy of a `.ts` from T starts on the first
+  keyframe after T, because the demuxer seeks by timestamp; `snapped_segments` and the copy-drift
+  warning say so and `--accurate` cuts on the frame (#620). The copy counts T from the file's start
+  (its sound starts at T), so it is a keyframe landing, not this clock. The decode check's head
+  read (`emit.decode_step`) decodes the picture alone without `-copyts`; it asks whether frames
+  decode in the first second, and a window 21 ms or 0.3 s off holds frames all the same.
+  `check.py --expect-changed` and `--compare` pair frames by index (`setpts=N`) and take their
+  times from ffprobe's pts less the start: already the file's clock. The tools that render with a
+  time (freeze, redact, graphics, cut, fit) map the sound beside the picture when the source has
+  one, so their graphs count from the file's start; they were not measured one by one here.

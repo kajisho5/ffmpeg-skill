@@ -63,7 +63,7 @@ from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT
 from _common import require_tool
 from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, sound_clock, several_av_streams, signatures_match, stream_signature
 from _common.runner import subtitle_codec_for, subtitle_container_holds, declare_time_map, segments_map, with_mapped_chapters
-from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
+from _common.decision import PAD_SOUND_FROM_ZERO, seek_margin, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
 from _common.emit import refuse, refuse_still
 from _common.words import parse_word_ranges, plan_word_ranges, read_word_list
@@ -1011,7 +1011,7 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             # discards it from both streams alike. An input seek straight to `start` can land (the
             # MP4 demuxer seeks over its raw decode times) on a keyframe whose picture comes after
             # `start` and lose the frames before it (-ss 9.9 on a B-frame HEVC file began at 10.0).
-            m = min(SEEK_MARGIN, start)
+            m = seek_margin(meta, start)
             cmd = ffmpeg_base() + ["-ss", f"{start - m:.6f}", "-i", src, "-ss", f"{m:.6f}", "-t", f"{dur:.6f}"]
             cmd += stream_maps(meta, dst, copy=False)
             # a VFR source is conformed by the fps filter at the rate cfr_args() delivers: the
@@ -1241,7 +1241,7 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
         # in-band SPS going from untagged to bt470bg, say) made FFmpeg 8.1 rebuild the graph at
         # that input's buffer source and deadlock at 0% CPU (#316); the output's colour tags are
         # written explicitly (video_args), so the retag is a label here, not a conversion.
-        m = min(SEEK_MARGIN, s)
+        m = seek_margin(meta, s)
         cmd += ["-ss", f"{s - m:.6f}", "-t", f"{m + d + 1.0:.6f}", "-reinit_filter", "0", "-i", src]
         a, b, half = m, m + d, 0.0
         if has_v and rate:
@@ -1559,7 +1559,7 @@ def run_smart(args, segments, output: str, meta: dict, forced: List[str], hold_n
         try:
             doc = _smartcut.execute(args.input, segments, dst, meta, params, packets, args.crf, args.preset, tmp,
                                     vend=video_end(args.input, meta), gop_is_open=gop_is_open, landing=seek_keyframe,
-                                    origin=file_origin, declick=DECLICK_S, seek_margin=SEEK_MARGIN)
+                                    origin=file_origin, declick=DECLICK_S, seek_margin=seek_margin(meta, float("inf")))
         except _smartcut.SmartFallback as exc:
             return fallback(exc.reason, exc.code)
         if not STATE.dry_run:
