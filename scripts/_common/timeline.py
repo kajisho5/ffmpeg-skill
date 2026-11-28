@@ -53,6 +53,9 @@ _NOT_EXPORTED = {
 # frame.fit -> the FCPXML adjust-conform type that fills the sequence the same way. blur has no
 # conform of its own: the picture is fitted whole, and its blurred background is not exported.
 _CONFORM = {"pad": "fit", "crop": "fill", "blur": "fit"}
+# a source's transfer -> the FCPXML colorSpace its format states (#731). Anything else is Rec. 709,
+# untagged included (players take untagged SDR as BT.709), as FCP warns on a format with neither
+_FCP_COLOR = {None: "1-1-1 (Rec. 709)", "smpte2084": "9-16-9 (Rec. 2020 PQ)", "arib-std-b67": "9-18-9 (Rec. 2020 HLG)"}
 _AUDIO_NOT_EXPORTED = ("replace", "voice", "denoise", "duck", "duck_amount", "duck_threshold", "duck_attack",
                        "duck_release", "gain", "stereo", "mono", "downmix", "stereo_widen", "effects",
                        "effects_volume", "stems", "music_volume", "fade_in", "fade_out", "music_fade_out",
@@ -291,7 +294,7 @@ def build(proj: Dict[str, Any], probes: Dict[str, Dict[str, Any]], rel) -> Dict[
                       "length": math.floor(Fraction(src_out - src_in) / Fraction(speed) + Fraction(1, 2)),
                       "media_frames": fr(dur), "has_video": bool(meta.get("video")),
                       "has_audio": bool(meta.get("audio")),
-                      "picture": picture, "fps": clip_fps, "reframed": reframe})
+                      "picture": picture, "fps": clip_fps, "reframed": reframe, "trc": (meta.get("video") or {}).get("color_transfer")})
 
     # Centre each dissolve on the cut: trim d/2 off the outgoing tail and d/2 off the incoming head.
     half_a, half_b = d_frames // 2, d_frames - d_frames // 2
@@ -504,14 +507,16 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
     q = lambda s: _xml_escape(_xml_text(s), {'"': "&quot;"})  # noqa: E731
     fd = _t(1, rate)
     res: List[str] = []
-    ids: Dict[Any, str] = {}  # a format's (width, height, frameDuration) or an asset's path -> its id
+    ids: Dict[Any, str] = {}  # a format's (width, height, frameDuration, colorSpace) or an asset's path -> its id
 
-    def fmt(width: int, height: int, frame_duration: str) -> str:
-        key = (width, height, frame_duration)
+    def fmt(width: int, height: int, frame_duration: str, color: str = _FCP_COLOR[None]) -> str:
+        key = (width, height, frame_duration, color)  # an HDR source of the frame's size has its own
         if key not in ids:
             ids[key] = f"r{len(ids) + 1}"
-            res.append(f'    <format id="{ids[key]}" name="FFVideoFormat{height}p" frameDuration="{frame_duration}" '
-                       f'width="{width}" height="{height}"/>')
+            # No name: Final Cut Pro's names carry the rate (FFVideoFormat1080p30), and one without it
+            # (FFVideoFormat1080p) is "an unexpected value" on import (#731). FCP 13 writes a format
+            # it has no name for as size, frameDuration and colorSpace, and that imports cleanly.
+            res.append(f'    <format id="{ids[key]}" frameDuration="{frame_duration}" width="{width}" height="{height}" colorSpace="{color}"/>')
         return ids[key]
 
     seq_fmt = fmt(tl["width"], tl["height"], fd)  # r1: the sequence's frame
@@ -521,7 +526,7 @@ def to_fcpxml(tl: Dict[str, Any]) -> str:
         # file under a 1080x1920 frame claimed to be 1080x1920, and its conform had nothing to do.
         if not (c["has_video"] and c["picture"]):
             return seq_fmt
-        return fmt(c["picture"][0], c["picture"][1], _t(1, exact_rate(float(c["fps"]))) if c["fps"] else fd)
+        return fmt(c["picture"][0], c["picture"][1], _t(1, exact_rate(float(c["fps"]))) if c["fps"] else fd, _FCP_COLOR.get(c.get("trc"), _FCP_COLOR[None]))
 
     def asset(path: str, name: str, frames: int, has_video: bool, has_audio: bool, format_id: str = "",
               start: Fraction = Fraction(0)) -> str:
