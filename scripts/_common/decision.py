@@ -726,11 +726,17 @@ def cfr_args(meta: Optional[Dict[str, Any]], fps: Optional[float] = None) -> Lis
         return []
     rate = fps or v.get("fps") or 30.0
     rate = round(rate) if abs(rate - round(rate)) < 0.02 else rate
-    # a rate the caller asked for relabels the start timecode, counted at the new rate (#470:
-    # proxy/denoise/crop/redact/sphere/straighten --fps 50 kept 01:00:00:12, a 25 fps label)
-    from _common.timeline import output_timecode_args
-    relabel = output_timecode_args(meta, 0.0, rate) if fps and v.get("fps") and abs(float(fps) - float(v["fps"])) > 0.01 else []
-    return ["-fps_mode", "cfr", "-r", f"{rate:g}"] + relabel
+    # a rate that differs from the source's relabels the start timecode, counted at the new one
+    # (#470: six tools' --fps 50 kept 01:00:00:12, a 25 fps label)
+    return ["-fps_mode", "cfr", "-r", f"{rate:g}"] + (relabel_at(meta, rate) if fps else [])
+
+
+def relabel_at(meta: Optional[Dict[str, Any]], rate: float) -> List[str]:
+    """Relabel when the canonical timeline rationals differ after output-rate snapping.
+    Equivalent NTSC rates compare equal; a near-integer source can still require relabelling."""
+    from _common.timeline import exact_rate, output_timecode_args
+    src = ((meta or {}).get("video") or {}).get("fps")
+    return output_timecode_args(meta, 0.0, rate) if src and exact_rate(float(rate)) != exact_rate(float(src)) else []
 
 
 def cfr_filter(meta: Optional[Dict[str, Any]], fps: Optional[float] = None, seek: float = 0.0) -> str:

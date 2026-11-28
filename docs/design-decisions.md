@@ -3479,11 +3479,18 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   one, reads 00:00:00:00). The label is read at
   the source's rate and written at the rate the output is delivered at (`fit --fps`, a VFR source
   conformed): 01:00:00:12 at 25 fps is 01:00:00:24 at 50, and a fit that changes the rate writes
-  it even without a trim, leaving the source's tmcd track behind. A start before a picture that
+  it even without a trim, leaving the source's tmcd track behind. A rate no `--fps` asks for is
+  one too: `deinterlace --mode field` doubles it and `export`'s `reels`-family presets name their
+  own `-r 30`, so both count the label at the rate they deliver. Compare the source and delivered
+  rates as timeline rationals after snapping the delivered rate. Equivalent NTSC rates keep their
+  label, while a 25.005 fps source conformed to 25 fps gets a new one. A start before a picture that
   starts after the file's origin is that picture's first frame; only a padded head counts back.
-  Code: `_common.timeline.output_timecode_args()`, `cut.first_frame_from()`. Tests:
+  Code: `_common.timeline.output_timecode_args()`, `_common.decision.relabel_at()`,
+  `cut.first_frame_from()`. Tests:
   `test_a_tool_that_moves_the_start_moves_the_start_timecode`,
   `test_the_start_timecode_is_counted_at_the_rate_fit_delivers`,
+  `test_every_tool_that_changes_the_delivered_rate_counts_the_timecode_at_it`,
+  `test_export_reels_relabels_ntsc_drop_frame_timecode`,
   `test_a_cut_before_a_late_picture_keeps_the_start_timecode_of_its_first_frame`,
   `test_a_stream_copy_cut_of_an_mxf_keeps_the_start_timecode_of_the_keyframe_it_lands_on`.
   Code: `_common.emit.source_carry()`, `_common.probe.carry_inventory()`. Test:
