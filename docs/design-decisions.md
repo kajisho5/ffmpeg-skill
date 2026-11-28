@@ -138,6 +138,9 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.8.3 — word-timed cuts in cut.py (#449)](#after-483--word-timed-cuts-in-cutpy-449)
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
+- [After 4.18.0 — crop.py folded into fit.py (#683)](#after-4180--croppy-folded-into-fitpy-683)
+- [After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)](#after-4190--the-change-floor-surveyed-across-encoders-and-a-finer-grid---change-grid-442)
+- [After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)](#after-4201--a-callers-subtitle-times-colours-and-luts-are-read-in-0-9-765)
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 <!-- contents:end -->
 
@@ -3021,8 +3024,9 @@ and a late sound padded with silence (`aresample=async=1:first_pts=0`), through 
   `hh:mm:ss[,.]mmm` reads the same to both and is still given to ffmpeg as it is (no side file for
   a BOM, CRLF or a period separator); any other goes as the `_adjusted.srt` copy the tool writes
   (an extra `--mode mux` track as `_trackN.srt`). Always writing the copy would add a side file to
-  every run for files both readers agree on. Code: `caption.srt_timings_shared_grammar()`. Test:
-  `test_caption_hands_ffmpeg_the_cues_it_read`.
+  every run for files both readers agree on. A timing line written in digits other than 0-9 is
+  not rewritten but refused (#765, the section "After 4.20.1" below). Code:
+  `caption.srt_timings_shared_grammar()`. Test: `test_caption_hands_ffmpeg_the_cues_it_read`.
 - **`--mode mux` keeps every existing subtitle track, converted where the container needs it.**
   The rule is export.py's (#380), now `_common.runner.subtitle_codec_for()`, plus WebVTT for
   `.webm`; an EIA-608 track converts as text does (kept as it is in `.mov`, which holds c608). A track no conversion fits (a bitmap track in MPEG-4 or WebM) and a WebM mux of a
@@ -6694,10 +6698,15 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   tighter ceiling states its range.
 - **A value equal to the default is not checked**, so a default outside its own stated range would
   hide; the test reads every stated range against its default instead.
-- Zero is not decided here. On most options it is a real setting; the ones where it is not keep
-  their own check.
-- Code: `scripts/_common/runner.py` (`apply_common`). Test:
-  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` (tests/test_contract.py).
+- **Zero is decided by the help too (#749).** On most options 0 is a real setting and is taken. An
+  option where it is not states `> 0` (`export --duration`, `--pad-blur`, `--emoji-scale`), read as
+  above 0 and at most a million, or a range from 1 (`caption --font-size 1..2000`). fit.py's own
+  `--pad-blur` check went with it, so one option is not refused in one tool and read as another
+  value in the next.
+- Code: `scripts/_common/runner.py` (`apply_common`). Tests:
+  `test_a_number_outside_what_its_option_takes_is_refused_on_every_tool` and
+  `test_a_zero_an_option_cannot_take_is_refused_before_a_dry_run_749` (tests/test_contract.py);
+  the class guard `NumericGuard` (tests/test_guards.py) gives every stated range's edges to every tool.
 
 ## After 4.2.1 — one file per `-o` (#562)
 
@@ -6721,11 +6730,16 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 ## After 4.2.2 — the answer is a command, and three options by request
 
 - **`try:` is printed only when it is known.** A usage error ends with the corrected command when
-  every mistake on the line has exactly one answer: one near option, one choice near the word given
-  (or a common other word for it: strong is high, light is low), a number written with its unit
-  (`-30dB`, `0.8s`, `1080px`). If any mistake has two candidates or none, no command is printed: a
-  caller that copies would run a guess as if it were the answer. The command is one the tool
-  takes, and the test runs each.
+  every mistake on the line has exactly one answer: one option spelt like the flag, one choice near
+  the word given (or a common other word for it when that word is a choice: strong is high, light is
+  low), a number written with its unit (`-30dB`, `0.8s`, `1080px`). If any mistake has two
+  candidates or none, no command is printed: a caller that copies would run a guess as if it were
+  the answer. A flag another tool takes, and an option that only shares a word with the flag or
+  whose help mentions it, are named in the hint and are not an answer: they mean something else
+  and take another value (`speedramp.py --ramp 3:6:0.5` is not `--segment 3:6:0.5`, which
+  speedramp refuses). The command corrects the mistakes it names and nothing else, so a value the
+  right option refuses is refused under its right name too; the test runs every rule on every tool
+  of `tests/sweep.py`'s table with a value the option takes, and each command it prints.
 - **A number after an option is joined with `=`.** argparse reads `--threshold -30dB` as two
   options. The corrected form is `--threshold=-30`.
 - **Three options were added during the freeze, by name.** `proxy --height`, `redact --rect` and
@@ -6737,7 +6751,8 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
   would be a second code path through that. `cut.py` then `reverse.py` does it, and the usage
   error names `cut.py`.
 - Code: `scripts/_common/runner.py` (`_teach`), `scripts/proxy.py`, `scripts/redact.py`,
-  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py).
+  `scripts/metadata.py`. Tests: `StumbleLedgerTests` (tests/test_contract.py),
+  `test_a_try_line_is_a_command_the_tool_accepts` among them.
 
 ## After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)
 
@@ -7218,6 +7233,185 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_locked_refuses_another_choice_before_ffmpeg_runs_dry_runs_included`,
   `test_an_entry_that_does_not_read_is_refused_where_the_policy_applies`,
   `test_batch_rows_carry_their_encode_and_the_cache_key_its_policy`.
+
+## After 4.18.0 — crop.py folded into fit.py (#683)
+
+- **`fit.py --rect W:H:X:Y` is crop.py's job, and crop.py is an alias.** The exact box (no scaling,
+  in the displayed frame, width and height even and refused if odd, an odd X/Y taken as given with
+  `exact=1`) is one function, `fit.crop_rect`; `crop.py` keeps its file and its options, turns them
+  into that call, and writes the same file byte for byte (the dry-run command line is the same, the
+  output name aside). `--rect W:H` without X:Y is a centred box, x = (width - W) / 2 rounded down.
+- **The order is FFmpeg's `crop=W:H:X:Y`**, the order `cropdetect.py` prints (`detected crop=...`)
+  and now hands on as `fit.py IN --rect W:H:X:Y`. `redact.py --rect` keeps `X:Y:W:H` (4.3.0): one
+  option name with two orders is a trap, and it is answered by the box having to fit the frame (most
+  swapped values do not) rather than by renaming either: W:H:X:Y is the shape #676's probe table lists for crop.py,
+  and redact's X:Y:W:H is what a model wrote for redact (`docs/stumbles.jsonl`). A wrong-way box that fits is not caught.
+- **`--rect` takes no other reframe in the same run.** `--duration`, `--aspect`, `--fit` (other than
+  crop), `--width/--height`, `--crop-x/-y`, `--zoom`, fades, `--rotate/--flip` and `--audio-stream`
+  are refused with the box, naming the option to run as a second `fit.py` step. The box is cut from
+  the source's displayed frame, so a rotate before it would change which pixels X:Y names.
+- **`fit.py --width W --height H --fit crop` keeps its meaning: scale to cover, then a centred W x H
+  window.** #683 proposed it as the centred box, but on a source larger than the box on both axes it
+  scales down today (a 3840x2160 clip to `--width 1080 --height 1920 --fit crop` keeps the full
+  height), and the centred box would keep a 1080x1920 piece of the middle: the same command would
+  write another picture. Where the box already fills one axis (a 1920x1080 clip to 1080x1080) the two
+  are the same window. The unscaled centred box is `--rect W:H`.
+- **An alias is described, callable and not advertised** (`_contract.ALIASES`, `alias_of` on its
+  ToolSpec). It stays in `contract --json`, in `provides` (a cross-repository id is not withdrawn), in
+  `tools/call` and in the 1.x snapshot (`tests/fixtures/mcp_tools.json`, read from every contract tool,
+  not from `tools/list`), and leaves the tool count (41), README's Tools section and the "Why 41"
+  table, SKILL.md's request table and `tools/list`, default or `FFMPEG_SKILL_MCP_FULL=1`.
+  `crop.py --x/--y/--width/--height` are no longer required one by one: `--rect`, or a size with no
+  corner (`--center` says so) is the centred box (#676's crop items).
+- **The other candidates of #683, looked at one by one; none is folded:**
+  - `straighten.py` beside `fit.py --rotate`: **keep.** `--rotate` is an exact 90-degree turn
+    (transpose, the frame's sides swap, nothing is lost); straighten is the `rotate` filter by any
+    angle, with its own covering scale (`|cos| + max(W/H, H/W) |sin|`, A235) and its own
+    `--fit crop|pad` and `--fill-color`. Folded, `fit.py --fit crop` would mean two different crops
+    by which other option is present.
+  - `pad.py` beside `insert.py` / `background.py`: **keep.** pad.py adds time (black and silence)
+    to a clip; insert.py and background.py make a new clip from a still or a colour. No shared
+    option or code path.
+  - `proxy.py` beside `export.py --preset`: **keep, for now.** A proxy is preset-like, but
+    export.py's presets fix the frame and the encoder, normalise loudness and fail a delivery that
+    misses a property, while a proxy's width or scale is the caller's, is never upscaled, keeps the
+    source's dynamic range and is not a delivery. A `proxy` preset would need `--width/--scale`
+    and an exemption from export's verification: more code and a second meaning of a preset, not
+    one job under two names. `capability_map`'s `media.proxy` resolves to proxy.py.
+  - `cropdetect.py`, `scenes.py`, `probe.py`, `look.py`: analysis; each measures something the
+    others do not. Left as they are.
+- Code: `fit.crop_rect()`, `fit.main()`, `crop.main()`, `_contract.ALIASES`, `tool_spec()`
+  (`alias_of`), `mcp/server.py tool_list()`. Tests:
+  `test_fit_rect_writes_crops_file_and_a_box_without_a_corner_is_centred` (tests/test_editing.py),
+  `test_docs_tool_count_matches_the_real_tool_list`, `test_mcp_tools_match_contract`,
+  `test_mcp_tool_surface_matches_the_frozen_1x_snapshot` (tests/test_contract.py).
+
+## After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)
+
+- **The survey.** `tests/change_floor_survey.py` (stdlib, about 15 minutes; not a test) turns each
+  source into a 1.5 s, 24 fps lossless 4:2:0 mezzanine and encodes it twice per setting: untouched,
+  and with four edits at their own frames (a caption cue, a 60x60 logo, a 24x24 logo, a colour
+  tweak of the whole frame, sizes in 1080p pixels). It measures with `change_tiles()`'s own graph
+  on three grids: **spill**, the largest tile no edit covers (edited against untouched, same
+  settings: the comparison the docs ask for); **untouched**, the largest tile of the untouched
+  encode against the mezzanine (what a re-encode alone gives); and each edit's smallest score, the
+  least of its frames' largest tile inside it. Sources: every clip in `demos/footage` (the twelve
+  1080p ones and the two small ones at their own size) and five synthetic pictures (testsrc2,
+  noise, gradients, dark low-light, a fast pan); all thirteen settings on the seven hardest at
+  1080p, four common ones on the rest, the seven `--quick` ones at 720p and 480p on four of them.
+  201 encodes, FFmpeg 6.1.1. Largest values on tiles of 20 px and more (spill / untouched):
+
+  | encode (pairs) | 32x18 (60 px at 1080p) | 64x36 (30 px) | 96x54 (20 px) |
+  |---|---|---|---|
+  | libx264 crf 18 medium (7) | 6 / 5 | 7 / 6 | 8 / 8 |
+  | libx264 crf 23 medium (27) | 12 / 11 | 13 / 12 | 14 / 12 |
+  | libx264 crf 23 veryfast (7) | 12 / 11 | 13 / 13 | 16 / 16 |
+  | libx264 crf 28 medium (27) | 18 / 21 | 22 / 22 | 22 / 22 |
+  | libx264 crf 35 medium (7) | 19 / 26 | 24 / 27 | 32 / 37 |
+  | libx265 crf 28 fast (27) | 16 / 20 | 18 / 21 | 18 / 21 |
+  | libx265 crf 34 fast (7) | 18 / 22 | 20 / 25 | 31 / 37 |
+  | libsvtav1 crf 35 preset 10 (7) | 17 / 18 | 18 / 19 | 21 / 21 |
+  | libsvtav1 crf 50 preset 10 (27) | 29 / 31 | 32 / 46 | 36 / 43 |
+  | libaom-av1 crf 35 cpu-used 8 realtime (17) | 17 / 16 | 20 / 27 | 42 / 42 |
+  | libvpx-vp9 crf 33 cpu-used 8 realtime (17) | 12 / 14 | 14 / 15 | 14 / 15 |
+  | prores (prores_aw) proxy (17) | 2 / 17 | 2 / 18 | 3 / 19 |
+  | prores standard (7) | 1 / 3 | 2 / 3 | 2 / 3 |
+  | smallest caption cue | 33 | 72 | 103 |
+  | smallest 60x60 logo | 67 | 103 | 117 |
+  | smallest 24x24 logo | 6 | 24 | 54 |
+  | smallest colour tweak | 6 | 6 | 7 |
+
+  The footage stays lower (its largest spill was 21, veo_rain at libsvtav1 crf 50, and 15 at
+  libx264 crf 28); the largest values are testsrc2's sharp detail and the noise picture. A finer tile averages fewer pixels, so the encoder's error rises
+  with it: at 64x36 testsrc2 at 480p (13 px tiles) reached 49 to 66 with libsvtav1 crf 50 and
+  libaom-av1, at 96x54 (9 px) 99 and 105.
+- **24 stays the floor of the 32x18 grid.** It is above every surveyed setting's spill except
+  libsvtav1 crf 50 below 720p (29 at 480p, 24 at 720p, on testsrc2), a quality nobody delivers at,
+  and under the smallest real edit (33, a caption at 480p, ProRes proxy). The untouched side
+  passes it only at the lowest qualities (libx264 crf 35, libsvtav1 crf 50): comparing a render
+  with its source instead of with a render of the same settings is what the docs already warn
+  about. Not per encoder: the floor would then depend on settings check.py cannot read (CRF,
+  preset), and the common ones of every encoder fit under one number.
+- **`--change-grid 32|64|96`, each with its own floor: 24, 32, 48.** The floor for 64 is above
+  every surveyed spill on 20 px tiles and more (32 at most, libsvtav1 crf 50; 22 for the common
+  settings), the one for 96 above libaom-av1 realtime's 42, the largest at that grid. The real
+  edits stay above both: a caption at 72 and 103, a 60x60 logo at 103 and 117. A 24x24 logo
+  scored 6 to 19 on the default grid (missed), 24 to 73 at 64 (found when it does not straddle
+  four tiles) and 54 or more at 96 (20 px tiles, which are now refused, below): a change that
+  small needs 64 at 1080p, where it is found when it falls inside one tile, or 96 on a 2880 px picture. `--change-floor` still
+  replaces the grid's floor. The grid is in the row ("floor 32 on 64x36 tiles") and in
+  `change_scope.tile`. Code: `probe.CHANGE_FLOORS`, `check.change_scope_row()`. Tests:
+  `test_check_change_grid_finds_a_logo_smaller_than_a_tile_442`,
+  `test_check_change_floor_holds_for_every_available_encoder_442` (each surveyed encoder this build
+  has, at a common setting, testsrc2 with a 60x60 logo: 720p at 32, 1080p at 64, 2880x1620 at 96,
+  no undeclared change; an encoder the build lacks is skipped).
+- **A finer grid is refused where its tiles are under 30 px** (64 needs 1920x1080, 96 needs
+  2880x1620; the narrower tile side counts, so a 1080x1920 picture, 17 px across at 64, has
+  neither). Under 20 px a re-encode alone passed the floors (above). The survey allowed 20 px
+  (64 at 720p, 96 at 1080p), and CI on macOS (FFmpeg 9.0.2, a libsvtav1 newer than the survey's
+  1.7.0) found what that costs: libsvtav1 crf 35 preset 10, testsrc2 at 720p on 64x36 tiles, the
+  untouched and the logo encode differed by 143 on one 20 px tile at (100, 80) for 2 frames, far
+  from the logo (quiet peak 31); 1.7.0 gives 15 there. 143 is above every real edit's score, so no
+  floor separates it: an encoder that moves bits to fine moving detail when an edit takes some
+  changes a tile that small for real. On 30 px tiles and more the same encoder passed. The owner's
+  decision (2026-11-27): the finer grids need 30 px tiles, and lose 1080p at 96, rather than keep a
+  grid that can call an untouched tile changed. The 32x18 default keeps its behaviour on every size. Three choices and not any
+  number: each is a floor that was measured.
+- **The grid and the floor need `--expect-changed`.** Without it neither is used, so either is
+  refused, as is a grid outside the three.
+- **Not measured: hardware encoders** (NVENC, Quick Sync, VAAPI, VideoToolbox, AMF; this machine
+  has none), libaom-av1 and libvpx-vp9 at their slower "good" settings, 10-bit and HDR pictures.
+  A clip that passes the floor untouched is a reason for `--change-floor`, and its numbers a
+  reason to add a row here. The colour tweak (brightness +0.03, saturation 1.15) is not found on
+  any grid, as the limit of the tiles says: `similarity` is the row for a faint change over the
+  whole picture.
+- **A 96x54 frame costs more.** Each frame is 15,552 bytes instead of 1,728 and a changed frame's
+  mask holds up to 5,184 bits: an hour at 30 fps in which every frame changed is about 70 MB of
+  masks (10 MB at 32x18).
+
+## After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)
+
+Python's `str.isdigit()` and an `re` pattern's `\d` take full-width and other Unicode digits;
+ffmpeg's SRT reader, `av_parse_color()` and `lut3d`'s .cube reader take 0-9 only. Where this tool
+reads a caller's text that ffmpeg then reads too, the two disagreed on one file.
+
+- **A line of digits outside 0-9 before an SRT timing line is cue text, not the next cue's
+  index.** `srt_blocks()` took "１２３" for an index (`isdigit()`) and dropped it, so a cue whose
+  text was only those digits lost it in every copy the tool writes (`--offset`, `--max-lines`,
+  the ASS route) while the result said `cues: 2`, `verified: true`. ffmpeg keeps it as text;
+  the index test and `_SRT_CUE_START` are now ASCII (`[0-9]`, `re.ASCII`).
+- **An SRT timing line written in other digits is refused, `kind: input`, before any command, dry
+  runs included, with the hint to write the times in ASCII digits.** ffmpeg refuses such a file
+  ("Invalid data found when processing input") when the first timing line is one, and burns the
+  line as the previous cue's text when a later one is; neither is a reading the caller meant, and
+  parse_srt() could read the times (`float()` takes those digits too) only by disagreeing with
+  ffmpeg. The tool follows its rule for a timing line it cannot read (`parse_srt()`'s "cannot read
+  the timing line", `kind: input`), not #414's rewritten copy: a copy would burn times ffmpeg
+  would never have read from the caller's file. `srt_file_blocks()` is the one reader of the
+  caller's file for `parse_srt()` and `srt_timings_shared_grammar()`, so caption.py's first
+  track and each extra `--mode mux` track meet it before any command; `_SHARED_SRT_TIMING` is
+  `re.ASCII` too. render.py's captions and waveform.py's `--srt` pass caption.py's refusal on as
+  `kind: input`: in a dry run before any command, in a real run when their caption stage runs,
+  after the stages before it, as for any refusal of caption.py's.
+- **`--color` with an alpha in other digits and a .cube LUT whose size or rows are in other digits
+  are refused, `kind: input`, as other text that ffmpeg cannot read there is.** `red@0.` followed
+  by a full-width 5 passed `validate_color()` and failed in ffmpeg after a dry run that had
+  completed; `refuse_bad_cube()` counted `LUT_3D_SIZE` and rows in those digits, which `lut3d`
+  refuses. `_COLOR_TOKEN_RE` is `re.ASCII`; the cube check takes `[0-9]+` and ASCII rows.
+- **Left as they are, by decision:** a `--text` cue file is this tool's own grammar, read by
+  `parse_time()` and converted before ffmpeg sees it (the SRT it writes is in 0-9), so
+  `TIME_RE`, `DROP_FRAME_RE`, `DROP_FRAME_LABEL` and `DROP_FRAME_CLOCK` keep taking any digit,
+  and a full-width cue reads as the caller wrote it. `SRT_TIMING_RE` and `TIMING_ONLY_RE` only
+  recognise an SRT given as `--text` to refuse it; made ASCII, a full-width SRT would pass and be
+  burned line by line as auto-timed text. `_VTT_INLINE` strips WebVTT tags ffmpeg's WebVTT reader
+  drops whatever digits they hold, so its wider `\d` agrees with ffmpeg. Numbers converted with
+  `int()`/`float()` before they reach ffmpeg (argparse options, `--allow-silent`,
+  `FFMPEG_SKILL_ENCODE` quality, a project's width and height, `--rect`) reach it in 0-9 and are
+  not refused.
+- Code: `_common.asr.srt_blocks()`, `_common.asr.srt_file_blocks()`, `caption._SHARED_SRT_TIMING`,
+  `_common.color._COLOR_TOKEN_RE`, `color.refuse_bad_cube()`. Tests (tests/test_contract.py):
+  `test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it`,
+  `test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs`.
 
 ## After 4.20.0 — a template render is encoded once (#357)
 

@@ -581,7 +581,7 @@ def main() -> int:
                     help="--preset copy only: remux a damaged file -- timestamps regenerated, corrupt packets dropped, "
                          "negative timestamps shifted to zero -- and count the decode errors and timestamp warnings "
                          "before and after; the input is never touched")
-    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds (a preset's own maximum still applies)")
+    ap.add_argument("--duration", type=float, metavar="S", help="keep only the first S seconds, > 0 (a preset's own maximum still applies)")
     ap.add_argument("--max-mb", type=float, metavar="MB",
                     help="the max size of the file: fit it under MB megabytes (MiB), a two-pass x264 encode at the video bitrate the "
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
@@ -647,7 +647,7 @@ def main() -> int:
         if encoder == "hap" and (meta["video"]["width"] % 4 or meta["video"]["height"] % 4):
             die(f"--preset hap-alpha needs a width and height that are multiples of 4 (HAP's texture blocks); "
                 f"this source is {meta['video']['width']}x{meta['video']['height']}",
-                hint="crop or pad it first (crop.py, pad.py)")
+                hint="crop or pad it first (fit.py --rect, pad.py)")
         # a pixel format with an alpha plane, or a VP9 stream stored with one (probed as yuv420p);
         # a dry run decides on these metadata reads alone and decodes nothing
         has_alpha_plane = bool(_ALPHA_PIX.match(meta["video"].get("pix_fmt") or "")) or vp9_alpha_tagged(args.input)

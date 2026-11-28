@@ -3062,6 +3062,36 @@ class TimelineExportTests(unittest.TestCase):
                 self.assertEqual([[e.get("type") for e in c.findall("adjust-conform")] for c in spine],
                                  [[conform], [], [conform]])
 
+    def test_fcpxml_formats_have_no_name_without_a_rate_731(self):
+        """#731: Final Cut Pro 13 said "Encountered an unexpected value" on importing a sequence
+        format named FFVideoFormat1080p, because its names carry the rate (FFVideoFormat1080p30).
+        Every format, the sequence's and each asset's, is written as FCP 13 writes one it has no
+        name for: size, frameDuration and colorSpace, no name. The colorSpace is the source's
+        (review of #732): a PQ or HLG clip is not declared Rec. 709, and gets its own format even
+        at the sequence's size and rate; an untagged one is read as BT.709."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/ntsc.mp4"] = {"duration": 8, "video": {"fps": 29.97, "width": 1920, "height": 1080}, "audio": {"channels": 2}}
+        for name, trc in (("sdr.mp4", None), ("pq.mov", "smpte2084"), ("hlg.mov", "arib-std-b67")):
+            probes[f"/m/{name}"] = {"duration": 8, "audio": {"channels": 2},
+                                    "video": {"fps": 30.0, "width": 1920, "height": 1080, "color_transfer": trc}}
+        rec709, pq, hlg = "1-1-1 (Rec. 709)", "9-16-9 (Rec. 2020 PQ)", "9-18-9 (Rec. 2020 HLG)"
+        for frame in ({}, {"frame": {"aspect": "9:16", "width": 1080, "fit": "pad"}}):
+            with self.subTest(frame=frame):
+                clips = [{"src": n} for n in ("a.mp4", "ntsc.mp4", "sdr.mp4", "pq.mov", "hlg.mov")]
+                root = ET.fromstring(tl_mod.to_fcpxml(tl_mod.build({"clips": clips, **frame}, probes, lambda p: f"/m/{p}")).encode("utf-8"))
+                formats = {f.get("id"): f for f in root.findall("./resources/format")}
+                for f in formats.values():
+                    self.assertIsNone(f.get("name"), f.attrib)
+                assets = {a.get("name"): formats[a.get("format")].get("colorSpace") for a in root.findall("./resources/asset[@format]")}
+                self.assertEqual(assets, {"a.mp4": rec709, "ntsc.mp4": rec709, "sdr.mp4": rec709, "pq.mov": pq, "hlg.mov": hlg})
+                seq = formats[root.find("./library/event/project/sequence").get("format")]
+                self.assertEqual(seq.get("colorSpace"), rec709)
+                hdr = {root.find(f"./resources/asset[@name='{n}']").get("format") for n in ("pq.mov", "hlg.mov")}
+                self.assertEqual(len(hdr), 2, "a PQ and an HLG source of one size and rate have a format each")
+                self.assertNotIn(seq.get("id"), hdr, "an HDR source never shares the sequence's Rec. 709 format")
+
     def test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip(self):
         """FCPXML 1.10's asset-clip content model is timeMap, the adjust-* elements, anchored
         items, then markers."""
