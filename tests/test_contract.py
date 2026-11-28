@@ -2587,8 +2587,8 @@ sys.exit(fit.main())
         # 2026-11-22 (#420, the owner's request): +500 each for audio.py's three --track options (about 505 bytes
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
-            ({}, 12, 76_600),  # +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_700),  # +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_800),  # +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
@@ -8321,9 +8321,9 @@ class BatchSourcePathTests(unittest.TestCase):
         leaves = {k for _, k in PROJECT_PATH_KEYS}
         src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
         # project_input_files()'s add(value) and the audiogram stage read keys named around them;
-        # `brand` is the brand key, `ov[k]` an overlay's font_file
+        # `brand` is the brand key, `ov[k]` an overlay's font_file, `cap[key]` caption_argv's text, srt or ass
         indirect = {"au[k]": {"music", "replace", "effects"}, "ch": {"chapters"}, "p: Any": set(),
-                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}}
+                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}, "cap[key]": {"text", "srt", "ass"}}
         for arg in re.findall(r"\brel\(((?:[^()]|\([^()]*\))+)\)", src):
             named = re.findall(r"[\"'](\w+)[\"']", arg)
             keys = {named[-1]} if named else indirect.get(arg.strip())
