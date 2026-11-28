@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
 ENCODE_ENV = "FFMPEG_SKILL_ENCODE"  # EncodePolicyTests pins it to the runner's name
-from _fixtures import OUT, SHARED_OUT  # noqa: E402
+from _fixtures import OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
@@ -4406,7 +4406,7 @@ sys.exit(fit.main())
         BT.601 source each input read from that file is converted once (cut's segment join opens it
         once per segment), a mixed join/multicam/broll/overlay --video converts only the BT.601
         input, and copies, the prores master and an untagged source plan no conversion at all."""
-        s601 = SHARED_OUT / "c_source601.mp4"
+        s601 = self.out("c_source601.mp4")
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
@@ -4455,11 +4455,11 @@ sys.exit(fit.main())
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
         beside a converted or already BT.709 cell. Two untagged cells need no label."""
-        s601 = SHARED_OUT / "c_source601.mp4"
+        s601 = self.out("c_source601.mp4")
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
-        s709 = SHARED_OUT / "c_source709.mp4"
+        s709 = self.out("c_source709.mp4")
         if not s709.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-c:a", "copy", s709)
@@ -4635,7 +4635,7 @@ sys.exit(fit.main())
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_range="pc")), "setparams=colorspace=bt709," + lim)
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_space="bt709")), "")
 
-        pc = SHARED_OUT / "c_source_pc.mkv"
+        pc = self.out("c_source_pc.mkv")
         if not pc.exists():
             ffmpeg("-i", self.src, "-t", "2", "-vf", "scale=out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc",
                    "-c:a", "pcm_s16le", pc)
@@ -5059,7 +5059,10 @@ sys.exit(fit.main())
         self.assertEqual(doc["status"], "completed")
         r = doc["result"]
         self.assertLessEqual(float(r["input_tp"]), -0.9, r)
-        self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
+        # the retry path runs where the first AAC encode overshoots; FFmpeg 9.1's `fast` coder
+        # (the one runner.pin_aac_coder names there, #659) meets the ceiling on its first encode
+        if sys.modules["_common.runner"].ffmpeg_version() < (9, 1):
+            self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
         doc = json.loads(tool("loudness", sq, "-I", "-14", "--tp", "-1", "--json", "-o", self.out("square_norm.wav")).stdout)
         self.assertEqual(doc["result"]["encodes"], 1)
         self.assertLessEqual(float(doc["result"]["input_tp"]), -0.9)

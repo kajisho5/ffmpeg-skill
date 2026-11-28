@@ -466,6 +466,22 @@ def stretches(values, test):
     return out
 
 
+def aac_track_samples(path):
+    """The samples an AAC track holds after its 1024-sample priming, the way the build states its
+    end: a short last packet (6.1), a short one that also states the samples dropped from its
+    frame (9.0), or a full last packet whose end only the MP4 edit list trims (9.1, #659; measured
+    on gyan.dev's 9.1 with twoloop, fast and the default coder alike). The packets give the count
+    on the first two and the decoder, which reads the edit list, on the third, so the written
+    length is the smaller of the two: a track too long or too short is that in both."""
+    packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
+                            "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
+    by_packets = sum(min(int(p["duration"]), 1024 - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", [])))
+                     for p in packets) - 1024
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-f", "s16le", "-"],
+                         capture_output=True, check=True).stdout
+    return min(by_packets, len(pcm) // 2)
+
+
 def pcm_of(command, path, channels=1):
     """The samples a result's last command writes, as one array of 16-bit values: the command is
     run again with PCM in place of AAC (an AAC frame smears an edge over 1024 samples)."""
@@ -473,8 +489,12 @@ def pcm_of(command, path, channels=1):
     import shlex
     cmd = shlex.split(command)
     at = cmd.index("aac")
-    assert (cmd[at - 1], cmd[at + 1]) == ("-c:a", "-b:a"), cmd
-    cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(path)
+    assert cmd[at - 1] == "-c:a", cmd
+    end = at + 1
+    if cmd[end:end + 1] == ["-aac_coder"]:  # named on FFmpeg 9.1 and later (#659): it goes with the AAC
+        end += 2
+    assert cmd[end] == "-b:a", cmd
+    cmd[at:end + 2], cmd[-1] = ["pcm_s16le"], str(path)
     sh(*cmd)
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", str(channels), "-f", "s16le", "-"],
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout

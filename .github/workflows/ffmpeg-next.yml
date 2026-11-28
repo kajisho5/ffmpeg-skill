@@ -1,5 +1,5 @@
 # The newest FFmpeg the Windows feed offers, on the tests that broke when it moved (#659).
-# ci.yml pins the version the suite passes on; this is where the next one is read before unpinning.
+# ci.yml pins the version the suite passes on; this is where the next one is read before moving the pin.
 # Runs every week, when asked, and on a pull request that changes this file or its probe (the install and
 # the probe only, not the suite). A weekly or
 # manual run that fails, hangs or runs out of time opens one issue, or comments on the open one, with
@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
   pull_request:
-    paths: [".github/workflows/ffmpeg-next.yml", ".github/scripts/ffmpeg_next_probe.py"]
+    paths: [".github/workflows/ffmpeg-next.yml", ".github/scripts/ffmpeg_next_probe.py", ".github/scripts/ffmpeg_next_tempo_probe.py"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
