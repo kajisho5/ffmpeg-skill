@@ -118,7 +118,10 @@ class TimeGuard(unittest.TestCase):
                     tool(name, *argv, "-o", str(out))
                     got[f"{name} -o .wav: first burst"] = round(first_burst(out), 2) if out.exists() else "not written"
                 read[ext] = got
-            self.assertEqual(read["mp4"]["check --content: dropouts"], ["1: 1.20s "], "the fixture has its dropout")
+            # the fixture's AAC is FFmpeg's default coder: 1.20 s on 6.1 to 9.0, 1.24 s on 9.1's (#659)
+            got = read["mp4"]["check --content: dropouts"]
+            self.assertEqual(len(got), 1, got)
+            self.assertAlmostEqual(float(re.search(r"([\d.]+)s", got[0]).group(1)), 1.2, delta=0.05, msg="the fixture has its dropout")
             differ = {k: (v, read["ts"][k]) for k, v in read["mp4"].items()
                       if json.dumps(v) != json.dumps(read["ts"][k]) and not (isinstance(v, (int, float)) and abs(v - read["ts"][k]) <= 0.01)}
             self.assertEqual(differ, {}, "these rendered or read the sound of a .ts on another clock than the .mp4's (mp4, ts)")

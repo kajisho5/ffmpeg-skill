@@ -4893,7 +4893,10 @@ sys.exit(fit.main())
         self.assertEqual(doc["status"], "completed")
         r = doc["result"]
         self.assertLessEqual(float(r["input_tp"]), -0.9, r)
-        self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
+        # the retry path runs where the first AAC encode overshoots; FFmpeg 9.1's `fast` coder
+        # (the one runner.pin_aac_coder names there, #659) meets the ceiling on its first encode
+        if sys.modules["_common.runner"].ffmpeg_version() < (9, 1):
+            self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
         doc = json.loads(tool("loudness", sq, "-I", "-14", "--tp", "-1", "--json", "-o", self.out("square_norm.wav")).stdout)
         self.assertEqual(doc["result"]["encodes"], 1)
         self.assertLessEqual(float(doc["result"]["input_tp"]), -0.9)

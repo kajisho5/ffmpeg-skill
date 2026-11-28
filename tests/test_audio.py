@@ -1705,7 +1705,9 @@ class Audit459AudioTests(MediaFixtures):
         self.assertLess(kbps(low), kbps(high) * 0.6)
         out = OUT / "a459_loud_bitrate.m4a"
         script("loudness.py", self.voice, "--audio-bitrate", "96k", "-o", out)
-        self.assertAlmostEqual(kbps(out), 96, delta=14)
+        # far from the 256k it stayed at; FFmpeg 9.1's `fast` AAC coder (#659) spends 76 kbps of
+        # a 96k budget on this voice, the older coder 90-100
+        self.assertTrue(96 * 0.7 <= kbps(out) <= 96 + 14, kbps(out))
         out = OUT / "a459_loud_bitrate.mp3"
         doc = json.loads(script("loudness.py", self.voice, "--audio-bitrate", "96k", "-o", out, "--json").stdout)
         self.assertAlmostEqual(kbps(out), 96, delta=14)
