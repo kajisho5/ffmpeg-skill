@@ -852,7 +852,22 @@ On Codex CLI 0.167.0, if the marketplace is already current but the cached plugi
 rerun `codex plugin add ffmpeg-skill@ffmpeg-skill` after the release reaches the `plugin` branch.
 This refreshes the cache without a separate uninstall and sets the plugin to enabled in your Codex user config.
 
+A copy made by hand (see "Without Node" above) is updated by copying the same files again from a newer clone or release, replacing the old ones.
+
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
+
+### Troubleshooting an installed copy
+
+Run these checks in the environment that runs the skill, not just in a separate shell. Run the first command from the directory that holds the installed copy's `scripts/`: the skill's own directory for a copy made by `npx ffmpeg-skill`, a Claude Code plugin or a copy by hand, and the plugin's top directory (the one that contains `skills/`) for the Codex plugin:
+
+```bash
+python3 scripts/_contract.py doctor --json  # from the directory that holds scripts/
+npx ffmpeg-skill doctor --json              # checks the invoked npm package, not a plugin copy
+```
+
+- **It works in my terminal but not in my agent.** Compare `ffmpeg_path` and `ffprobe_path` against the binaries seen by the agent (a copy older than 3.13.0 does not report them: update it first, see [Updating](#updating)). Use both binaries from the same build, and restart the host after changing the PATH it inherits. If the direct Python command fails, check `python3 --version` (3.10 or newer); on Windows, use `python` or `py -3` if `python3` is unavailable.
+- **A specific tool won't run.** In the installed copy's report, look under `tools` (for example, `tools.stabilize`) for that tool's `usable` status and any `fix` message. See [Quick start](#quick-start) for how to interpret the overall status.
+- **The agent still uses an older version.** Use the installed copy's `version` in the report, then follow [Updating](#updating) for that installation route. A newer version reported by the npm command doesn't establish that the agent's own copy was updated.
 
 ## Requirements
 

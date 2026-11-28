@@ -23,7 +23,7 @@ from _platforms import TP_TOLERANCE_DB
 
 AUDIO_LENGTH_TOLERANCE = 0.03  # seconds: one AAC frame at 48 kHz is 0.021 s
 LUFS_TOLERANCE = 1.0  # LU: a normalised file within this of the requested -I is on target
-from _common.probe import PROBED_AUDIO, probed_maps, shorter_than_a_loudness_block
+from _common.probe import PROBED_AUDIO, probed_maps, sound_clock, shorter_than_a_loudness_block
 from _common.emit import own_length, refuse
 from _common.runner import ffmpeg_failure_extra
 from _common.decision import LOSSLESS_AUDIO_EXT, PAD_SOUND_FROM_ZERO, late_sound_lead
@@ -137,6 +137,8 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
     # a copied picture the container holds the start, and nothing is padded.
     sound_only = ext in AUDIO_CODECS or not meta.get("video")
     lead = late_sound_lead(meta) if sound_only else 0.0
+    # on the file's clock (-copyts and the shift, which pads the lead): an MPEG-TS/PS decode of the sound alone counted from the sound (#787)
+    clock = sound_only and bool(meta.get("start_time"))
 
     def encode(tp: float, bitrate: str) -> None:
         nonlocal dropped_streams
@@ -156,10 +158,10 @@ def _normalize(args, meta: dict, stats: dict, lufs: float, tp_max: float, output
             # closed it, and everything after the gap played that much early (review of #636).
             af += ",asetpts=N/SR/TB+STARTPTS"
         if in_audio:
-            af += f",atrim=duration={float(in_audio):.6f}"
+            af += f",atrim=duration={float(in_audio) + lead * clock:.6f}"
         if lead:
             af += "," + PAD_SOUND_FROM_ZERO  # after the trim, which counts from the first sample
-        cmd = ffmpeg_base() + ["-i", args.input, "-af", af, "-ar", str(sr)]
+        cmd = ffmpeg_base() + ["-copyts"] * clock + ["-i", args.input, "-af", f"{sound_clock(meta)},{af}" if clock else af, "-ar", str(sr)]
         if ext in AUDIO_CODECS or not meta.get("video"):
             # the rate reaches an audio extension's codec when it was pinned or is AAC's (an
             # .mp3/.ogg/.opus left alone keeps its own setting, as it always has)
