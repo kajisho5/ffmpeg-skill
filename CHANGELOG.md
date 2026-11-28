@@ -6,6 +6,15 @@
 
 (nothing yet)
 
+## 4.22.2
+
+_Automated release: version and notes generated from pull requests merged since 4.22.1._
+
+### Fixed
+
+- The installer removes the `ffmpeg-skill.bak-<pid>` an interrupted upgrade left next to the skill, which agents loaded as a second copy (#717, thanks @thejesh23).
+- fix: the installer removes an interrupted upgrade's ffmpeg-skill.bak-<pid> (carries #717) (#794)
+
 ## 4.22.1
 
 _Automated release: version and notes generated from pull requests merged since 4.22.0._
