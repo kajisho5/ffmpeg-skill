@@ -1,5 +1,5 @@
 {
   "name": "ffmpeg-skill",
-  "version": "4.25.0",
+  "version": "4.26.1",
   "description": "Local FFmpeg video and audio editing for coding agents: 41 tools with a machine-readable contract. Cut, captions, reframe, loudness, platform exports. No cloud, no API keys."
 }
