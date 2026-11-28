@@ -14125,11 +14125,20 @@ class StumbleLedgerTests(unittest.TestCase):
     def test_a_taught_stumble_is_answered_with_the_way_out(self):
         clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
         with tempfile.TemporaryDirectory() as tmp:
+            # {room}: 20 s of a talk, a tone for 3 s in every 5, over a room whose hiss peaks near -30 dBFS
+            room = str(Path(tmp) / "room.mp4")
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.05:d=20:seed=7",
+                            "-f", "lavfi", "-i", "sine=f=300:d=20", "-f", "lavfi", "-i", "color=gray:s=160x120:d=20",
+                            "-filter_complex", "[1]volume='if(lt(mod(t,5),3),2.5,0)':eval=frame[t];[0][t]amix=inputs=2:normalize=0[a]",
+                            "-map", "2:v", "-map", "[a]", "-shortest", room], check=True)
             for row in self.rows():
                 if row["status"] == "open":
                     continue
                 with self.subTest(tool=row["tool"], argv=row["argv"]):
-                    argv = [clip if a == "{clip}" else a for a in row["argv"]]
+                    argv = [clip if a == "{clip}" else room if a == "{room}" else a for a in row["argv"]]
+                    if row["class"] == "default_misses":  # the call runs and removes nothing; its hint is the way out
+                        self.assert_the_hint_is_the_way_out(row, argv, tmp)
+                        continue
                     proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4"), "--dry-run"],
                                           capture_output=True, text=True, timeout=120)
                     if row["status"] == "named":  # the guessed name is the option's now; a value or a file may still be wrong
@@ -14141,6 +14150,22 @@ class StumbleLedgerTests(unittest.TestCase):
                     answer = (proc.stdout + proc.stderr).rsplit("error:", 1)[-1]
                     for phrase in row["must_say"]:
                         self.assertIn(phrase, answer)
+
+    def assert_the_hint_is_the_way_out(self, row, argv, tmp):
+        """#684: the hint named the track's mean level + 6 dB. The mean is the speech, so on {room}
+        it said --threshold -9, and that call removed 18.8 of the 20 s. The hint now names the peak of
+        the quietest stretch + 3 dB, and the call it names removes the four pauses and keeps the talk."""
+        run = lambda *more: json.loads(subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, *more, "-o", str(Path(tmp) / "out.mp4"),
+                                                       "--dry-run", "--json"], capture_output=True, text=True, timeout=120, check=True).stdout)
+        first = run()
+        self.assertEqual(first["silences"], [])
+        self.assertEqual(list(first)[:2], ["status", "hint"])  # read first (a real run has `wrote` between them)
+        for phrase in row["must_say"]:
+            self.assertIn(phrase, first["hint"])
+        threshold = re.search(r"--threshold (-\d+)", first["hint"])[1]
+        second = run(f"--threshold={threshold}")
+        self.assertEqual(len(second["silences"]), 4, second["silences"])
+        self.assertTrue(5.5 < second["removed_seconds"] < 8.0, second["removed_seconds"])  # the four 2 s pauses less the margins
 
     def test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept(self):
         """argparse takes a shortened option name. `freeze.py --time 3 --hold 1` ran with --timeout 3,

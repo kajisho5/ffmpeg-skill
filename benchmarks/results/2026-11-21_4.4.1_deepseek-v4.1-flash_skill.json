@@ -1,0 +1,19 @@
+{
+ "schema": 1,
+ "date": "2026-11-21",
+ "task_set": "scratch-24",
+ "tasks": 24,
+ "runs_per_task": 1,
+ "call_limit": 20,
+ "release": "4.4.1",
+ "arm": "skill",
+ "models": [
+  "DeepSeek V4.1 Flash"
+ ],
+ "requests": 24,
+ "correct": null,
+ "calls_per_request": 9.0,
+ "cost_usd": null,
+ "source": "https://github.com/kajisho5/ffmpeg-skill/issues/684",
+ "note": "#684, the one model of the three that uses more calls with the skill. Its correct count was not published."
+}

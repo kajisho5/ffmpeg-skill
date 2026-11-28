@@ -962,6 +962,9 @@ def emit(output: Optional[str], *, ctx: "Optional[Context]" = None,
             miss = f" (ASKED {want:.3f} s: {abs(got - want):.3f} s {'longer' if got > want else 'shorter'})" if isinstance(want, (int, float)) and abs(got - want) > 0.04 else ""
             shape = f", {v.get('width')}x{v.get('height')}, {v.get('fps')} fps" if v else ""
             doc = {"status": "completed", "wrote": f"{got:.3f} s{miss}{shape}, " + ("picture and sound" if v and meta.get("audio") else "picture only" if v else "sound only"), **doc}
+        # a hint is what the caller does next (silence.py's --threshold when nothing was removed), so
+        # it is read with the first line, not after the commands and the probe (#684)
+        doc = {**{k: doc[k] for k in ("status", "wrote") if k in doc}, **({"hint": extra["hint"]} if extra.get("hint") else {}), **doc}
         if probed:
             doc["probe"] = meta
         identity = file_identity(output) if output and not ctx.dry_run else None

@@ -467,7 +467,7 @@ npx ffmpeg-skill doctor --json   # available / missing / missing_optional / unkn
 - **字幕とタイトルの絵文字（1.15）。** `caption.py`/`graphics.py --emoji-assets DIR` は、絵文字ごとの PNG（Twemoji の名前 `1f389.png`、または Noto の `emoji_u1f389.png`）を文字の上に合成します。drawtext はカラー絵文字のフォントをそもそも読めず、入っているフォントがあっても libass がカラーで描く保証にはならないからです。それには `doctor --json` の `fonts.emoji` が描画の試験から答えます。素材が無いとき、結果の `emoji.mode` は 3 つのどれが起きたかを言います。このビルドの libass がカラーの字形を描くときは `color`（そういうビルドでの `--emoji mono` も、警告つきで）、単色の字形を描くときは `mono`、絵文字が文から除かれたときは `none` です。ここにはその字形を描けるものが無いために除いたときは `emoji_not_drawn` の警告が付き、`--emoji none` で頼んだときは情報の行だけです（絵文字だけの `graphics.py` のタイトルは断ります）。何もダウンロードしません。
 - **タイトルとロワーサードでのインドの文字とタイ文字の正しい字形（1.15）。** `graphics.py` はデーヴァナーガリー、ベンガル、タミル、タイ、ラオの文字を自動で libass で描きます（`text_renderer: "ass"`）。drawtext は母音記号の並べ替えや記号のまとめ直しをしないからです。アラビア文字とヘブライ文字は fribidi のあるビルドならもとから正しく描けます。こうした文字に `--text-render drawtext` を指定すると、間違った形で描くのではなく断ります。
 - **ラテン文字以外は文字体系でフォントを選ぶ（1.12）。** 日本語、中国語、韓国語、アラビア語、ヘブライ語、デーヴァナーガリー、タイ語、キリル文字、ギリシャ文字の字幕、タイトル、重ね合わせは、それを含むフォントファイルを自動で見つけ、そういうフォントの無いマシンでは豆腐の四角を描く代わりに作業を失敗させます（`kind: input`）。`doctor --json` の `fonts.scripts` が、このマシンでどの言語を描けるかを言います。`--lang ja|ko` は漢字だけの文の言語を決め、`--lang zh-TW`（または `zh-HK`、`zh-Hant`）は繁体字の書体を選びます（2.19）。明示した `--font`/`--font-file` は常にそのまま使います。
-- **無音が見つからない？** 既定のしきい値は −35 dBFS です。ツールはトラックの測ったレベルつきのヒントを出すので、しきい値を上げる（`silence.py --threshold -25`）か、`--min-silence` を短くします。
+- **無音が見つからない？** 既定のしきい値は −35 dBFS です。ツールはいちばん静かな区間のピークと、その間（ま）を見つける 3 dB 上の `--threshold`（`silence.py --threshold -26`）をヒントに出します。切る前に `--list` で間を確かめるか、`--min-silence` を短くします。
 - **同期の結果には確からしさが付く。** 0.3 未満か、ずれが分析の窓の端に近いときは、おそらく間違いです。`--analyze-seconds` を広げるか、拍手を探してください。別々の機器で 10 分を超えて録ったものには `sync.py --fix-drift` が必要です。
 - **変わった名前のファイルや使えない入力は、ffmpeg に渡さずに名指しする。** `a%20b.png` や `logo%d.png` という名前の静止画はその 1 ファイルとして読みます。コロンを含む相対パスの字幕、LUT、フォントも動きます（`--srt ./a:b.srt`）。`-` で始まる名前の入力はファイルとして読みます（`--` のあとか、`./-name.mp4` として渡す）。空、ディレクトリ、メディアではない、利用者が読めない入力は、それぞれの `error.reason`（`input_empty`、`input_is_directory`、`input_not_media`、`input_permission_denied`）とヒントつきで断ります。この FFmpeg のビルドにマルチプレクサの無い出力の拡張子（`out.xyz`）は、何かを動かす前に断ります（`output_extension_unknown`）。ドライランでも同じです。
 - **出力を黙って上書きしない。** 既存の出力のパスは断ります（`kind: input`、`error.reason: output_exists`、何かを動かす前に）。置き換えるつもりなら `--overwrite` を渡します。
@@ -672,7 +672,7 @@ python3 tests/bench_silence.py
 python3 tests/bench_scenes.py
 ```
 
-ベンチマークは `tests/bench_*.py`、エージェントの評価は [evals/](evals/)、回ごとの結果は `evals/results/` にあります。
+ベンチマークは `tests/bench_*.py`、エージェントの評価は [evals/](evals/)、回ごとの結果は `evals/results/` にあります。同じ依頼をスキルありとなしで、モデルとリリースごとに比べた結果は [ベンチマークのページ](docs/benchmark.md) にあり、`benchmarks/results/` から作ります（`python3 benchmarks/run.py MODEL --arm skill|raw`）。
 
 <a id="a-one-hour-recording"></a>
 

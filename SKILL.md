@@ -109,7 +109,7 @@ variant and caveat) when a request is not below; it and `doctor --json`'s `tools
 |-----------|----|
 | "cut from 1:20 to 2:05", "trim the first 10 s" | `cut.py input.mp4 --start 1:20 --end 2:05` |
 | "keep only these parts", "remove the middle" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` (`--remove 1:00-1:30`) |
-| "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`) |
+| "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`; nothing removed: run again with the `--threshold` its `hint` names) |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |

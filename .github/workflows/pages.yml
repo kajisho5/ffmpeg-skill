@@ -11,6 +11,7 @@ on:
       - "README.md"
       - "CHANGELOG.md"
       - "docs/**"
+      - "benchmarks/**"
       - "brand/**"
       - "site/**"
       - ".github/scripts/build_pages.py"

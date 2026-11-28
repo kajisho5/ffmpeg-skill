@@ -10,6 +10,7 @@ published document with Jekyll front matter added and its relative links rewritt
 - An image or other asset the pages reference is copied next to the page that uses it.
 - A relative link whose target does not exist is an error: the build fails rather than
   publish a dead link.
+- docs/benchmark.md is generated from benchmarks/results/ (benchmarks/page.py) as it is built.
 - site/ is copied to the site root as it is (no front matter, so Jekyll does not touch it).
   Its relative src/href must point at a published page, a file in site/, or a repo file
   (a GIF under docs/demos, say), which is copied; anything else is a dead link too.
@@ -43,6 +44,7 @@ PAGES = {
     "docs/contract.md": ("docs/contract.md", "Contract"),
     "docs/design-decisions.md": ("docs/design-decisions.md", "Design decisions"),
     "docs/roadmap.md": ("docs/roadmap.md", "Roadmap"),
+    "docs/benchmark.md": ("docs/benchmark.md", "Benchmark"),
     "CHANGELOG.md": ("CHANGELOG.md", "Changelog"),
 }
 
@@ -114,8 +116,21 @@ def _rewrite_prose(text: str, page_repo: str, assets: set) -> str:
     return "".join(c if i % 2 else HTML_ATTR.sub(attr, MD_LINK.sub(md, c)) for i, c in enumerate(chunks))
 
 
+def _source(page_repo: str) -> str:
+    """A page's Markdown. docs/benchmark.md is made here from benchmarks/results/*.json
+    (benchmarks/page.py), so the site shows every committed results file even before the copy in
+    docs/ is regenerated; tests/test_benchmarks.py keeps that copy equal to it."""
+    if page_repo != "docs/benchmark.md":
+        return (ROOT / page_repo).read_text(encoding="utf-8")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("benchmark_page", ROOT / "benchmarks" / "page.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.render()
+
+
 def render(page_repo: str, assets: set) -> str:
-    text = (ROOT / page_repo).read_text(encoding="utf-8")
+    text = _source(page_repo)
     # fenced code blocks are shown as written: a `](x)` inside one is code, not a link
     chunks = re.split(r"(^```.*?^```[^\n]*$)", text, flags=re.M | re.S)
     text = "".join(c if i % 2 else _rewrite_prose(c, page_repo, assets) for i, c in enumerate(chunks))

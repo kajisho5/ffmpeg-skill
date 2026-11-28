@@ -1,0 +1,22 @@
+{
+ "schema": 1,
+ "date": "2026-11-21",
+ "task_set": "scratch-24",
+ "tasks": 24,
+ "runs_per_task": 1,
+ "call_limit": 20,
+ "release": "4.4.1",
+ "label": "4.4.0 + #670 (shipped as 4.4.1)",
+ "arm": "skill",
+ "models": [
+  "DeepSeek V4.1 Flash",
+  "GLM 5.3 Flash",
+  "Qwen 3.8 27B"
+ ],
+ "requests": 72,
+ "correct": 71,
+ "calls_per_request": 6.5,
+ "cost_usd": 0.31,
+ "source": "https://github.com/kajisho5/ffmpeg-skill/pull/670",
+ "note": "Measured on the #670 branch (SKILL.md: one ordinary edit is one call), released in 4.4.1. The one request still failed is \"cut out the pauses\" on one model, which ran out of calls (#684). Per model, calls per request went 11.5 to 9.0, 8.9 to 5.5 and 7.9 to 5.0 against 4.4.0; #670 does not say which model is which beyond what #684 gives."
+}

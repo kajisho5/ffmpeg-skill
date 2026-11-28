@@ -1,0 +1,22 @@
+{
+ "schema": 1,
+ "date": "2026-11-21",
+ "task_set": "scratch-24",
+ "tasks": 24,
+ "runs_per_task": 1,
+ "call_limit": 20,
+ "release": "4.3.4",
+ "label": "none (beside 4.3.4)",
+ "arm": "raw",
+ "models": [
+  "DeepSeek V4.1 Flash",
+  "GLM 5.3 Flash",
+  "Qwen 3.8 27B"
+ ],
+ "requests": 72,
+ "correct": 66,
+ "calls_per_request": 7.0,
+ "cost_usd": null,
+ "source": "https://github.com/kajisho5/ffmpeg-skill/issues/677",
+ "note": "#677: 4.3.4 \"made three small models slower (11.1 tool calls per request against 7.0) and no more accurate (63 of 72 against 66 of 72)\". The cost of the runs without the skill was not stated."
+}

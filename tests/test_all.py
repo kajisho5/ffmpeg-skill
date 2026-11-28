@@ -18,6 +18,7 @@ import test_accel  # noqa: E402
 import test_analysis  # noqa: E402
 import test_asr  # noqa: E402
 import test_audio  # noqa: E402
+import test_benchmarks  # noqa: E402
 import test_cut_copy  # noqa: E402
 import test_delivery  # noqa: E402
 import test_editing  # noqa: E402
@@ -26,7 +27,7 @@ import test_orchestration  # noqa: E402
 import test_picture  # noqa: E402
 
 MODULES = (test_analysis, test_editing, test_cut_copy, test_audio, test_picture, test_delivery, test_orchestration, test_accel,
-           test_asr, test_guards)
+           test_asr, test_guards, test_benchmarks)
 
 
 def load_tests(loader, tests, pattern):
