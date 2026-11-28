@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.22.5`) | any release |
+| `skill.version` | the npm / package.json version (`4.23.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -187,7 +187,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.22.5", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.23.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -461,6 +461,40 @@ written before the cut, which they do not need. `--max-cuts` bounds the number o
 writes nothing. `--audition-seconds` without `--audition`, and
 `--audition` with `--filler-list`, `--profile`, `--protect-ranges` or `--extract-profile`, are
 refused.
+
+With `fit.py --fit pad` or `--fit blur` and a source whose size is known, the same documents carry
+`placed` (#581 part 2): where the picture lands in the frame, `{x, y, width, height, frame_width,
+frame_height, scale, source_width, source_height}`, from the filters' own rules (scale rounds half
+away from zero; pad floors the picture's size and offset to the chroma grid of the line written,
+4:2:0, or 4:2:2 for `--codec prores`; the blur graph floors only the offset, to the source's grid).
+`picture`, after a real run, is the measurement.
+
+`cut.py --audition DIR [--audition-seconds S]` (#581 part 2) writes the same clips and index for the
+joins of a `--segments`, `--remove` or `--word-segments` cut, but cut from the file the cut wrote,
+after it: a stream copy joins where its keyframes landed (`source_in` is the keyframe, as in
+`snapped_segments`) and a re-encode on the frame, so a clip is the join as it was made. The result's
+`audition` adds `path` (the cut's `mode`), `made_from` (the output) and `commands` (the clips'
+lines; the result's `commands` and `encoder` stay the cut's); `clip_source` is the range of the
+written cut a clip holds. One range has no join and is refused, as is `--audition-seconds` without
+`--audition`; `DIR` must exist (`output_dir_missing`), and every clip and the index are guarded
+before the cut. A dry run plans the clips (`duration` null) and writes nothing.
+
+`render.py` results, dry runs included, carry `clips` (#581 part 2): per project clip `{clip, src,
+speed_factor, crop, placed}`. `speed_factor` is that clip's speed stage's (1.0 with none); in a dry
+run whose clip is cut first it is computed from the planned length the stage's `--duration` is built
+from. `crop` and `placed` are the fit stage's for a one-clip project (in a dry run whose fit input is
+not written yet, from `fit.py`'s own dry run of the clip's picture, which the cut and the speed stage
+keep); with several clips `join.py` frames each and they are `null`. The fit stage's `timing` is
+passed on as `timing`.
+
+`render.py --preview` (#581 part 2) renders the whole project at its own frame, every stage at the
+`--fast` preset, so captions, graphics and overlays are laid out as the final's, then makes the
+delivered picture small with `proxy.py` (the short side 540, never enlarged, quality 30) into
+`<output>_preview.mp4` beside the output; the project's output is not written, the export (when the
+project has one) writes into the work directory, the check stage is not run (`check_preview`), and
+the result has `preview: true` and no `picture` (that was the full frame). It refuses `--stop-after`,
+`--export-timeline`, `--write-project`, `--init`, `--list-templates`, `--compare-project` (it checks a
+full-size render), a saved plan, a template pack and an audio-only output.
 
 New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
 in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
