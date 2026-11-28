@@ -616,7 +616,7 @@ def add_common(ap: "argparse.ArgumentParser", codec: bool = True) -> None:
         g.add_argument("--quality", type=int, default=ap._defaults["crf"], metavar="N",
                        help="encoder quality on the CRF scale (default %(default)s; lower = better; 18 visually lossless for x264/x265, up to 63 for av1); ignored by prores")
     if (codec and "crf" in ap._defaults) or not codec:
-        _add_hw_flags(g, "encode on the GPU with Apple VideoToolbox (h264/hevc/prores; Apple Silicon only): several times faster, "
+        _add_hw_flags(g, "encode on the GPU (Apple Silicon: VideoToolbox; elsewhere NVENC, SDR h264/hevc): several times faster, "
                          "larger files at the same quality; falls back to the CPU encoder, reported, where it cannot apply"
                          + ("" if codec else ". The only way to put a delivery preset on the GPU: $FFMPEG_SKILL_HW does not apply here"),
                       "encode on the CPU (x264/x265/SVT-AV1/prores_ks) even when $FFMPEG_SKILL_HW=1")
@@ -1066,20 +1066,21 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
     what, extra = str(cmd[0]), {}
     enc = video_encoder_of(cmd) if ctx.hw or ctx.hw_auto else None
     if enc:
-        on_gpu = enc.endswith("_videotoolbox")
+        on_gpu = gpu_family(enc)
+        gpu = on_gpu or next((gpu_family(a) for vt, _ in ctx.hw_swaps for a in vt if gpu_family(a)), "VideoToolbox")
         why = videotoolbox_failure(stderr) if on_gpu else None
         if not on_gpu and retried:
-            what += f" (video encoder {enc}, the CPU retry after VideoToolbox refused the job)"
+            what += f" (video encoder {enc}, the CPU retry after {gpu} refused the job)"
         elif on_gpu and why is None:
-            what += f" (video encoder {enc}; not retried on the CPU: ffmpeg reported no VideoToolbox error)"
+            what += f" (video encoder {enc}; not retried on the CPU: ffmpeg reported no {gpu} error)"
         else:
             what += f" (video encoder {enc})"
         report = hw_report(ctx, enc)
         if on_gpu:
             report["notes"].append(
-                "the VideoToolbox encode failed and was not retried on the CPU: " +
+                f"the {gpu} encode failed and was not retried on the CPU: " +
                 ("ffmpeg reported no encoder-open or compression-session error, so the cause is not the GPU (see the message)"
-                 if why is None else f"VideoToolbox refused it ({why}) and no CPU encoder line was recorded to retry with"))
+                 if why is None else f"{gpu} refused it ({why}) and no CPU encoder line was recorded to retry with"))
         extra = {"encoder": enc, "hw": report}
     for path in (p for arg in (*shape_of(cmd).inputs, str(cmd[-1])) for p in (arg, os.path.basename(arg)) if diagnostic is None and p not in ("", "-") and classify_ffmpeg_failure(p)):
         stderr = re.sub(r"(?m)(^|(?:file|input|output|for|to) ['\"]?)" + re.escape(path) + r"(?=['\"]|:|\.(?:\s|$))", r"\1<path>", stderr)
@@ -1088,6 +1089,11 @@ def _fail(cmd: Sequence[str], returncode: int, stderr: str, ctx: "Optional[Conte
         extra["hint"] = cls[1]
     die(f"command {'reported an error despite exit 0' if returncode == 0 else f'failed ({returncode})'}: {what}\n{tail}", code=1, kind="ffmpeg", ctx=ctx, ffmpeg_returncode=returncode,
         error_extra={"reason": cls[0], "details": cls[2]} if cls else None, **extra)
+
+
+def gpu_family(enc: Optional[str]) -> Optional[str]:
+    """The GPU encoder family --hw ran `enc` on (VideoToolbox on Apple Silicon, NVENC off macOS: #694), else None."""
+    return {"videotoolbox": "VideoToolbox", "nvenc": "NVENC"}.get(str(enc or "").rpartition("_")[2])
 
 
 def video_encoder_of(cmd: Sequence[str]) -> Optional[str]:
@@ -1718,7 +1724,7 @@ def _check_build_components(cmd: Sequence[str]) -> None:
     run found out after its earlier commands had run. Read from the command as built, so every tool
     and every route to an encoder (an HDR source kept as HEVC, --codec, a preset) is covered.
     Only output options are read (a -c:v before an -i picks a decoder), and an encoder only for a
-    stream kind the output keeps: not one -an/-vn/-sn drops or no input file carries. A VideoToolbox encoder is
+    stream kind the output keeps: not one -an/-vn/-sn drops or no input file carries. A --hw (GPU) encoder is
     left to --hw's own checks and its CPU retry, a -filter_complex_script and a lavfi input are not
     parsed, and a list that could not be read refuses nothing."""
     last_input = max((i for i, tok in enumerate(cmd[:-1]) if tok == "-i"), default=-1)
@@ -1731,7 +1737,7 @@ def _check_build_components(cmd: Sequence[str]) -> None:
         m = _ENCODER_OPTION_RE.match(tok)
         if tok in _GRAPH_OPTIONS:
             filters += [n for n in graph_filter_names(value) if n not in filters]
-        elif i > last_input and m and value != "copy" and not value.endswith("_videotoolbox"):
+        elif i > last_input and m and value != "copy" and not gpu_family(value):
             if value not in encoders:
                 encoders.append(value)
             streams.setdefault(value, set()).add(m.group(1) or m.group(2))
@@ -2647,7 +2653,7 @@ HW_FORCED_ENV = "_FFMPEG_SKILL_HW_EXPLICIT"
 
 def add_hw_orchestrator_args(ap: "argparse.ArgumentParser") -> None:
     """--hw / --no-hw on a tool that runs other tools (render.py, batch.py) and encodes nothing itself."""
-    _add_hw_flags(ap, "run every stage's encode on Apple VideoToolbox, the final delivery export included (Apple Silicon; "
+    _add_hw_flags(ap, "run every stage's encode on the GPU (VideoToolbox on Apple Silicon, NVENC off macOS), the final delivery export included ("
                       "falls back to the CPU, reported, where it cannot apply). Without it, $FFMPEG_SKILL_HW=1 still "
                       "puts the intermediate stages on the GPU and leaves the delivery export on the CPU",
                   "every stage on the CPU encoders, whatever $FFMPEG_SKILL_HW says")
@@ -2713,9 +2719,14 @@ def apple_silicon() -> bool:
 #    property ... Output will be encoded using a supported profile/level combination", the
 #    frames_before/frames_after/entropy/realtime/pixel-aspect properties), which a job that fails
 #    for another reason (a full disk: "Error submitting a packet to the muxer") can still carry.
-_VT_ENCODER_RE = re.compile(r"(?:h264|hevc|prores)_videotoolbox")
-_VT_OWN_CONTEXT_RE = re.compile(r"\[(?:h264|hevc|prores)_videotoolbox @ [^\]]*\]")
-_VT_SESSION_RE = re.compile(r"create compression session|prepare encoder|encode frame|encoding frame", re.I)
+# NVENC (#694, Har150n's patch) is read the same way: its open failure names h264_nvenc/hevc_nvenc, and
+# its own context says why ("Cannot load libcuda.so.1", "Driver does not support the required nvenc
+# API version", "OpenEncodeSessionEx failed", "No capable devices found"): a build lists it on a
+# machine whose driver or GPU then refuses every job.
+_VT_ENCODER_RE = re.compile(r"(?:h264|hevc|prores)_videotoolbox|(?:h264|hevc)_nvenc")
+_VT_OWN_CONTEXT_RE = re.compile(r"\[(?:(?:h264|hevc|prores)_videotoolbox|(?:h264|hevc)_nvenc) @ [^\]]*\]")
+_VT_SESSION_RE = re.compile(r"create compression session|prepare encoder|encode frame|encoding frame|nvenc API version|"
+                            r"OpenEncodeSessionEx failed|No capable devices found|Cannot load libcuda", re.I)
 # the encoder's own ERROR-level lines that do not fail the encode (listed above)
 _VT_NONFATAL_RE = re.compile(r"profile/level|entropy|frames_before|frames_after|realtime|pixel aspect|aspect ratio", re.I)
 _STREAM_CONTEXT_RE = re.compile(r"\[[a-z]ost#\d+:\d+")
@@ -2867,7 +2878,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
                 # after that must not carry a note about it).
                 why = videotoolbox_failure(proc.stderr or "")
                 if why is not None:
-                    reason = f"VideoToolbox refused the encode: {why}"
+                    reason = f"{gpu_family(video_encoder_of(tried)) or 'VideoToolbox'} refused the encode: {why}"
                     # said before the retry, without a claim about its outcome: a retry that never
                     # returns (a timeout exits from inside _execute) leaves this line, which is true
                     _set_refusal_note(ctx, reason, "; retrying on the CPU encoder")

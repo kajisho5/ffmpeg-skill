@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for Apple VideoToolbox encoding (--hw).
+"""Tests for GPU encoding (--hw): Apple VideoToolbox, and NVIDIA NVENC off macOS (#694).
 
     python3 tests/test_accel.py          # this group alone
     python3 tests/test_all.py            # every group
 
 The pure-logic cases run everywhere. The real VideoToolbox encodes run only on Apple Silicon with
-an ffmpeg that lists the encoders.
+an ffmpeg that lists the encoders; the real NVENC encodes only where an NVENC encode opens (a build
+that lists h264_nvenc on a machine without the driver or GPU skips them, as CI does).
 """
 import argparse
 import contextlib
@@ -136,7 +137,7 @@ class FakeFfmpeg:
             "args = sys.argv[1:]\n"
             f"with open({str(self.log)!r}, 'a', encoding='utf-8') as fh:\n"
             "    fh.write(json.dumps(args) + '\\n')\n"
-            "do = conf['vt' if any(a.endswith('_videotoolbox') for a in args) else 'cpu']\n"
+            "do = conf['vt' if any(a.endswith(('_videotoolbox', '_nvenc')) for a in args) else 'cpu']\n"
             "if do.get('as_cpu'):\n"  # a VideoToolbox line the real (CPU) ffmpeg can run: libx264 at its CRF
             "    args = [a.replace('h264_videotoolbox', 'libx264') for a in args]\n"
             "    for i, a in enumerate(args):\n"
@@ -272,7 +273,9 @@ class VtArgsTests(unittest.TestCase):
     def test_av1_and_an_intel_mac_stay_on_the_cpu_with_a_note(self):
         STATE.hw = True
         self.assertIsNone(decision._vt_args("av1", 30, None, True))
-        with mock.patch.object(decision, "hw_platform_reason", return_value="VideoToolbox constant-quality encoding needs Apple Silicon"):
+        # an Intel Mac: macOS (no NVENC there, #694) without Apple Silicon
+        with mock.patch.object(decision, "hw_platform_reason", return_value="VideoToolbox constant-quality encoding needs Apple Silicon"), \
+                mock.patch("platform.system", return_value="Darwin"):
             cpu = ["-c:v", "libx264", "-crf", "18"]
             self.assertEqual(decision._maybe_hw("h264", 18, None, True, cpu), cpu)
         self.assertTrue(any("av1" in n for n in STATE.hw_notes))
@@ -1317,6 +1320,223 @@ class HwChildStageTests(_RealFfmpegCase):
         self.assertNotIn("hw", child_doc, "the caption stage ran on the CPU, as asked")
         self.assertNotIn("hw", doc)
         self.assertEqual(doc["encoder"], "libx264")
+
+
+def _nvenc_here() -> bool:
+    """An NVENC encode really opens here: off macOS, h264_nvenc listed, and a 0.1 s encode succeeds.
+    A listed encoder is not enough (#694: a build lists it where the driver or GPU refuses every job;
+    Ubuntu's ffmpeg lists it on runners that have no NVIDIA GPU)."""
+    if platform.system() == "Darwin" or not shutil.which("ffmpeg") or "h264_nvenc" not in ffmpeg_encoders():
+        return False
+    try:
+        return subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i",
+                               "color=s=256x256:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _nvenc_available(encoders=("h264_nvenc", "hevc_nvenc", "libx264", "libx265", "prores_ks", "aac")):
+    """NVENC as a machine off macOS whose build lists it would see it, on any runner: the platform
+    reads as not macOS (Windows stays Windows) and the encoder list is stood in."""
+    return (mock.patch("platform.system", return_value="Linux" if platform.system() == "Darwin" else platform.system()),
+            mock.patch.object(decision, "ffmpeg_encoders", return_value=set(encoders)))
+
+
+# What FFmpeg prints when an NVENC encoder cannot take a job (#694).
+NVENC_OPEN_FAILED = {
+    # captured on the machine that built #694's PR: Ubuntu 24.04's FFmpeg 6.1.1 lists h264_nvenc, no NVIDIA driver
+    "6.1, no driver": "[h264_nvenc @ 0x55dda39fbd80] Cannot load libcuda.so.1\n"
+                      "[vost#0:0/h264_nvenc @ 0x55dda39fb9c0] Error while opening encoder - maybe incorrect parameters "
+                      "such as bit_rate, rate, width or height.\n",
+    # the driver line as #694 quotes it (FFmpeg 9.0.1, driver 591.66), then the 8.0+ open-failure line
+    "9.0, driver too old": "[h264_nvenc @ 0x1f0] Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0\n"
+                           "[vost#0:0/h264_nvenc @ 0x1e0] [enc:h264_nvenc @ 0x1f0] Error while opening encoder - maybe "
+                           "incorrect parameters such as bit_rate, rate, width or height.\n",
+    # libavcodec/nvenc.c's own wording for a GPU without NVENC, with no CLI open-failure line after it
+    "no capable device": "[hevc_nvenc @ 0x2a0] OpenEncodeSessionEx failed: unsupported device (2): (no details)\n"
+                         "[hevc_nvenc @ 0x2a0] No capable devices found\n",
+}
+
+
+class NvencArgsTests(unittest.TestCase):
+    """--hw off macOS: the NVENC line, chosen from `ffmpeg -encoders`, and what stays on the CPU (#694).
+    Stood in on every runner; no GPU is needed."""
+
+    def setUp(self):
+        STATE.reset()
+        STATE.hw, STATE.hw_source = True, "flag"
+
+    def tearDown(self):
+        STATE.reset()
+
+    def test_the_nvenc_line_is_built_from_the_crf_and_its_swap_recorded(self):
+        a, b = _nvenc_available()
+        cpu = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
+        with a, b:
+            line = decision._maybe_hw("h264", 18, {"video": {"bt2020_or_hdr": False}}, True, cpu)
+            hevc = decision._vt_args("hevc", 23, None, False)
+            top = decision._vt_args("h264", 51, None, False)
+        self.assertEqual(line, ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0",
+                                "-pix_fmt", "yuv420p", "-profile:v", "high", "-movflags", "+faststart", "-bsf:v",
+                                "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"])
+        self.assertEqual(STATE.hw_swaps[-1], (line, cpu), "run() can put the CPU line back")
+        self.assertEqual(hevc[:2] + hevc[hevc.index("-cq"):hevc.index("-cq") + 2], ["-c:v", "hevc_nvenc", "-cq", "24"])
+        self.assertIn("hvc1", hevc)
+        self.assertNotIn("-bsf:v", hevc, "no BT.709 tags where the CPU line would not write them")
+        self.assertEqual(top[top.index("-cq") + 1], "51", "NVENC's -cq stops at 51")
+        self.assertEqual(STATE.hw_notes, [])
+
+    def test_what_nvenc_cannot_take_stays_on_the_cpu_with_a_note(self):
+        hdr = {"video": {"bt2020_or_hdr": True, "color_transfer": "smpte2084"}}
+        for codec, meta, encoders, why in (("prores", None, None, "no NVENC encoder for prores"),
+                                           ("av1", None, None, "no NVENC encoder for av1"),
+                                           ("hevc", hdr, None, "NVENC writes 8-bit SDR here: an HDR or BT.2020 source keeps the CPU line"),
+                                           ("h264", None, ("libx264",), "this ffmpeg build has no h264_nvenc")):
+            with self.subTest(codec=codec, why=why):
+                STATE.hw_notes.clear()
+                a, b = _nvenc_available() if encoders is None else _nvenc_available(encoders)
+                cpu = ["-c:v", "libx264", "-crf", "23"]
+                with a, b:
+                    self.assertEqual(decision._maybe_hw(codec, 23, meta, True, cpu), cpu)
+                self.assertEqual(STATE.hw_notes, [f"{why}; encoded on the CPU"])
+                self.assertEqual(STATE.hw_swaps, [])
+
+    def test_an_unreadable_encoder_list_is_named_not_taken_for_a_missing_nvenc(self):
+        a, b = _nvenc_available(())
+        with a, b, mock.patch.object(decision, "ffmpeg_list_error", return_value="timed out"):
+            self.assertIsNone(decision._vt_args("h264", 23, None, True))
+        self.assertIn("h264_nvenc could not be confirmed", STATE.hw_notes[0])
+
+    def test_a_mac_never_takes_nvenc(self):
+        """An Intel Mac stays on the CPU with the VideoToolbox reason, whatever its build lists."""
+        with mock.patch("platform.system", return_value="Darwin"), \
+                mock.patch.object(decision, "hw_platform_reason", return_value="VideoToolbox constant-quality encoding needs Apple Silicon"), \
+                mock.patch.object(decision, "ffmpeg_encoders", return_value={"h264_nvenc", "libx264"}):
+            self.assertIsNone(decision._vt_args("h264", 23, None, True))
+        self.assertTrue(any("Apple Silicon" in n for n in STATE.hw_notes), STATE.hw_notes)
+
+    def test_an_export_preset_on_nvenc_keeps_its_rate_and_leaves_faststart_to_export(self):
+        a, b = _nvenc_available()
+        with a, b:
+            line = decision.hw_preset_video(["-c:v", "libx265", "-preset", "medium", "-crf", "22", "-pix_fmt", "yuv420p",
+                                             "-r", "30"], {"video": {"bt2020_or_hdr": True}}, bt709=True)
+        self.assertEqual(line[line.index("-c:v") + 1], "hevc_nvenc", "a preset's 8-bit BT.709 line, as on VideoToolbox")
+        self.assertEqual((line[line.index("-cq") + 1], line[line.index("-r") + 1]), ("23", "30"))
+        self.assertNotIn("-movflags", line)
+
+    def test_nvenc_open_failures_are_recognised_and_a_filter_failure_is_not(self):
+        for case, stderr in NVENC_OPEN_FAILED.items():
+            with self.subTest(case=case):
+                line = runner.videotoolbox_failure(stderr)
+                self.assertIsNotNone(line, stderr)
+                self.assertIn("nvenc", line)
+                self.assertNotIn("0x", line)
+        font = ("[Parsed_drawtext_0 @ 0x6000] Cannot find a valid font for the family Sans\n"
+                "[vost#0:0/h264_nvenc @ 0x6002] Could not open encoder before EOF\n")
+        self.assertIsNone(runner.videotoolbox_failure(font), "the encoder never got a frame: not the GPU's failure")
+        self.assertEqual([runner.gpu_family(e) for e in ("h264_nvenc", "hevc_videotoolbox", "libx264", "copy", None)],
+                         ["NVENC", "VideoToolbox", None, None, None])
+
+    def test_the_result_notes_that_an_nvenc_encode_is_not_the_cpu_encode(self):
+        line = "ffmpeg -i a.mp4 -c:v h264_nvenc -preset p5 -tune hq -rc vbr -cq 19 -b:v 0 -pix_fmt yuv420p b.mp4"
+        note = emit_module.hw_quality_note("h264_nvenc", line)
+        self.assertIn("h264_nvenc -cq 19 is not CRF-equivalent", note)
+        self.assertIn("--no-hw", note)
+        rec = emit_module.encode_record("h264_nvenc", line, STATE)
+        self.assertEqual((rec["codec"], rec["crf"], rec["hw"]), ("h264", None, True))
+        self.assertTrue(emit_module.hw_report(STATE, "h264_nvenc")["used"])
+        self.assertFalse(emit_module.hw_report(STATE, "libx264")["used"])
+
+    def test_doctor_says_nvenc_can_be_chosen_only_where_the_build_lists_it_off_macos(self):
+        import _contract
+        with mock.patch("platform.system", return_value="Linux"):
+            self.assertTrue(_contract._hw_default(["h264_nvenc", "libx264"])["platform_ok"])
+            self.assertFalse(_contract._hw_default(["libx264", "av1_nvenc"])["platform_ok"], "--hw takes h264/hevc only")
+        with mock.patch("platform.system", return_value="Darwin"), \
+                mock.patch.object(runner, "hw_platform_reason", return_value="VideoToolbox constant-quality encoding needs Apple Silicon"):
+            self.assertFalse(_contract._hw_default(["h264_nvenc"])["platform_ok"])
+
+
+class NvencRunTests(_RealFfmpegCase):
+    """A run of an NVENC line, the GPU stood in by a fake ffmpeg (every runner)."""
+
+    def _encode(self, fake):
+        STATE.hw, STATE.hw_source, STATE.json = True, "flag", True
+        a, b = _nvenc_available()
+        with a, b:
+            video = decision.video_args(_common.probe(str(self.src)), 23, "ultrafast")
+        self.assertEqual(video[video.index("-c:v") + 1], "h264_nvenc")
+        out = self.work / "o.mp4"
+        cmd = [str(fake.path), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(self.src), "-t", "0.5"] + video + ["-an", str(out)]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                runner.run(cmd)
+                emit_module.emit(str(out))
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, json.loads(stdout.getvalue())
+
+    def test_a_driver_that_refuses_nvenc_falls_back_to_the_cpu_and_says_so(self):
+        """#694's trap: the build lists h264_nvenc and the driver refuses every job."""
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 1, "stderr": NVENC_OPEN_FAILED["9.0, driver too old"]}, "cpu": {"real": self.real_ffmpeg}})
+        code, doc = self._encode(fake)
+        self.assertEqual(code, 0, doc)
+        calls = fake.calls()
+        self.assertEqual(len(calls), 2, calls)
+        self.assertIn("h264_nvenc", calls[0])
+        self.assertIn("libx264", calls[1])
+        self.assertEqual((doc["encoder"], doc["hw"]["used"], doc["hw"]["fallback"]), ("libx264", False, True))
+        self.assertTrue(any(n.startswith("NVENC refused the encode") and "nvenc API version" in n and n.endswith("re-encoded on the CPU")
+                            for n in doc["hw"]["notes"]), doc["hw"])
+        self.assertTrue(doc["verified"])
+        self.assertFalse(any("CRF-equivalent" in n for n in doc.get("notes") or []), "the file is the CPU encode")
+
+    def test_a_failure_that_is_not_nvenc_s_is_not_retried(self):
+        fake = FakeFfmpeg(self.work, {"vt": {"rc": 234, "stderr": "[vost#0:0/h264_nvenc @ 0x6002] Could not open encoder before EOF\n"},
+                                      "cpu": {"real": self.real_ffmpeg}})
+        code, doc = self._encode(fake)
+        self.assertEqual((code, len(fake.calls())), (1, 1))
+        self.assertIn("not retried on the CPU: ffmpeg reported no NVENC error", doc["error"]["message"])
+        self.assertEqual(doc["encoder"], "h264_nvenc")
+
+    def test_a_dry_run_plans_nvenc_and_notes_its_quality(self):
+        import fit
+        out, err = io.StringIO(), io.StringIO()
+        a, b = _nvenc_available()
+        with a, b, mock.patch.object(sys, "argv", ["fit.py", str(self.src), "--height", "120", "--hw", "--dry-run", "--json",
+                                                   "-o", str(self.work / "f.mp4")]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            STATE.reset()
+            try:
+                fit.main()
+            except SystemExit as e:
+                self.assertEqual(e.code, 0, err.getvalue())
+        doc = json.loads(out.getvalue())
+        self.assertEqual((doc["encoder"], doc["hw"]["used"], doc["encode"]["hw"]), ("h264_nvenc", None, True))
+        self.assertTrue(any("h264_nvenc -cq 19 is not CRF-equivalent" in n for n in doc["notes"]), doc["notes"])
+
+
+@unittest.skipUnless(_nvenc_here(), "no NVENC encode opens here (no NVIDIA GPU or driver, macOS, or no h264_nvenc in the build)")
+class NvencEncodeTests(MediaFixtures):
+    """Real NVENC encodes, probed (#694)."""
+
+    def test_hw_encodes_on_nvenc_and_reports_it(self):
+        out = OUT / "nvenc_fit.mp4"
+        doc = json.loads(script("fit.py", self.src, "--height", "360", "--hw", "--json", "-o", out).stdout)
+        self.assertEqual(doc["encoder"], "h264_nvenc")
+        self.assertEqual(doc["hw"], {"requested": True, "source": "flag", "used": True, "fallback": False, "notes": []})
+        self.assertTrue(doc["verified"], doc.get("verification"))
+        self.assertTrue(any("h264_nvenc -cq" in n and "not CRF-equivalent" in n for n in doc["notes"]), doc.get("notes"))
+        v = doc["probe"]["video"]
+        self.assertEqual((v["codec"], v["color_primaries"], v["color_transfer"]), ("h264", "bt709", "bt709"))
+
+    def test_an_export_preset_runs_on_hevc_nvenc(self):
+        doc = json.loads(script("export.py", self.src, "--preset", "h265", "--hw", "--json", "-o", OUT / "nvenc_h265.mp4").stdout)
+        self.assertEqual(doc["encoder"], "hevc_nvenc")
+        self.assertTrue(doc["verified"], doc.get("verification"))
 
 
 @unittest.skipUnless(_vt_here(), "VideoToolbox encoders need Apple Silicon and an ffmpeg that lists them")

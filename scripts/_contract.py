@@ -327,7 +327,7 @@ REENCODE_META: Dict[str, Dict[str, str]] = {
 
 IDEMPOTENCY = {
     "bit_exact": "same inputs and flags give byte-identical output (with the CPU encoders: under --hw / $FFMPEG_SKILL_HW a "
-                 "VideoToolbox encode is content_equivalent at best)",
+                 "VideoToolbox or NVENC encode is content_equivalent at best)",
     "content_equivalent": "same inputs and flags give the same media content; bytes may differ between encoder builds",
     "cached": "re-runs skip inputs whose content hash and recipe are unchanged",
     "environment_dependent": "output includes timings or machine state and differs between runs",
@@ -769,8 +769,8 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
             "probe": {"type": "object", "description": "probe of the output when a file was written"},
             "output_identity": {"type": "object", "description": "2.24: {size, mtime_ns} of the file this run wrote, absent under --dry-run; pass it to check.py --expect-identity SIZE:MTIME_NS so the check grades this file and not whatever later sits at the path"},
             "encoder": {"type": "string", "description": "the video encoder the last ffmpeg command used (after any GPU->CPU fallback; under --dry-run the planned one; render.py and waveform.py: their stages' commands included), `copy` for a stream copy; absent when no command encoded video"},
-            "hw": {"type": "object", "description": "present when VideoToolbox was asked for (--hw, $FFMPEG_SKILL_HW, a render.py stage, a batch.py item), on export.py when $FFMPEG_SKILL_HW=1 is set but its delivery preset does not take it, and when this ffmpeg build has no libx264/libx265 and an encode ran on VideoToolbox instead: {requested: whether this run's encodes were asked onto VideoToolbox (false for that export, and for the build without libx264/libx265), source: flag|env|auto (auto: nobody asked, the build has no libx264/libx265 and this Apple Silicon machine ran VideoToolbox in its place), used: true|false whether the encoder that ran last is VideoToolbox, null under --dry-run (nothing ran) and when this process ran no encode itself (batch.py: its stages are child processes; its top-level hw gathers the items' requested/source/fallback/notes and each results row carries its item's encoder and hw), fallback: a job VideoToolbox refused (encoder open or compression session failure; nothing else is retried) was re-encoded on the CPU, notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}. A VideoToolbox encode also adds a top-level notes line: its quality is not CRF-equivalent. A kind: ffmpeg failure under --hw / $FFMPEG_SKILL_HW carries encoder and hw too"},
-            "encode": {"type": "object", "description": "#576: the settings the last video encode ran with, read off its command line (absent when nothing encoded video): {codec: h264|hevc|av1|prores (or the encoder's own name), crf (null where the encoder takes none: prores, VideoToolbox), preset (null where it has none), hw: whether it is VideoToolbox, policy: {locked, applied: the keys $FFMPEG_SKILL_ENCODE set for this tool's own flags, the call not giving them} or null when the variable is unset}; batch.py: on each results row"},
+            "hw": {"type": "object", "description": "present when the GPU (VideoToolbox; NVENC off macOS) was asked for (--hw, $FFMPEG_SKILL_HW, a render.py stage, a batch.py item), on export.py when $FFMPEG_SKILL_HW=1 is set but its delivery preset does not take it, and when this ffmpeg build has no libx264/libx265 and an encode ran on VideoToolbox instead: {requested: whether this run's encodes were asked onto VideoToolbox (false for that export, and for the build without libx264/libx265), source: flag|env|auto (auto: nobody asked, the build has no libx264/libx265 and this Apple Silicon machine ran VideoToolbox in its place), used: true|false whether the encoder that ran last is a GPU one (VideoToolbox, NVENC), null under --dry-run (nothing ran) and when this process ran no encode itself (batch.py: its stages are child processes; its top-level hw gathers the items' requested/source/fallback/notes and each results row carries its item's encoder and hw), fallback: a job the GPU encoder refused (encoder open or compression session failure; nothing else is retried) was re-encoded on the CPU, notes: why an encode stayed on or fell back to the CPU, and, when $FFMPEG_SKILL_HW chose the GPU and it ran, what that costs and that --no-hw opts out}. A GPU encode also adds a top-level notes line: its quality is not CRF-equivalent. A kind: ffmpeg failure under --hw / $FFMPEG_SKILL_HW carries encoder and hw too"},
+            "encode": {"type": "object", "description": "#576: the settings the last video encode ran with, read off its command line (absent when nothing encoded video): {codec: h264|hevc|av1|prores (or the encoder's own name), crf (null where the encoder takes none: prores, VideoToolbox, NVENC), preset (null where it has none), hw: whether it is a GPU encoder (VideoToolbox, NVENC), policy: {locked, applied: the keys $FFMPEG_SKILL_ENCODE set for this tool's own flags, the call not giving them} or null when the variable is unset}; batch.py: on each results row"},
             "preview": {"type": "boolean", "description": "#576: true when --fast made this a preview (x264 preset veryfast), never a final; absent otherwise"},
             "plan": {"type": "string", "description": "with --plan FILE: the plan document written (the run itself is a dry run)"},
             "verified": {"type": "boolean", "description": "true only with a successful artifact probe or equivalent file check and when every self-check (verification) passed; false under --dry-run"},
@@ -995,7 +995,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
         # emit() adds the VideoToolbox quality line to `notes` on every tool that takes --hw, so every
         # such tool publishes `notes`, and a tool-specific condition (loop's "--boomerang ... the audio
         # was dropped", export's own lines) is not the only one it can carry
-        gpu = "a line that its quality is not CRF-equivalent (on a VideoToolbox encode: --hw / $FFMPEG_SKILL_HW; see hw)"
+        gpu = "a line that its quality is not CRF-equivalent (on a VideoToolbox/NVENC encode: --hw / $FFMPEG_SKILL_HW; see hw)"
         if isinstance(notes, dict) and notes.get("description"):
             props["notes"] = dict(notes, description=notes["description"] + "; also " + gpu)
         else:
@@ -1447,12 +1447,13 @@ def _parakeet_available() -> bool:
     return any(runtime_check(e, SafeShutil(shutil)) for e in ("parakeet-mlx", "parakeet.cpp"))
 
 
-def _hw_default() -> Dict[str, Any]:
-    """--hw's machine facts, normalised (never the raw environment value): whether VideoToolbox
-    constant-quality encoding can run here (the tools' own check: Apple Silicon hardware, also
-    under a Rosetta Python), and whether $FFMPEG_SKILL_HW makes it the default."""
+def _hw_default(encoders: Optional[List[str]] = None) -> Dict[str, Any]:
+    """--hw's machine facts, normalised (never the raw environment value): whether its GPU line can be
+    chosen here (Apple Silicon hardware, also under a Rosetta Python; off macOS h264_nvenc/hevc_nvenc
+    in the build's `encoders`, #694, listed and not proven usable), and whether $FFMPEG_SKILL_HW makes it the default."""
     from _common.runner import env_hw, hw_platform_reason
-    return {"platform_ok": hw_platform_reason() is None, "default_on": env_hw()}
+    nvenc = platform.system() != "Darwin" and bool({"h264_nvenc", "hevc_nvenc"} & set(encoders or ()))
+    return {"platform_ok": hw_platform_reason() is None or nvenc, "default_on": env_hw()}
 
 
 def _default_font() -> str:
@@ -1593,7 +1594,7 @@ def doctor() -> Dict[str, Any]:
     `gpu_encoders` is a separate, honest answer to a question none of the required/optional
     capabilities above ask: which GPU-backed encoders (nvenc, videotoolbox, qsv, vaapi, amf) this
     ffmpeg BUILD carries, from `-encoders` alone. No tool requires one -- every tool runs on CPU
-    x264/x265 unless `--hw` / FFMPEG_SKILL_HW=1 puts it on VideoToolbox (Apple Silicon only) -- so
+    x264/x265 unless `--hw` / FFMPEG_SKILL_HW=1 puts it on VideoToolbox (Apple Silicon) or NVENC (off macOS) -- so
     `gpu_encoders` never affects `ok` or any tool's `usable` (`covered_by` is the one place a
     VideoToolbox encoder counts: for a libx264/libx265 the build lacks, see above). It
     only proves the build shipped the capability, never that the GPU/driver on this machine will
@@ -1709,7 +1710,7 @@ def doctor() -> Dict[str, Any]:
         "tools": _tool_usability(state, drawtext_crashed, covered, unsupported),
         "covered_by": covered,
         "gpu_encoders": _gpu_encoders(listings["encoders"]),
-        "hw": _hw_default(),
+        "hw": _hw_default(listings["encoders"]["names"]),
         "fonts": _fonts_capability(probe=True),
         "speech_engines": speech_engines,
     }
@@ -2455,7 +2456,7 @@ def main() -> int:
                 print(f"note: overall 'ok' means nothing REQUIRED BY EVERY TOOL is missing -- {len(not_usable)} tool(s) still can't run today: {', '.join(not_usable)} (see doctor --json .tools for why)")
             gpu = d["gpu_encoders"]
             if gpu["status"] == "parsed":
-                print(f"GPU-backed encoders in this build: {len(gpu['present'])} (only --hw / FFMPEG_SKILL_HW=1 use one, VideoToolbox on Apple Silicon; names in doctor --json)")
+                print(f"GPU-backed encoders in this build: {len(gpu['present'])} (only --hw / FFMPEG_SKILL_HW=1 use one: VideoToolbox on Apple Silicon, h264_nvenc/hevc_nvenc off macOS; names in doctor --json)")
             print(_fonts_summary_line(d["fonts"]))
             print("full detail: doctor --json (capability lists, per-tool `usable`, fix hints)")
             for err in d["errors"]:

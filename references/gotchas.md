@@ -386,7 +386,9 @@ intermediates and keep the default for the final export. `render.py` encodes its
 `superfast` by itself since 2.16 (veryfast in 2.15) when its project ends in an encoding export
 (`--intermediate-preset medium` turns it off). On Apple Silicon,
 `--hw` (or `FFMPEG_SKILL_HW=1` for the machine) moves h264/hevc/prores encodes to
-VideoToolbox: 2–7× faster, 1.1–2.9× the bytes at the same quality (1.9–3.5× on HDR). The variable
+VideoToolbox: 2–7× faster, 1.1–2.9× the bytes at the same quality (1.9–3.5× on HDR). Off macOS
+the same flag moves SDR h264/hevc to NVENC where the build lists it (one clip measured, #694:
+2.7× faster, 1.28× the bytes); an HDR source stays on the CPU. The variable
 leaves `export.py`'s delivery presets on the CPU, which is the usual split (GPU
 intermediates, CPU delivery); `render.py --hw` puts the export on the GPU too. A build with no
 libx264/libx265 (an LGPL ffmpeg) has no CPU delivery to keep: its tools and presets use

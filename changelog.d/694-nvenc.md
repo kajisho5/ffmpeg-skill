@@ -1,0 +1,3 @@
+### Added
+
+- `--hw` encodes SDR H.264/HEVC on NVIDIA NVENC off macOS when `ffmpeg -encoders` lists `h264_nvenc`/`hevc_nvenc`, as it uses VideoToolbox on Apple Silicon (#694, from Har150n's patch and measurement). No new flag: `--hw` means VideoToolbox on macOS and NVENC elsewhere. An encoder the build lacks, an HDR source, ProRes and AV1 stay on the CPU with a note in `hw.notes`; a job the driver or GPU refuses is re-encoded on the CPU and reported in `hw.fallback`; an NVENC encode adds a `notes` line that it is not the CRF encode. `doctor`'s `hw.platform_ok` is true off macOS when the build lists an NVENC encoder.

@@ -634,7 +634,9 @@ truth-up. No further action was needed there.
   `fallback`, `notes`), and a GPU encode notes that its quality is not CRF-equivalent: `--quality`
   maps to `-q:v` by an approximate SSIM fit, at 1.1-3.5x the bytes. vaapi / nvenc / qsv are not
   planned: each needs a real-hardware-verified quality mapping and refusal list, as VideoToolbox
-  got (`tests/bench_vt.py`, docs/design-decisions.md "Unreleased -- the GPU").
+  got (`tests/bench_vt.py`, docs/design-decisions.md "Unreleased -- the GPU"). After 4.26.0 NVENC
+  is the off-macOS value of the same `--hw` (#694): a contributor's patch, measured on one clip on
+  their RTX 4070, falling back to the CPU like VideoToolbox; its mapping is that one clip, not a bench.
 - Eval 20 on the Windows and macOS runners; it also grades whether agents quote the metrics
   rather than re-probe.
 

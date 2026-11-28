@@ -30,7 +30,7 @@ A start between frames begins on the next frame and may keep up to one frame of
 timestamp. The MP4 edit list hides the encoder priming, and a source whose audio
 starts late keeps that offset.
 
-A re-encode keeps an SDR HEVC source HEVC (x265 8-bit BT.709, or VideoToolbox under --hw;
+A re-encode keeps an SDR HEVC source HEVC (x265 8-bit BT.709, or the GPU under --hw;
 the default since 3.0.0), so a trimmed phone clip keeps its codec; --no-keep-hevc uses x264
 as every 2.x release did. Other SDR sources get x264 and an HDR or BT.2020 one x265 Main10,
 as every editing tool does. --codec overrides all of these.
@@ -1340,10 +1340,10 @@ def join_from_source(src: str, segments: List[Tuple[float, float]], dst: str, me
 
     chunks = encode_chunks()
     if not STATE.dry_run and STATE.hw and not signatures_match([join_signature(c) for c in chunks], ".mkv"):
-        # VideoToolbox refused some chunk and run() re-encoded that one on the CPU, so the chunks
+        # the GPU refused some chunk and run() re-encoded that one on the CPU, so the chunks
         # no longer match: encode them all on the CPU rather than refuse a join that can be made
         info("the GPU refused part of this join and the chunks came out mixed; re-encoding every chunk on the CPU")
-        STATE.hw_notes.append("the --segments join fell back to the CPU for every chunk after VideoToolbox refused one")
+        STATE.hw_notes.append("the --segments join fell back to the CPU for every chunk after the GPU refused one")
         # off for these encodes only: the result still reports that the GPU was asked for
         STATE.hw = False
         try:
@@ -1606,7 +1606,7 @@ def main() -> int:
                          "the picture starts at the keyframe before --start")
     kh = ap.add_mutually_exclusive_group()
     kh.add_argument("--keep-hevc", action="store_true",
-                    help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; VideoToolbox under --hw); "
+                    help="a re-encode of an SDR HEVC source stays HEVC (x265 8-bit BT.709; the GPU under --hw); "
                          "the default since 3.0.0; --codec overrides it")
     kh.add_argument("--no-keep-hevc", action="store_true",
                     help="re-encode an SDR HEVC source with x264, as every 2.x release did (HDR still gets x265 Main10)")
