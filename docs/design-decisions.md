@@ -6772,25 +6772,34 @@ is pixels on `overlay.py` and a factor on `proxy.py`).
 
 ## After 4.3.0 — the AAC coder is named from FFmpeg 9.1 on (#659)
 
-- **Every AAC track is written with `-aac_coder twoloop` on FFmpeg 9.1 and later.** 9.1 changed
+- **Every AAC track is written with `-aac_coder fast` on FFmpeg 9.1 and later.** 9.1 changed
   the encoder's default to a new coder (`nmr`). Measured on `9.1-essentials_build-www.gyan.dev`:
   mono at 192k behind 0.1 s or 2.5 s of silence never returned (a 48-byte file after the time
   limit), while 64k to 160k, 256k, the same sound as stereo, a 1.0 s delay, and `-aac_coder
-  twoloop` or `fast` at 192k all ended in 0.2 s. `twoloop` was the default up to 9.0, so the sound
-  is the one every older build writes. It is not a bitrate rule for mono: the cases that end and
-  the ones that do not were found by trying, and a rule drawn around them would be a guess about
-  an encoder that is not ours.
+  twoloop` or `fast` at 192k all ended in 0.2 s. 4.3.0 named `twoloop`, the default up to 9.0.
+- **`twoloop` does not end either; `fast` does (2026-11-28).** Two retimed mono tracks (`fit.py
+  --method speed` to 0.91x and `speedramp.py` 2x over the first second, both led by `adelay`)
+  ran past 900 s on 9.1 with `twoloop`. Taken apart on the same build
+  (`.github/scripts/ffmpeg_next_tempo_probe.py`, which the "ffmpeg next" probe now runs too): the filter chain alone
+  wrote its WAV in 0.0 s, and that WAV encoded to AAC never ended with `twoloop` at 160k or 192k
+  nor (for the 0.91x track) with the default coder; `fast` ended in 0.1 s on every case, mono and
+  stereo, as did `twoloop` on the same sound as stereo. So the pin names `fast`. Its quality is the
+  encoder's own fast search, a little below `twoloop` at the same bitrate; a caller who wants
+  another coder names it, and a command that names one keeps it. It is not a bitrate or channel
+  rule: the cases that end and the ones that do not were found by trying, and a rule drawn
+  around them would be a guess about an encoder that is not ours.
 - **It is one step on the path every command takes** (`runner.pin_aac_coder` in `run`), not an
   argument added in the 25 tools that write AAC: a new tool cannot forget it, and the plan under
   `--dry-run` shows it. Older builds get the command they always got, so no golden command
   changes there; on 9.1 a test that pins a whole argv applies `pin_aac_coder` to the expected one,
   as it applies `bt709_tag_args()` (#659: `test_waveform_without_image_is_byte_identical_to_1_15`
   failed with the pin forced on, the one such test found). A command that names a coder keeps it.
-- **To be removed, not kept:** when a 9.x release returns from the probe's 192k mono case
+- **To be removed, not kept:** when a 9.x release returns from the probe's 192k mono case and
+  the two retimed tracks with its default coder
   (`.github/scripts/ffmpeg_next_probe.py`, run from the "ffmpeg next" workflow), the pin gets an
   upper version. CI installs a pinned FFmpeg on Windows (9.1.0 since this was closed); the feed's
   newest is read by that workflow on demand before the pin moves.
-- Pinned by `test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1`
+- Pinned by `test_an_aac_track_names_the_coder_that_ends_from_ffmpeg_9_1`
   (tests/test_orchestration.py).
 - **The rest of the 9.1 run was the tests, not the tools.** Read from the one full Windows run on
   9.1.0 (job log of run 44835283620) and reproduced here on 6.1.1 where the cause is not the

@@ -2820,22 +2820,23 @@ class CommonFacadeTests(unittest.TestCase):
         self.assertEqual(runner.__file__, before)
         self.assertTrue(callable(_common.emit) and callable(_common.probe))
 
-    def test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1(self):
-        """#659: FFmpeg 9.1 made a new coder the AAC encoder's default and it never returns on some
-        sound (mono at 192k behind 0.1 s or 2.5 s of silence: `sync.py --replace-audio` ran to its
-        time limit on Windows, a file of 48 bytes). Every command passes run(), which from 9.1 on
-        names the coder that was the default before; older builds get the command they always got,
-        and a command that names a coder keeps it."""
+    def test_an_aac_track_names_the_coder_that_ends_from_ffmpeg_9_1(self):
+        """#659: FFmpeg 9.1's AAC encoder never returns on some mono sound with its new default coder
+        (`sync.py --replace-audio` ran to its time limit on Windows, a file of 48 bytes) and with
+        `twoloop`, the default until 9.0 (fit.py --method speed 0.91x and speedramp.py 2x ran past
+        900 s). Every command passes run(), which from 9.1 on names `fast`, the coder that ended on
+        every case; older builds get the command they always got, and a command that names a coder
+        keeps it."""
         from unittest import mock
         from _common import runner
         cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "o.mp4"]
-        self.assertEqual(runner.pin_aac_coder(cmd, (9, 1)), cmd[:7] + ["-aac_coder", "twoloop"] + cmd[7:])
-        self.assertEqual(runner.pin_aac_coder(cmd, (10, 0))[7:9], ["-aac_coder", "twoloop"])
+        self.assertEqual(runner.pin_aac_coder(cmd, (9, 1)), cmd[:7] + ["-aac_coder", "fast"] + cmd[7:])
+        self.assertEqual(runner.pin_aac_coder(cmd, (10, 0))[7:9], ["-aac_coder", "fast"])
         self.assertEqual(runner.pin_aac_coder(cmd, (9, 0)), cmd)
         self.assertEqual(runner.pin_aac_coder(cmd, (0, 0)), cmd, "an unreadable version takes the older spelling")
         two = ["ffmpeg", "-i", "a.mov", "-c:a:0", "aac", "-acodec", "aac", "-codec:a:1", "aac", "o.mov"]
-        self.assertEqual(runner.pin_aac_coder(two, (9, 1)).count("twoloop"), 3)
-        named = cmd[:7] + ["-aac_coder", "fast"] + cmd[7:]
+        self.assertEqual(runner.pin_aac_coder(two, (9, 1)).count("fast"), 3)
+        named = cmd[:7] + ["-aac_coder", "twoloop"] + cmd[7:]
         self.assertEqual(runner.pin_aac_coder(named, (9, 1)), named)
         for other in (["ffmpeg", "-i", "a.mp4", "-c:a", "libopus", "o.mkv"], ["ffmpeg", "-i", "a.mp4", "-c", "copy", "o.mp4"]):
             self.assertEqual(runner.pin_aac_coder(other, (9, 1)), other)
@@ -2845,7 +2846,7 @@ class CommonFacadeTests(unittest.TestCase):
             OUT.mkdir(parents=True, exist_ok=True)
             src = tiny_clip(OUT / "pin_coder_src.mp4", "color=c=red:s=160x120:r=25", audio=True)
             runner.run(["ffmpeg", "-y", "-i", str(src), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(OUT / "pin_coder.mp4")], quiet=True)
-            self.assertIn("-c:a aac -aac_coder twoloop -b:a 192k", runner.STATE.commands[-1])
+            self.assertIn("-c:a aac -aac_coder fast -b:a 192k", runner.STATE.commands[-1])
 
 
 class TimelineExportTests(unittest.TestCase):

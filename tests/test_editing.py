@@ -5054,13 +5054,20 @@ class OneClockTests(MediaFixtures):
     def test_loop_keeps_a_late_sound_in_sync_on_every_repeat(self):
         """-stream_loop shortened every repeat of a clip whose sound starts late by a frame and slid
         the sound (346 of 360 frames, 1 then 68 ms); the concat list repeats the file's whole length,
-        and an in-sync AAC source is not moved by the list's priming either."""
+        and an in-sync AAC source is not moved by the list's priming either. FFmpeg 9.1's AAC
+        encoder keeps the last frame whole, so the late-sound fixture is 4.012 s there, not 4.000:
+        a repeat that is not a whole number of 30 fps frames puts each repeat's pictures on the
+        frame grid up to half a frame from their sound (-12 and +9 ms on 9.1), as an MPEG-PS's
+        repeats do below (#659)."""
         for name, kw in (("alate", {"audio_late": 0.3}), ("sync", {})):
+            src = self._fx(name, **kw)
             out = OUT / f"clock_loop_{name}.mp4"
-            script("loop.py", self._fx(name, **kw), "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite")
+            script("loop.py", src, "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite")
             offsets = av_offsets_ms(out)
             self.assertEqual(len(offsets), 12, offsets)
-            self.assertInSync(offsets, msg=f"loop {name}")
+            length = float(json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src).stdout)["format"]["duration"])
+            whole = abs(length * 30 - round(length * 30)) < 0.05
+            self.assertInSync(offsets, tol=5 if whole else 1000 / 30 / 2, msg=f"loop {name} ({length:.3f} s)")
             self.assertEqual(stream_spans(out)["video"][2], 360)
 
     def test_loop_of_an_mpeg_ps_whose_sound_starts_late_keeps_every_frame_787(self):
