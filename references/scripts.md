@@ -2134,7 +2134,8 @@ dictionary, so the break goes where you put a space or a `|`, and a run with
 none stays long on its own line — `caption.py` counts such lines as `overlong`
 and says so. A cue that would need more than `--max-lines` (default 2) is split
 into consecutive cues sharing its time; a cue shorter than `--min-duration`
-(default 1.0 s) is held longer, never past the next cue's start; `--offset
+(default 1.0 s) is held longer, never past the next cue's start or the end of
+the picture (a cue that runs past it ends there, with a note); `--offset
 TIME` shifts every cue (seconds, `mm:ss`, `hh:mm:ss.ms` or `hh:mm:ss:ff`, a
 leading `-` for earlier) for `--text`, `--srt` and `--ass`. One `cues:` info line reports what changed;
 with `--ass`, `caption.ass_shifted` / `ass_unshifted` count the Dialogue lines moved and those whose
