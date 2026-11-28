@@ -247,6 +247,51 @@ class ContractTests(unittest.TestCase):
                               f"{path.relative_to(ROOT)}: states tool count(s) {sorted(counts)}, "
                               f"but scripts/ actually has {real_count} public tools -- update the stale wording")
 
+    @staticmethod
+    def _og():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("og", ROOT / "brand" / "og.py")
+        og = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(og)
+        return og
+
+    def test_the_social_card_says_the_contracts_tool_count(self):
+        """brand/og.png, and the copy the site serves, is a picture: "42 local FFmpeg tools · 12 stable"
+        in it is text no count check read, so a change of the tool count left it behind. brand/og.py
+        draws it with the numbers read from the contract and records that line in the PNG; the line
+        must be the contract's in both copies, and README's alt text for it must say the same. When
+        the count changes this fails until `python3 brand/og.py` draws the card again."""
+        og = self._og()
+        n, stable = og.counts()
+        line = og.card_text()
+        self.assertTrue(line.startswith(f"{n} local FFmpeg tools · {stable} stable · "))
+        for path in (og.OUT, *og.COPIES):
+            self.assertEqual(og.read_text(path), line, f"{path.relative_to(ROOT)}: the card's text is not the contract's; run python3 brand/og.py")
+        alt = re.search(r'<img src="brand/og\.png"[^>]*\balt="([^"]*)"', (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertTrue(alt, "README.md: no <img> of brand/og.png with an alt text")
+        self.assertIn(f"{n} local FFmpeg tools, {stable} stable", alt.group(1))
+
+    def test_the_social_card_generator_draws_the_line_it_records(self):
+        """brand/og.py draws a 1280x640 card and records in it the line it drew. Skipped where the
+        fonts it draws with or drawtext are not installed."""
+        og = self._og()
+        fonts = og.font_files(None)
+        filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, encoding="utf-8").stdout
+        if not fonts or not re.search(r"\sdrawtext\s", filters):
+            self.skipTest("brand/og.py needs drawtext and the Inter and JetBrains Mono fonts")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "og.png"
+            og.render(out, "41 local FFmpeg tools · 12 stable · your agent does the work", fonts)
+            self.assertEqual(int.from_bytes(out.read_bytes()[16:20], "big"), og.W)
+            self.assertEqual(int.from_bytes(out.read_bytes()[20:24], "big"), og.H)
+            self.assertEqual(og.read_text(out), "41 local FFmpeg tools · 12 stable · your agent does the work")
+            pixels = lambda: subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "md5", "-"], capture_output=True, text=True, encoding="utf-8").stdout
+            before = pixels()
+            og.write_text(out, "again")  # a second record replaces the first and leaves the pixels
+            self.assertEqual(og.read_text(out), "again")
+            self.assertEqual(out.read_bytes().count(b"tEXtffmpeg-skill:text"), 1)
+            self.assertEqual(pixels(), before)
+
     def test_the_why_42_faq_table_matches_the_tools_section_and_the_mcp_core(self):
         """README's "Why 42 tools?" answer restates two facts held elsewhere: which group each
         tool sits in (the Tools section) and which 12 tools/list shows by default
@@ -2594,7 +2639,7 @@ sys.exit(fit.main())
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
             ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_900),  # +100 for join.py --transition none by default (#681, 194826 measured), +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 195_300),  # +400 for speedramp.py --speed, --start and --end (#676, 195184 measured), +100 for join.py --transition none by default (#681, 194826 measured), +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
@@ -14203,6 +14248,56 @@ class StumbleLedgerTests(unittest.TestCase):
                     answer = (proc.stdout + proc.stderr).rsplit("error:", 1)[-1]
                     for phrase in row["must_say"]:
                         self.assertIn(phrase, answer)
+
+    @unittest.skipIf(os.name == "nt", "the try: line is quoted for cmd.exe there, which shlex does not read")
+    def test_a_printed_try_line_passes_the_tools_own_usage_check(self):
+        """#676: `try:` is printed only when the tool's own parser takes the corrected line. Before, a
+        guess with no value was answered with an option that needs one (`caption.py --soft` as `--mode`,
+        `color.py --grade` as `--source-alpha-mode`), `--size 1920x1080` with `--width` (a number) and
+        `grid.py --columns 2` without the `--rows` it requires: each command, copied, was a usage error."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        printed = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            for row in self.rows():
+                if row["status"] != "taught":
+                    continue
+                argv = [clip if a == "{clip}" else a for a in row["argv"]]
+                proc = subprocess.run([sys.executable, str(ROOT / "scripts" / f"{row['tool']}.py"), *argv, "-o", str(Path(tmp) / "out.mp4"), "--dry-run"],
+                                      capture_output=True, text=True, encoding="utf-8", timeout=120)
+                line = next((l for l in (proc.stdout + proc.stderr).rsplit("error:", 1)[-1].splitlines() if l.startswith("try: ")), None)
+                if line is None:
+                    continue
+                printed += 1
+                with self.subTest(tool=row["tool"], argv=row["argv"]):
+                    again = subprocess.run([sys.executable, *shlex.split(line[len("try: "):])[1:]], capture_output=True, text=True, encoding="utf-8", timeout=120)
+                    self.assertNotEqual(again.returncode, 2, again.stderr[-300:])
+        # #764 narrowed which stumbles get a try: line (one option spelt like the flag, none for a help
+        # mention or another tool's flag), so few taught lines print one; each that does is checked above
+        self.assertGreaterEqual(printed, 1)
+
+    def test_speedramp_takes_one_span_as_speed_start_end(self):
+        """#676: `--speed 2 --start 3 --end 4` is the shape the probe table lists for one sped-up span.
+        It is the three --segment pieces it stands for, the same commands; --start/--end without
+        --speed, --speed beside --segment and a --speed that is not one factor are refused."""
+        clip = str(ROOT / "demos" / "footage" / "veo_sea.mp4")
+        dur = json.loads(subprocess.run([sys.executable, str(SCRIPTS / "probe.py"), clip, "--json"], capture_output=True, text=True, encoding="utf-8").stdout)["duration"]
+        run = lambda *argv: subprocess.run([sys.executable, str(SCRIPTS / "speedramp.py"), clip, *argv, "-o", "x.mp4", "--dry-run", "--json"],
+                                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        for span, pieces in ((("--speed", "2", "--start", "3", "--end", "4"), ("0-3:1", "3-4:2", f"4-{dur!r}:1")),
+                             (("--speed", "0.5", "--start", "2"), ("0-2:1", f"2-{dur!r}:0.5")),
+                             (("--speed", "2"), (f"0-{dur!r}:2",))):
+            with self.subTest(span=span):
+                one, many = run(*span), run(*[a for p in pieces for a in ("--segment", p)])
+                self.assertEqual(one.returncode, 0, one.stderr[-300:])
+                self.assertEqual(json.loads(one.stdout)["commands"], json.loads(many.stdout)["commands"])
+        for argv, says in ((("--segment", f"0-{dur!r}:1", "--start", "2"), "--start and --end are the span of --speed"),
+                           (("--segment", f"0-{dur!r}:1", "--speed", "2"), "one of the two"), ((), "one of the two"),
+                           (("--speed", "0:2"), "--segment START-END:FACTOR"), (("--speed", "nan"), "takes one FACTOR"),
+                           (("--speed", "50", "--start", "1", "--end", "2"), "FACTOR must be 0.05..20.0")):
+            with self.subTest(refused=argv):
+                proc = run(*argv)
+                self.assertEqual(proc.returncode, 1, proc.stderr[-300:])
+                self.assertIn(says, json.loads(proc.stdout)["error"]["message"])
 
     def test_a_shortened_shared_option_is_refused_and_a_tools_own_is_kept(self):
         """argparse takes a shortened option name. `freeze.py --time 3 --hold 1` ran with --timeout 3,

@@ -146,6 +146,9 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
+- [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
+- [After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)](#after-4200--caption-delivery-on-a-phone-capture-is-a-harness-not-a-fixture-729)
+- [After 4.20.0 — the social card's count comes from the contract](#after-4200--the-social-cards-count-comes-from-the-contract)
 <!-- contents:end -->
 
 ## Time limits
@@ -7727,3 +7730,81 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
 - Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
   `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
   `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
+## After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes
+
+- **`speedramp.py --speed F --start A --end B` is one span, the rest at 1x.** It is the shape the
+  issue's probe table lists for speedramp, and it has one meaning: the same command as
+  `--segment 0-A:1 --segment A-B:F --segment B-END:1`, built from those pieces after the probe
+  (`--start` defaults to 0, `--end` to the clip's end), so every check `--segment` has applies to it
+  unchanged. `--segment` stays the documented form. Either one or the other: both, neither, or
+  `--start`/`--end` without `--speed` is refused, before the probe. The nine-model probe was not
+  re-run for this change (the issue's step 1); the shape is taken from the issue's table, and the
+  owner named the three options (`feature_freeze_named`, 2026-11-27). `--speed` is read as text so
+  that `--speed 0:2` (a time and a factor) is answered with the `--segment` form instead of
+  argparse's "invalid float value".
+- **`try:` is printed only when the tool's own parser takes it.** "The command is one the tool
+  takes" (after 4.2.2) was true of the three lines its test ran and false of 10 taught lines in the
+  ledger: a guess written without a value answered with an option that needs one (`--soft` as
+  `caption.py --mode`), `--size 1920x1080` with `--width`, `--columns 2` without the `--rows` grid
+  requires. `runner._parses` parses the corrected line before it is printed. It checks names,
+  arity, types, choices and required options; a value the tool refuses after parsing
+  (`look.py --tiles 4`, `speedramp.py --segment 3:6:0.5`) can still be printed, and the refusal
+  that follows says the shape. Main's rule ('`try:` is printed only when it is known', #764) is
+  narrower and comes first: an option whose help only mentions the word is named, not printed as a
+  command, so `fit.py --background blur` is answered "--fit mention 'background'" and
+  `color.py --grade` "--correct mention 'grade'", with no `try:`.
+- **A help string does not say a word another option owns.** `color.py --peak` said "peak
+  brightness", so `--brightness 0.1` was answered with `--peak 0.1`, a `--to-sdr` setting, and that
+  command ran; `--source-alpha-mode` said "grades", so `--grade` was answered with it. `--peak` now
+  says luminance, `--exposure` and `--gamma` say brightness (two answers, so no `try:`), `--correct`
+  says grade. `batch.py --recipe`, `--jobs` and `--force` use config, parallel/workers and no cache.
+- **#676's crop items came with #683** (crop folded into fit): `fit.py --rect W:H` is a centred
+  box, and `crop.py --width/--height` without `--x/--y` (or with `--center`) is one too.
+  `crop.py --size WxH` is not added; the help of `--width` says a size WxH is `--width`/`--height`.
+- **Not done here:** `multicam.py`'s misses were already taught; the probe for
+  `color.py` and `batch.py` was not re-run, so their new ledger lines say they were written by an
+  agent that had read the tool.
+- Code: `scripts/speedramp.py`, `scripts/_common/runner.py` (`_parses`), the help of
+  `scripts/color.py` and `scripts/batch.py`. Tests: `test_speedramp_takes_one_span_as_speed_start_end`,
+  `test_a_printed_try_line_passes_the_tools_own_usage_check`, `StumbleLedgerTests` (tests/test_contract.py).
+
+## After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)
+
+- **The phone file is the caller's, the control is generated.** No phone footage is committed or
+  downloaded: `tests/caption_delivery.py` takes a capture by argument or `$FFMPEG_SKILL_PHONE_CAPTURE`,
+  reads it where it is, and writes its cut, captioned and delivered files to a temporary folder.
+  The 30000/1001 CFR control is made by the harness itself (testsrc2 and a 48 kHz tone), so every
+  run, here or on a contributor's machine, has a case whose answer is known. The committed report
+  is the control's (`docs/caption-delivery/`); a report of a private capture names the file and its
+  device tags and is the owner's to share. Location tags are never copied into it.
+- **What is judged is what #729 asks.** A cue's delivered start is within one delivered frame of the
+  request, and the first frame shown at or after it is less than a frame later; its delivered end is
+  within a frame of the end caption.py gave it; the sample rate is the source's at every step; the
+  delivery is CFR on the grid it reports and its picture lasts B - A within a frame; each tool's
+  own `verified` is true. The ends are compared with the adjusted ends, not the requested ones: a
+  0.4 s cue that the default `--min-duration` lengthens to 1 s is a deliberate change, recorded in
+  `min_duration_changes`, not a failure.
+- **A lengthened last cue past the picture's end is recorded, not judged.** On a short clip the
+  default `--min-duration` can carry the last cue past the cut's end, and the muxed container follows
+  it (the 4 s VFR fixture delivers a 3.84 s container around a 3.22 s picture). The report says so
+  (`past_picture_end_ms`); whether caption.py should stop a cue at the picture's end is not decided
+  here.
+- Code: `tests/caption_delivery.py`. Tests: `CaptionDeliveryHarnessTests` (tests/test_delivery.py),
+  on the control and on the VFR clip of #512 (`make_vfr_flash_beep`), with a forced half-second
+  offset that must fail the start checks.
+
+## After 4.20.0 — the social card's count comes from the contract
+
+- **The card is drawn, and it records what it says.** `brand/og.png` said "42 local FFmpeg tools ·
+  12 stable" as pixels, where no count check reads. `brand/og.py` draws the card with ffmpeg
+  (drawtext, geq, overlay; Inter and JetBrains Mono) from the contract's count of tools that are not
+  an alias of another and of stable tools, and writes that line into the PNG as a `tEXt` chunk.
+  `test_the_social_card_says_the_contracts_tool_count` compares the chunk in both copies and
+  README's alt text with the contract, so a change of the count fails until the card is drawn
+  again. Pixels are not compared: they depend on the font files and the FFmpeg build.
+- **The hand-drawn card stayed until the count changed.** Its pixels were not redrawn; the line it
+  showed was recorded in it (`og.write_text`, which leaves the image data as it is). The first change
+  of the count, 42 to 41 when crop became an alias of fit (#683), replaced it with the drawn one,
+  which follows its layout.
+- Code: `brand/og.py`. Tests: `test_the_social_card_says_the_contracts_tool_count`,
+  `test_the_social_card_generator_draws_the_line_it_records` (tests/test_contract.py).

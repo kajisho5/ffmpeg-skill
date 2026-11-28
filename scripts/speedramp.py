@@ -17,6 +17,7 @@ Examples:
 """
 import argparse
 import math
+import re
 import sys
 from fractions import Fraction
 from typing import Any, List, Tuple
@@ -65,21 +66,33 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="output file (default: <name>_ramp.<ext>)")
-    ap.add_argument("--segment", action="append", required=True, dest="segments",
+    ap.add_argument("--segment", action="append", dest="segments",
                      help=f"one step of the ramp as START-END:FACTOR, repeatable; segments must cover 0..duration with no gaps or overlaps, in order. FACTOR is {MIN_SPEED}..{MAX_SPEED} (2.0 = twice as fast, 0.5 = half speed)")
+    ap.add_argument("--speed", metavar="FACTOR", help="instead of --segment: one span at this speed, the rest at 1x (--speed 2 --start 3 --end 4)")
+    ap.add_argument("--start", metavar="TIME", help="--speed: span start (default 0)")
+    ap.add_argument("--end", metavar="TIME", help="--speed: span end (default: the end)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
     add_common(ap)
     args = ap.parse_args()
     apply_common(args)
 
-    segments = [parse_segment(s) for s in args.segments]
+    if bool(args.segments) == (args.speed is not None):
+        die("give the ramp as --segment START-END:FACTOR (repeatable) or as one span, --speed FACTOR [--start TIME] [--end TIME]; one of the two")
+    if args.speed is None and (args.start or args.end):
+        die("--start and --end are the span of --speed; with --segment each START-END is in the segment")
+    segments = [parse_segment(s) for s in args.segments or ()]
     segments.sort(key=lambda s: s[0])
     meta = probe(args.input)
     if not meta.get("video"):
         die("input has no video stream")
     refuse_still(meta, args.input, "--segment ranges are times in a clip, and a still has none")  # not "0..0.000" (#531)
     dur = input_length(meta)
+    if args.speed is not None:  # one span (#676): the 1x pieces around it are what --segment would be given
+        if not re.fullmatch(r"\d+(\.\d*)?|\.\d+", args.speed):
+            die(f"--speed takes one FACTOR, got {args.speed!r}; several spans are --segment START-END:FACTOR, repeated")
+        a, b = time_arg(args.start or "0", "--start"), time_arg(args.end, "--end") if args.end else dur
+        segments = [parse_segment(f"{x!r}-{y!r}:{f}") for x, y, f in ((0.0, a, "1"), (a, b, args.speed), (b, dur, "1")) if y - x > 1e-3 or f != "1"]
     if abs(segments[0][0] - 0.0) > 0.01:
         die(f"segments must start at 0, first segment starts at {segments[0][0]:g}")
     if abs(segments[-1][1] - dur) > 0.5:

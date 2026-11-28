@@ -284,7 +284,7 @@ flowchart LR
 | `waveform.py` | 音声トラックを波形やスペクトルの動画にします。カット時刻の波形の PNG には `--at` を、`--platform`、`--title`、焼き込み字幕つきの動画のオーディオグラムには `--image` を使います |
 | `freeze.py` | 1 つのフレームを N 秒止めます（`--at`、`--hold`、`--mode insert/extend`）。エンドカードの静止や、笑いの間に |
 | `pad.py` | タイムラインの最初や最後に黒/無音の余白を足します（`--start`、`--end`）。フレームごとに帯を付ける `fit.py --fit pad` とは別のものです |
-| `speedramp.py` | `--segment START-END:FACTOR`（繰り返し可）で、クリップのタイムラインに沿っていくつかの一定速度を段階的に切り替えます。クリップ全体を 1 つの速度にする `fit.py` とは別のものです |
+| `speedramp.py` | `--segment START-END:FACTOR`（繰り返し可）で、クリップのタイムラインに沿っていくつかの一定速度を段階的に切り替えます。1 つの区間なら `--speed F --start A --end B` でも指定できます。クリップ全体を 1 つの速度にする `fit.py` とは別のものです |
 | `loop.py` | クリップを `--times` N 回、または目標の `--duration` まで繰り返します。背景のループや、決まった枠の長さを埋めるのに。`--crossfade` はつなぎ目をなめらかにし、`--boomerang` は順再生のあと逆再生します |
 | `broll.py` | ある時間だけ A ロールの上に B ロールのクリップを挟み（`--insert B --at T --duration D`、繰り返し可）、また戻ります。既定では A の長さと音声は変わりません |
 | `metadata.py` | `TIME TITLE` のテキストファイルからコンテナのチャプターマーカーを、title/artist/comment のタグとともに書きます。すべてのストリームはビット単位でそのままコピーします。`--auto-chapters` は測った間とシーンの切れ目からマーカーを提案し、あとで名前を付け直す前提で `Chapter N` と名付けます |
@@ -673,6 +673,19 @@ python3 tests/bench_scenes.py
 ```
 
 ベンチマークは `tests/bench_*.py`、エージェントの評価は [evals/](evals/)、回ごとの結果は `evals/results/` にあります。
+
+<a id="captions-on-a-phone-capture-and-a-2997-control"></a>
+
+### スマートフォンで撮った素材と 29.97 の対照での字幕
+
+`tests/caption_delivery.py`（#729）は、始まり近く、中ほど、終わり近くに 3 つのキューを置いたクリップで `cut.py --accurate`、`caption.py --mode mux`、`export.py --preset copy` を動かし、納品したキューを 1 つずつ頼んだものと比べます。開始が納品のフレーム 1 つ以内か、画面に初めて出るフレームが 1 フレームより遅れないか、終わりが `--min-duration` の与えた終わりと合うかです。素材の出どころと ffprobe のパケットの時刻、各段階のサンプルレート、カットが選んだ CFR の格子、納品の長さを記録します。自分で作る 30000/1001 の CFR の対照を必ず動かします。[その報告](docs/caption-delivery/cfr-30000-1001-control.md)（600 秒、FFmpeg 6.1.1）は合格で、0.4 秒の最後のキューは既定の最小値で 1 秒に延びています。このリポジトリにスマートフォンの映像は入っていません。自分の素材を確かめるには、ファイルを置いたまま次を実行します。
+
+```bash
+python3 tests/caption_delivery.py ~/Movies/IMG_0001.MOV --report-dir ~/caption-report
+# or: FFMPEG_SKILL_PHONE_CAPTURE=~/Movies/IMG_0001.MOV python3 tests/caption_delivery.py --report-dir ~/caption-report
+```
+
+素材は読むだけです。カットしたもの、字幕を付けたもの、納品したものは一時フォルダに置き、あとで消します（`--work DIR` なら残します）。確認が 1 つでも失敗すれば終了コードは 1 です。報告はファイルの名前と、メーカー、機種、ソフトウェアのタグを示します（場所は示しません）。共有する前に読んでください。実際の VFR のスマートフォンの素材は、まだここでは動かしていません。
 
 <a id="a-one-hour-recording"></a>
 

@@ -31,7 +31,7 @@ No cloud · No API keys · Python standard library<br>
 </p>
 
 <p align="center">
-  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: Edit. Measure. Ship. 42 local FFmpeg tools, 12 stable; your agent does the work. A card shows final.mp4 measured: 59.98 s, 1080x1920, 30 fps, -14.0 LUFS, verified."></a>
+  <a href="https://kajisho5.github.io/ffmpeg-skill/"><img src="brand/og.png" width="720" alt="ffmpeg-skill v4: Edit. Measure. Ship. 41 local FFmpeg tools, 12 stable; your agent does the work. A card shows final.mp4 measured: 59.98 s, 1080x1920, 30 fps, -14.0 LUFS, verified."></a>
 </p>
 
 <p align="center">
@@ -284,7 +284,7 @@ These are the rules the skill file gives the agent and the code enforces.
 | `waveform.py` | Render an audio track as a waveform or spectrum video. Use `--at` for a waveform PNG at a cut time, or `--image` for a video audiogram with `--platform`, `--title` and burnt-in captions |
 | `freeze.py` | Hold a frame for N seconds (`--at`, `--hold`, `--mode insert/extend`) — an end-card hold or a comedic beat |
 | `pad.py` | Add black/silent padding at the start and/or end of the timeline (`--start`, `--end`) — distinct from `fit.py --fit pad`'s per-frame letterbox bars |
-| `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable) — distinct from `fit.py`'s single whole-clip speed factor |
+| `speedramp.py` | Step through different constant speeds across a clip via `--segment START-END:FACTOR` (repeatable), or one span with `--speed F --start A --end B` — distinct from `fit.py`'s single whole-clip speed factor |
 | `loop.py` | Repeat a clip `--times` N or to a target `--duration` — for background loops and filling a fixed slot length; `--crossfade` smooths the seam, `--boomerang` plays it forward then backward |
 | `broll.py` | Cut away to a B-roll clip over the A-roll for a window (`--insert B --at T --duration D`, repeatable) and come back; A's length and audio untouched by default |
 | `metadata.py` | Write container chapter markers from a `TIME TITLE` text file and title/artist/comment tags, every stream copied bit for bit; `--auto-chapters` proposes the markers from measured pauses and scene cuts and names them `Chapter N` for you to rename |
@@ -698,6 +698,28 @@ python3 tests/bench_scenes.py
 ```
 
 Benchmarks live in `tests/bench_*.py`, agent evals in [evals/](evals/), results by iteration in `evals/results/`.
+
+### Captions on a phone capture and a 29.97 control
+
+`tests/caption_delivery.py` (#729) runs `cut.py --accurate`, `caption.py --mode mux` and
+`export.py --preset copy` on a clip, with three cues near the start, at the middle and near the
+end, and compares each delivered cue with the request: its start within one delivered frame, the
+first frame it is on screen less than a frame later, its end against the end `--min-duration`
+gave it. It records the source's provenance and ffprobe packet times, the sample rate at each step,
+the CFR grid the cut chose and the delivery's lengths. It always runs a 30000/1001 CFR control it
+generates; [its report](docs/caption-delivery/cfr-30000-1001-control.md) (600 s, FFmpeg 6.1.1)
+passes, with the 0.4 s end cue lengthened to 1 s by the default minimum. No phone footage is in
+this repository: to check your own, keep the file where it is and run
+
+```bash
+python3 tests/caption_delivery.py ~/Movies/IMG_0001.MOV --report-dir ~/caption-report
+# or: FFMPEG_SKILL_PHONE_CAPTURE=~/Movies/IMG_0001.MOV python3 tests/caption_delivery.py --report-dir ~/caption-report
+```
+
+The capture is only read; the cut, captioned and delivered files go to a temporary folder that is
+removed (`--work DIR` keeps them), and the exit status is 1 when a check fails. The report names
+the file and its make, model and software tags (never its location): read it before you share it.
+A real VFR phone capture has not been run here yet.
 
 ### A one-hour recording
 

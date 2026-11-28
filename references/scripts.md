@@ -715,6 +715,7 @@ existing content (seconds or `mm:ss`). At least one of `--start`/`--end` must be
 ### speedramp.py — step through different speeds across a clip
 ```
 speedramp.py INPUT --segment START-END:FACTOR [--segment ...] [-o OUT]
+speedramp.py INPUT --speed FACTOR [--start TIME] [--end TIME] [-o OUT]
 ```
 Distinct from `fit.py --duration --method speed`, which applies one
 constant factor to the whole clip -- this takes a list of `--segment`
@@ -727,6 +728,9 @@ rather than a continuous curve. `START`/`END` take seconds or `mm:ss`;
 0.5 = half speed). Picking exactly where a ramp should ease in or out is a
 judgement call for the calling agent, made concrete here as the segment
 boundaries it supplies.
+`--speed F --start A --end B` (since #676) is one span at F and the rest at 1x, the same command as
+`--segment 0-A:1 --segment A-B:F --segment B-END:1`; `--start` defaults to 0 and `--end` to the clip's
+end. It is either that or `--segment`, never both, and `--start`/`--end` without `--speed` are refused.
 A subtitle/data track in the source is not carried into the retimed/concatenated
 output; the result says so with `dropped_non_av_streams: true`.
 

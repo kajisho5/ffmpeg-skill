@@ -565,10 +565,25 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
             words[-1] += "=" + b
         else:
             words.append(b)
-    if fix.get(""):
+    if fix.get("") and _parses(ap, words):
         # a POSIX shell's single quotes mean nothing to cmd.exe, and a Windows path needs no quoting there
         tips += "\ntry: " + (subprocess.list2cmdline if os.name == "nt" else shlex.join)(["python3", sys.argv[0]] + words)
     return tips
+
+
+def _parses(ap: "argparse.ArgumentParser", words: List[str]) -> bool:
+    """Whether this parser takes the corrected line, so `try:` never prints a command that fails its own usage
+    check (#676): `--soft` given as `--mode`, which needs a value, or `--size 1920x1080` as `--width`, a number."""
+    def stop(message: str) -> None:
+        raise ValueError(message)
+    saved, ap.error = ap.error, stop  # type: ignore[method-assign]
+    try:
+        ap.parse_args(words)
+    except (ValueError, SystemExit):
+        return False
+    finally:
+        ap.error = saved  # type: ignore[method-assign]
+    return True
 
 
 _OTHER_WORDS = {"strong": "high", "heavy": "high", "max": "high", "weak": "low", "light": "low", "mild": "low", "mid": "medium", "normal": "medium", "moderate": "medium"}
