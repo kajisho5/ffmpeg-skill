@@ -1254,6 +1254,20 @@ not a new file format this tool would have to maintain.
   With no probed duration every non-blank cue counts as drawn. `--mode mux` is not checked; a
   soft track draws nothing by itself. Tests: `test_caption_refuses_cues_that_are_never_visible`,
   `test_caption_reports_cues_burned_and_outside`, `test_waveform_srt_outside_the_render_is_refused_as_input`.
+- **A cue ends with the picture it is laid on (#776).** `--min-duration` never lengthens a cue
+  past the end of the input's picture, and a cue whose own end is past it is held there too, in a
+  burn and a mux, for every cue source (`--srt`, `--text`, `--transcribe`): a muxed track that
+  ran on made the delivery longer than its picture (a 3.13 s picture in a 3.8 s container, which
+  a copy export keeps), and in a burn the adjusted SRT named times no frame has. Each held cue
+  is a note (`cue N ends with the picture at T s, not at U s (--min-duration)` or `(its own
+  end)`), beside the adjusted copy's note and, in a burn, `caption.extended`, which counts only a
+  cue that ends later than asked. A cue
+  that starts at or after the picture's end keeps its own times and is not lengthened: it is
+  `cues_outside` in a burn (above), and dropping it from a mux would remove text the caller
+  wrote. The tracks after the first in a multi-track mux keep their files' times, as they keep
+  their lengths (the 3.8.6 section). The picture's end is the video stream's own end on the
+  file's clock (`emit.own_end` less `emit.file_origin`); with none known nothing is held. Code:
+  `caption.layout_cues()`. Test: `test_a_cue_ends_with_the_picture_it_is_laid_on`.
 - **Whitespace-only text flags are missing, not text.** `graphics.py` maps a blank
   `--title`/`--name`/`--subtitle`/`--text`/`--top`/`--bottom` to unset before the template's own
   "needs --title" check; non-blank text is drawn exactly as given (not stripped). `overlay.py
