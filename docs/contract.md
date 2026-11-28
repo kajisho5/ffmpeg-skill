@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.25.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.26.1`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -193,7 +193,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.25.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.26.1", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -217,7 +217,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | Field | Meaning |
 |---|---|
 | `id`, `name`, `version`, `executable` | `ffmpeg-skill/cut`, `cut`, skill version, `scripts/cut.py` |
-| `examples[]` | `{prompts[], command}` (1.21.0): SKILL.md's own "User says" / "Do" table rows for this tool, machine-readable — `prompts` is the row's phrasing(s), `command` the row's `Do` text with the markdown backticks stripped. Every tool has at least one; parsed from SKILL.md at read time, so it never drifts from the table a person reads |
+| `examples[]` | `{prompts[], command}` (1.21.0): SKILL.md's own "User says" / "Do" table rows for this tool (for a tool that table does not name, `references/requests.md`'s, #687), machine-readable — `prompts` is the row's phrasing(s), `command` the row's `Do` text with the markdown backticks stripped. Every tool has at least one; parsed from SKILL.md at read time, so it never drifts from the table a person reads |
 | `role` | `analysis`, `analysis_and_execution`, `execution` or `verification` (see below) |
 | `capabilities.required` | ffmpeg components the tool always needs |
 | `capabilities.optional[]` | `{capability, when}`: needed only for that flag or input |

@@ -90,9 +90,11 @@ applicable rule against the tree:
 - **Every surface, or it is not shipped.** A `feat` updates `README.md` (tool
   table, contract table, gotchas), `SKILL.md`, `references/scripts.md`,
   `docs/contract.md` and `CHANGELOG.md`. See `references/surfaces.md`.
-- **`SKILL.md` stays under 30,000 bytes** — enforced by
-  `test_skill_md_stays_under_the_30kb_budget`, not a convention. Adding a line
-  means trimming one, and the PR should say which.
+- **`SKILL.md` stays under 16,000 bytes and 180 lines** — enforced by
+  `test_skill_md_stays_under_its_byte_budget` and
+  `test_skill_md_stays_within_the_agent_reading_budget`, not a convention. Adding a
+  line means trimming one, and the PR should say which; a request a model routes
+  from the tool name alone goes in `references/requests.md`, not SKILL.md (#687).
 - **A demo, or the feature is invisible.** Every script under `scripts/` must
   appear in some demo's command line (a test asserts it); a `feat` adds a
   before/after entry to `demos/build.py` and regenerates `docs/demos.md` with

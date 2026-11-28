@@ -95,10 +95,13 @@ would have caught the original bug isn't done yet.
   starting with `### Fixed`, `### Added` or `### Changed`, then its bullets (format in
   `changelog.d/README.md`). Two open PRs then never conflict in `CHANGELOG.md`; the release folds
   the fragments into the new version's section and deletes them.
-- `SKILL.md` must stay under **30,000 bytes** — it is loaded into every session.
+- `SKILL.md` must stay under **16,000 bytes and 180 lines** — it is loaded into every session.
   Since 1.15 this is a test
-  (`tests/test_contract.py::test_skill_md_stays_under_the_30kb_budget`), not a
-  convention: adding a line there means trimming one, and the PR says which.
+  (`tests/test_contract.py::test_skill_md_stays_under_its_byte_budget`,
+  `tests/test_orchestration.py::test_skill_md_stays_within_the_agent_reading_budget`), not a
+  convention: adding a line there means trimming one, and the PR says which. Its request table
+  keeps only the rows whose command is not the obvious one; every request is in
+  `references/requests.md` (#687).
 - A `feat` PR adds at least one before/after demo to `demos/build.py` and
   `docs/demos.md` (the page is generated: add the demo to the table in
   `demos/build.py`, then run `python3 demos/build.py --docs`). A feature nobody
