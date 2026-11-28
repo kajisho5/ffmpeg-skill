@@ -146,6 +146,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
+- [After 4.26.0 — `--hw` uses NVENC off macOS (#694)](#after-4260----hw-uses-nvenc-off-macos-694)
 <!-- contents:end -->
 
 ## Time limits
@@ -4422,7 +4423,7 @@ Tests: `SmartCutTests` in `tests/test_cut_copy.py`.
   `filter_missing` and `details: {name}`, what the failed run already carried, so a caller keyed
   on those sees the same refusal earlier; `--codec av1`/`prores` keep their own `missing_tool`
   refusal, which is decided before a command exists. Left out on purpose: a `*_videotoolbox`
-  encoder (`--hw` has its own platform check and CPU retry), `copy`, a lavfi input and a
+  or `*_nvenc` encoder (`--hw` has its own platform check and CPU retry), `copy`, a lavfi input and a
   `-filter_complex_script`, every `run_analysis()` measurement (`loudness.measure()`'s loudnorm
   pass among them, which still fails in ffmpeg on a build without the filter; several callers take a failed
   reading as "no reading": cropdetect's windows, `probe.py --analyze`; the others now carry the
@@ -7727,3 +7728,72 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
 - Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
   `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
   `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
+
+## After 4.26.0 — `--hw` uses NVENC off macOS (#694)
+
+An outside contributor (Har150n) posted a patch that lets `--hw` encode with NVIDIA NVENC off macOS, the way it
+uses VideoToolbox on Apple Silicon, and measured it. The owner accepted NVENC as a value of the existing `--hw`
+with four conditions: gated on `ffmpeg -encoders` with a clear outcome when the encoder is absent, the
+measurements in the PR, tests that skip cleanly where there is no NVENC, and a `notes` line where the output
+differs from the CPU encode.
+
+- **`--hw` stays one boolean; the machine decides which GPU it means.** The owner's comment asked for "a typed
+  `--hw` choice". `--hw` is a boolean in every tool's input schema (`hw`, `no_hw`, see "`--hw` and `--no-hw` are
+  two booleans" under 2.6.0), and a machine has one of the two encoders: VideoToolbox needs macOS on Apple
+  Silicon, NVENC is never on a Mac. So `--hw` (and `FFMPEG_SKILL_HW=1`, `render.py`/`batch.py --hw`) means
+  VideoToolbox on macOS and NVENC elsewhere, and no flag, value, result key, warning or environment variable is
+  added during the feature freeze. The patch's `FFMPEG_SKILL_NVENC_CQ_OFFSET` was left out for that reason: the
+  offset is fixed at 1. Code: `_common.decision._vt_args`, `_common.runner.gpu_family`.
+- **Gated on the encoder list; what NVENC cannot take stays on the CPU with a note.** Off macOS an SDR h264 or
+  hevc encode takes `h264_nvenc`/`hevc_nvenc` when `ffmpeg -encoders` lists it. Otherwise the encode is the CPU
+  line it always was and `hw.notes` says why, as VideoToolbox's absence does: "this ffmpeg build has no
+  h264_nvenc", "no NVENC encoder for prores" (and av1: `av1_nvenc` exists, but `--hw` keeps AV1 on SVT-AV1 on
+  every platform), "NVENC writes 8-bit SDR here: an HDR or BT.2020 source keeps the CPU line" (the patch's HDR
+  rule: no 10-bit NVENC line was measured), and, when the list could not be read, "could not be confirmed". It is
+  not a refusal: `--hw` asks for speed where it can be had, and a run that cannot have it still writes the file.
+  A Mac never takes NVENC, whatever its build lists.
+- **Listed is not usable: a refused NVENC job is re-encoded on the CPU, and nothing else is.** The contributor
+  found FFmpeg 9.0.1 listing `h264_nvenc` on driver 591.66, where every open fails ("Driver does not support the
+  required nvenc API version. Required: 13.1 Found: 13.0"); Ubuntu's FFmpeg 6.1.1 lists it on machines with no
+  NVIDIA driver ("Cannot load libcuda.so.1", captured on the machine that built this PR). `run()`'s VideoToolbox
+  retry reads NVENC's refusals too: the CLI's "Error while opening encoder" on a line naming `*_nvenc`, or the
+  encoder's own "nvenc API version", "OpenEncodeSessionEx failed", "No capable devices found", "Cannot load
+  libcuda". "Could not open encoder before EOF" (a filter graph that failed first) is still not retried. The note
+  names the family: "NVENC refused the encode: ...; re-encoded on the CPU". So every `--hw` encode on such a
+  runner runs ffmpeg twice, the first attempt failing at the encoder's open; that is the price of not running a
+  probe encode, which a dry run could not do. Code: `_common.runner.videotoolbox_failure`, `run`, `_fail`.
+- **The quality mapping is the patch's, measured once.** `-preset p5 -tune hq -rc vbr -cq <CRF+1> -b:v 0
+  -pix_fmt yuv420p` (H.264 High; HEVC tagged `hvc1`), BT.709 tags through the same `h264_metadata`/`hevc_metadata`
+  bitstream filter as VideoToolbox, for the same reason. The contributor's measurement (Windows 11, RTX 4070
+  Laptop, FFmpeg 8.1 BtbN build; `cut.py --accurate`, 20 s of a 1080x1920 30 fps iPhone take):
+
+  | | time | SSIM vs source | size |
+  |---|---|---|---|
+  | CPU (libx264, CRF 18) | 10.9 s | 0.988 | 30.5 MB |
+  | `--hw` (h264_nvenc, cq 19) | 4.1 s | 0.990 | 39.0 MB |
+
+  That is one clip on one GPU, not a bench like `tests/bench_vt.py`'s: the driver version of that run was not
+  stated, HEVC was not measured, and this repository has no NVIDIA machine to repeat it on. A content type it did
+  not hold can land on either side of the CPU encode.
+- **An NVENC encode says it is not the CPU encode.** Every NVENC encode adds a top-level `notes` line naming the
+  encoder and its `-cq`, saying it is not CRF-equivalent, the measured byte ratio, and `--no-hw` for the CRF encode;
+  `encode.hw` is true and `encode.crf` null, `hw.used` true. `verified` keeps its meaning (the output's measured
+  properties). Code: `_common.emit.hw_quality_note`, `encode_record`, `hw_report`.
+- **What stays VideoToolbox-only.** A build without libx264/libx265 moves onto VideoToolbox without `--hw`
+  (#314); it does not move onto NVENC: the issue asked for `--hw`, and an LGPL build with NVENC and without x264
+  was not reported. `export.py`'s note under `FFMPEG_SKILL_HW=1` still advises `--hw` only where VideoToolbox can
+  run. `doctor`'s `hw.platform_ok` is true off macOS when the build lists `h264_nvenc` or `hevc_nvenc` (which,
+  as `gpu_encoders` says, does not prove the driver takes a job); on a Mac it is the Apple Silicon check it was.
+- **What CI runs.** No CI runner has an NVIDIA GPU, so the real encodes (`NvencEncodeTests`) are skipped unless a
+  0.1 s `h264_nvenc` encode opens on the machine. The line, the notes, the refusal strings and the CPU retry are
+  tested with the encoder list and the platform stood in, and with a fake ffmpeg that prints NVENC's refusal, on
+  every runner. Tests: `NvencArgsTests` (`test_the_nvenc_line_is_built_from_the_crf_and_its_swap_recorded`,
+  `test_what_nvenc_cannot_take_stays_on_the_cpu_with_a_note`,
+  `test_an_unreadable_encoder_list_is_named_not_taken_for_a_missing_nvenc`, `test_a_mac_never_takes_nvenc`,
+  `test_an_export_preset_on_nvenc_keeps_its_rate_and_leaves_faststart_to_export`,
+  `test_nvenc_open_failures_are_recognised_and_a_filter_failure_is_not`,
+  `test_the_result_notes_that_an_nvenc_encode_is_not_the_cpu_encode`,
+  `test_doctor_says_nvenc_can_be_chosen_only_where_the_build_lists_it_off_macos`), `NvencRunTests`
+  (`test_a_driver_that_refuses_nvenc_falls_back_to_the_cpu_and_says_so`,
+  `test_a_failure_that_is_not_nvenc_s_is_not_retried`, `test_a_dry_run_plans_nvenc_and_notes_its_quality`), all
+  in tests/test_accel.py.

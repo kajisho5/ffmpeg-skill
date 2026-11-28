@@ -12,7 +12,7 @@ import shlex
 import stat
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file, stream_copy_output
+from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, gpu_family, same_file, stream_copy_output
 
 
 # Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
@@ -405,8 +405,8 @@ def _set_current_ctx(ctx: "Context") -> None:
     _CURRENT_CTX = ctx
 
 
-ENV_HW_NOTE = ("VideoToolbox chosen by FFMPEG_SKILL_HW=1 (machine default; ~1.1-3.5x the bytes of x264/x265 "
-               "at matched quality); rerun with --no-hw for a final deliverable")
+ENV_HW_NOTE = ("the GPU encoder chosen by FFMPEG_SKILL_HW=1 (machine default; larger files than x264/x265 at matched "
+               "quality: ~1.1-3.5x on VideoToolbox); rerun with --no-hw for a final deliverable")
 ENV_NOT_FOR_DELIVERY_BASE = ("FFMPEG_SKILL_HW=1 is not applied to export.py's delivery presets (a delivered file is where "
                              "VideoToolbox's larger files cost most)")
 ENV_NOT_FOR_DELIVERY_NOTE = ENV_NOT_FOR_DELIVERY_BASE + "; pass --hw to put this export on the GPU"
@@ -455,7 +455,7 @@ def hw_report(ctx: "Context", enc: Optional[str]) -> Dict[str, Any]:
     # a stage that reported its source without asking (export.py under the variable: requested
     # false, source env) still names where the request came from
     source = source or next((st.get("source") for st in stages if st.get("source")), None)
-    vt = enc is not None and enc.endswith("_videotoolbox")
+    vt = gpu_family(enc) is not None
     # `used` is what ran; a dry run ran nothing (the planned encoder is `encoder`), so null --
     # as waveform.py's `silent` is null when nothing was measured
     used = None if enc is None or ctx.dry_run else vt
@@ -471,11 +471,18 @@ def hw_report(ctx: "Context", enc: Optional[str]) -> Dict[str, Any]:
 
 
 def hw_quality_note(enc: Optional[str], line: Optional[str], no_cpu_encoder: bool = False) -> Optional[str]:
-    """The `notes` line every VideoToolbox encode carries: its quality is not the CRF encode's.
+    """The `notes` line every GPU encode (VideoToolbox, NVENC) carries: its quality is not the CRF encode's.
     `no_cpu_encoder`: the build has no libx264/libx265, so `--no-hw` is no remedy and is not offered."""
     import re as _re
-    if not enc or not enc.endswith("_videotoolbox"):
+    if not gpu_family(enc):
         return None
+    if gpu_family(enc) == "NVENC":
+        # #694: -cq is NVENC's own constant-quality scale, set at CRF+1 from one measured clip
+        m = _re.search(r"(?:^|\s)-cq\s+(\d+)", line or "")
+        return (f"{enc}{' -cq ' + m.group(1) if m else ''} is not CRF-equivalent: --quality (or the preset's CRF) is set as "
+                "NVENC's constant quality at CRF+1, so size and detail differ from the x264/x265 encode (one clip in #694: "
+                "1.28x the bytes at SSIM 0.990 against 0.988); `verified` covers the output's measured properties, not "
+                "quality parity with the CPU encode; --no-hw for the CRF encode")
     if enc == "prores_videotoolbox":
         return ("prores_videotoolbox is not prores_ks: the same 422 HQ profile from a different encoder, so size and detail "
                 "differ from the CPU encode; `verified` covers the output's measured properties, not parity with the CPU "
@@ -496,7 +503,7 @@ def encode_record(enc: str, line: Optional[str], ctx: "Context") -> Dict[str, An
     codec = {"libx264": "h264", "libx265": "hevc", "libsvtav1": "av1", "libaom-av1": "av1", "prores_ks": "prores"}.get(enc, enc.split("_")[0])
     policy = ctx.encode_policy
     return {"codec": codec, "crf": int(crf[1]) if crf and crf[1].isdigit() else None, "preset": preset[1] if preset else None,
-            "hw": enc.endswith("_videotoolbox"), "policy": {"locked": bool(policy.get("locked")), "applied": list(policy.get("applied") or [])} if policy else None}
+            "hw": gpu_family(enc) is not None, "policy": {"locked": bool(policy.get("locked")), "applied": list(policy.get("applied") or [])} if policy else None}
 
 
 def _encoder_report(ctx: "Context") -> Dict[str, Any]:

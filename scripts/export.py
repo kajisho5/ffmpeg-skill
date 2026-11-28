@@ -53,7 +53,7 @@ from _common import STATE, run_analysis, add_common, apply_common, bt709_label_f
 from _common.decision import chain_with_rate, enlarge_args, hdr_tag_args, warn_mostly_cropped, hw_preset_video, restate_last_swap
 from _common.emit import note, record_fallback, record_skip, refuse, stream_inventory_step, warn
 from _common.probe import AUDIO_MEDIA_EXT, PROBED_AUDIO, PROBED_VIDEO, display_size, probed_maps, square_pixels, square_pixels_note
-from _common.runner import ffmpeg_encoders, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
+from _common.runner import ffmpeg_encoders, gpu_family, guard_sidecar, remember_written, replace_checked, replace_checked_together, reserve_sibling, subtitle_codec_for
 from _common.emit import file_identity, input_length, own_length, refuse_still
 from check import SPECS as PLATFORMS, measure_loudness
 from fit import measure_picture
@@ -83,8 +83,8 @@ def _verify_delivery(args, preset: dict, source: dict, output: str, streams: dic
     video = written.get("video") or {}
     steps = extra.setdefault("verification", [])
     codec = preset.get("codec") or (preset.get("expect") or {}).get("codec")
-    codec = codec or {"libx264": "h264", "h264_videotoolbox": "h264", "libx265": "hevc",
-                      "hevc_videotoolbox": "hevc"}.get(encoder)
+    codec = codec or {"libx264": "h264", "h264_videotoolbox": "h264", "h264_nvenc": "h264", "libx265": "hevc",
+                      "hevc_videotoolbox": "hevc", "hevc_nvenc": "hevc"}.get(encoder)
     if encoder == "copy":
         codec = source["video"].get("codec")
     if codec and not any(step["step"] == "codec" for step in steps):
@@ -539,7 +539,7 @@ def size_video_args(args, video: List[str], p: Dict, meta: Dict, has_audio: bool
         die("--max-mb sets the bitrate from the size, --crf sets a quality: give one of them")
     if "-c:v" not in video or video[video.index("-c:v") + 1] != "libx264" or "-crf" not in video:
         die(f"--max-mb runs a two-pass x264 encode; --preset {args.preset} does not encode with x264"
-            + (" (--hw puts it on VideoToolbox, which has no two-pass mode)" if STATE.hw else ""))
+            + (" (--hw puts it on the GPU encoder, which takes no two-pass line here)" if STATE.hw else ""))
     if not math.isfinite(args.max_mb) or args.max_mb <= 0:
         die(f"--max-mb must be a positive number of MiB, got {args.max_mb:g}")
     dur = input_length(meta)  # the bitrate is the size over the length: no stated length is refused (#491)
@@ -770,8 +770,8 @@ def main() -> int:
         note(f"--hw: --preset {args.preset} stays on prores_ks: VideoToolbox's ProRes encoder writes 422 HQ, "
              "without the alpha this preset keeps")
     elif not p.get("codec") and video:
-        # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on VideoToolbox: the same codec,
-        # its CRF mapped to -q:v, the preset's frame rate kept; tags come with the VT line itself.
+        # --hw (never $FFMPEG_SKILL_HW here) puts a fixed preset on the GPU (VideoToolbox, NVENC off
+        # macOS): the same codec, its CRF mapped, the preset's frame rate kept; tags come with the GPU line.
         # A build without libx264/libx265 has no other encoder, so it goes there without --hw too
         # (hw_preset_video returns the line untouched in every other case)
         video = hw_preset_video(video, meta, bt709=tag_bt709)
@@ -798,7 +798,7 @@ def main() -> int:
             cmd[cmd.index("-vf") + 1] = chain_with_rate(cmd[cmd.index("-vf") + 1], rate_f)
         elif rate_f:
             cmd += ["-vf", rate_f]
-        if tag_bt709 and not video[video.index("-c:v") + 1].endswith("_videotoolbox"):
+        if tag_bt709 and not gpu_family(video[video.index("-c:v") + 1]):
             cmd += bt709_tag_args(video[video.index("-c:v") + 1])
         hdr = bool(meta["video"].get("bt2020_or_hdr"))
         if not p.get("intermediate") and not (p.get("codec") and hdr):

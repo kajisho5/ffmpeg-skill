@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import platform
 import re
 from fractions import Fraction
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -921,12 +922,17 @@ def source_transfer(v: Dict[str, Any]) -> str:
 
 
 def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: bool) -> Optional[List[str]]:
-    """VideoToolbox encoder options for `codec`, or None (with a note in STATE.hw_notes) when the
-    request stays on the CPU: no VideoToolbox encoder for the codec, this machine cannot, or the
-    ffmpeg build lacks it."""
-    name = {"h264": "h264_videotoolbox", "hevc": "hevc_videotoolbox", "prores": "prores_videotoolbox"}.get(codec)
-    reason = None if name else f"no VideoToolbox encoder for {codec}"
-    reason = reason or hw_platform_reason()
+    """The --hw encoder options for `codec` (VideoToolbox on macOS; off it NVENC, SDR h264/hevc at -cq
+    CRF+1, #694), or None with a note in STATE.hw_notes when the request stays on the CPU: no GPU
+    encoder for the codec, this machine cannot, or the ffmpeg build lacks it."""
+    v = (meta or {}).get("video") or {}
+    hdr = bool(v.get("bt2020_or_hdr"))
+    nvenc = platform.system() != "Darwin" and hw_platform_reason() is not None
+    family = "NVENC" if nvenc else "VideoToolbox"
+    name = f"{codec}_{family.lower()}" if codec in (("h264", "hevc") if nvenc else ("h264", "hevc", "prores")) else None
+    reason = (f"no {family} encoder for {codec}" if not name
+              else "NVENC writes 8-bit SDR here: an HDR or BT.2020 source keeps the CPU line" if nvenc and hdr
+              else None if nvenc else hw_platform_reason())
     if not reason and name not in ffmpeg_encoders():
         unread = ffmpeg_list_error("encoders")
         # an encoder list that could not be read says nothing about the build: name the read
@@ -938,8 +944,10 @@ def _vt_args(codec: str, crf: int, meta: Optional[Dict[str, Any]], keep_bt709: b
         if note not in STATE.hw_notes:
             STATE.hw_notes.append(note)
         return None
-    v = (meta or {}).get("video") or {}
-    hdr = bool(v.get("bt2020_or_hdr"))
+    if nvenc:
+        return ["-c:v", name, "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", str(min(51, crf + 1)), "-b:v", "0",
+                "-pix_fmt", "yuv420p"] + (["-profile:v", "high"] if codec == "h264" else ["-tag:v", "hvc1"]) + \
+            ["-movflags", "+faststart"] + (_vt_bt709(codec) if keep_bt709 else [])
     hdr_tags = ["-colorspace", hdr_line_matrix(v), "-color_primaries", v.get("color_primaries") or "bt2020",
                 "-color_trc", source_transfer(v)]
     if codec == "prores":
