@@ -44,6 +44,12 @@
       "test": "test_guards.NumericGuard.test_no_tool_takes_a_number_outside_the_range_its_help_states",
       "also": "test_contract.StumbleLedgerTests.test_a_number_outside_what_its_option_takes_is_refused_on_every_tool",
       "how": "every numeric option of every tool in tests/sweep.py's table is given, in a dry run, the value just past each end of the range its help states (a..b, or 0 for > 0) and 1000000000; one that is not refused by runner.apply_common (or by argparse's choices) fails. An option whose help states no range is held only to the million cap and the negative rule, so a value with no meaning of its own is refused by writing its range in the help"
+    },
+    "test": {
+      "test": "test_guards.TestClassGuard.test_no_test_writes_a_fixed_name_into_a_shared_directory",
+      "also": "test_guards.TestClassGuard.test_no_grader_fills_a_slot_with_a_word_that_contains_its_stem",
+      "also_pending": 786,
+      "how": "every tests/test_*.py is parsed: a test method or setUp that writes a name it wrote down (to write_text, mkdir, open for writing, shutil's destination, the value after -o, an ffmpeg call's output) into SHARED_OUT, tests/out, $OUT, the system temp directory or a module-level directory made from one of them (or from OUT at import, #685's DIR = OUT / name) fails; every evals/ grader that reads expect decides its slots with run._slot_hit and no slot alternative is tested with `in` by hand, and for every slot of every corpus the stem in prose, in a longer word or file, in another case or a longer flag fills nothing in _slot_hit, run.score or grade_runs_25.grade. It does not see a shared path reached through a helper, a class attribute or a project file's relative name, a write by a call it does not know as one, or setUpClass's shared fixtures; and #659's form, an outcome asserted without the condition the fixture's outcome rests on, is not mechanical: #786 stays open for it"
     }
   }
 }

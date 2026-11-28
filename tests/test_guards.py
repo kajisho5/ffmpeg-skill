@@ -6,6 +6,7 @@ entries, the test here that catches the class wherever it happens: in the tools 
 one written after the test. A fix of a class whose guard is pending does not pass revert_proof.py,
 so a fix of one tool cannot be the end of a class that keeps coming back.
 """
+import ast
 import importlib.util
 import json
 import os
@@ -117,7 +118,10 @@ class TimeGuard(unittest.TestCase):
                     tool(name, *argv, "-o", str(out))
                     got[f"{name} -o .wav: first burst"] = round(first_burst(out), 2) if out.exists() else "not written"
                 read[ext] = got
-            self.assertEqual(read["mp4"]["check --content: dropouts"], ["1: 1.20s "], "the fixture has its dropout")
+            # the fixture's AAC is FFmpeg's default coder: 1.20 s on 6.1 to 9.0, 1.24 s on 9.1's (#659)
+            got = read["mp4"]["check --content: dropouts"]
+            self.assertEqual(len(got), 1, got)
+            self.assertAlmostEqual(float(re.search(r"([\d.]+)s", got[0]).group(1)), 1.2, delta=0.05, msg="the fixture has its dropout")
             differ = {k: (v, read["ts"][k]) for k, v in read["mp4"].items()
                       if json.dumps(v) != json.dumps(read["ts"][k]) and not (isinstance(v, (int, float)) and abs(v - read["ts"][k]) <= 0.01)}
             self.assertEqual(differ, {}, "these rendered or read the sound of a .ts on another clock than the .mp4's (mp4, ts)")
@@ -609,6 +613,275 @@ class NumericGuard(unittest.TestCase):
                         if proc.returncode == 0 or not (f"{flag} {float(value):g} is outside what this option takes" in proc.stderr or "invalid choice" in proc.stderr):
                             taken[f"{tool} {flag}={value}"] = next((l for l in proc.stderr.splitlines() if l.startswith("error:")), "ran")[:160]
         self.assertEqual(taken, {})
+
+
+_OUTPUT_FLAGS = {"-o", "--output", "--out", "--output-dir", "--out-dir", "--outdir"}
+_WRITE_METHODS = {"write_text", "write_bytes", "mkdir", "touch", "symlink_to", "hardlink_to"}
+_COPIES = {"copy", "copy2", "copyfile", "copytree", "move"}
+
+# A test that writes a fixed name into a shared directory and is still right to: none today. An entry
+# is "file.py:function: the name", with the reason the collision cannot happen.
+SHARED_WRITE_BY_DESIGN: "dict[str, str]" = {}
+
+
+def _call_name(node):
+    f = node.func if isinstance(node, ast.Call) else node
+    return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+
+
+def _is_text(node):
+    return isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant) and isinstance(node.value, str))
+
+
+class _SharedPaths:
+    """Which expressions of one test module name a directory every test, run and module shares:
+    _fixtures.SHARED_OUT, tests/out spelled out, $OUT read by hand, tempfile.gettempdir(), and a
+    module-level name bound to one of them -- or to OUT itself, which outside a test method (at import)
+    is SHARED_OUT, so `DIR = OUT / "cut_copy"` is #685's old form and `DIR = OUT.sub("cut_copy")` is not."""
+
+    def __init__(self, tree):
+        self.proxies = {"OUT"}   # names that are the per-test proxy inside a test method
+        self.shared = {"SHARED_OUT"}
+        for node in tree.body + [n for c in tree.body if isinstance(c, ast.ClassDef) for n in c.body]:
+            if isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets):
+                names = {t.id for t in node.targets}
+                v = node.value
+                if isinstance(v, ast.Call) and _call_name(v) == "sub" and self.is_proxy(v.func.value):
+                    self.proxies |= names
+                elif self.is_proxy(v):
+                    self.proxies |= names
+                elif self.is_dir(v, at_import=True):
+                    self.shared |= names
+                    self.proxies -= names
+
+    def is_proxy(self, node):
+        return (isinstance(node, ast.Name) and node.id in self.proxies) or (isinstance(node, ast.Attribute) and node.attr == "OUT")
+
+    def is_dir(self, node, at_import=False, local=()):
+        if isinstance(node, ast.Name):
+            return node.id in self.shared or node.id in local or (at_import and node.id in self.proxies)
+        if isinstance(node, ast.Attribute):
+            return node.attr == "SHARED_OUT" or (at_import and self.is_proxy(node))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return "tests/out" in node.value.replace("\\", "/")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            if isinstance(node.right, ast.Constant) and node.right.value == "out" and isinstance(node.left, ast.BinOp) \
+                    and isinstance(node.left.right, ast.Constant) and node.left.right.value == "tests":
+                return True
+            return self.is_dir(node.left, at_import, local)
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name == "gettempdir":
+                return True
+            if name in ("get", "getenv") and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "OUT":
+                return True
+            if name in ("Path", "PurePath", "str", "fspath", "resolve", "_path"):
+                inner = node.args[0] if node.args else (node.func.value if isinstance(node.func, ast.Attribute) else None)
+                return inner is not None and self.is_dir(inner, at_import, local)
+            if name == "join" and node.args:
+                return self.is_dir(node.args[0], at_import, local)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "OUT":
+            return True
+        return False
+
+    def is_named_file(self, node, local_dirs, local_files):
+        """A path into a shared directory with a name the test wrote down."""
+        if isinstance(node, ast.Name):
+            return node.id in local_files
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return _is_text(node.right) and self.is_dir(node.left, local=local_dirs)
+        if isinstance(node, ast.Call) and node.args:
+            name = _call_name(node)
+            if name == "join" and len(node.args) > 1:
+                return self.is_dir(node.args[0], local=local_dirs) and any(_is_text(a) for a in node.args[1:])
+            if name == "joinpath" and isinstance(node.func, ast.Attribute):
+                return self.is_dir(node.func.value, local=local_dirs) and any(_is_text(a) for a in node.args)
+            if name in ("Path", "str", "fspath"):
+                return self.is_named_file(node.args[0], local_dirs, local_files)
+        return False
+
+
+def shared_writes(path: Path) -> "list[str]":
+    """Every place a test method (or setUp) of `path` writes a fixed name into a shared directory:
+    the path's write_text/write_bytes/mkdir/touch, open() for writing, shutil's destination, the
+    value after -o/--output, or the last argument of an ffmpeg-style call (one with "-i"). Reads of
+    a shared fixture, and setUpClass, which builds the shared fixtures, are not writes here."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    sp = _SharedPaths(tree)
+    found = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or not (fn.name.startswith("test") or fn.name == "setUp"):
+            continue
+        dirs, files = set(), set()
+        for _ in range(2):  # an alias of an alias
+            for node in ast.walk(fn):
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    names = {t.id for t in targets if isinstance(t, ast.Name)}
+                    if node.value is None:
+                        continue
+                    if sp.is_named_file(node.value, dirs, files):
+                        files |= names
+                    elif sp.is_dir(node.value, local=dirs):
+                        dirs |= names
+        hit = lambda n: sp.is_named_file(n, dirs, files)  # noqa: E731
+        for node in ast.walk(fn):
+            written = []
+            if isinstance(node, ast.Call):
+                name = _call_name(node)
+                if isinstance(node.func, ast.Attribute) and hit(node.func.value) and (
+                        name in _WRITE_METHODS or (name == "open" and any(_is_text(a) and set(a.value) & set("wax+") for a in node.args
+                                                                          if isinstance(a, ast.Constant)))):
+                    written.append(node.func.value)
+                if name == "open" and isinstance(node.func, ast.Name) and node.args:
+                    mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+                    if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and set(mode.value) & set("wax+"):
+                        written.append(node.args[0])
+                if name in _COPIES and len(node.args) > 1:
+                    written.append(node.args[1])
+                if any(isinstance(a, ast.Constant) and a.value == "-i" for a in node.args) and node.args:
+                    written.append(node.args[-1])
+            if isinstance(node, (ast.Call, ast.List, ast.Tuple)):
+                seq = node.args if isinstance(node, ast.Call) else node.elts
+                written += [b for a, b in zip(seq, seq[1:]) if isinstance(a, ast.Constant) and a.value in _OUTPUT_FLAGS]
+            for w in written:
+                if hit(w):
+                    found.append(f"{path.name}:{fn.name}: {ast.unparse(w)} (line {w.lineno})")
+    return sorted(set(found))
+
+
+def _slot_negatives(slot: str) -> "tuple[list[str], list[str]]":
+    """(texts that call nothing the slot names, texts that call it), for each alternative of a slot.
+    A negative holds the alternative's stem inside a longer word or file, as prose, as another file
+    of the same stem, in another case, or as a longer flag; a positive is the call itself, so a
+    negative that passes is not passing because the matcher fills nothing."""
+    neg, pos = [], []
+    for alt in (a.strip() for a in slot.split("|")):
+        if not alt:
+            continue
+        if alt.startswith("-"):
+            neg += [f"$ python3 scripts/x.py {alt}-presets a", f"$ python3 scripts/x.py {alt}x a", f"$ python3 scripts/x.py {alt}_b a",
+                    f"$ python3 scripts/x.py x{alt} a"]
+            pos += [f"$ python3 scripts/x.py {alt} a"]
+            continue
+        stem = alt[:-3] if alt.endswith(".py") else alt
+        neg += [f"I will {stem} the clip", f"execute pre{stem} and {stem}s", f"$ python3 scripts/auto_{stem}.py a",
+                f"$ python3 scripts/short{stem}.py a", f"$ python3 scripts/pre-{stem}.py a", f"$ python3 scripts/{stem}_x.py a",
+                f"$ python3 scripts/x.{stem}.py a", f"$ ls {stem}.pyc {stem}.py.bak {stem}.mp4", f"$ python3 scripts/{stem.capitalize()}.py a"
+                if stem.capitalize() != stem else f"$ python3 scripts/{stem.upper()}.py a", f"mcp__ffmpeg-skill__{stem}_x", f"mcp__ffmpeg-skill__x{stem}"]
+        pos += [f"$ python3 scripts/{stem}.py in.mp4 --json"] + ([f"mcp__ffmpeg-skill__{stem}"] if not alt.endswith(".py") else [])
+    return neg, pos
+
+
+def _hand_rolled_slot_tests(tree) -> "list[int]":
+    """Lines where a grader tests an alternative of a slot (a name bound by iterating x.split("|"))
+    with `in`: a substring of the text or a member of a word set, the form #786's second entry was."""
+    lines = []
+    for node in ast.walk(tree):
+        gens = node.generators if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)) else \
+            [node] if isinstance(node, (ast.For, ast.comprehension)) else []
+        for g in gens:
+            it = g.iter
+            if isinstance(it, ast.Call) and _call_name(it) == "split" and it.args and isinstance(it.args[0], ast.Constant) \
+                    and it.args[0].value == "|" and isinstance(g.target, ast.Name):
+                for n in ast.walk(node):
+                    if isinstance(n, ast.Compare) and any(isinstance(o, (ast.In, ast.NotIn)) for o in n.ops) \
+                            and any(isinstance(s, ast.Name) and s.id == g.target.id for s in ast.walk(n.left)):
+                        lines.append(n.lineno)
+    return sorted(set(lines))
+
+
+class TestClassGuard(unittest.TestCase):
+    """The test class (#685 fixed names in a shared output directory, the evals slot that a word
+    containing its stem filled, #659 an outcome asserted without the fixture's condition): a verdict
+    that rests on something the test does not state. Two of its forms are mechanical and are
+    checked here over every test module and every grader. The third, #659's, is not: whether a
+    test asserts the condition its fixture's outcome rests on (an alignment of 0 s, a loudness range
+    clear of 0) is a fact about FFmpeg and the fixture, not about the code's shape, so no scan finds
+    it; #786 stays open for it, and each such test states its condition (test_multicam_switch_energy_
+    picks_the_loudest_camera, test_loudness_keeps_each_sound_where_its_picture_is)."""
+
+    def test_no_test_writes_a_fixed_name_into_a_shared_directory(self):
+        """#685: every tests/test_*.py, parsed. A test method or setUp that writes a name it wrote
+        down into SHARED_OUT, tests/out, $OUT, the system temp directory or a module-level directory
+        made from one of them (or from OUT at import) fails: a -k run across modules, a repeated run
+        or another test sees that file. OUT, OUT.sub(...), out_path(), out_dir() and tempfile's own
+        directories are per test and pass."""
+        found = [h for p in sorted((ROOT / "tests").glob("test_*.py")) for h in shared_writes(p)]
+        self.assertEqual([h for h in found if h.split(" (line")[0] not in SHARED_WRITE_BY_DESIGN], [],
+                         "write these through OUT / out_path() (one directory per test) or a TemporaryDirectory")
+        stale = [k for k in SHARED_WRITE_BY_DESIGN if not any(h.startswith(k) for h in found)]
+        self.assertEqual(stale, [], "allowed shared writes that no test makes any more")
+
+    def test_the_shared_write_scan_sees_the_685_forms(self):
+        """The scan's own control: #685's two forms, the old module-level DIR = OUT / "cut_copy"
+        and the old module's own OUT = Path(os.environ.get("OUT", ROOT / "tests" / "out")), and the
+        cache form SHARED_OUT / name, are found; the per-test forms are not."""
+        old = ('import os\nfrom pathlib import Path\nfrom _fixtures import OUT, SHARED_OUT\nROOT = Path(".")\n'
+               'MINE = Path(os.environ.get("OUT", ROOT / "tests" / "out"))\nDIR = OUT / "cut_copy"\nNEW = OUT.sub("cut_copy")\n'
+               'class T:\n    def test_a(self):\n        out = DIR / "copy_4.3.mp4"\n        cut_json(self.src, "-o", out)\n'
+               '        (MINE / "c_identity.cube").write_text("x")\n        s = SHARED_OUT / "c_source601.mp4"\n'
+               '        ffmpeg("-i", self.src, "-c:v", "libx264", s)\n        t = Path(tempfile.gettempdir()) / f"{self.id()}.json"\n'
+               '        t.write_text("{}")\n'
+               '    def test_b(self):\n        cut_json(self.src, "-o", NEW / "a.mp4")\n        (OUT / "b.txt").write_text("x")\n'
+               '        (SHARED_OUT / "source.mp4").exists()\n        ffmpeg("-i", SHARED_OUT / "source.mp4", OUT / "c.mp4")\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "test_old.py"
+            f.write_text(old, encoding="utf-8")
+            found = shared_writes(f)
+        self.assertEqual([h.split(" (line")[0] for h in found],
+                         ["test_old.py:test_a: MINE / 'c_identity.cube'", "test_old.py:test_a: out",
+                          "test_old.py:test_a: s", "test_old.py:test_a: t"], found)
+
+    def test_no_grader_fills_a_slot_with_a_word_that_contains_its_stem(self):
+        """The evals slot form: evals/run.py filled `cut` from "execute". Every grader in evals/
+        that reads a prompt's `expect` decides each slot with run._slot_hit and tests no alternative
+        with `in` by hand; and for every slot of every corpus, _slot_hit, run.score and
+        grade_runs_25.grade leave it unfilled by its stem in prose, in a longer word, in another
+        file of the same stem, in another case or as a longer flag, and fill it with the call."""
+        sys.path.insert(0, str(ROOT / "evals"))
+        try:
+            run = importlib.import_module("run")
+            g25 = importlib.import_module("grade_runs_25")
+        finally:
+            sys.path.remove(str(ROOT / "evals"))
+        bypass = {}
+        for p in sorted((ROOT / "evals").rglob("*.py")):
+            src = p.read_text(encoding="utf-8")
+            tree = ast.parse(src)
+            reads_expect = any(isinstance(n, ast.Constant) and n.value == "expect" for n in ast.walk(tree))
+            if reads_expect and p.name != "run.py" and "_slot_hit" not in src:
+                bypass[p.name] = "reads expect without run._slot_hit"
+            if _hand_rolled_slot_tests(tree):
+                bypass[p.name] = f"tests a slot alternative with `in` at lines {_hand_rolled_slot_tests(tree)}"
+        self.assertEqual(bypass, {}, "a grader with its own slot matcher")
+        slots = set()
+        for f in sorted((ROOT / "evals").glob("*.json")):
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            items = raw.get("tasks", []) if isinstance(raw, dict) else raw
+            slots |= {e for t in items if isinstance(t, dict) for e in (t.get("expect") or []) if isinstance(e, str)}
+        self.assertGreater(len(slots), 40, "the corpora's slots were read")
+        filled, missed = {}, {}
+        with tempfile.TemporaryDirectory() as tmp:
+            for i, slot in enumerate(sorted(slots)):
+                neg, pos = _slot_negatives(slot)
+                for text in neg:
+                    d = Path(tmp) / f"n{i}"
+                    d.mkdir(exist_ok=True)
+                    (d / "transcript.txt").write_text(text + "\n\n## Report\nDone: out.mp4\n", encoding="utf-8")
+                    verdicts = {"_slot_hit": run._slot_hit(slot, text), "score": run.score(text, {"expect": [slot]})[0],
+                                "grade_runs_25": g25.grade({"id": "n", "expect": [slot]}, d)["verdict"] == "pass"}
+                    if any(verdicts.values()):
+                        filled.setdefault(slot, []).append((text, [k for k, v in verdicts.items() if v]))
+                for text in pos:
+                    d = Path(tmp) / f"p{i}"
+                    d.mkdir(exist_ok=True)
+                    (d / "transcript.txt").write_text(text + "\n\n## Report\nDone: out.mp4\n", encoding="utf-8")
+                    # grade_runs_25 reads commands only (`$ ` lines); an MCP tool name is not one there
+                    if not run._slot_hit(slot, text) or (text.startswith("$ ") and g25.grade({"id": "p", "expect": [slot]}, d)["verdict"] != "pass"):
+                        missed.setdefault(slot, []).append(text)
+        self.assertEqual(filled, {}, "slots a text that calls none of their scripts fills")
+        self.assertEqual(missed, {}, "slots the call itself does not fill (the negatives above would prove nothing)")
 
 
 class GuardRegistryTests(unittest.TestCase):
