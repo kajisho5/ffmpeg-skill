@@ -28,6 +28,7 @@ the largest of its channels):
 Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF) are not measured: this machine has none.
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -116,7 +117,9 @@ LOCK = threading.Lock()
 
 def mezzanine(work, name, size):
     w, h = size
-    out = work / f"m_{name}_{w}x{h}.mkv"
+    # named by the fixture as well: a resumed --work made before the fixture changed is not reused
+    digest = hashlib.sha1(SYNTHETIC.get(name, name).encode()).hexdigest()[:8]
+    out = work / f"m_{name}_{w}x{h}_{digest}.mkv"
     with LOCK:  # one writer per file: a second job read a half-written one
         if not out.exists():
             part = out.with_suffix(".part.mkv")

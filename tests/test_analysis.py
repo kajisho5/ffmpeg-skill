@@ -2924,7 +2924,8 @@ class TimestampSeekTests(unittest.TestCase):
         def luma(path, at):
             raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:V:0", "-vf", f"select=gte(t\\,{at}),scale=32:18",
                                   "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
-            return sum(raw) / max(1, len(raw))
+            self.assertEqual(len(raw), 32 * 18, f"no frame at {at} s in {path}")
+            return sum(raw) / len(raw)
         for ext in (".mp4", ".ts"):
             with self.subTest(ext=ext):
                 out = OUT / f"tsseek_fade_{ext[1:]}.mp4"

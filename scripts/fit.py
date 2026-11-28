@@ -808,7 +808,7 @@ def main() -> int:
     # ---- fades: last, so they are drawn on the frame that is delivered, over its final length, on
     # the clock the output-side seek drops its margin from (as the zoom's t0): the fades ran inside
     # the dropped margin, and a 10 s MPEG-TS margin left a --fade-out output black
-    for kind, secs, at in (("in", args.fade_in, out_seek), ("out", args.fade_out, out_seek + total - args.fade_out)):
+    for kind, secs, at in (("in", args.fade_in, out_seek), ("out", args.fade_out, out_seek + max(total - args.fade_out, 0))):
         if secs > 0 and total > 0:
             vf.append(f"fade=t={kind}:st={max(at, 0):.3f}:d={secs:g}")
             af += [f"afade=t={kind}:st={max(at, 0):.3f}:d={secs:g}"] if has_audio else []
