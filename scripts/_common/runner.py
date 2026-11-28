@@ -35,6 +35,52 @@ INSTALL_HINTS = {
 }
 
 MCP_PROGRESS_ENV = "FFMPEG_SKILL_MCP_PROGRESS"
+# render.py's one-pass render (#357) to its own children, as MCP_PROGRESS_ENV is: no flag, so not in
+# the contract. {input, output, meta, recipe, vf, af}: probe(input) reads as `meta` says (the frame
+# an earlier stage plans), and the ffmpeg command that writes `output` is printed instead of run
+# (`recipe`) or reads `input` through the earlier stages' filters (`vf`, `af`)
+STAGE_ENV = "FFMPEG_SKILL_STAGE"
+
+
+def stage_spec() -> Dict[str, Any]:
+    try:
+        spec = json.loads(os.environ.get(STAGE_ENV) or "{}")
+    except ValueError:
+        return {}
+    return spec if isinstance(spec, dict) else {}
+
+
+def planned_input(path: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    spec = stage_spec()
+    if spec.get("meta") and os.path.abspath(path) == os.path.abspath(spec.get("input") or "") and meta.get("video"):
+        return dict(meta, video=dict(meta["video"], **spec["meta"]))
+    return meta
+
+
+def _joined(pre: str, own: Optional[str]) -> str:
+    """`pre` then the tool's own chain; a trailing rate filter goes first when `pre` is a graph,
+    where it would lose the last frame (chain_with_rate())."""
+    head, _, last = (own or "").rpartition(",")
+    if ";" in pre and last.startswith("fps="):
+        return ",".join(x for x in (last, pre, head) if x)
+    return ",".join(x for x in (pre, own) if x)
+
+
+def _stage_command(cmd: List[str], ctx: "Context") -> List[str]:
+    spec = stage_spec()
+    if not spec or len(cmd) < 2 or os.path.abspath(cmd[-1]) != os.path.abspath(spec.get("output") or "-"):
+        return cmd
+    if spec.get("recipe"):
+        sys.stdout.write(json.dumps({"status": "recipe", "command": list(cmd), "notes": ctx.notes, "diagnostics": {
+            "warnings": ctx.warnings, "fallbacks": ctx.fallbacks, "skipped": ctx.skipped}, **ctx.recipe_extra}) + "\n")
+        sys.exit(0)
+    cmd = list(cmd)
+    for flag in ("-vf", "-af"):
+        if spec.get(flag[1:]) and flag in cmd:
+            cmd[cmd.index(flag) + 1] = _joined(spec[flag[1:]], cmd[cmd.index(flag) + 1])
+        elif spec.get(flag[1:]):
+            cmd[-1:-1] = [flag, spec[flag[1:]]]
+    return cmd
 _PROGRESS_PREFIX = "[ffmpeg-skill progress] "
 
 # For an FFmpeg that is on PATH but older than MIN_FFMPEG (#467 A226): reinstalling the
@@ -400,7 +446,7 @@ class Context:
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "time_mapped", "watched", "temp_dirs", "side_deliveries",
                  "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
-                 "sequence_frames_sha256", "encode_policy")
+                 "sequence_frames_sha256", "encode_policy", "recipe_extra")
 
     def __init__(self) -> None:
         self.reset()
@@ -461,6 +507,7 @@ class Context:
         # tool reported, tagged with `stage`, which emit() adds to this result's own so that
         # `verified` is the conjunction of every stage's (absorb_stage())
         self.stage_verification: List[Dict[str, Any]] = []
+        self.recipe_extra: Dict[str, Any] = {}  # what a stage adds to its recipe for render.py's one-pass render (#357)
 
 
 STATE = Context()
@@ -498,11 +545,16 @@ def _teach(ap: "argparse.ArgumentParser", message: str = "") -> str:
             tools = sorted(n for n in os.listdir(here) if n[0] != "_" and n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, n), encoding="utf-8").read())
             tips += (f"\n{flag} is not an option of this tool" + (f"; did you mean {' or '.join(near)}?" if near else "") + (f"; {' and '.join(said)} mention '{word}'" if said else "")
                      + (f" ({', '.join(tools)} take {flag})" if tools else ""))
-            fix[flag] = (near + said)[0] if len(near + said) == 1 else None
+            # an answer is one option spelt like a flag no tool takes (in its own file or a shared one): another tool's flag, an
+            # option sharing a word or one the help mentions mean something else (speedramp --ramp 3:6:0.5 is not --segment 3:6:0.5)
+            taken = tools or [n for n in os.listdir(os.path.join(here, "_common")) if n.endswith(".py") and f'"{flag}"' in open(os.path.join(here, "_common", n), encoding="utf-8", errors="replace").read()]
+            fix[flag] = (near + said)[0] if len(near + said) == 1 and not taken and difflib.get_close_matches(flag, near, 1, 0.85) else None
     # a choice with one near neighbour or a common other word for it, and a number written with its unit (-30dB, 0.8s, 1080px)
     wrong = re.search(r"invalid choice: '([^']+)' \(choose from (.*)\)", message)
     if wrong:
-        fix[wrong[1]] = (difflib.get_close_matches(_OTHER_WORDS.get(wrong[1].lower(), wrong[1]), [c.strip(" '") for c in wrong[2].split(",")], 1, 0.6) or [None])[0]
+        # the other word only when it is a choice: strong is high, never the platform nearest to 'high' (ig); Python 3.13 drops the quotes
+        choices = [c.strip(" '") for c in wrong[2].split(",")]
+        fix[wrong[1]] = _OTHER_WORDS[wrong[1].lower()] if _OTHER_WORDS.get(wrong[1].lower()) in choices else (difflib.get_close_matches(wrong[1], choices, 1, 0.6) or [None])[0]
     words: List[str] = []
     for a in ([] if None in fix.values() else sys.argv[1:]):
         name, eq, rest = a.partition("=")
@@ -644,13 +696,14 @@ def apply_common(args: "argparse.Namespace") -> None:
         env_limit, env_problem = _read_env_timeout()
         if env_problem:
             warn(env_problem, "timeout_env_invalid", value=os.environ.get("FFMPEG_SKILL_TIMEOUT"), timeout=env_limit)
-    # one step for every number a tool takes (#645): the range its help states as a..b is the range it
-    # takes, a negative needs a help that names one, and nothing but a sample count is past a million
+    # one step for every number a tool takes (#645): the range its help states as a..b or "> 0" (#749)
+    # is the range it takes, a negative needs a help that names one, and nothing but a sample count is past a million
     for a in getattr(getattr(STATE, "parser", None), "_actions", ()):
         v, text = getattr(args, a.dest, None), a.help or ""
-        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", text)
+        span = re.search(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)|> 0\b", text)
         if a.type in (int, float) and isinstance(v, (int, float)) and v != a.default and a.dest not in ("timeout", "length_samples") and (
-                not float(span[1]) <= v <= float(span[2]) if span else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
+                (not 0 < v <= 1e6 if span[0] == "> 0" else not float(span[1]) <= v <= float(span[2])) if span
+                else abs(v) > 1e6 or (v < 0 and not re.search(r"-\d|dB|degree|stops", text))):
             die(f"{next((o for o in a.option_strings if o in [x.split('=')[0] for x in sys.argv[1:]]), a.option_strings[0])} {v:g} is outside what this option takes" + (f", {span[0]}" if span else ""), hint=text.replace("%%", "%") or None)
     STATE.encode_policy = _apply_encode_policy(args)
     if STATE.fast and getattr(args, "preset", None) in X264_PRESETS:
@@ -2760,7 +2813,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         # that conversion as a -vf; it joins the tool's own graph here, before anything records
         # or runs the command (color.py imports this module, hence the late import)
         from _common.color import fold_bt709_matrix
-        cmd = pin_aac_coder(fold_bt709_matrix(cmd))
+        cmd = _stage_command(pin_aac_coder(fold_bt709_matrix(cmd)), ctx)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_output_extension(cmd)

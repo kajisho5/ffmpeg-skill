@@ -55,14 +55,14 @@ from _common import require_filter, emoji_filter_chain, EMOJI_ASSET_HINT, emoji_
 from _common import asr as _asr
 from _common.asr import ENGINE_CHOICES
 from _common.decision import ntsc_rate
-from _common.emit import note, warn
+from _common.emit import file_origin, note, own_end, warn
 from _common.placement import measure_placement, sample_cues
-from _common.probe import display_size, square_pixels, square_pixels_note
+from _common.probe import display_size, sound_clock, square_pixels, square_pixels_note
 from _common.runner import carried_stream_maps, refuse_output_is_input, same_file, subtitle_codec_for, subtitle_container_holds
 from _common.fonts import font_choice, fonts_dir_face, record_font_choice, require_font_file
 from _common import (ASR_INSTALL_HINT, die_no_engine, parse_srt, transcribe, whisper_word_timings,
                      write_srt)
-from _common.asr import srt_blocks
+from _common.asr import srt_file_blocks
 from _common.runner import absent_word, normalize_text
 from _common import (SAFE_WIDTH_FRACTION, ORPHAN_MIN_EM, WRAP_MODES, wrap_text, wrap_variants, best_break,
                      fit_size, line_em_for_size, MIN_CAPTION_FRACTION,
@@ -248,10 +248,12 @@ def word_durations_from_audio(video: str, start: float, end: float, n_words: int
     if n_words <= 1:
         return [total_cs]
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", f"{start:.3f}", "-i", video,
+    # -copyts and the shift: an MPEG-TS/PS counts a sound-only decode from the sound's own start (#787)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts", "-ss", f"{start:.3f}", "-i", video,
            "-map", f"0:a:{audio_stream}", "-t", f"{end - start:.3f}", "-vn",
            # a sound that starts late is padded to its place on the file's clock (#414)
-           "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+           "-af", sound_clock(probe(video, required=False), start),
+           "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)  # under --timeout like every other measurement
     n = len(proc.stdout) // 2
     if proc.returncode != 0 or n < 800:
@@ -369,7 +371,7 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
     # --- the PNG overlay route -------------------------------------------------------------
     if not play_w or not play_h:
         return cues, plan
-    scale = float(getattr(args, "emoji_scale", 1.0) or 1.0)
+    scale = float(getattr(args, "emoji_scale", 1.0))
     # --animate moves the TEXT (\fad/\fscx in the ASS); the PNG has to move with it, or the emoji
     # pops in against a line that is still fading up. These match the \fad values below.
     fade_in, fade_out = (ms / 1000.0 for ms in ANIMATE_FADE_MS.get(getattr(args, "animate", None) or "none", (0, 0)))
@@ -451,14 +453,18 @@ def plan_emoji(cues, args, play_w, play_h, brand=None):
 def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float], max_lines: int,
                 min_duration: float, offset: float, wrap: str = "phrase",
                 lang: Optional[str] = None, per_cue_em: Optional[List[Optional[float]]] = None,
-                per_cue_size: Optional[List[int]] = None) -> Tuple[List[Tuple[float, float, str]], dict]:
+                per_cue_size: Optional[List[int]] = None,
+                picture_end: Optional[float] = None) -> Tuple[List[Tuple[float, float, str]], dict]:
     """Shift, wrap, split and lengthen cues so they can actually be read.
 
     `offset` moves every cue (a transcript that runs early/late); `max_em` wraps each cue to the
     safe area at the chosen size (None when no video geometry is known, e.g. --write-srt alone);
     a cue needing more than `max_lines` lines is split into consecutive cues sharing its time in
     proportion to their text; a cue shorter than `min_duration` is lengthened, never past the next
-    cue's start. Returns the new cues and a count of what changed.
+    cue's start or the picture's end (#776). A cue that starts before `picture_end` and would end
+    after it, lengthened or as asked, ends with the picture and is named in `stats["held"]`; one
+    that starts at or after it keeps its own times.
+    Returns the new cues and a count of what changed.
 
     `per_cue_em` (--fit-size-scope cue) gives cue i its OWN line budget instead of the file's:
     a cue drawn at a larger size has a narrower line in em, and wrapping it to the file-wide
@@ -533,14 +539,21 @@ def layout_cues(cues: List[Tuple[float, float, str]], *, max_em: Optional[float]
         staged.append((start, end, text))
         staged_sizes.append(own_size)
     out: List[Tuple[float, float, str]] = []
+    held: List[str] = []
     for i, (start, end, text) in enumerate(staged):
+        new_end = end
         if min_duration and end - start < min_duration:
             limit = staged[i + 1][0] if i + 1 < len(staged) else None
-            new_end = start + min_duration if limit is None else min(start + min_duration, limit)
-            if new_end > end:
-                stats["extended"] += 1
-                end = new_end
-        out.append((start, end, text))
+            new_end = max(end, start + min_duration if limit is None else min(start + min_duration, limit))
+        if picture_end is not None and start < picture_end < new_end:
+            held.append(f"cue {i + 1} ends with the picture at {picture_end:.3f} s, not at {new_end:.3f} s "
+                        + ("(--min-duration)" if new_end > end else "(its own end)"))
+            new_end = picture_end
+        elif picture_end is not None and start >= picture_end:
+            new_end = end  # wholly after the picture: kept as asked, never lengthened past it
+        stats["extended"] += new_end > end
+        out.append((start, new_end, text))
+    stats["held"] = held
     if per_cue_size is not None:
         stats["cue_sizes"] = staged_sizes
     return out, stats
@@ -1147,8 +1160,9 @@ def track_title_for(code: Optional[str], given: Optional[str]) -> Optional[str]:
 
 
 # a timing line in the grammar ffmpeg's SRT demuxer and parse_srt() read alike: hours, minutes,
-# seconds and three-digit milliseconds on both sides (ffmpeg allows position fields after it)
-_SHARED_SRT_TIMING = re.compile(r"^\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}(\s.*)?$")
+# seconds and three-digit milliseconds on both sides (ffmpeg allows position fields after it), in
+# the digits 0-9: srt_file_blocks() refuses a timing line in other digits, which ffmpeg cannot read
+_SHARED_SRT_TIMING = re.compile(r"^\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2,}:\d{2}:\d{2}[,.]\d{3}(\s.*)?$", re.ASCII)
 
 
 def srt_timings_shared_grammar(path: str) -> bool:
@@ -1157,7 +1171,7 @@ def srt_timings_shared_grammar(path: str) -> bool:
     parse_srt() reads 1.5 s (#414); such a file is handed to ffmpeg as a rewritten copy."""
     # the timing lines parse_srt() reads, grouped as it groups them (srt_blocks()): a later line
     # that only holds "-->" is dialogue, not a timing this check should judge
-    return all(_SHARED_SRT_TIMING.match(times) for times, _body in srt_blocks(read_text_or_die(path, "--srt")))
+    return all(_SHARED_SRT_TIMING.match(times) for times, _body in srt_file_blocks(path)[1])
 
 
 def mux_subtitle_codec(output: str) -> str:
@@ -1258,7 +1272,7 @@ def main() -> int:
     sty.add_argument("--brand", help="brand.json: font, colours, caption size/position/animation defaults")
     sty.add_argument("--font", default=None, help="font family, e.g. 'Noto Sans CJK JP' for Japanese (default DejaVu Sans or brand font)")
     sty.add_argument("--fonts-dir", help="directory with extra .ttf/.otf files")
-    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points (relative to a 288p script height, scales automatically)")
+    sty.add_argument("--font-size", "--size", dest="size", type=int, default=None, help="font size in ASS points, 1..2000 (relative to a 288p script height, scales automatically)")
     sty.add_argument("--color", default=None, help="text colour RRGGBB (default FFFFFF or brand text colour)")
     sty.add_argument("--outline-color", default=None, help="outline colour RRGGBB")
     sty.add_argument("--outline", type=float, default=None, help="outline width (default 2)")
@@ -1281,7 +1295,7 @@ def main() -> int:
                           "Twemoji's assets/72x72 or Noto Emoji's png/128. Nothing is ever downloaded; "
                           "also read from brand.json styles.caption.emoji_assets and FFMPEG_SKILL_EMOJI_ASSETS")
     emo.add_argument("--emoji-scale", type=float, default=1.0,
-                     help="emoji box as a multiple of the line's font size (default 1.0)")
+                     help="emoji box as a multiple of the line's font size, > 0 (default 1.0)")
     emo.add_argument("--emoji-max", type=int, default=60,
                      help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
@@ -1294,7 +1308,7 @@ def main() -> int:
     sty.add_argument("--fit-size-scope", choices=["file", "cue"], default="file",
                      help="one fitted size for the whole file (default) or one per cue (a size that changes "
                           "cue to cue reads as a mistake, so it is opt-in)")
-    sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue (default 1.0)")
+    sty.add_argument("--min-duration", type=float, default=1.0, help="shortest time a cue stays on screen in seconds, never past the next cue or the end of the picture (default 1.0)")
     sty.add_argument("--wrap", choices=list(WRAP_MODES), default="phrase",
                      help="line breaking for wide cues: phrase-aware (phrase, default) or width-only (measured). "
                           "Both preserve text, timing and line count.")
@@ -1525,12 +1539,16 @@ def main() -> int:
                                  max_lines=args.max_lines, min_duration=args.min_duration,
                                  offset=args.offset, wrap=args.wrap, lang=args.language,
                                  per_cue_em=getattr(args, "_fit_cue_em", None),
-                                 per_cue_size=getattr(args, "_fit_cue_size", None))
+                                 per_cue_size=getattr(args, "_fit_cue_size", None),
+                                 picture_end=(own_end(meta["video"]) or math.inf) - file_origin(meta) if meta else None)
         # which size each OUTPUT cue belongs to, after splits have renumbered them
         args._fit_sizes_out = stats.pop("cue_sizes", None)
         report_layout(stats)
+        for line in stats["held"]:  # the delivery is never made longer than its picture (#776)
+            note(line)
         caption_stats.clear()
         caption_stats.update(stats)
+        caption_stats.pop("held")
         caption_stats.update(fit_stats)
         return out, any(v for k, v in stats.items() if k != "wrap")
 
@@ -2162,10 +2180,6 @@ def main() -> int:
         cmd += ["-map", f"0:a:{args.audio_stream}"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
-    run(cmd)
-    result = probe(output, role="output")
-    info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
-    extra = {"notes": side_notes} if side_notes else {}
     # 1.17.1: say so when the words on screen are the words that were handed in. This tool never
     # rewrites, shortens or translates a cue -- only line breaks, timing and type size move -- so
     # the honest sentence in a report ("the text is yours, unchanged") needs no extra judgement.
@@ -2181,6 +2195,11 @@ def main() -> int:
     if caption_stats["text_unchanged"]:
         info("caption text unchanged: the cues were burned exactly as given (line breaks, timing "
              "and type size only)")
+    STATE.recipe_extra = {"caption": dict(caption_stats, **ass_counts)}  # render.py's one-pass render (#357)
+    run(cmd)
+    result = probe(output, role="output")
+    info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
+    extra = {"notes": side_notes} if side_notes else {}
     extra["caption"] = dict(caption_stats, **ass_counts)
     extra["font_used"] = font_used
     if not STATE.dry_run:  # the union of the cues' boxes, at the middle of each (the longest always one)
