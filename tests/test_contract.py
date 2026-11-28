@@ -12936,6 +12936,86 @@ class SharedCodeAudit465Tests(unittest.TestCase):
         self.assertEqual([p.name for p in outdir.iterdir() if p.name.endswith(".ffskill-lock")], [],
                          "a timed-out step left its output lock")
 
+    @unittest.skipIf(os.name == "nt", "no SIGTERM handler runs on Windows (A183)")
+    def test_a_stop_inside_a_lock_s_making_or_a_child_s_start_leaves_nothing(self):
+        """The test above failed once on a slow macOS runner: verify.py's 1 s limit sent the export
+        step its SIGTERM while export.py was making its output lock (after the lock's link, before
+        the with block began), and the handler's exit never reached the lock's removal. The same
+        window inside the lock's removal, and between a child's start and _watch(): the stop did not
+        know the child, which ran on and wrote (ffmpeg under run(), a sibling script and its lock under
+        run_tool(), verify.py's step). The child script below sends itself SIGTERM in each window."""
+        script = self.work / "window_child.py"
+        sibling = self.work / "window_sibling.py"
+        sibling.write_text(
+            "import sys\nsys.path.insert(0, sys.argv[1])\nimport _common\nfrom _common import runner\n"
+            "runner.install_signal_handlers()\n"
+            "_common.run(_common.ffmpeg_base() + ['-re', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=25:d=20',"
+            " '-c:v', 'libx264', '-preset', 'ultrafast', sys.argv[2]])\n", encoding="utf-8")
+        script.write_text(textwrap.dedent("""
+            import os, signal, subprocess, sys, time
+            sys.path.insert(0, sys.argv[1])
+            import _common
+            from _common import runner
+            runner.install_signal_handlers()
+            where, out, sibling = sys.argv[2], sys.argv[3], sys.argv[4]
+            stop = lambda: os.kill(os.getpid(), signal.SIGTERM)
+            link, acquire, popen = os.link, runner._TakeoverSection.acquire, subprocess.Popen.__init__
+
+            def until(ready):  # the child has started writing: its output or its lock is there
+                deadline = time.monotonic() + 20
+                while not ready() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+
+            def started(self, args, *a, **k):
+                popen(self, args, *a, **k)
+                if where == "run" and list(args)[-1:] == [out]:  # the encode, not a capability check
+                    until(lambda: os.path.exists(out))
+                    stop()
+                if where == "run_tool" and list(args)[1:2] == [sibling]:
+                    until(lambda: os.path.exists(os.path.join(os.path.dirname(out), "." + os.path.basename(out) + ".ffskill-lock")))
+                    stop()
+                if where == "batch" and str(list(args)[1:2]).endswith("fit.py']"):  # batch.py's own handler
+                    with open(out + ".pid", "w") as f:
+                        f.write(str(self.pid))
+                    until(lambda: any(n.endswith(".ffskill-lock") for _d, _s, names in os.walk(out + ".d") for n in names))
+                    stop()
+            subprocess.Popen.__init__ = started
+            if where == "enter":
+                os.link = lambda src, dst: (link(src, dst), dst.endswith(".ffskill-lock") and stop())[0]
+            if where == "exit":
+                runner._TakeoverSection.acquire = lambda self, *a, **k: (stop(), acquire(self, *a, **k))[1]
+            if where == "run_tool":
+                runner.run_tool([sibling, sys.argv[1], out])
+            elif where == "batch":
+                import runpy
+                sys.argv = [os.path.join(sys.argv[1], "batch.py"), out + ".d/in", "--recipe", out + ".d/r.json", "--json"]
+                runpy.run_path(sys.argv[0], run_name="__main__")
+            else:
+                _common.run(_common.ffmpeg_base() + ["-re", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:d=" +
+                            ("20" if where == "run" else "0.2"), "-c:v", "libx264", "-preset", "ultrafast", out])
+            """), encoding="utf-8")
+        folder = self.work / "window_batch.mp4.d"
+        (folder / "in").mkdir(parents=True)
+        ffmpeg("-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:d=60", "-c:v", "libx264", "-preset", "ultrafast",
+               str(folder / "in" / "a.mp4"))
+        (folder / "r.json").write_text(json.dumps({"glob": "*.mp4", "output_dir": str(folder / "out"), "steps": [
+            ["fit.py", "{in}", "--aspect", "1:1", "--fit", "pad", "-o", "{out}"]]}), encoding="utf-8")
+        for where in ("enter", "exit", "run", "run_tool", "batch"):
+            with self.subTest(where):
+                out = self.work / f"window_{where}.mp4"
+                proc = subprocess.run([sys.executable, str(script), str(SCRIPTS), where, str(out), str(sibling)],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(proc.returncode, 143, proc.stderr[-800:])
+                if where == "batch":
+                    # the step was stopped (and waited for) before batch.py exited: it no longer runs
+                    pid = int((self.work / "window_batch.mp4.pid").read_text())
+                    with self.assertRaises(ProcessLookupError, msg="the step batch.py started runs on"):
+                        os.kill(pid, 0)
+                    continue
+                left = sorted(p.name for p in self.work.iterdir() if p.name.startswith((out.name, "." + out.name)))
+                self.assertEqual(left, [] if where != "exit" else [out.name],
+                                 "the lock is removed, and a stopped child's partial output with it")
+
     def test_an_unknown_colour_name_is_refused_before_ffmpeg(self):
         """A189: validate_color() took any word, so `grey` (ffmpeg says gray) failed inside ffmpeg
         as kind ffmpeg after a dry run that had completed."""

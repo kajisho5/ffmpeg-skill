@@ -931,7 +931,26 @@ def _kept_fields() -> Dict[str, Any]:
     return {"output": out} if out else {}
 
 
-_STOPPING = {"signal": None}
+_STOPPING: Dict[str, Any] = {"signal": None, "held": 0}
+_LOCKS: List["_OutputLock"] = []  # the output locks this process holds (registered once made)
+
+
+# In the main thread, a SIGINT/SIGTERM that arrives in the block is handled when the block ends.
+# A stop between a child's start and _watch() did not stop the child, which wrote on; one inside
+# an output lock's creation or removal left the lock (#465: a verify.py step stopped by --timeout
+# while export.py was making its lock, on a slow macOS runner).
+@contextlib.contextmanager
+def _signals_held() -> Any:
+    import threading
+    main = threading.current_thread() is threading.main_thread()
+    _STOPPING["held"] += main
+    try:
+        yield
+    finally:
+        _STOPPING["held"] -= main
+        if main and not _STOPPING["held"] and _STOPPING.get("pending") is not None:
+            handler, signum = _STOPPING.pop("pending")  # _on_signal, or batch.py's own handler
+            handler(signum, None)
 
 
 def _on_signal(signum: int, frame: Any) -> None:
@@ -943,9 +962,14 @@ def _on_signal(signum: int, frame: Any) -> None:
         # lock and its takeover file beside the output (#510). The parent's SIGKILL after
         # STOP_GRACE still ends a cleanup that hangs.
         return
+    if _STOPPING["held"]:
+        _STOPPING["pending"] = (_on_signal, signum)
+        return
     _STOPPING["signal"] = signum
     name = {getattr(_signal, "SIGINT", None): "SIGINT", getattr(_signal, "SIGTERM", None): "SIGTERM"}.get(signum, str(signum))
     stop_children()
+    for lock in list(_LOCKS):
+        lock.__exit__()  # here: a stop held to the end of a lock's __enter__ unwinds through no with block
     die(f"interrupted by {name}: the running command was stopped and its partial output removed; {kept_clause()}",
         code=128 + signum, kind="interrupted", **_kept_fields())
 
@@ -1934,6 +1958,13 @@ class _OutputLock:
         self.path = os.path.join(d, f".{base}.ffskill-lock")
 
     def __enter__(self) -> "_OutputLock":
+        # a stop waits for the lock to be made and registered, then removes it (_on_signal): one
+        # between the lock's creation and the with block left it (#465)
+        with _signals_held():
+            _LOCKS.append(self._acquire())
+        return self
+
+    def _acquire(self) -> "_OutputLock":
         if not self.path:
             return self
         try:
@@ -2115,6 +2146,12 @@ class _OutputLock:
         record_fallback(f"took over the stale output lock {self.path}: {why}", "stale_lock_taken_over", **details)
 
     def __exit__(self, *exc: Any) -> None:
+        with _signals_held():  # a stop during the removal waits for its end (#465)
+            self._release()
+            if self in _LOCKS:
+                _LOCKS.remove(self)
+
+    def _release(self) -> None:
         """Remove this run's own lock, inside the takeover section: a holder past its deadline
         whose lock another run is taking over, or has taken over, never removes that run's lock
         by its name. On POSIX the lock at the name is removed only when it is still this run's
@@ -3207,8 +3244,9 @@ def run_tool(argv: Sequence[str], *, per_call: Optional[float] = None,
     # its own stdin, never ours: under the MCP server ours is the client's JSON-RPC pipe, and on
     # Windows a Python child that inherited it did not finish exiting while the client held it open,
     # so the answer to tools/call was written only when the client hung up (#664)
-    child = subprocess.Popen([sys.executable] + list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
-    _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
+    with _signals_held():  # watched before a stop is handled: an unwatched one ran on, writing (#465)
+        child = subprocess.Popen([sys.executable] + list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+        _watch(child, [])  # a sibling script removes its own partial output; there is none of ours to clean
     if on_start is not None:
         on_start(child)
     report = on_progress
@@ -3527,9 +3565,10 @@ def child_kwargs() -> Dict[str, Any]:
 def _run_captured(cmd: List[str]) -> subprocess.CompletedProcess:
     """Plain run with stdout/stderr captured."""
     limit = _limit_for(cmd)
-    child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                             **child_kwargs())
-    _watch(child, cmd)
+    with _signals_held():  # watched before a stop is handled (#465)
+        child = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                 **child_kwargs())
+        _watch(child, cmd)
     try:
         out, err = child.communicate(timeout=limit)
     except subprocess.TimeoutExpired:
@@ -3564,9 +3603,10 @@ def _run_with_progress(cmd: List[str]) -> subprocess.CompletedProcess:
     full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
     t0 = time.time()
     limit = _limit_for(cmd)
-    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                            **child_kwargs())
-    _watch(proc, cmd)
+    with _signals_held():  # watched before a stop is handled (#465)
+        proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                **child_kwargs())
+        _watch(proc, cmd)
     assert proc.stdout is not None and proc.stderr is not None
     lines: "queue.Queue[Optional[str]]" = queue.Queue()
     err_chunks: List[str] = []

@@ -38,7 +38,7 @@ from _common.runner import (with_flags, ENCODE_ENV, HW_FORCED_ENV, OWNED_ENV, _O
                             owned_identity, stop_children)
 from _common.emit import absorb_stage_hw, audit, note, record_skip, shown, steps_encoder_report, warn
 from _common.decision import NO_DEFAULT_ENCODE_EXT, brand_asset_files, rebase_project_paths
-from _common.runner import parse_json, refuse_outside_roots
+from _common.runner import parse_json, refuse_outside_roots, _STOPPING
 
 HERE = Path(__file__).resolve().parent
 MEDIA_EXT = {e for e in _MEDIA_EXT if e not in (".png", ".jpg", ".jpeg", ".webp")}  # one list (_common); a batch walks media, not stills
@@ -929,6 +929,9 @@ def main() -> int:
             # a second signal while the first one's stop runs (Ctrl-C reaches the whole group, and a
             # parent then sends SIGTERM): raising again broke into the stop or the table, and the
             # exit code became the second signal's (#510 review; runner._on_signal() does the same)
+            return
+        if _STOPPING["held"]:  # a step started and not yet watched: handled once it is (#465)
+            _STOPPING["pending"] = (_interrupt, signum)
             return
         interrupted["signal"] = signum
         _STOP.set()

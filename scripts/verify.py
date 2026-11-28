@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from _common import STATE, add_common, apply_common, die, emit, guard_sidecar, info, probe, refuse_output_is_input, MEDIA_EXT as _MEDIA_EXT
-from _common.runner import absent_word, file_arg, _stop_child, _unwatch, _watch
+from _common.runner import absent_word, file_arg, _signals_held, _stop_child, _unwatch, _watch
 
 HERE = Path(__file__).resolve().parent
 # _common's one list less the stills, as batch.py walks a folder: verify kept a list of its own,
@@ -145,12 +145,14 @@ def step(name: str, argv: List[str], timeout: float) -> Dict:
         return r
     # argv[1] is the step's input: one named -take.mp4 is given as ./-take.mp4, or the step's
     # parser reads it as an option (collect()'s Path drops a ./ the caller wrote, #558)
-    child = subprocess.Popen([sys.executable, str(HERE / argv[0]), file_arg(argv[1])] + argv[2:] + _forwarded(argv) + ["--json"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     # watched like run_tool()'s child (review of #530): a SIGTERM or Ctrl-C to verify.py stops the
     # step through stop_children() -- its own handler removes its partial output and lock --
-    # instead of leaving it running and writing after verify.py has exited
-    _watch(child, [])
+    # instead of leaving it running and writing after verify.py has exited; one that came before
+    # _watch() waits for it (#465)
+    with _signals_held():
+        child = subprocess.Popen([sys.executable, str(HERE / argv[0]), file_arg(argv[1])] + argv[2:] + _forwarded(argv) + ["--json"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        _watch(child, [])
     try:
         out, err = child.communicate(timeout=timeout or None)
         proc = subprocess.CompletedProcess(child.args, child.returncode, out, err)
