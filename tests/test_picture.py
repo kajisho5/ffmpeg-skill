@@ -1235,6 +1235,39 @@ class PictureTests(MediaFixtures):
         for code in ("en", "ja", "es"):
             self.assertIn(code, subs_row[0]["value"])
 
+    def test_a_cue_ends_with_the_picture_it_is_laid_on(self):
+        """#776: --min-duration lengthened a short last cue past the picture's end, so a 3.13 s
+        picture was muxed into a 3.8 s container (a copy export kept it) and the burn's adjusted
+        SRT named times past the last frame. Every path through layout_cues, by both reasons (the
+        minimum duration, the cue's own end), ends the cue with the picture and says so; a cue wholly
+        after the picture keeps its own times and is not lengthened."""
+        clip = OUT / "held_end_vfr.mp4"
+        sh("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=30:duration=4",
+           "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr", "-t", "3.22", "-c:v", "libx264",
+           "-preset", "veryfast", "-pix_fmt", "yuv420p", clip)
+        end = float(probe(str(clip))["video"]["duration"])
+        self.assertLess(end, 3.3)  # the fixture: a picture that ends before either cue would
+        for reason, last in (("--min-duration", "00:00:02,800 --> 00:00:03,000"), ("its own end", "00:00:02,800 --> 00:00:04,000")):
+            srt = OUT / "held_end.srt"
+            srt.write_text(f"1\n00:00:00,500 --> 00:00:02,000\nHello\n\n2\n{last}\nBye\n\n", encoding="utf-8")
+            for mode, ext in (("mux", ".mkv"), ("mux", ".mp4"), ("burn", ".mp4")):
+                with self.subTest(reason=reason, mode=mode, ext=ext):
+                    out = OUT / f"held_end_{mode}_{reason[:3].strip('-')}{ext}"
+                    for p in (out, out.with_name(out.stem + "_adjusted.srt")):
+                        p.unlink(missing_ok=True)
+                    doc = json.loads(script("caption.py", clip, "--mode", mode, "--srt", srt, "-o", out, "--json").stdout)
+                    self.assertIn(f"cue 2 ends with the picture at {end:.3f} s, not at "
+                                  f"{3.8 if reason == '--min-duration' else 4.0:.3f} s ({reason})", doc["notes"])
+                    self.assertLessEqual(doc["probe"]["duration"], end + 0.05, doc["wrote"])
+                    held = out.with_name(out.stem + "_adjusted.srt").read_text(encoding="utf-8")
+                    self.assertIn(f"00:00:02,800 --> 00:00:0{end:.3f}".replace(".", ","), held)
+        srt.write_text("1\n00:00:00,500 --> 00:00:02,000\nHello\n\n2\n00:00:03,500 --> 00:00:03,700\nlate\n\n", encoding="utf-8")
+        out = OUT / "held_end_after.mkv"
+        out.unlink(missing_ok=True)
+        doc = json.loads(script("caption.py", clip, "--mode", "mux", "--srt", srt, "-o", out, "--json").stdout)
+        self.assertAlmostEqual(doc["probe"]["duration"], 3.7, places=2)  # 4.5 when it was lengthened
+        self.assertFalse([n for n in doc.get("notes") or [] if "ends with the picture" in n])
+
     def test_offset_shifts_every_track_of_a_multi_track_mux(self):
         """Audit A61: --offset moved the first --srt of a multi-track mux and left the other
         languages where they were; the layout flags are the first track's, and a note says so."""

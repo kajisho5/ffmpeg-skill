@@ -52,7 +52,7 @@ def pad_filters(out_w: int, out_h: int, fill: str, color: str, blur: int, darken
     if fill == "blur":
         # boxblur rejects a radius larger than half the smaller dimension ("radius 20, must be
         # <= 8" on a 16 px target); clamp instead of failing an otherwise valid request
-        radius = max(1, min(int(blur), max(1, min(out_w, out_h) // 2 - 1)))
+        radius = min(int(blur), max(1, min(out_w, out_h) // 2 - 1))
         # left unset, the chroma radius was the luma one, and a 4:2:0 68x120 frame's 34x60 chroma
         # planes failed at 20 ("must be <= 17", #527). On a larger frame it is still the luma one
         chroma = boxblur_chroma_radius(radius)
@@ -83,7 +83,7 @@ def warn_mostly_cropped(video: Optional[Dict[str, Any]], out_w: int, out_h: int)
 def add_pad_fill_args(parser: "argparse.ArgumentParser") -> None:
     parser.add_argument("--pad-fill", choices=["color", "blur"], default="color",
                         help="what fills the letterbox/pillarbox bars under --fit pad: a solid --pad-color (default) or a blurred, scaled-up copy of the frame")
-    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur (default 20)")
+    parser.add_argument("--pad-blur", type=int, default=20, help="blur radius in pixels for --pad-fill blur, > 0 (default 20)")
 
 
 def aspect_ratio(value: Any) -> Optional[Fraction]:

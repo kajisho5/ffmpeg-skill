@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from _common.probe import SILENT_PEAK_DBFS
+from _common.probe import SILENT_PEAK_DBFS, sound_clock
 from _common.runner import path_denied
 from _common import STATE, add_common, dry_run_input_pending, require_tool, apply_common, audio_codec_for, db_to_linear, default_output, die, emit, ffmpeg_base, info, is_audio_output, measured_level_dbfs, probe, run, run_keeping_subtitles, fmt_secs
 from _common.emit import file_origin, own_length, refuse, stream_end, warn
@@ -655,7 +655,16 @@ def main() -> int:
         main_src = f"{idx}:a:0"
         idx += 1
 
-    fx: List[str] = []
+    clocked: List[str] = []
+
+    def clock(path: str, pad: bool = False) -> List[str]:
+        """A sound read alone on its file's clock (#787): an MPEG-TS/PS decode of it counted from
+        the sound's own start. Beside a copied picture (-copyts would move it) nothing moves; a
+        bed keeps a late start unpadded, as amix plays it from the output's start on any container."""
+        bed = {} if keep_video else probe(path, required=False)
+        clocked.extend([sound_clock(bed, pad=pad)] if bed.get("start_time") else [])
+        return clocked[-1:] if bed.get("start_time") else []
+    fx: List[str] = clock(args.replace or args.input, pad=True)
     if not keep_video:
         # A sound-only output of a track that starts after its file's origin (late against its
         # picture): the lead is written as silence, first, so every stage after it works on the
@@ -740,7 +749,7 @@ def main() -> int:
             inputs += ["-i", args.music]
         m = f"{idx}:a:0"
         idx += 1
-        mfx = [f"volume={args.music_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
+        mfx = clock(args.music) + [f"volume={args.music_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
         # A142: a bed shorter than the output (and not looped) stops at its own end, so its fade
         # ends there: timed on the output's end it started after the bed had stopped at full level
         # ... and at the main track's end when the output runs past it (--length-samples): the
@@ -774,7 +783,7 @@ def main() -> int:
         inputs += ["-i", args.effects]
         e = f"{idx}:a:0"
         idx += 1
-        efx = [f"volume={args.effects_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
+        efx = clock(args.effects) + [f"volume={args.effects_volume:g}dB", f"atrim=0:{main_dur:.6f}" if main_dur else "anull"]
         graph.append(f"[{e}]{','.join(efx)}[effects]")
         graph.append(f"[{last}][effects]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[mixfx]")
         last = "mixfx"
@@ -814,7 +823,7 @@ def main() -> int:
         last = "out"
 
     # the picture is mapped first, so it stays stream 0 as in the source (#470: the sound was 0)
-    cmd = ffmpeg_base() + inputs + ["-filter_complex", ";".join(graph)] + (["-map", "0:v:0"] if keep_video else []) + ["-map", f"[{last}]"]
+    cmd = ffmpeg_base() + ["-copyts"] * bool(clocked) + inputs + ["-filter_complex", ";".join(graph)] + (["-map", "0:v:0"] if keep_video else []) + ["-map", f"[{last}]"]
     if keep_video:
         cmd += ["-c:v", "copy"]
         if Path(output).suffix.lower() in (".mp4", ".mov", ".m4v"):
