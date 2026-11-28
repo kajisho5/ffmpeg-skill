@@ -2180,10 +2180,6 @@ def main() -> int:
         cmd += ["-map", f"0:a:{args.audio_stream}"]
     cmd += video_args(meta, args.crf, args.preset) + cfr_args(meta)
     cmd += (aac_args() if meta.get("audio") else ["-an"]) + [output]
-    run(cmd)
-    result = probe(output, role="output")
-    info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
-    extra = {"notes": side_notes} if side_notes else {}
     # 1.17.1: say so when the words on screen are the words that were handed in. This tool never
     # rewrites, shortens or translates a cue -- only line breaks, timing and type size move -- so
     # the honest sentence in a report ("the text is yours, unchanged") needs no extra judgement.
@@ -2199,6 +2195,11 @@ def main() -> int:
     if caption_stats["text_unchanged"]:
         info("caption text unchanged: the cues were burned exactly as given (line breaks, timing "
              "and type size only)")
+    STATE.recipe_extra = {"caption": dict(caption_stats, **ass_counts)}  # render.py's one-pass render (#357)
+    run(cmd)
+    result = probe(output, role="output")
+    info(f"wrote {output} ({fmt_secs(result.get('duration'))})")
+    extra = {"notes": side_notes} if side_notes else {}
     extra["caption"] = dict(caption_stats, **ass_counts)
     extra["font_used"] = font_used
     if not STATE.dry_run:  # the union of the cues' boxes, at the middle of each (the longest always one)
