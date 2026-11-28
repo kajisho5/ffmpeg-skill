@@ -1011,12 +1011,18 @@ writes the resulting cut list exactly as it does today.
 
 ### join.py — concatenate with transitions
 ```
-join.py CLIP1 CLIP2 [...] [--transition fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen|none]
+join.py CLIP1 CLIP2 [...] [--transition none|fade|dissolve|wipeleft|slideleft|fadeblack|fadewhite|circleopen]
         [--duration 0.5] [--width W --height H] [--fps N] [--fit pad|crop] [-o OUT]
 join.py CLIP1 CLIP2 [...] --copy --transition none [-o OUT]
 join.py CLIP1 CLIP2 [...] --transition none --audio-lead S | --audio-lag S [-o OUT]
 join.py --list parts.txt [--on-missing fail|skip] [--on-silent warn|fail|skip] [--allow-silent N[,N]] [--silence-threshold -50] [...]
 ```
+The default is `--transition none` (after 4.17.0, #681): the clips play end to end and the join is their
+summed length (`expected_duration`). A crossfade is asked for by name, `--transition fade` (or
+`dissolve`, `fadeblack`, ...), with `--duration` its length (default 0.5 s); `--duration` with no
+transition is refused (`kind: input`) rather than ignored. Up to 4.17.0 the default was a 0.5 s
+`fade`, so a call with no `--transition` now writes a longer file: pass `--transition fade` for
+the old output.
 A still picture among the clips is refused (`kind: input`), with any `--transition` and `--copy`:
 it has no length to place, and `insert.py` makes a clip of it.
 `--audio-lead S` (J-cut) and `--audio-lag S` (L-cut) move each clip's sound against its picture at
@@ -1079,8 +1085,8 @@ silent track generated for clips without audio), then chains `xfade` +
 -- the video stream's, or the audio's when it runs more than a frame longer --
 and the shorter stream is padded (silence / last frame held), so every clip's
 sound stays with its picture and a plain cut leaves no hole in the video. Output length = sum of clip lengths −
-transition × (n−1); `verified` checks the output's video-stream length against it. Clips must be
-longer than 2 × the transition. Use `--transition none` for a plain cut.
+transition × (n−1); `verified` checks the output's video-stream length against it. With a
+transition, clips must be longer than 2 × the transition. `--transition none` (the default) is a plain cut.
 A subtitle/data track in the source is not carried into the retimed/concatenated
 output; the result says so with `dropped_non_av_streams: true`.
 
