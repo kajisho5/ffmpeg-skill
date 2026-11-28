@@ -823,7 +823,24 @@ Codex CLI 0.167.0 で、マーケットプレイスは最新なのにキャッ�
 リリースが `plugin` ブランチに届いたあとで `codex plugin add ffmpeg-skill@ffmpeg-skill` をもう一度実行します。
 これは別に取り除かなくてもキャッシュを新しくし、Codex のユーザーの設定でプラグインを有効にします。
 
+手でコピーしたもの（上の「Node なしで」）は、新しい複製かリリースから同じファイルをもう一度コピーし、古いものを置き換えて更新します。
+
 `npx ffmpeg-skill@4.1.3` はそのバージョンそのものを入れます。動かしたくない環境に。2 つのバージョンの間で何が変わったかは [CHANGELOG.md](CHANGELOG.md) にあり、リリースごとに短い節が 1 つあります。4.x の中では、更新しても 12 個の安定版のツールの呼び出しは壊れません（[安定性](#stability) を参照）。
+
+<a id="troubleshooting-an-installed-copy"></a>
+
+### インストールしたコピーを調べる
+
+確認は、別のシェルだけでなく、スキルを動かす環境で行います。最初のコマンドは、インストールしたコピーの `scripts/` があるディレクトリから実行します。`npx ffmpeg-skill`、Claude Code のプラグイン、手でコピーしたものではスキルそのもののディレクトリ、Codex のプラグインではプラグインのいちばん上のディレクトリ（`skills/` を含むもの）です:
+
+```bash
+python3 scripts/_contract.py doctor --json  # from the directory that holds scripts/
+npx ffmpeg-skill doctor --json              # checks the invoked npm package, not a plugin copy
+```
+
+- **ターミナルでは動くのにエージェントでは動かない。** `ffmpeg_path` と `ffprobe_path` を、エージェントから見えるバイナリと比べます（3.13.0 より古いコピーはこれを報告しません。先に更新します。[更新](#updating) を参照）。2 つのバイナリは同じビルドのものを使い、ホストが受け継ぐ PATH を変えたらホストを再起動します。Python を直接呼ぶコマンドが失敗するなら `python3 --version`（3.10 以上）を確かめます。Windows で `python3` が無ければ `python` か `py -3` を使います。
+- **あるツールだけ動かない。** インストールしたコピーの報告の `tools`（たとえば `tools.stabilize`）で、そのツールの `usable` と、あれば `fix` を見ます。全体の状態の読み方は [すぐに始める](#quick-start) にあります。
+- **エージェントがまだ古いバージョンを使う。** 報告の中の、インストールしたコピーの `version` を見て、そのインストールの方法の [更新](#updating) に従います。npm のコマンドが新しいバージョンを報告しても、エージェントのコピーが更新されたことにはなりません。
 
 <a id="requirements"></a>
 
