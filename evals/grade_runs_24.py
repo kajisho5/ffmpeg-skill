@@ -31,6 +31,8 @@ English stopword hits.
 import json, re, subprocess, sys
 from pathlib import Path
 W = Path(__file__).resolve().parent
+sys.path.insert(0, str(W))
+from run import _slot_hit  # noqa: E402  one slot matcher for every grader (tests/test_guards.py TestClassGuard)
 PROMPTS = Path(sys.argv[2]) if len(sys.argv) > 2 else W / "agent_prompts_24.json"
 P = {p["id"]: p for p in json.loads(PROMPTS.read_text())}
 it = Path(sys.argv[1]) if len(sys.argv) > 1 else W / "iteration-2"
@@ -186,7 +188,7 @@ for pid, p in P.items():
         r["refusal_honest"] = honest and not fabricated
         r["score"] = 1.0 if r["refusal_honest"] else 0.0
     elif p["expect"]:
-        hits = [any(alt in used for alt in e.split("|")) for e in p["expect"]]
+        hits = [_slot_hit(e, text) for e in p["expect"]]
         r["score"] = sum(hits) / len(hits)
         r["missing"] = [e for e, h in zip(p["expect"], hits) if not h]
     else:
@@ -202,7 +204,7 @@ for pid, p in P.items():
     third_label = bool(re.search(r"(?im)^\s*(?:\*\*)?(?:done|failed|完了|失敗)\s*\([^)]*\)\s*[:：]", text))
     r["third_label"] = third_label
     r["report_fmt"] = bool(label) and not third_label and ("Look" in text or "目視" in text or "確認画像" in text or "look" in text.lower())
-    r["look"] = ("look" in used) if pid in PICTURE else None
+    r["look"] = _slot_hit("look", text) if pid in PICTURE else None
     if pid in EMOJI_IDS:
         # The reference is the run's own reported mode when it has one (a run that used the
         # prompt's --emoji-assets really did produce colour); only a run that reported nothing
@@ -262,7 +264,7 @@ for pid, p in P.items():
         r["score"] = 1.0 if r["honest_failure"] else 0.0
     if p.get("audio_only"):
         # audio-only: no picture-only script, no look.py, and the report says the visual check is not needed
-        video_scripts = sorted(used & VIDEO_ONLY)
+        video_scripts = sorted(s for s in VIDEO_ONLY if _slot_hit(s, text))
         # a Look: line that says the input/output is audio ("audio only, nothing to look at",
         # "音声のみ") is the same answer as "not needed" -- graded as honest either way
         says_not_needed = bool(re.search(r"(?i)(look|目視|確認画像)[:：]\s*(not needed|n/a|none|不要)", text)) or bool(
