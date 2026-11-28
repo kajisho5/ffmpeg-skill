@@ -1020,32 +1020,33 @@ def skill_examples() -> Dict[str, List[Dict[str, Any]]]:
     `prompts` is a list because a row often gives several phrasings ("cut from 1:20 to 2:05",
     "trim the first 10 s") for the one `command`; `command` has the markdown backticks
     stripped but otherwise keeps the row's own text (including "or"/"then" alternatives).
+    #687: SKILL.md keeps only the rows whose command is not the obvious one, so a tool its table
+    does not name takes its rows from references/requests.md, the table every request is in.
     """
     examples: Dict[str, List[Dict[str, Any]]] = {}
-    try:
-        lines = (ROOT / "SKILL.md").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return examples
-    in_table = False
     esc_pipe = "\x00"  # a markdown-escaped "\|" (a literal pipe inside a cell, e.g. broll's --audio b\|mix) is not a column separator
-    for line in lines:
-        if line.startswith("| User says"):
-            in_table = True
+    for doc in ("SKILL.md", "references/requests.md"):
+        if not (ROOT / doc).is_file():
             continue
-        if not in_table:
-            continue
-        if not line.startswith("|"):
-            break
-        if line.startswith("|---") or line.startswith("|-----"):
-            continue
-        cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
-        if len(cells) != 2:
-            continue
-        prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
-        prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
-        command = re.sub(r"`([^`]*)`", r"\1", do)
-        for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
-            examples.setdefault(tool, []).append({"prompts": prompts, "command": command})
+        lines = (ROOT / doc).read_text(encoding="utf-8").splitlines()
+        found: Dict[str, List[Dict[str, Any]]] = {}
+        in_table = False
+        for line in lines:
+            if not in_table:
+                in_table = line.startswith("| User says")
+                continue
+            if not line.startswith("|"):
+                break
+            cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
+            if len(cells) != 2 or line.startswith("|---"):
+                continue
+            prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
+            prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
+            command = re.sub(r"`([^`]*)`", r"\1", do)
+            for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
+                found.setdefault(tool, []).append({"prompts": prompts, "command": command})
+        for tool, rows in found.items():
+            examples.setdefault(tool, rows)
     return examples
 
 
