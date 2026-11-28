@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
+from _fixtures import aac_track_samples, MediaFixtures, OUT, SCRIPTS, _is_faststart, exif_rotated_jpeg, frame_rgb, sar_clip, script, sh, tiny_clip  # noqa: E402
 from _fixtures import av_offsets_ms, flash_times, make_flash_beep, make_vfr_flash_beep, make_tones_take, stream_spans  # noqa: E402
 from _fixtures import frame_lumas, frame_numbers, numbered_clip, pcm_of, plain_clip, stretches  # noqa: E402
 from _common import probe  # noqa: E402
@@ -1232,14 +1232,7 @@ class EditingTests(MediaFixtures):
                "-af", f"atrim=end_sample={samples}", *x264, "-c:a", "pcm_s16le", path)
             return path
 
-        def track_samples(path):
-            packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
-                                    "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
-            # the end of the track is a short last packet (6.1), a short one that also states the
-            # samples dropped from its frame (9.0), or a full one that states them (9.1, #659): a
-            # packet holds the smaller of its duration and its 1024-sample frame less the drop
-            return sum(min(int(p["duration"]), 1024 - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", [])))
-                       for p in packets) - 1024
+        track_samples = aac_track_samples
 
         def frames(path):
             return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
@@ -1313,8 +1306,9 @@ class EditingTests(MediaFixtures):
         def first_sound(doc, name):
             cmd = shlex.split(doc["commands"][-1])
             at = cmd.index("aac")
-            self.assertEqual((cmd[at - 1], cmd[at + 1]), ("-c:a", "-b:a"))
-            cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(OUT / name)
+            end = at + 3 if cmd[at + 1:at + 2] == ["-aac_coder"] else at + 1  # named on 9.1 and later (#659)
+            self.assertEqual((cmd[at - 1], cmd[end]), ("-c:a", "-b:a"))
+            cmd[at:end + 2], cmd[-1] = ["pcm_s16le"], str(OUT / name)
             sh(*cmd)
             raw = subprocess.run(["ffmpeg", "-v", "error", "-i", cmd[-1], "-map", "0:a:0", "-ac", "1", "-f", "s16le", "-"],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
@@ -5077,13 +5071,20 @@ class OneClockTests(MediaFixtures):
     def test_loop_keeps_a_late_sound_in_sync_on_every_repeat(self):
         """-stream_loop shortened every repeat of a clip whose sound starts late by a frame and slid
         the sound (346 of 360 frames, 1 then 68 ms); the concat list repeats the file's whole length,
-        and an in-sync AAC source is not moved by the list's priming either."""
+        and an in-sync AAC source is not moved by the list's priming either. FFmpeg 9.1's AAC
+        encoder keeps the last frame whole, so the late-sound fixture is 4.012 s there, not 4.000:
+        a repeat that is not a whole number of 30 fps frames puts each repeat's pictures on the
+        frame grid up to half a frame from their sound (-12 and +9 ms on 9.1), as an MPEG-PS's
+        repeats do below (#659)."""
         for name, kw in (("alate", {"audio_late": 0.3}), ("sync", {})):
+            src = self._fx(name, **kw)
             out = OUT / f"clock_loop_{name}.mp4"
-            script("loop.py", self._fx(name, **kw), "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite")
+            script("loop.py", src, "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite")
             offsets = av_offsets_ms(out)
             self.assertEqual(len(offsets), 12, offsets)
-            self.assertInSync(offsets, msg=f"loop {name}")
+            length = float(json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src).stdout)["format"]["duration"])
+            whole = abs(length * 30 - round(length * 30)) < 0.05
+            self.assertInSync(offsets, tol=5 if whole else 1000 / 30 / 2, msg=f"loop {name} ({length:.3f} s)")
             self.assertEqual(stream_spans(out)["video"][2], 360)
 
     def test_loop_of_an_mpeg_ps_whose_sound_starts_late_keeps_every_frame_787(self):

@@ -3,6 +3,8 @@
 import json, re, sys
 from pathlib import Path
 W = Path(__file__).resolve().parent
+sys.path.insert(0, str(W))
+from run import _slot_hit  # noqa: E402  one slot matcher for every grader (tests/test_guards.py TestClassGuard)
 prompts = {p["id"]: p for p in json.loads((W / "agent_prompts.json").read_text())}
 it = W / sys.argv[1] if len(sys.argv) > 1 else W / "iteration-1"
 rows = []
@@ -18,9 +20,9 @@ for d in sorted(it.iterdir()):
         cmds = [l for l in text.splitlines() if re.search(r"\b\w+\.py\b", l) and ("python" in l or l.strip().startswith("$"))]
         used = set(re.findall(r"\b([a-z_]+)\.py\b", text))
         exp = prompts[d.name]["expect"]
-        hits = [any(alt.replace(".py", "") in used for alt in e.split("|")) for e in exp]
+        hits = [_slot_hit(e, text) for e in exp]
         report_ok = bool(re.search(r"(?im)^\s*(\*\*)?done", text)) and ("LUFS" in text or "fps" in text)
-        look_ok = "look" in used
+        look_ok = _slot_hit("look.py", text)
         rows.append((d.name, variant, sum(hits) / len(exp), len(cmds), [e for e, h in zip(exp, hits) if not h], len(used), report_ok, look_ok))
 print(f"{'eval':22s} {'variant':10s} {'routing':8s} {'cmds':5s} {'scripts':7s} {'report':6s} {'look':4s} missing")
 for name, variant, score, ncmd, missing, nscripts, rep, look in rows:

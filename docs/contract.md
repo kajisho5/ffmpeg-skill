@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.26.1`) | any release |
+| `skill.version` | the npm / package.json version (`4.26.3`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -193,7 +193,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.26.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.26.3", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -1284,7 +1284,7 @@ is checked when its duration can be read.
 A refusal also carries `error.reason`, a stable snake_case code for *why*
 (`contract --json` → `json_output.error_reasons` lists them: `output_exists`, `output_is_input`,
 `output_is_directory`, `output_dir_missing`, `output_dir_not_writable`, `output_locked`,
-`output_container_codecs` (a `.webm` or `.mxf` output for an H.264/HEVC or AAC encode, which those containers cannot hold),
+`output_container_codecs` (a `.webm` or `.mxf` output for an H.264/HEVC or AAC encode, which those containers cannot hold, an `.mpg`/`.mpeg` output for an AAC encode, which MPEG-PS cannot hold, or an `.avi`, `.wmv` or `.asf` output for an H.264/HEVC encode or a stream copy of B-frame video, whose presentation times they do not store),
 `media_path_is_url` (`subfile,...:` included), `media_path_is_playlist` (an HLS, DASH, IMF or ffconcat playlist given as media, DASH and IMF told by content whatever the file is called), `media_path_has_line_break` (a path with a line break, which a concat list cannot hold), `path_outside_roots` (an input or output outside the directories `FFMPEG_SKILL_ROOTS` names, see [Invocation](#invocation)),
 `output_looks_like_option` (an output starting with `-`, other than `-` for stdout), `output_extension_missing` (a media output with no file extension, which leaves ffmpeg no container to choose), `output_extension_unknown` (a media output whose extension this ffmpeg build maps to no muxer, such as `out.xyz`, with no `-f`), `output_extension_unsupported` (a `.wma` output the run would encode into; `.wma` is written only as a stream copy of WMA sound), `output_extension_audio_only` (an audio-only extension such as `.wav` or `.m4a` for a run that writes a picture), `output_path_taken` (two files one run writes share a path), `media_path_not_a_file` (a FIFO or device as input), `input_is_directory`, `input_empty` (0 bytes), `input_not_media` (ffprobe cannot read it as media) and `input_permission_denied` (the file, or a directory on the way to it, is not readable by the user; a path that is not there stays "input not found"), `still_unreadable` (a file with an image name that ffmpeg cannot decode as one; for `sequence.py`, a frame of the sequence that does not decode, when its decode check completes; when the check cannot be made a note says so and the encode runs), `silence.py --timemap`'s `timemap_path_taken`, `join.py --copy`'s `join_copy_mismatch`,
 `render.py`'s `plan_*` reasons, `--codec av1`/`prores`'s `encoder_missing` and

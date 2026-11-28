@@ -1,0 +1,8 @@
+{
+  "date": "2026-11-28",
+  "issue": 659,
+  "class": "capability",
+  "what": "On FFmpeg 9.1 (Windows, gyan.dev essentials build) fit.py --method speed to 0.91x and speedramp.py with a 2x first second never finished: the mono AAC track, led by adelay and retimed by atempo, never returned from the encoder with -aac_coder twoloop, the coder runner.pin_aac_coder named from 9.1 on (4.3.0). Taken apart on that build, the filter chain wrote its WAV in 0.0 s and the WAV alone never encoded with twoloop at 160k or 192k, nor with 9.1's default coder for the 0.91x track; -aac_coder fast ended in 0.1 s on every case.",
+  "escaped": "#660 chose twoloop from the one case that had hung (192k mono behind silence), where twoloop ended; no other retimed mono track was encoded on 9.1, and CI pinned Windows to 9.0.2 while the full suite on 9.1 was a draft PR's job.",
+  "mechanism": "pin_aac_coder names fast from 9.1 on (test_an_aac_track_names_the_coder_that_ends_from_ffmpeg_9_1), and the ffmpeg next probe runs .github/scripts/ffmpeg_next_tempo_probe.py, which encodes both retimed tracks by part with each coder on the newest Windows build, so a coder that stops ending is read there before the pin moves"
+}

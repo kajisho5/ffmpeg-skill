@@ -20,7 +20,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, integrated_lufs, script, sh, tiny_clip  # noqa: E402
+from _fixtures import aac_track_samples, MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, integrated_lufs, script, sh, tiny_clip  # noqa: E402
 from _common import font_for_script, probe, shell_quote  # noqa: E402
 
 
@@ -567,14 +567,7 @@ class OrchestrationTests(MediaFixtures):
                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", path)
             return path
 
-        def track_samples(path):
-            packets = json.loads(sh("ffprobe", "-v", "error", "-ignore_editlist", "1", "-select_streams", "a:0", "-show_entries",
-                                    "packet=duration:packet_side_data=discard_padding", "-of", "json", path).stdout)["packets"]
-            # the end of the track is a short last packet (6.1), a short one that also states the
-            # samples dropped from its frame (9.0), or a full one that states them (9.1, #659): a
-            # packet holds the smaller of its duration and its 1024-sample frame less the drop
-            return sum(min(int(p["duration"]), 1024 - sum(int(s.get("discard_padding", 0)) for s in p.get("side_data_list", [])))
-                       for p in packets) - 1024
+        track_samples = aac_track_samples
 
         def frames(path):
             return int(sh("ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
@@ -641,18 +634,22 @@ class OrchestrationTests(MediaFixtures):
     # ------------------------------------------------------------ 1.18.0: --switch energy / --edl
     def _loud_cams(self):
         """Two cameras on one reference timeline: camA loud 0-6s / quiet 6-12s, camB the reverse
-        -- --switch energy should pick camA for the first half and camB for the second."""
+        -- --switch energy should pick camA for the first half and camB for the second.
+
+        Both hear one scene (the same seeded noise in irregular bursts), each 6 dB louder in its
+        own half, so the alignment finds 0 s (#659). The earlier pair shared no sound (a 440 Hz
+        tone each, loud and quiet swapped): the alignment put camB 6.017 s late, lining up the two
+        loud halves, and the late picks were a tie between two equally quiet tones that an
+        encoder change decided (FFmpeg 9.1 picked camA from 10.25 s)."""
         camA = OUT / "mc_energy_a.mp4"
         camB = OUT / "mc_energy_b.mp4"
         if not camA.exists():
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-               "-i", "testsrc2=size=160x90:rate=30", "-f", "lavfi",
-               "-i", "aevalsrc='0.8*sin(2*PI*440*t)*lt(t\\,6)+0.01*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
-               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camA)
-            sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-               "-i", "testsrc2=size=160x90:rate=30,hue=h=90", "-f", "lavfi",
-               "-i", "aevalsrc='0.01*sin(2*PI*440*t)*lt(t\\,6)+0.8*sin(2*PI*440*t)*gt(t\\,6)':s=48000",
-               "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", camB)
+            for path, hue, first, second in ((camA, "", 1, 0.5), (camB, ",hue=h=90", 0.5, 1)):
+                sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                   "-i", f"testsrc2=size=160x90:rate=30{hue}", "-f", "lavfi",
+                   "-i", "anoisesrc=seed=7:color=pink:sample_rate=48000:amplitude=0.5",
+                   "-af", f"volume='(0.1+0.9*lt(mod(1.3*t*t\\,1)\\,0.2))*if(lt(t\\,6)\\,{first}\\,{second})':eval=frame",
+                   "-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", path)
         return camA, camB
 
     def test_multicam_switch_energy_picks_the_loudest_camera(self):
@@ -661,6 +658,7 @@ class OrchestrationTests(MediaFixtures):
         data = json.loads(script("multicam.py", camA, camB, "--switch", "energy", "--min-shot", "1",
                                  "--fast", "-o", out, "--json").stdout)
         self.assertEqual(data["switch_mode"], "energy")
+        self.assertAlmostEqual(data["offsets_seconds"][1], 0.0, delta=0.05, msg="the fixture's cameras share a timeline")
         cams_by_time = {}
         for s, e, c in data["cuts"]:
             cams_by_time[(s + e) / 2] = c
@@ -2824,22 +2822,23 @@ class CommonFacadeTests(unittest.TestCase):
         self.assertEqual(runner.__file__, before)
         self.assertTrue(callable(_common.emit) and callable(_common.probe))
 
-    def test_an_aac_track_is_written_with_the_older_coder_from_ffmpeg_9_1(self):
-        """#659: FFmpeg 9.1 made a new coder the AAC encoder's default and it never returns on some
-        sound (mono at 192k behind 0.1 s or 2.5 s of silence: `sync.py --replace-audio` ran to its
-        time limit on Windows, a file of 48 bytes). Every command passes run(), which from 9.1 on
-        names the coder that was the default before; older builds get the command they always got,
-        and a command that names a coder keeps it."""
+    def test_an_aac_track_names_the_coder_that_ends_from_ffmpeg_9_1(self):
+        """#659: FFmpeg 9.1's AAC encoder never returns on some mono sound with its new default coder
+        (`sync.py --replace-audio` ran to its time limit on Windows, a file of 48 bytes) and with
+        `twoloop`, the default until 9.0 (fit.py --method speed 0.91x and speedramp.py 2x ran past
+        900 s). Every command passes run(), which from 9.1 on names `fast`, the coder that ended on
+        every case; older builds get the command they always got, and a command that names a coder
+        keeps it."""
         from unittest import mock
         from _common import runner
         cmd = ["ffmpeg", "-i", "a.mp4", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "o.mp4"]
-        self.assertEqual(runner.pin_aac_coder(cmd, (9, 1)), cmd[:7] + ["-aac_coder", "twoloop"] + cmd[7:])
-        self.assertEqual(runner.pin_aac_coder(cmd, (10, 0))[7:9], ["-aac_coder", "twoloop"])
+        self.assertEqual(runner.pin_aac_coder(cmd, (9, 1)), cmd[:7] + ["-aac_coder", "fast"] + cmd[7:])
+        self.assertEqual(runner.pin_aac_coder(cmd, (10, 0))[7:9], ["-aac_coder", "fast"])
         self.assertEqual(runner.pin_aac_coder(cmd, (9, 0)), cmd)
         self.assertEqual(runner.pin_aac_coder(cmd, (0, 0)), cmd, "an unreadable version takes the older spelling")
         two = ["ffmpeg", "-i", "a.mov", "-c:a:0", "aac", "-acodec", "aac", "-codec:a:1", "aac", "o.mov"]
-        self.assertEqual(runner.pin_aac_coder(two, (9, 1)).count("twoloop"), 3)
-        named = cmd[:7] + ["-aac_coder", "fast"] + cmd[7:]
+        self.assertEqual(runner.pin_aac_coder(two, (9, 1)).count("fast"), 3)
+        named = cmd[:7] + ["-aac_coder", "twoloop"] + cmd[7:]
         self.assertEqual(runner.pin_aac_coder(named, (9, 1)), named)
         for other in (["ffmpeg", "-i", "a.mp4", "-c:a", "libopus", "o.mkv"], ["ffmpeg", "-i", "a.mp4", "-c", "copy", "o.mp4"]):
             self.assertEqual(runner.pin_aac_coder(other, (9, 1)), other)
@@ -2849,7 +2848,7 @@ class CommonFacadeTests(unittest.TestCase):
             OUT.mkdir(parents=True, exist_ok=True)
             src = tiny_clip(OUT / "pin_coder_src.mp4", "color=c=red:s=160x120:r=25", audio=True)
             runner.run(["ffmpeg", "-y", "-i", str(src), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(OUT / "pin_coder.mp4")], quiet=True)
-            self.assertIn("-c:a aac -aac_coder twoloop -b:a 192k", runner.STATE.commands[-1])
+            self.assertIn("-c:a aac -aac_coder fast -b:a 192k", runner.STATE.commands[-1])
 
 
 class TimelineExportTests(unittest.TestCase):
