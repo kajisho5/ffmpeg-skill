@@ -2594,7 +2594,7 @@ sys.exit(fit.main())
         # in the listing; the full profile had 50 bytes of room, the default 250)
         profiles = (
             ({}, 12, 76_800),  # +200 for render.py --staged (#357, 76750 measured), +500 for render.py --preview, cut.py --audition and --audition-seconds (#581 part 2, 76569 measured), +150 for check.py --expect-audio-changed (#442), +650 for cut.py --words and its five options (#449), +200 for check.py --expect-removed (#442, 162 bytes), +500 for fit.py --zoom and its three options (#647, 74913 measured), +300 for silence.py --audition and --audition-seconds (#581, 75214 measured), +300 for render.py --compare-project (#442 phase 4), +200 for fit.py --rect (#683, 75745 measured), +200 for check.py --change-grid (#442, 75926 measured), +100 for caption.py's cue ended with the picture (#776, 76016 measured)
-            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_800),  # +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
+            ({"FFMPEG_SKILL_MCP_FULL": "1"}, 41, 194_900),  # +100 for join.py --transition none by default (#681, 194826 measured), +100 for render.py --staged (#357, 194781 measured), +200 for render.py --preview and cut.py --audition (#581 part 2, 194600 measured), +500 more for color.py --source-alpha-mode (#453), +200 for check.py --expect-removed (#442), +400 for fit.py --zoom (#647, 196549 measured), +300 for silence.py --audition (#581, 196850 measured), +300 for render.py --compare-project (#442 phase 4); 41 tools, crop an alias not listed (#683, 194151 measured), +100 for main at 4.20.2 (194215 measured), +100 for check.py --change-grid (#442, 194412 measured)
             ({"FFMPEG_SKILL_MCP_TOOLS": "probe,cut,fit,export,check"}, 5, 27_000),  # +300 for cut.py --audition and --audition-seconds (#581 part 2, 26943 measured), +600 for the same and check.py --expect-audio-changed (#442, #449), +200 for --expect-removed (#442), +500 for fit.py --zoom (#647, 26194 measured), +200 for fit.py --rect (#683, 26404 measured), +100 for check.py --change-grid (#442, 26616 measured)
         )
         for env, count, limit in profiles:
@@ -6179,7 +6179,7 @@ sys.exit(fit.main())
             kinds = sh("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", doc["output"]).stdout.split()
             self.assertEqual(kinds.count("subtitle"), 2, f"{name}: expected both source subtitle tracks, got {kinds}")
         drop = [
-            ("join", [self.subbed, self.subbed, "--duration", "0.3", "-o", self.out("policy_join.mp4"), "--json"]),
+            ("join", [self.subbed, self.subbed, "--transition", "fade", "--duration", "0.3", "-o", self.out("policy_join.mp4"), "--json"]),
             ("broll", [self.subbed, "--insert", self.src, "--at", "1", "--duration", "1", "-o", self.out("policy_broll.mp4"), "--json"]),
             ("speedramp", [self.subbed, "--segment", "0-3:2", "--segment", "3-6:1", "-o", self.out("policy_ramp.mp4"), "--json"]),
         ]
@@ -6681,8 +6681,6 @@ def garbage_payload(p):
                 doc = json.loads(tool(name, *args, "-o", out, "--overwrite", "--json").stdout)
                 self.assertEqual(doc["status"], "completed", doc)
                 lens = {k: float(v) for k, v in probe_streams(out).items()}
-                if name == "join":  # the default crossfade overlaps the clips by its own length
-                    want -= doc["transition_shortening"]
                 self.assertAlmostEqual(lens["audio"], want, delta=0.25, msg=f"{name}: audio is {lens['audio']}s, wanted {want}s")
                 self.assertAlmostEqual(lens["audio"], lens["video"], delta=0.25)
                 if name in ("cut", "join", "export"):
@@ -6836,13 +6834,13 @@ def garbage_payload(p):
         """join.py's expected length is derived from the transition it applied, so a check against
         it alone hid that a fade took time out of the material (15 s of clips as 14 s). The clips'
         own total is reported beside it, with a note when the transitions shortened the join."""
-        doc = json.loads(tool("join", self.src, self.src, "-o", self.out("len_join.mp4"), "--overwrite", "--json").stdout)
+        doc = json.loads(tool("join", self.src, self.src, "--transition", "fade", "-o", self.out("len_join.mp4"), "--overwrite", "--json").stdout)
         step = next(s for s in doc["verification"] if s["step"] == "duration")
         self.assertAlmostEqual(doc["inputs_duration"], step["inputs_total"], places=2)
         self.assertAlmostEqual(doc["transition_shortening"], doc["inputs_duration"] - doc["expected_duration"], places=3)
         self.assertGreater(doc["transition_shortening"], 0)
         self.assertTrue(any("transitions overlap the clips" in n for n in doc.get("notes") or []))
-        cut = json.loads(tool("join", self.src, self.src, "--transition", "none", "-o", self.out("len_join_cut.mp4"),
+        cut = json.loads(tool("join", self.src, self.src, "-o", self.out("len_join_cut.mp4"),
                               "--overwrite", "--json").stdout)
         self.assertEqual(cut["transition_shortening"], 0.0)
         self.assertFalse(any("transitions overlap" in n for n in cut.get("notes") or []))
