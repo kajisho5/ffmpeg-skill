@@ -1,6 +1,7 @@
 # The newest FFmpeg the Windows feed offers, on the tests that broke when it moved (#659).
 # ci.yml pins the version the suite passes on; this is where the next one is read before unpinning.
-# Runs every week, when asked, and on a pull request that changes this file or its probe. A weekly or
+# Runs every week, when asked, and on a pull request that changes this file or its probe (the install and
+# the probe only, not the suite). A weekly or
 # manual run that fails, hangs or runs out of time opens one issue, or comments on the open one, with
 # the FFmpeg version and the failing tests' names (#680): the feed moved to 9.1 once and every
 # Windows job ran to its limit before anyone knew.
@@ -61,8 +62,10 @@ jobs:
       # the whole suite, as ci.yml runs it but unpinned. A command still running after 300 s is
       # killed and fails its test by name (tests/_fixtures.py), so a hang is a failing test here and
       # not the end of the job; the step limit is the backstop for anything else.
+      # not on a pull request: there the job checks the install and the probe, and the suite on the
+      # next FFmpeg is expected to fail (that is what the weekly run reports) and outlasts its limit
       - name: Suite
-        if: ${{ !inputs.force_failure }}
+        if: ${{ !inputs.force_failure && github.event_name != 'pull_request' }}
         shell: bash
         timeout-minutes: 100
         env:

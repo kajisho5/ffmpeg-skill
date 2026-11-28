@@ -3913,7 +3913,8 @@ sys.exit(fit.main())
         self.assertIn("gh issue comment", script)
         self.assertIn("gh issue create", script)
         self.assertIn("      failed: ${{ steps.summary.outputs.failed }}\n", probe)
-        self.assertIn("        if: ${{ !inputs.force_failure }}\n", probe)
+        # a pull request runs the install and the probe, not the suite the next FFmpeg is expected to fail
+        self.assertIn("        if: ${{ !inputs.force_failure && github.event_name != 'pull_request' }}\n", probe)
         self.assertIn("        if: ${{ inputs.force_failure }}\n", probe)
         summary = probe[probe.index("      - name: Summary"):]
         self.assertIn("        if: always()\n", summary)
