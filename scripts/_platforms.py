@@ -88,7 +88,7 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
                  "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": True},
         # the description/caption block along the bottom, the like/comment/share column on the
         # right, the status bar and the "Following | For You" tabs at the top
-        "safe": {"top": 0.10, "bottom": 0.22, "left": 0.05, "right": 0.14},
+        "safe": {"top": 0.125, "bottom": 0.22, "left": 0.06, "right": 0.17},
         "caption": _CAP_VERTICAL,
         "preset": "tiktok", "check": "tiktok",
     },
@@ -99,7 +99,7 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
         "spec": {"max_duration": 90, "aspects": ["9:16", "4:5", "1:1"], "min_height": 1080, "fps_max": 60,
                  "codecs": ["h264", "hevc"], "max_bytes": 4 * 1024 ** 3,
                  "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": True},
-        "safe": {"top": 0.08, "bottom": 0.20, "left": 0.05, "right": 0.12},
+        "safe": {"top": 0.13, "bottom": 0.22, "left": 0.06, "right": 0.17},
         "caption": _CAP_VERTICAL,
         "preset": "reels", "check": "reels",
     },
@@ -110,7 +110,7 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
         "spec": {"max_duration": 180, "aspects": ["9:16", "1:1"], "min_height": 1080, "fps_max": 60,
                  "codecs": ["h264", "hevc"], "max_bytes": 256 * 1024 ** 3,
                  "lufs": -14, "lufs_tol": 2.0, "tp": -1.0, "sdr_only": False},
-        "safe": {"top": 0.06, "bottom": 0.18, "left": 0.05, "right": 0.12},
+        "safe": {"top": 0.15, "bottom": 0.22, "left": 0.05, "right": 0.15},
         "caption": _CAP_VERTICAL,
         "preset": "shorts", "check": "shorts",
     },
