@@ -20,7 +20,7 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, script, sh, tiny_clip  # noqa: E402
+from _fixtures import MediaFixtures, OUT, ROOT, SCRIPTS, TONES, _no_fontconfig, integrated_lufs, script, sh, tiny_clip  # noqa: E402
 from _common import font_for_script, probe, shell_quote  # noqa: E402
 
 
@@ -265,6 +265,81 @@ class OrchestrationTests(MediaFixtures):
         self.assertIsNotNone(again["snap"])
         self.assertEqual(len(again["snap"]["clips"]), 2)
         self.assertEqual(again["snap"]["clips"][0]["source"], "cache")
+
+    def test_render_preview_is_the_whole_project_small_and_never_the_final(self):
+        """#581 part 2: --preview renders every stage at the project's own frame, so the captions are
+        laid out as the final's, then writes a small fast copy with the short side at 540 beside the
+        output, preview: true, and never the final itself; a flag it cannot honour is refused."""
+        src = OUT / "render_preview_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+           "-f", "lavfi", "-i", "sine=f=440:r=48000", "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+           "-shortest", src)
+        cues = OUT / "render_preview_cues.txt"
+        cues.write_text("0:00 0:02 Hello there\n0:02 0:03 Second line\n", encoding="utf-8")
+        final = OUT / "render_preview_final.mp4"
+        final.unlink(missing_ok=True)
+        proj = OUT / "render_preview.json"
+        proj.write_text(json.dumps({"output": str(final), "frame": {"aspect": "9:16", "width": 720}, "fit": {"fit": "crop"},
+                                    "clips": [{"src": str(src), "in": 0.5, "out": 3.5}],
+                                    "captions": {"text": str(cues)}}), encoding="utf-8")
+        planned, previewed = (json.loads(script("render.py", proj, *extra, "--dry-run", "--json").stdout)
+                              for extra in ([], ["--preview"]))
+        norm = lambda d: [re.sub(r"\S*_work_\d+_\w+", "W", re.sub(r"-preset \S+ ", "", c))  # noqa: E731
+                          for c in d["commands"] if c.startswith("[dry-run] $")]
+        # the stages are the final's own commands (only the encoder preset is the fast one), then the small copy
+        self.assertEqual(norm(previewed)[:-1], norm(planned))
+        self.assertIn("scale=540:-2", norm(previewed)[-1])
+        doc = json.loads(script("render.py", proj, "--preview", "--json").stdout)
+        self.assertEqual((doc["preview"], doc["output"]), (True, str(OUT / "render_preview_final_preview.mp4")))
+        self.assertFalse(final.exists(), "a preview wrote the final output")
+        got = probe(doc["output"])
+        self.assertEqual((got["video"]["width"], got["video"]["height"]), (540, 960))
+        self.assertTrue(got["audio"])
+        self.assertLess(abs(got["duration"] - 3.0), 0.1, got["duration"])
+        self.assertIn("preview", doc["stages"])
+        for extra in (["--stop-after", "fit"], ["--export-timeline", str(OUT / "render_preview.otio")]):
+            err = json.loads(script("render.py", proj, "--preview", *extra, "--json", expect_fail=True).stdout)["error"]
+            self.assertIn("--preview", err["message"])
+
+    def test_render_preview_refuses_compare_project_before_anything_runs(self):
+        """#581 part 2 with #442 phase 4: --compare-project checks a full-size delivered render, and a
+        preview is a small one no check runs on, so the pair is refused before any stage, dry runs included."""
+        proj, old = OUT / "render_preview_cmp.json", OUT / "render_preview_cmp_old.json"
+        for p in (proj, old):
+            p.write_text(json.dumps({"output": str(OUT / "render_preview_cmp.mp4"),
+                                     "clips": [{"src": str(OUT / "render_preview_cmp_src.mp4")}]}), encoding="utf-8")
+        for extra in ([], ["--dry-run"]):
+            res = script("render.py", proj, "--preview", "--compare-project", old, *extra, "--json", expect_fail=True)
+            doc = json.loads(res.stdout)
+            self.assertEqual(doc["error"]["kind"], "input")
+            self.assertIn("--compare-project", doc["error"]["message"])
+            self.assertIn("full-size", doc["error"]["message"])
+            self.assertEqual(doc["commands"], [])
+
+    def test_render_dry_run_states_each_clips_speed_and_crop(self):
+        """#581 part 2: a dashboard shows "clip 0: 1.5x, crop x=438" without parsing ffmpeg lines.
+        The dry run's fit stage reads a cut that is not written yet, so its window comes from fit.py's
+        own dry run of the clip's picture; the real run's from the stage itself, and they agree."""
+        src = OUT / "render_decisions_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+           "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", src)
+        proj = OUT / "render_decisions.json"
+        proj.write_text(json.dumps({"output": str(OUT / "render_decisions.mp4"), "frame": {"aspect": "9:16", "width": 360},
+                                    "fit": {"fit": "crop"}, "clips": [{"src": str(src), "in": 0.5, "out": 3.5, "speed": 1.5}]}),
+                        encoding="utf-8")
+        plan = json.loads(script("render.py", proj, "--dry-run", "--json").stdout)
+        clip = plan["clips"][0]
+        self.assertEqual((clip["clip"], clip["speed_factor"]), (0, 1.5), clip)
+        self.assertEqual({k: clip["crop"][k] for k in ("x", "width", "source_width")}, {"x": 438, "width": 404, "source_width": 1280})
+        real = json.loads(script("render.py", proj, "--fast", "--json").stdout)["clips"][0]
+        self.assertAlmostEqual(real["speed_factor"], 1.5, places=2)
+        self.assertEqual(real["crop"], clip["crop"])
+        # several clips: each is framed by join.py, which states no window; each speed is still its own
+        two = OUT / "render_decisions_two.json"
+        two.write_text(json.dumps({"output": str(OUT / "render_decisions_two.mp4"), "frame": {"aspect": "9:16", "width": 360},
+                                   "clips": [{"src": str(src), "in": 0, "out": 2, "speed": 2}, {"src": str(src)}]}), encoding="utf-8")
+        plan = json.loads(script("render.py", two, "--dry-run", "--json").stdout)
+        self.assertEqual([(c["speed_factor"], c["crop"]) for c in plan["clips"]], [(2.0, None), (1.0, None)])
 
     def test_render_without_snap_builds_the_same_command_as_before(self):
         proj = OUT / "nosnap_project.json"
@@ -1508,8 +1583,8 @@ class OrchestrationTests(MediaFixtures):
         script("render.py", self.src, "--template", "reels", "--cues", self.cues,
                "--write-project", proj, "-o", OUT / "ip_out.mp4", "--json")
 
-        def presets(project, *extra):
-            doc = json.loads(script("render.py", project, "--dry-run", "--json", *extra).stdout)
+        def presets(project, *extra):  # --staged: fused (#357), the export is the only encode
+            doc = json.loads(script("render.py", project, "--dry-run", "--json", "--staged", *extra).stdout)
             x264 = [re.search(r"-preset (\S+)", c).group(1) for c in doc["commands"] if "-c:v libx264" in c]
             return doc.get("intermediate_preset"), x264
 
@@ -2334,6 +2409,144 @@ class OrchestrationTests(MediaFixtures):
                 self.assertIn("usage:", out)
 
 
+class OnePassRenderTests(MediaFixtures):
+    """#357: a template render of one uncut clip is encoded once (fit, captions and loudness read into
+    the export's command), equivalent to the staged render; anything else renders stage by stage, and
+    the result's render_path_reason says why."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.flat = OUT / "onepass_flat.mp4"  # a flat picture: the captions are the only pixels that differ from it
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x606060:s=1280x720:r=30:d=4",
+           "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000:d=4", "-c:v", "libx264", "-preset", "veryfast",
+           "-pix_fmt", "yuv420p", "-c:a", "aac", cls.flat)
+        cls.flat_cues = OUT / "onepass_cues.txt"
+        cls.flat_cues.write_text("0:00-0:02 One pass renders this line\n0:02-0:04 And this one, a little longer\n", encoding="utf-8")
+
+    @staticmethod
+    def _encodes(doc):
+        return [c for c in doc["commands"] if re.search(r"-c:v (?!copy)", c)]
+
+    def _caption_box(self, path, t):
+        """The box of the pixels that differ from the flat background at `t` (#547's bbox)."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _common.placement import bbox
+        frame = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                                "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout[:1080 * 1920]
+        return bbox(bytes(255 if abs(v - frame[0]) > 24 else 0 for v in frame), 1080, 1920)
+
+    def test_a_template_render_is_one_encode_equivalent_to_the_staged_render(self):
+        docs = {}
+        for path in ("fused", "staged"):
+            work = OUT / f"onepass_work_{path}"
+            shutil.rmtree(work, ignore_errors=True)
+            docs[path] = json.loads(script("render.py", "--template", "reels", self.flat, "--cues", self.flat_cues,
+                                           "-o", OUT / f"onepass_{path}.mp4", "--work", work, "--json",
+                                           *(["--staged"] if path == "staged" else [])).stdout)
+        fused, staged = docs["fused"], docs["staged"]
+        self.assertEqual((fused["render_path"], fused["render_path_reason"]), ("fused", None))
+        self.assertEqual((staged["render_path"], staged["render_path_reason"]), ("staged", "staged_requested"))
+        self.assertEqual(len(self._encodes(fused)), 1, fused["commands"])
+        self.assertGreaterEqual(len(self._encodes(staged)), 3, staged["commands"])
+        self.assertTrue(fused["verified"] and staged["verified"])
+        self.assertEqual(fused["stages"], staged["stages"])
+        self.assertIsNone(fused["intermediate_preset"], "no stage encoded an intermediate")
+        self.assertIn("loudness", [v.get("stage") for v in fused["verification"]], "the loudness stage's check, on the delivery")
+        self.assertEqual(fused["caption"], staged["caption"])
+        a, b = (probe(str(OUT / f"onepass_{p}.mp4")) for p in ("fused", "staged"))
+        for key in ("width", "height", "fps", "nb_frames"):
+            self.assertEqual(a["video"][key], b["video"][key], key)
+        self.assertEqual(a["stream_counts"], b["stream_counts"])
+        self.assertAlmostEqual(a["duration"], b["duration"], delta=0.03)
+        self.assertAlmostEqual(integrated_lufs(OUT / "onepass_fused.mp4"), integrated_lufs(OUT / "onepass_staged.mp4"), delta=0.5)
+        # the captions are laid out against the frame fit plans: the same ASS, drawn in the same place.
+        # The karaoke word lengths are read from the sound: the source's here, an AAC re-encode of it there
+        ass = [(OUT / f"onepass_work_{p}" / "captioned.ass").read_text(encoding="utf-8") for p in ("fused", "staged")]
+        self.assertEqual(*(re.sub(r"\\kf\d+", r"\\kf", text) for text in ass))
+        for got, want in zip(*(map(int, re.findall(r"\\kf(\d+)", text)) for text in ass)):
+            self.assertLessEqual(abs(got - want), 2)
+        for t in (1.0, 3.0):
+            box_f, box_s = self._caption_box(OUT / "onepass_fused.mp4", t), self._caption_box(OUT / "onepass_staged.mp4", t)
+            self.assertIsNotNone(box_f)
+            for got, want in zip(box_f, box_s):
+                self.assertLessEqual(abs(got - want), 2, (t, box_f, box_s))
+        ssim = sh("ffmpeg", "-nostats", "-i", OUT / "onepass_fused.mp4", "-i", OUT / "onepass_staged.mp4",
+                  "-lavfi", "ssim", "-f", "null", "-").stderr
+        self.assertGreaterEqual(float(re.search(r"All:([0-9.]+)", ssim).group(1)), 0.98)
+        self.assertEqual(Path(fused["caption_srt"]).read_text(encoding="utf-8"), Path(staged["caption_srt"]).read_text(encoding="utf-8"))
+        plan = json.loads(script("render.py", "--template", "reels", self.flat, "--cues", self.flat_cues, "-o", OUT / "onepass_plan.mp4",
+                                 "--work", "onepass_relative_work", "--dry-run", "--json", cwd=OUT).stdout)  # a relative --work too
+        self.assertEqual((plan["render_path"], len(self._encodes(plan))), ("fused", 1), "the plan is the one command")
+
+    def test_every_reason_for_the_staged_path_is_named(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _fixtures import make_multistream
+        subs = make_multistream(OUT / "onepass_subs.mkv", subtitle=True)
+        tracks = make_multistream(OUT / "onepass_tracks.mp4")
+        base = {"clips": [{"src": str(self.flat)}], "frame": {"aspect": "9:16", "fit": "crop"},
+                "loudness": {"lufs": -14}, "export": {"preset": "reels"}}
+
+        def reason(name, change=None, *extra, src=None):
+            proj = json.loads(json.dumps(base))
+            if src:
+                proj["clips"] = [{"src": str(src)}]
+            proj.update(change or {})
+            proj["output"] = str(OUT / f"onepass_r_{name}.mp4")
+            path = OUT / f"onepass_r_{name}.json"
+            path.write_text(json.dumps(proj), encoding="utf-8")
+            return script("render.py", path, "--dry-run", "--json", *extra)
+
+        cases = {
+            "staged_requested": ({}, ["--staged"]), "cache": ({}, ["--cache", OUT / "onepass_cache"]),
+            "stop_after": ({}, ["--stop-after", "export"]), "preview": ({}, ["--preview"]), "no_encoding_export": ({"export": {"preset": "copy"}}, []),
+            "export_not_a_platform_preset": ({"export": {"preset": "h265"}}, []),
+            "clips_cut_or_joined": ({"clips": [{"src": str(self.flat), "in": 0, "out": 2}]}, []),
+            "silence_stage": ({"silence": {"threshold": -40}}, []),
+            "graphics_stage": ({"graphics": [{"template": "lower-third", "name": "A", "start": 0, "end": 1}]}, []),
+            "overlays_stage": ({"overlays": [{"text": "hi"}]}, []), "audio_stage": ({"audio": {"gain": 1}}, []),
+            "audiogram_stage": ({"audiogram": {"background": "black"}}, []),
+            "fit_not_one_picture_chain": ({"fit": {"duration": 3, "method": "trim"}}, []),
+            "fit_changes_frame_rate": ({"frame": {"aspect": "9:16", "fit": "crop", "fps": 25}}, []),
+        }
+        for name, (change, extra) in cases.items():
+            with self.subTest(reason=name):
+                doc = json.loads(reason(name, change, *extra).stdout)
+                self.assertEqual((doc.get("render_path"), doc.get("render_path_reason")), ("staged", name), doc.get("error"))
+        for name, src in (("source_variable_frame_rate", self.vfr), ("source_rotated_or_anamorphic", self.rot),
+                          ("source_hdr", self.hdr), ("source_subtitle_or_data_streams", subs),
+                          ("source_several_audio_tracks", tracks)):
+            with self.subTest(reason=name):
+                doc = json.loads(reason(name, None, src=src).stdout)
+                self.assertEqual((doc.get("render_path"), doc.get("render_path_reason")), ("staged", name), doc.get("error"))
+        with self.subTest(reason="loudness_not_planned"):  # loudness.py refuses a silent track; the staged path runs it
+            silent = OUT / "onepass_silent.mp4"
+            sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=gray:s=320x240:r=30:d=2", "-f", "lavfi",
+               "-i", "anullsrc=r=48000:cl=mono", "-t", "2", "-c:v", "libx264", "-c:a", "aac", silent)
+            proc = reason("silent", None, src=silent)
+            self.assertEqual(json.loads(proc.stdout)["render_path_reason"], "loudness_not_planned")
+            self.assertIn("render path: staged (loudness_not_planned)", proc.stderr)
+        # a stage whose plan does not read into one chain, or that refused: emoji drawn as PNG overlays are
+        # inputs of their own (only where libass draws no colour, so the plans are given here)
+        sys.path.insert(0, str(SCRIPTS))
+        import render
+        work = OUT / "onepass_unit"
+        work.mkdir(exist_ok=True)
+        for name, script_name, command in (
+                ("fit_not_planned", "fit.py", None), ("captions_not_planned", "caption.py", None),
+                ("captions_not_one_picture_chain", "caption.py", ["ffmpeg", "-i", "x", "-i", "e.png", "-filter_complex", "[0:v][1:v]overlay", "o"])):
+            with self.subTest(reason=name):
+                def planned(script_, argv, command=command, script_name=script_name, **spec):
+                    if script_ == script_name:
+                        return None if command is None else {"command": command}
+                    return {"command": ["ffmpeg", "-i", "x", "-vf", "null", "o"]}
+                with unittest.mock.patch.object(render, "stage_recipe", planned), unittest.mock.patch.object(render, "sh") as export:
+                    why, _ = render.render_fused(str(self.flat), work, ".mp4", {"aspect": "9:16"}, ["--aspect", "9:16"],
+                                                 ["--text", str(self.flat_cues)], None, [], str(work / "o.mp4"))
+                self.assertEqual(why, name)
+                export.assert_not_called()
+
+
 class DemoGalleryTests(unittest.TestCase):
     """The gallery in docs/demos.md is committed, so its builder is a shipped artefact: if
     demos/build.py stops rendering, the README's pictures quietly describe an older tool.
@@ -2926,6 +3139,36 @@ class TimelineExportTests(unittest.TestCase):
                 self.assertEqual([c.get("format") for c in spine], [assets["a.mp4"], assets["tall.mp4"], assets["sq25.mp4"]])
                 self.assertEqual([[e.get("type") for e in c.findall("adjust-conform")] for c in spine],
                                  [[conform], [], [conform]])
+
+    def test_fcpxml_formats_have_no_name_without_a_rate_731(self):
+        """#731: Final Cut Pro 13 said "Encountered an unexpected value" on importing a sequence
+        format named FFVideoFormat1080p, because its names carry the rate (FFVideoFormat1080p30).
+        Every format, the sequence's and each asset's, is written as FCP 13 writes one it has no
+        name for: size, frameDuration and colorSpace, no name. The colorSpace is the source's
+        (review of #732): a PQ or HLG clip is not declared Rec. 709, and gets its own format even
+        at the sequence's size and rate; an untagged one is read as BT.709."""
+        import xml.etree.ElementTree as ET
+        tl_mod = self._tl()
+        probes = self._probes(**{"a.mp4": 8})
+        probes["/m/ntsc.mp4"] = {"duration": 8, "video": {"fps": 29.97, "width": 1920, "height": 1080}, "audio": {"channels": 2}}
+        for name, trc in (("sdr.mp4", None), ("pq.mov", "smpte2084"), ("hlg.mov", "arib-std-b67")):
+            probes[f"/m/{name}"] = {"duration": 8, "audio": {"channels": 2},
+                                    "video": {"fps": 30.0, "width": 1920, "height": 1080, "color_transfer": trc}}
+        rec709, pq, hlg = "1-1-1 (Rec. 709)", "9-16-9 (Rec. 2020 PQ)", "9-18-9 (Rec. 2020 HLG)"
+        for frame in ({}, {"frame": {"aspect": "9:16", "width": 1080, "fit": "pad"}}):
+            with self.subTest(frame=frame):
+                clips = [{"src": n} for n in ("a.mp4", "ntsc.mp4", "sdr.mp4", "pq.mov", "hlg.mov")]
+                root = ET.fromstring(tl_mod.to_fcpxml(tl_mod.build({"clips": clips, **frame}, probes, lambda p: f"/m/{p}")).encode("utf-8"))
+                formats = {f.get("id"): f for f in root.findall("./resources/format")}
+                for f in formats.values():
+                    self.assertIsNone(f.get("name"), f.attrib)
+                assets = {a.get("name"): formats[a.get("format")].get("colorSpace") for a in root.findall("./resources/asset[@format]")}
+                self.assertEqual(assets, {"a.mp4": rec709, "ntsc.mp4": rec709, "sdr.mp4": rec709, "pq.mov": pq, "hlg.mov": hlg})
+                seq = formats[root.find("./library/event/project/sequence").get("format")]
+                self.assertEqual(seq.get("colorSpace"), rec709)
+                hdr = {root.find(f"./resources/asset[@name='{n}']").get("format") for n in ("pq.mov", "hlg.mov")}
+                self.assertEqual(len(hdr), 2, "a PQ and an HLG source of one size and rate have a format each")
+                self.assertNotIn(seq.get("id"), hdr, "an HDR source never shares the sequence's Rec. 709 format")
 
     def test_fcpxml_keeps_the_dtd_child_order_on_a_retimed_first_clip(self):
         """FCPXML 1.10's asset-clip content model is timeMap, the adjust-* elements, anchored

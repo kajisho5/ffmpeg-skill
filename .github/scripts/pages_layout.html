@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ page.lang | default: 'en' }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -63,6 +63,7 @@ footer { max-width: 980px; margin: 0 auto; padding: 0 16px 40px; color: var(--mu
 <nav><div class="in">
   <a class="brand" href="{{ '/' | relative_url }}"><img src="{{ '/brand/favicon.svg' | relative_url }}" alt="" width="20" height="20" style="vertical-align:-4px;margin-right:6px">ffmpeg-skill</a>
   <a href="{{ '/readme.html' | relative_url }}">README</a>
+  <a href="{{ '/docs/use-cases/' | relative_url }}">Use cases</a>
   <a href="{{ '/docs/demos.html' | relative_url }}">Demos</a>
   <a href="{{ '/docs/contract.html' | relative_url }}">Contract</a>
   <a href="{{ '/docs/design-decisions.html' | relative_url }}">Design decisions</a>

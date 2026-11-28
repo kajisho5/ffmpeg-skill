@@ -16,7 +16,7 @@ from array import array
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from _common.emit import die, note, refuse, warn
-from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, register_plan_input, require_tool, run, run_analysis, still_input_args
+from _common.runner import ffmpeg_failure_extra, refuse_denied_input, STATE, dry_run_input_pending, planned_input, register_plan_input, require_tool, run, run_analysis, still_input_args
 
 # The streams probe() describes, as stream specifiers: its `video` is the first picture that is not
 # a cover (`V`), its `audio` the first sound stream. Without a -map, FFmpeg picks the largest
@@ -61,6 +61,11 @@ def fingerprint(path: str, *, complete: bool = False) -> Dict[str, Any]:
     return result
 
 
+def sound_clock(meta: "Optional[Dict[str, Any]]", start: float = 0.0, *, pad: bool = True) -> str:
+    """A sound-only decode's filter, to keep its samples on the file's clock under `-copyts` (#787);
+    `pad=False` keeps the timestamps and leaves a late sound's lead unpadded (audio.py's beds)."""
+    return f"asetpts=PTS-{float((meta or {}).get('start_time') or 0.0) + start:.6f}/TB" + ",aresample=async=1:first_pts=0" * pad
+
 def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None, start: float = 0.0,
                     *, check: bool = True) -> "Sequence[float]":
     """Decode (part of) a file's audio to mono float samples in [-1, 1) at `sample_rate` via a
@@ -74,7 +79,9 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     exact in a float32, so every value read back is the double the list held."""
     register_plan_input(path)
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    # -copyts: without it the demuxer rewrites the timestamps of an MPEG-TS/PS to start at the
+    # earliest stream it reads -- here the sound alone -- and the sound's own start becomes 0 (#787)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-copyts"]
     if start:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", path]
@@ -84,7 +91,8 @@ def decode_pcm_mono(path: str, sample_rate: int, seconds: Optional[float] = None
     # so sample i is at start + i / sample_rate on the file's clock: sync.py measured a track that
     # starts 0.3 s late 0.279 s off, and --replace-audio placed it that far late (#409)
     # the first audio track, the one probe() describes (default selection takes the most channels)
-    cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", str(sample_rate), "-f", "s16le", "-"]
+    cmd += ["-map", f"0:{PROBED_AUDIO}", "-vn", "-af", sound_clock(probe(path, required=False), start), "-ac", "1",
+            "-ar", str(sample_rate), "-f", "s16le", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
         if check:
@@ -552,7 +560,7 @@ def probe(path: str, role: str = "input", *, required: bool = True, advise_deint
         "chapter_times": [(round(_to_float(c.get("start_time")) or 0.0, 2), round(_to_float(c.get("end_time")) or 0.0, 2))
                           for c in (raw.get("chapters") or [])],
     }
-    return out
+    return planned_input(path, out) if role == "input" else out
 
 
 _CARRY: Dict[str, Dict[str, Any]] = {}
@@ -1165,8 +1173,11 @@ def detect_silences(path: str, threshold: float, min_silence: float) -> "List[Tu
     if dry_run_input_pending(path):
         return []
     ffmpeg = require_tool("ffmpeg")
-    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn", "-af",
-           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
+    # the file's clock, as decode_pcm_mono() reads it: on an MPEG-TS/PS the demuxer would
+    # otherwise count from the sound's first sample, which is late when the sound starts last (#787)
+    cmd = [ffmpeg, "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", f"0:{PROBED_AUDIO}", "-vn",
+           "-af", f"{sound_clock(probe(path, required=False))},silencedetect=noise={threshold}dB:d={min_silence}",
+           "-f", "null", "-"]
     proc = run_analysis(cmd, check=False, record=True)
     if proc.returncode != 0:
         die(f"silencedetect failed:\n{proc.stderr.strip()[-800:]}", kind="ffmpeg", **ffmpeg_failure_extra(proc.stderr))
@@ -1270,8 +1281,9 @@ def _detect_dropouts(path: str, end: float) -> "List[Tuple[float, float]]":
     is padded with CONTENT_DROPOUT_PAD s of zeros first: a silent tail of audio that ends before
     the container does then runs into the pad and is too long to count, instead of closing at
     the audio's EOF and passing the container-duration edge test."""
-    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-i", path, "-map", "0:a:0", "-af",
-                         f"apad=pad_dur={CONTENT_DROPOUT_PAD:g},"
+    # -copyts and the shift: on an MPEG-TS/PS a sound-only decode counts from the sound's own start (#787)
+    proc = run_analysis([require_tool("ffmpeg"), "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", "0:a:0", "-af",
+                         f"{sound_clock(probe(path, required=False))},apad=pad_dur={CONTENT_DROPOUT_PAD:g},"
                          f"silencedetect=noise={CONTENT_DROPOUT_DB:g}dB:d={CONTENT_DROPOUT_MIN}", "-f", "null", "-"],
                         check=False, record=True)
     if proc.returncode != 0:
@@ -1522,7 +1534,9 @@ def compare_pictures(path: str, reference: str) -> "Optional[Dict[str, Any]]":
 
 # check.py --compare --expect-changed (#439): where the picture differs from the reference.
 CHANGE_GRID = (32, 18)   # tiles across and down: one is 60x60 px at 1080p
-CHANGE_FLOOR = 24        # a tile whose largest channel difference (0-255, area mean) is above this changed
+# a tile whose largest channel difference (0-255, area mean) is above this changed, per --change-grid
+# (tiles across; down is 9/16 of it): 60, 30 and 20 px at 1080p, from the survey in tests/change_floor_survey.py
+CHANGE_FLOORS = {32: 24, 64: 32, 96: 48}
 
 
 def change_tiles(path: str, reference: str, floor: int, grid: "Tuple[int, int]" = CHANGE_GRID,

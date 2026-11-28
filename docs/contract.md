@@ -7,7 +7,7 @@ dry-run, input preservation and repeatability. It is the interface a planning ag
 consumes instead of reading `SKILL.md`, which stays written for a coding agent that
 follows the workflow by hand.
 
-The whole document is about 950 KB, almost all of it the 42 `tools` entries. `--tool NAME`
+The whole document is about 950 KB, almost all of it the `tools` entries: 41 tools and one alias (`crop`, see "Aliases"). `--tool NAME`
 (repeatable; `cut` or `cut.py`) keeps only the named tools under `tools`, in the order given,
 and every other key as it is: about 55 to 85 KB for one tool. An unknown name is refused (exit
 2) with the list of tools, and `doctor` does not take the flag.
@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.20.0`) | any release |
+| `skill.version` | the npm / package.json version (`4.24.0`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -53,7 +53,7 @@ under:
 - **`stable`**: the 12 core tools (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`,
   `audio`, `loudness`, `graphics`, `silence`, `probe`; the MCP server's default `tools/list`). The
   table below holds for them for the whole of 4.x, as it held for every tool in 3.x.
-- **`beta`**: the other 30. The same table holds, except that an argument or an output key may be
+- **`beta`**: the other 29 (and the `crop` alias). The same table holds, except that an argument or an output key may be
   removed, renamed or made required in a minor release after it has been listed in `deprecated`
   for one minor release (not the three steps below). Tool names and script names are not
   removed in 4.x.
@@ -99,11 +99,14 @@ CHANGELOG line, and if the old behaviour was something a caller could reasonably
 on, the line says so.
 
 `contract --json` carries a top-level `deprecated` list, next to `contract_version`: one entry per
-thing the next major removes, `{"what", "since", "replacement", "removed_in", "where"}` with `where`
+thing the next major removes (or, for a beta tool's argument, the next minor), `{"what", "since", "replacement", "removed_in", "where"}` with `where`
 naming the surface (`cli`, `json`, `mcp`, `behaviour`). It was empty in 2.0.0, and it is empty again
 in 3.0.0: its two 2.x entries, **running on Python 3.9** (`since: 2.10.9`) and **running on
 FFmpeg 5.x** (`since: 2.14.0`), were settled by 3.0.0 and moved to `removed`
-(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. 3.0.0 requires Python 3.10+ and
+(`removed_in: 3.0.0`). The 2.x warning lines are gone with them. From 4.20.2 to 4.22.0 it listed `overlay.py --emoji-assets`,
+`--emoji-scale` and `--emoji-max` (the beta rule): overlay draws text with drawtext and never read them, so
+each parsed, did nothing and said so with the warning `deprecated_option` (#749); 4.22.3 removes them, and
+overlay.py now refuses them as unknown options. 3.0.0 requires Python 3.10+ and
 FFmpeg 6.1+: every tool refuses an `ffmpeg`/`ffprobe` whose version it can read as older than 6.1
 (`kind: missing_tool`, `error.reason: ffmpeg_unsupported`; a git or vendor build whose version is
 unreadable is not refused), `doctor` names an unsupported Python or FFmpeg in `unsupported` and
@@ -167,7 +170,7 @@ removes a tool, a flag or an output key.
 
 | What changed in 4.0.0 | 3.x behaviour | 4.0 behaviour | Migrating from 3.x |
 |---|---|---|---|
-| The promise is split by tool (`stability`) | every tool under the same promise | the 12 core ones `stable`, the other 30 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
+| The promise is split by tool (`stability`) | every tool under the same promise | the 12 core ones `stable`, the other 29 `beta` (see "Stability guarantee (4.x)") | Read `stability` in `contract --json`; pin a version if you depend on a beta tool's arguments |
 | `export.py`, a single-file video delivery (not GIF) that misses a required property: a missing picture or sound stream, the wrong video codec (for an editing master also its profile and pixel format), preset size or fixed frame rate, or a duration or `--max-mb` limit (#620) | exit 0 with `verified: false` | exit 1, `kind: verification`, the failed steps listed and the file kept. A failed loudness step still only sets `verified: false` | Read the exit status (or `status`) for a delivery that misses a required property, and keep reading `verified`: a loudness miss is still exit 0 with `verified: false` |
 | `fit.py --duration` whose implicit speed factor is above 1.15 or below 1/1.15 (#582) | retimed, with `large_speed_change` among the warnings | refused before ffmpeg runs, `error.reason: fit_method_required` (`details: {factor, threshold, source_duration, target_duration}`), dry runs with a known length included | Pass `--method speed` to retime or `--method trim` to trim; `--smooth blend` or `--smooth interpolate` also chooses a retime |
 | Delivery templates (`render.py --template`) (#575) | platform checks only | the template's `check` also runs `check.py --content` (black frames, freezes, flashes, silence, dropouts); a failed row fails the render and keeps the file | Fill the template with `--write-project` and set `"check": {"platform": "...", "content": false}` |
@@ -184,7 +187,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.20.0", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.24.0", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -219,7 +222,7 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | `supports_json` | whether `--json` exists |
 | `supports_json_brief` | whether `--json-brief` exists (1.11.0): the same success document with `probe` replaced by a compact `summary` (`duration_s`, `width`, `height`, `fps`, `vcodec`, `acodec`, `channels`, and `lufs` when the tool measured one), `commands` replaced by the number of commands run, and the per-step `verification` list dropped (its verdict stays in `verified`). Tool-specific keys are unchanged, `--json`'s own output is unchanged, and a failure prints the same failure document either way |
 | `mutates_input` | always `false`: no tool overwrites its input |
-| `stability` | `stable` (the 12 core tools) or `beta` (the other 30); since 4.0.0, see "Stability guarantee (4.x)" |
+| `stability` | `stable` (the 12 core tools) or `beta` (the other 29); since 4.0.0, see "Stability guarantee (4.x)" |
 | `produces_artifact` | writes a file (media, PNG, HTML, EDL) |
 | `verification` | `{required, tools}`: which tools to run on the output afterwards |
 | `requires_visual_verification` | the picture changed; run `ffmpeg-skill/look` and inspect the PNG |
@@ -230,6 +233,16 @@ One entry per tool under `tools`, sorted by id. Tool ids are stable:
 | | `scenes` has `audio_only: true` and `video_required: false` after 3.2.0: an audio-only file is one scene, measured by `--beats`, `--audio-peaks`, `--speech` and `--highlights` (result key `audio_only: true`); `--sheet` and `--shots` refuse it. `render` has `audio_only: true` and `video_required: false` since 2.17.4: `--template podcast` and `--template audiogram` take an audio file. `join` has them since 0.9.1: audio-only inputs are joined as audio (no `look` needed then); mixing audio and video inputs is refused |
 | `deterministic_inputs`, `idempotency_hint` | see Repeatability |
 | `mcp` | the MCP tool name and its positional arguments |
+| `alias_of` | only on an alias (4.19, #683): the tool that does its job, e.g. `fit` on `crop` |
+
+### Aliases
+
+A tool folded into another keeps its script, its CLI options, its MCP name and its schema, and is
+marked `alias_of` (`_contract.ALIASES`). It is left out of what is advertised: the tool count,
+SKILL.md's table, README's Tools section and `tools/list`, full or default. `tools/call` runs it by
+name and the 1.x snapshot still pins its arguments. `crop` is the one alias: `crop.py --x X --y Y
+--width W --height H` runs the code `fit.py --rect W:H:X:Y` runs and writes the same file. Both
+take the box without `--x/--y` (or `X:Y`) as a centred one.
 
 ### Roles
 
@@ -289,7 +302,9 @@ the two files could not be compared, and WARNs when a declared span did not chan
 SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
 decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
 `--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
-then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
+then compared with those spans removed; both documents gain `removed`. `--change-grid 32|64|96`
+(#442) sets the tiles across (60, 30 or 20 px at 1080p; down is 9/16 of it), each with its own surveyed floor,
+and is refused where a tile would be under 30 px (64 needs 1920 px across, 96 needs 2880); `change_scope`'s `tile` names the grid used. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`
@@ -447,6 +462,40 @@ writes nothing. `--audition-seconds` without `--audition`, and
 `--audition` with `--filler-list`, `--profile`, `--protect-ranges` or `--extract-profile`, are
 refused.
 
+With `fit.py --fit pad` or `--fit blur` and a source whose size is known, the same documents carry
+`placed` (#581 part 2): where the picture lands in the frame, `{x, y, width, height, frame_width,
+frame_height, scale, source_width, source_height}`, from the filters' own rules (scale rounds half
+away from zero; pad floors the picture's size and offset to the chroma grid of the line written,
+4:2:0, or 4:2:2 for `--codec prores`; the blur graph floors only the offset, to the source's grid).
+`picture`, after a real run, is the measurement.
+
+`cut.py --audition DIR [--audition-seconds S]` (#581 part 2) writes the same clips and index for the
+joins of a `--segments`, `--remove` or `--word-segments` cut, but cut from the file the cut wrote,
+after it: a stream copy joins where its keyframes landed (`source_in` is the keyframe, as in
+`snapped_segments`) and a re-encode on the frame, so a clip is the join as it was made. The result's
+`audition` adds `path` (the cut's `mode`), `made_from` (the output) and `commands` (the clips'
+lines; the result's `commands` and `encoder` stay the cut's); `clip_source` is the range of the
+written cut a clip holds. One range has no join and is refused, as is `--audition-seconds` without
+`--audition`; `DIR` must exist (`output_dir_missing`), and every clip and the index are guarded
+before the cut. A dry run plans the clips (`duration` null) and writes nothing.
+
+`render.py` results, dry runs included, carry `clips` (#581 part 2): per project clip `{clip, src,
+speed_factor, crop, placed}`. `speed_factor` is that clip's speed stage's (1.0 with none); in a dry
+run whose clip is cut first it is computed from the planned length the stage's `--duration` is built
+from. `crop` and `placed` are the fit stage's for a one-clip project (in a dry run whose fit input is
+not written yet, from `fit.py`'s own dry run of the clip's picture, which the cut and the speed stage
+keep); with several clips `join.py` frames each and they are `null`. The fit stage's `timing` is
+passed on as `timing`.
+
+`render.py --preview` (#581 part 2) renders the whole project at its own frame, every stage at the
+`--fast` preset, so captions, graphics and overlays are laid out as the final's, then makes the
+delivered picture small with `proxy.py` (the short side 540, never enlarged, quality 30) into
+`<output>_preview.mp4` beside the output; the project's output is not written, the export (when the
+project has one) writes into the work directory, the check stage is not run (`check_preview`), and
+the result has `preview: true` and no `picture` (that was the full frame). It refuses `--stop-after`,
+`--export-timeline`, `--write-project`, `--init`, `--list-templates`, `--compare-project` (it checks a
+full-size render), a saved plan, a template pack and an audio-only output.
+
 New `sequence` plans add a complete-file `sha256_full` fingerprint for each selected frame
 in `inputs`. The additive `sequence_frames_sha256` field binds their order and contents.
 The tool checks the same fingerprints again before saving the plan. Replay, including replay with
@@ -475,7 +524,7 @@ on one machine and VideoToolbox bytes on another; `encoder` in the result says w
 
 ## `provides`
 
-`provides` lists these 42 tools by a cross-repository Capability id, for
+`provides` lists these 41 tools and the `crop` alias by a cross-repository Capability id, for
 `kajisho5/AI-video-production-OS`'s `CapabilityContract.provides`
 (`docs/SPEC.md` there), matching the ids already assigned to this Skill in
 that project's own `docs/CAPABILITY_MATRIX.md` section 9 ("ffmpeg-skill's
@@ -800,7 +849,8 @@ and says so (warning `emoji_not_drawn`). A `--fonts-dir` is searched by the prob
 it never moves `ok` or any tool's `usable`.
 
 `caption.py`, `graphics.py` and `overlay.py` gained `--emoji auto|color|png|mono|none`,
-`--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15; `graphics.py` also gained
+`--emoji-assets DIR`, `--emoji-scale FLOAT` and `--emoji-max N` in 1.15 (`overlay.py` never read the last
+three: deprecated in 4.20.2 and removed in 4.22.3, #749); `graphics.py` also gained
 `--text-render auto|ass|drawtext` and `--write-ass PATH`. New success keys: `emoji`
 (`{"mode", "count", "clusters", "assets", "missing", "overlays"}`) on `caption.py` and
 `graphics.py`, and `text_renderer` (`"ass"`|`"drawtext"`), `script` and `ass` (the generated file,
@@ -920,6 +970,7 @@ Per-tool keys added in 1.17, all additive:
 | `timeline` | `render.py --export-timeline FILE` | `{format, rate, duration, frames, clips, transition, transition_frames, music, markers, notes, not_exported}`: the written timeline's own numbers (`rate` is exact, `"30000/1001"` for 29.97) and what the project asked for that an editor timeline cannot carry. Nothing is encoded (`commands: []`); `verified` means the file was written and reads back as its format (`verification` step `parse`) -- not that an editor opened it |
 | `templates` | `render.py --list-templates --json` | one row per shipped template: `{template, destination, frame: {width, height} or null for an audio destination, fit, max_duration, lufs, safe: {top, bottom, left, right}}` (unreleased: before, the table was printed under `--json` too). `render.py --init FILE --json` prints the plain success document with `output` the file it wrote |
 | `cache` | `render.py --cache` | `{dir, ffmpeg, hits, misses, miss_reasons, saved_seconds, entries}`, plus `would_hit` under `--dry-run`. `miss_reasons` (unreleased, additive): `[{stage, reason, ...}]`, `reason` one of `not_cached`, `sidecar_missing`, `artifact_missing`, `sidecar_corrupt`, `artifact_truncated`, `no_output_path`, `destination_not_owned` (a file already at the stage's path in `--work` is not one this render wrote). The ffmpeg build banner, the skill version, the contract version, the forwarded flags (`--fast`, `--codec`, …), the GPU setting (`FFMPEG_SKILL_HW` and whether `--hw`/`--no-hw` made it explicit) and the output's extension are all part of every key, so a cache is never reused across any of them — a `--fast` draft is never served to a run that did not ask for one |
+| `render_path`, `render_path_reason` | `render.py` (#357) | `fused` when the picture and the sound were encoded once, `staged` when every stage wrote a file of its own (`--staged` asks for it). Fused needs one uncut clip whose stages are `fit`, `captions` and `loudness` (each optional) before a platform `export`: fit, caption and loudness are run as themselves up to their encode, against the frame fit plans (an internal variable between `render.py` and its children, not a flag), and the export reads the source through their filters, the loudness measured on the source. `render_path_reason` is `null` when fused, else one code: `staged_requested`, `cache`, `stop_after`, `preview` (a preview never writes the final), `no_encoding_export`, `export_not_a_platform_preset`, `clips_cut_or_joined`, `audiogram_stage`, `silence_stage`, `graphics_stage`, `overlays_stage`, `audio_stage`, `source_variable_frame_rate`, `source_rotated_or_anamorphic`, `source_hdr`, `source_subtitle_or_data_streams`, `source_several_audio_tracks`, `fit_not_planned`, `captions_not_planned`, `loudness_not_planned` (the stage refused its plan: the staged path runs it and says why), `fit_not_one_picture_chain` (a retime, trim or fade), `fit_changes_frame_rate`, `captions_not_one_picture_chain` (emoji drawn as overlays). Fused, `stage_pictures` has no `fit` entry (fit wrote no file to measure) and the loudness stage's check is made on the delivery the export measured. On a result that reached the delivery |
 | `intermediate_preset` | `render.py` | The x264/x265 preset the stages before an encoding export ran at: `--intermediate-preset`, default `superfast` since 2.16 (`veryfast` in 2.15). `null` when no stage received it: no encoding export was reached, `--fast`, `--stop-after` before the export, a `copy` export, or nothing but the export encoded. Present on every render result, early stops included |
 
 Per-tool keys added in 1.17.1, all additive:
@@ -1348,7 +1399,7 @@ name, `description` is the ToolSpec's own one-line description (unchanged from t
 CLI's `--help` first line), the order is the contract's sorted order, and `inputSchema` is
 `_contract.mcp_input_schema(ToolSpec)`. The structured-arguments note that explains how to
 call a tool (`_contract.MCP_STRUCTURED_NOTE`) is server-wide, not per-tool: it is sent once,
-in `initialize`'s `instructions` field, rather than appended to all 42 descriptions (1.20.0).
+in `initialize`'s `instructions` field, rather than appended to every description (1.20.0).
 `tools/call` maps structured arguments to
 argv with the ToolSpec's `mcp.positional` and `mcp.argument_exceptions`. A new
 public script, a removed one, or a changed parser therefore changes the MCP surface
@@ -1405,17 +1456,17 @@ but with `overwrite` it replaces an existing file at its output or plan path, wh
 count as an additive update. The hints are hints: a client must not treat them as a security
 boundary.
 
-### Default `tools/list` surface: core 12, opt-in for all 42
+### Default `tools/list` surface: core 12, opt-in for all 41
 
 By default `tools/list` returns only the core dozen in `_contract.MCP_CORE_TOOLS` (`render`,
 `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`,
-`probe`) rather than all 42, so a session doesn't pay context for 30 schemas it is unlikely to ever call
+`probe`) rather than all 41, so a session doesn't pay context for 29 schemas it is unlikely to ever call
 directly -- the set is the tools eval iterations 17-20's ground-truth `expect` lists actually name
-most often across the corpus in `evals/agent_prompts*.json`. Every tool -- including the other 30
--- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
-contract (`ffmpeg-skill contract --json`) still describes all 42 unconditionally. Set
+most often across the corpus in `evals/agent_prompts*.json`. Every tool -- including the other 29
+and the `crop` alias -- is still callable by name through `tools/call` regardless of what `tools/list` advertised; the
+contract (`ffmpeg-skill contract --json`) still describes all 41 and the alias unconditionally. Set
 `FFMPEG_SKILL_MCP_FULL=1` (anything but "" or `0`) in the server's environment to make `tools/list`
-return all 42, as every version before 1.18.3 did.
+return all 41 (every tool but an alias), as every version before 1.18.3 returned every tool.
 
 Set `FFMPEG_SKILL_MCP_TOOLS=probe,cut,fit,export,check` to advertise a named subset.
 The server trims whitespace, ignores duplicate names and preserves contract order.
