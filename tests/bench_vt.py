@@ -44,7 +44,7 @@ from _common import decision, probe  # noqa: E402
 SYNTHETIC = {
     "cg-testsrc2": "testsrc2=size=1920x1080:rate=30",
     "fractal-zoom": "mandelbrot=size=1920x1080:rate=30:maxiter=200",
-    "grain-gradient": "gradients=size=1920x1080:rate=30:speed=0.02:seed=1,noise=alls=10:allf=t+u",
+    "grain-gradient": "gradients=size=1920x1080:rate=30:speed=0.02:seed=1:c0=0x203040:c1=0xc08050,noise=alls=10:allf=t+u",
 }
 DEFAULT_GRID = list(range(4, 101, 4))
 

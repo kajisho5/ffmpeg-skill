@@ -146,7 +146,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
-- [After 4.19.0 — the last open items of #696](#after-4190--the-last-open-items-of-696)
+- [After 4.19.0 — the items of #696 closed here](#after-4190--the-items-of-696-closed-here)
 <!-- contents:end -->
 
 ## Time limits
@@ -7665,7 +7665,7 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
 - Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
   `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
   `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
-## After 4.19.0 — the last open items of #696
+## After 4.19.0 — the items of #696 closed here
 
 - **`audio.py --tempo` ends on FFmpeg 8.0.1.** The chain that never ended there was fit.py's
   `-af` form (above, "the millisecond in fit.py"). `audio.py` runs `atempo` and then
@@ -7715,8 +7715,8 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
   saying nothing. `decision.seek_margin(meta, t)` is the one place that knows this: 10 s
   (`TIMESTAMP_SEEK_MARGIN`) on those demuxers, else `SEEK_MARGIN` (1 s) where cut, sync and fit
   already used it. The decode drops the margin: an output `-ss`, a `trim` (look), or a `select` on
-  the file's own clock (the contact sheet). `look.py --at` and `--compare` take the 1 s margin on every
-  container, which also covers an MP4 seek that lands on a keyframe after its time. The contact
+  the file's own clock (the contact sheet). `look.py --at` and `--compare` take at least the 1 s margin
+  on every container (10 s on MPEG-TS and MPEG-PS), which also covers an MP4 seek that lands on a keyframe after its time. The contact
   sheet, the review page's stills and the analysis decodes (`probe.seek_args`: cropdetect's
   windows, its motion centre, fit's crop check, `scenes.py --shots`) take the 10 s margin on
   those demuxers only, so their MP4 commands are

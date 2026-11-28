@@ -52,7 +52,7 @@ FOOTAGE_NATIVE = {"ai_talk": (640, 430), "ai_talk_en": (854, 480)}
 SYNTHETIC = {
     "testsrc2": "testsrc2=size={w}x{h}:rate=24",
     "noise": "color=c=gray:size={w}x{h}:rate=24,noise=alls=40:allf=t+u",
-    "gradient": "gradients=size={w}x{h}:rate=24:speed=0.02:seed=1",
+    "gradient": "gradients=size={w}x{h}:rate=24:speed=0.02:seed=1:c0=0x203040:c1=0xc08050",
     "dark": "color=c=0x101418:size={w}x{h}:rate=24,noise=alls=12:allf=t+u,drawbox=x=iw/3:y=ih/3:w=iw/4:h=ih/4:color=0x302820:t=fill",
     "fast_pan": "testsrc2=size={w2}x{h}:rate=24,crop={w}:{h}:x='mod(n*{step},{w})':y=0",
 }

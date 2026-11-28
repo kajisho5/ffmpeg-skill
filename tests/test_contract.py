@@ -3538,7 +3538,8 @@ sys.exit(fit.main())
     def test_no_fixture_draws_from_an_unseeded_random_source_696(self):
         """#558 item 12, #696: a fixture made from noise that changes every run makes a test pass
         or fail by chance. FFmpeg's random sources (anoisesrc, life, cellauto, sierpinski,
-        gradients) pick a fresh seed unless given `seed=`; Python's module-level random functions,
+        gradients) pick a fresh seed unless given `seed=`, and gradients a random colour for each
+        of c0 and c1 not given, seed or no seed (FFmpeg 6.1); Python's module-level random functions,
         a Random made without a seed and os.urandom draw a fresh one too. `noise` and expression
         random() are fixed generators and are not flagged. Every file under tests/ and demos/."""
         source = re.compile(r"""(?:["',;\]]|f["'])(anoisesrc|life|cellauto|sierpinski|gradients)(=[^"',;\[\s]+|(?=["']))""")
@@ -3548,7 +3549,8 @@ sys.exit(fit.main())
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 code = line.split("#")[0] if not line.lstrip().startswith(("'", '"', "f'", 'f"')) else line
                 for m in source.finditer(code):
-                    if "seed=" not in (m.group(2) or ""):
+                    opts = m.group(2) or ""
+                    if "seed=" not in opts or m.group(1).startswith("grad") and not ("c0=" in opts and "c1=" in opts):
                         found.append(f"{path.name}:{n}: {m.group(0).lstrip(chr(34) + chr(39) + 'f,;]')}")
                 if python.search(code):
                     found.append(f"{path.name}:{n}: {line.strip()[:80]}")
