@@ -141,6 +141,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.18.0 — crop.py folded into fit.py (#683)](#after-4180--croppy-folded-into-fitpy-683)
 - [After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)](#after-4190--the-change-floor-surveyed-across-encoders-and-a-finer-grid---change-grid-442)
 - [After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)](#after-4201--a-callers-subtitle-times-colours-and-luts-are-read-in-0-9-765)
+- [After 4.18.0 — a preview of the whole project, joins of a cut to listen to, and each clip's decisions (#581)](#after-4180--a-preview-of-the-whole-project-joins-of-a-cut-to-listen-to-and-each-clips-decisions-581)
 <!-- contents:end -->
 
 ## Time limits
@@ -7183,8 +7184,9 @@ Four items were asked; two already existed when this was built, so only the othe
 
 Of what the issue asked, `--dry-run`, `--plan`, `render.py --export-timeline`, `silence.py --list`/`--edl`/`cut_points`,
 `proxy.py` and `fit.py`'s `timing.speed_factor` existed when this was built. Two things were added, as flags and keys
-of tools that exist; no tool and no MCP tool. Not built: a low-resolution preview render of a whole project
-(`render.py --preview`), `cut.py --audition`, and `render.py --dry-run` gathering each clip's speed and crop.
+of tools that exist; no tool and no MCP tool. Not built here: a low-resolution preview render of a whole project
+(`render.py --preview`), `cut.py --audition`, and `render.py --dry-run` gathering each clip's speed and crop; they
+came after 4.18.0 (the next entry).
 
 - **`silence.py --audition DIR` makes each clip with the join the cut uses.** The clip is `cut.join_from_source`
   over two ranges, the last `--audition-seconds` of the range before the join and the first of the one after it,
@@ -7425,3 +7427,57 @@ reads a caller's text that ffmpeg then reads too, the two disagreed on one file.
   `_common.color._COLOR_TOKEN_RE`, `color.refuse_bad_cube()`. Tests (tests/test_contract.py):
   `test_a_cue_of_full_width_digits_is_text_as_ffmpeg_reads_it`,
   `test_a_timing_line_in_other_digits_is_refused_before_ffmpeg_runs`.
+
+## After 4.18.0 — a preview of the whole project, joins of a cut to listen to, and each clip's decisions (#581)
+
+The owner's decision of 2026-11-27: the old open issues are freeze exceptions (#581 part 2). The four items the
+issue still listed were built, as flags and result keys of tools that exist; no tool and no MCP tool.
+
+- **`render.py --preview` lays the project out at its own frame, then makes it small.** Every stage runs on the
+  frame the final has, at the `--fast` preset, and `proxy.py` makes the delivered picture small at the end (the
+  short side 540, never enlarged, quality 30). Rendering at 540 from the first stage was not done: a project and
+  a brand file state sizes in pixels of the final frame (`captions.size` and `margin`, an overlay's `scale` and
+  `font_size`, the brand's safe margin), and the caption and graphics tools take them as pixels of the frame
+  they draw on, so every one of them would have to be rescaled for the preview to match, and one that was missed
+  would put a subtitle somewhere the final does not, which is what a preview is checked for. Drawn at the final's
+  frame and then scaled, the preview is the final's layout by construction; the dry run's stage commands are the
+  final's, but for the preset (the test compares them). The cost is that the stages encode the full frame, at
+  the fast preset.
+- **It never writes the final's name.** The preview is always `<output>_preview.mp4` beside the output, and its
+  guards are that file's; `-o` keeps the meaning it has (the template's output), so there is one name to learn
+  rather than a second meaning of `-o`. The export stage, when the project has one, writes into the work
+  directory; the check stage is not run (a platform check of a 540-line file would fail on its frame, and the
+  preview is not the delivery: `check_preview`), and `picture` is dropped, since it was the full frame's.
+  `preview: true` is in the result. Refused: `--stop-after`, `--export-timeline`, `--write-project`, `--init`,
+  `--list-templates`, a saved plan (it runs its own commands), a template pack, and an audio-only output.
+  `--compare-project` (#442 phase 4) is refused too, `kind: input`, before any stage, dry runs included: it
+  checks a full-size delivered render against the previous one, and a preview is a small render no check runs
+  on, so the check would compare a 540-line file with the full frame. Test:
+  `test_render_preview_refuses_compare_project_before_anything_runs`.
+- **`cut.py --audition` is cut from the written cut.** A stream copy joins at the keyframes it lands on, and its
+  sound is whatever the copied packets hold there, so a clip made from the source by any other path would be
+  heard where the cut is not (the test's beep sits between the keyframe and the asked start: the copy's clip has
+  it, the re-encode's has not). The clips are made after the cut, from its file, at the joins' output times: the
+  sum of `snapped_segments` spans for a copy, of the ranges on the frame grid otherwise; `path` is the cut's
+  `mode`, `source_in` the keyframe a copied part begins at. The clips are made with `silence.py`'s
+  `write_auditions` (the same small encode, index and cleanup). Their commands are the audition's `commands`,
+  not the result's, so the result's `encoder` is still the cut's (`copy`). One range has no join and is refused.
+  A clip that fails removes the clips this run wrote; the cut is already written and stays.
+- **`render.py`'s `clips` takes each decision from the stage that made it.** `speed_factor` is the clip's speed
+  stage's own (`fit.py`'s `timing`); a dry run whose clip is cut first has no length for that stage to read, and
+  the factor is computed from the planned length the stage's `--duration` is built from, the same number. `crop`
+  and `placed` are the fit stage's for a one-clip project; in a dry run its input is a cut not yet written, so
+  `fit.py`'s own dry run of the clip's picture is asked (the cut and the speed stage keep the picture's size).
+  **Not done:** with several clips, `join.py` frames each clip with its own scale and crop or pad, and states no
+  window; `crop` and `placed` are `null` there rather than `fit.py`'s numbers, which differ from join's crop by up
+  to a few pixels of rounding. The fit stage's `timing` is passed on as `timing`.
+- **`fit.py --fit pad` and `--fit blur` state `placed`**, computed from the filters' own rules and held by the test
+  to the measured `picture`: scale's `force_original_aspect_ratio=decrease` rounds half away from zero; pad works
+  in the line written (4:2:0, 4:2:2 for `--codec prores`) and floors the picture's size and offset to its chroma
+  grid; the blur graph's overlay works in the source's format and floors only the offset. A crop states `crop`.
+- Code: `render.py` (`preview_width`, the fit stage's `framed`, the export and preview steps), `cut.py main()`
+  (the audition block), `fit.py` (`placed`), `_contract.EMITTED_KEYS`. Tests:
+  `test_render_preview_is_the_whole_project_small_and_never_the_final`,
+  `test_render_dry_run_states_each_clips_speed_and_crop` (tests/test_orchestration.py),
+  `test_cut_audition_is_cut_from_the_written_cut_on_the_path_it_took`,
+  `test_fit_pad_and_blur_state_where_the_picture_lands` (tests/test_editing.py).
