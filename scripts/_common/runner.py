@@ -2217,131 +2217,60 @@ def replace_checked(tmp: str, final: str) -> "Optional[Dict[str, int]]":
     return replace_checked_together([(tmp, final)]).get(final)
 
 
-def _keep_group(tmp: str, final: str, gid: int, staged_gid: int) -> None:
-    """Give the staged file the group of the file it replaces (#743 review).
-
-    os.replace() installs the staged inode, which keeps the writer's group (or the directory's
-    under setgid): replacing a target restricted to alice:editors with a file in staff keeps the
-    mode but hands staff what that group restricted. The target's group is set here, before
-    write_sidecar's chmod (chown clears setgid). A writer that may not set that group is refused
-    instead of replacing the file with one of another group; the owner is not restored (that
-    needs privilege) and is a separate decision.
-    """
-    if not hasattr(os, "chown") or staged_gid == gid:
-        return  # no group ownership to keep (Windows), or the staged file already has it
-    try:
-        os.chown(tmp, -1, gid)
-    except OSError as exc:
-        refuse("input", "output_group_not_settable",
-               f"refusing to replace {final!r}: it belongs to group {gid}, and this run may not give the new "
-               f"file that group ({exc.strerror or exc}); write elsewhere, or let the file's owner replace it",
-               path=final, group=gid, staged_group=staged_gid)
-
-
 def write_sidecar(path: str, text: str, encoding: str = "utf-8") -> None:
     """Write a side file a tool produces itself (an EDL, an SRT, a chapter or project list).
 
-    Staged as a hidden sibling temp and put in place by replace_checked(), so the replace runs
-    under the path's output lock after refuse_changed_output(): a file another process put there
-    after the output check is refused instead of overwritten, and a full disk or an interrupted
-    write leaves the previous file whole (#696). The mode and group are what open() would have
-    given it: an existing target keeps its permission bits and its group (a writer that may not
-    set that group is refused), a new one gets the umask's.
+    An existing target is written in place under its output lock, after refuse_changed_output():
+    a file another process replaced there after the output check is refused instead of
+    overwritten, and the inode is kept, so its mode, group, access ACL, hard links and any
+    symlink it is stay as open() left them (#743 review). An absent target is staged beside it
+    and installed with os.link(), which fails when another process creates the name in the
+    comparison-to-install gap; a filesystem without hard links creates the name exclusively and
+    copies the staged file into it, so that file is refused there too. The identity recorded is
+    the inode this call wrote, not one read back from the path after the install.
     """
-    directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(prefix=".ffskill-side", suffix=".tmp", dir=directory)
-    try:
-        staged_gid = os.fstat(fd).st_gid  # the group the staged file landed in
-        with os.fdopen(fd, "w", encoding=encoding) as fh:
-            fh.write(text)
+    with _OutputLock(path):
+        refuse_changed_output(path)
+        if os.path.lexists(path):
+            # in place: the target keeps its inode, mode, group, ACL, hard links and symlink
+            with open(path, "w", encoding=encoding) as fh:
+                fh.write(text)
+                st = os.fstat(fh.fileno())
+            identity = {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
+                        "ino": st.st_ino, "dev": st.st_dev}
+            _remember_identity(path, (identity, os.path.islink(path)))
+            report_committed(path, identity=identity)
+            return
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(prefix=".ffskill-side", suffix=".tmp", dir=directory)
         try:
-            existing = os.stat(path)  # an existing file keeps open()'s mode and group
-        except OSError:
-            existing = None
-        if existing is None:
+            with os.fdopen(fd, "w", encoding=encoding) as fh:
+                fh.write(text)
             mask = os.umask(0)  # mkstemp makes the file 0600; a new file gets open()'s mode
             os.umask(mask)
-            mode = 0o666 & ~mask
-        else:
-            mode = existing.st_mode & 0o7777
-            _keep_group(tmp, path, existing.st_gid, staged_gid)  # before chmod: chown clears setgid
-        os.chmod(tmp, mode)
-        if existing is not None:
-            _keep_acl(tmp, path)  # the replaced file's access ACL, after its mode
-        # the identity the file will have at path, captured before the install: reading it back
-        # afterwards could record one another process put there in the gap as this run's
-        staged = owned_identity(tmp)
-        installed = replace_checked(tmp, path) or staged
-        _remember_identity(path, (installed, False))  # a later write of this run's own side file is not refused
-        report_committed(path, identity=installed)
-    except BaseException:
-        _remove_quietly(tmp)
-        raise
-
-
-def _acl_value(path: str) -> "Optional[Tuple[str, bytes]]":
-    """The target's access ACL, when the filesystem keeps one (#743 review).
-
-    Linux stores it in the `system.posix_acl_access` xattr; a file without one raises ENODATA
-    (ENOATTR on BSD) and a filesystem without xattrs ENOTSUP, both read as "no ACL". Any other
-    error means the ACL cannot be read, so the caller refuses rather than replacing a file whose
-    named-user permissions it cannot see.
-    """
-    getxattr = getattr(os, "getxattr", None)
-    if getxattr is None:  # Windows, and platforms without xattrs
-        return None
-    name = "system.posix_acl_access"
-    try:
-        return name, getxattr(path, name)
-    except OSError as exc:
-        if exc.errno in (errno.ENODATA, getattr(errno, "ENOATTR", errno.ENODATA), errno.ENOTSUP,
-                         errno.EOPNOTSUPP):
-            return None
-        raise
-
-
-def _keep_acl(tmp: str, final: str) -> None:
-    """Give the staged file the access ACL of the file it replaces (#743 review).
-
-    The mode's group bits are the ACL's mask, so a file can allow a named user and deny the
-    owning group; replacing it with a mode-only copy would hand that group access the original
-    denied. The ACL is copied after the mode (setting it re-derives the mode bits from the ACL),
-    and a writer that cannot copy it is refused instead of replacing the file with one whose
-    named users' permissions are lost.
-    """
-    try:
-        acl = _acl_value(final)
-    except OSError as exc:
-        refuse("input", "output_acl_not_preserved",
-               f"refusing to replace {final!r}: its access ACL cannot be read ({exc.strerror or exc}), "
-               "so the permissions of the new file cannot match the ones it replaces",
-               path=final, error=str(exc))
-        return
-    if acl is None:
-        return
-    name, value = acl
-    try:
-        os.setxattr(tmp, name, value)
-    except OSError as exc:
-        refuse("input", "output_acl_not_preserved",
-               f"refusing to replace {final!r}: its access ACL cannot be copied to the new file "
-               f"({exc.strerror or exc}), which would change the permissions of its named users",
-               path=final, error=str(exc))
+            os.chmod(tmp, 0o666 & ~mask)
+            staged = owned_identity(tmp)
+            installed = _install_checked(tmp, path, None) or staged
+            _remember_identity(path, (installed, False))  # a later write of this run's own side file is not refused
+            report_committed(path, identity=installed)
+        except BaseException:
+            _remove_quietly(tmp)
+            raise
 
 
 def _install_exclusive(tmp: str, final: str) -> "Optional[Dict[str, int]]":
     """Copy `tmp` into a name this call creates, for a filesystem without hard links (#743 review).
 
     O_CREAT|O_EXCL creates the name or fails, so a file another process created after the check
-    is refused, never replaced -- the guarantee os.link() gives where hard links exist. The
-    staged file's group, mode and access ACL are copied to the new inode; a reader may see it
-    while it is being filled (the copy is not atomic, unlike a rename, but it never clobbers
-    another file). Returns the identity the new file was left with: it is a different inode
-    from the staged one, so the caller records this one.
+    is refused, never replaced -- the guarantee os.link() gives where hard links exist. The staged
+    file's mode is copied to the new inode, which otherwise gets what open() would give it (the
+    umask or the directory's default ACL); a reader may see it while it is being filled (the copy
+    is not atomic, unlike a rename, but it never clobbers another file). Returns the identity the
+    new file was left with: it is a different inode from the staged one, so the caller records it.
     """
     staged = os.stat(tmp)
     try:
-        fd = os.open(final, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(final, os.O_WRONLY | os.O_CREAT | os.O_EXCL, staged.st_mode & 0o7777)
     except FileExistsError:
         refuse("input", "output_exists",
                f"refusing to write {final!r}: it did not exist when the run checked it and "
@@ -2351,28 +2280,6 @@ def _install_exclusive(tmp: str, final: str) -> "Optional[Dict[str, int]]":
     created = os.fstat(fd).st_ino
     done = False
     try:
-        if hasattr(os, "fchown"):
-            try:
-                os.fchown(fd, -1, staged.st_gid)
-            except OSError as exc:
-                refuse("input", "output_group_not_settable",
-                       f"refusing to write {final!r}: the new file cannot be given the group of "
-                       f"the file it would replace ({exc.strerror or exc})",
-                       path=final, group=staged.st_gid, staged_group=os.fstat(fd).st_gid)
-        os.fchmod(fd, staged.st_mode & 0o7777)
-        try:
-            acl = _acl_value(tmp)
-        except OSError as exc:
-            refuse("input", "output_acl_not_preserved",
-                   f"refusing to write {final!r}: the staged file's access ACL cannot be read "
-                   f"({exc.strerror or exc})", path=final, error=str(exc))
-        if acl is not None:
-            try:
-                os.setxattr(fd, acl[0], acl[1])
-            except OSError as exc:
-                refuse("input", "output_acl_not_preserved",
-                       f"refusing to write {final!r}: its access ACL cannot be copied to the new "
-                       f"file ({exc.strerror or exc})", path=final, error=str(exc))
         with os.fdopen(fd, "wb", closefd=False) as dst, open(tmp, "rb") as src:
             shutil.copyfileobj(src, dst)
         now = os.fstat(fd)

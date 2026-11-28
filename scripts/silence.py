@@ -29,7 +29,7 @@ from _common import (filler_spans, FILLER_WORDS, FILLER_AMBIGUOUS, FILLER_DISCOU
 from _common import asr as _asr
 from _common.emit import warn
 from _common.asr import _dicts
-from _common.runner import parse_json, replace_checked, same_file, write_sidecar
+from _common.runner import parse_json, same_file, write_sidecar
 from _common import guard_sidecar, refuse_existing_outputs, refuse_unwritten_output, refuse_output_is_input, _check_output_path
 from _common.emit import refuse
 from _common import detect_silences as detect, STATE, add_common, apply_common, default_output, die, emit, info, is_audio_output, print_json, probe, X264_PRESETS, measured_level_dbfs, fmt_secs
@@ -282,25 +282,9 @@ def write_time_map(path: str, tm: Dict[str, Any]) -> None:
         text = "\n".join(rows) + "\n"
     else:
         text = json.dumps(tm, indent=2) + "\n"
-    # staged and swapped in, so a full disk or an interrupted write leaves the previous map whole;
-    # the staging name is short and unique, so it neither outgrows the name limit nor truncates a
-    # sibling that happens to exist
-    import tempfile
-    fd, tmp = tempfile.mkstemp(prefix=".tm", suffix=".tmp", dir=os.path.dirname(os.path.abspath(path)))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        mask = os.umask(0)  # mkstemp makes the file 0600; give the map the mode open() would have
-        os.umask(mask)
-        os.chmod(tmp, 0o666 & ~mask)
-        # under the map's lock, and only while it is the file refuse_existing_outputs() decided about
-        replace_checked(tmp, path)
-    except BaseException:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    # the same checked write as an --edl: staged when the map is new, in place when it replaces
+    # one, under the map's lock after refuse_changed_output() (#696, #743 review)
+    write_sidecar(path, text)
 
 
 def cut_levels(path: str, tm: Dict[str, Any], duration: float,

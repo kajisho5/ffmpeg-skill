@@ -506,21 +506,19 @@ exists. When a decision changes, edit the entry in the same PR.
   itself, and a file created at that name after the lock's comparison and before ffmpeg opens it
   is truncated by `-y` (staging every output would rename segment and pattern outputs ffmpeg names
   itself); a file a tool writes itself and a caller named (an EDL, an SRT/ASS, a chapter or description
-  list, a project, a report) goes through `write_sidecar()`, which stages it and puts it in place by
-  `replace_checked()`, so the same comparison runs under the path's lock (#696); a target the check
-  recorded absent is installed with `os.link()`, which fails if another process created one in the
-  gap unless `--overwrite` consented (it replaces that path whatever is there; a filesystem
+  list, a project, a report) goes through `write_sidecar()`, which writes an existing target in
+  place under the path's output lock and only after `refuse_changed_output()`, so the comparison
+  and the write are one step (#696, #743 review): the inode is kept, so the mode, group, access
+  ACL, hard links and any symlink it is stay exactly as `open()` left them, and a file another
+  process put there after the check is refused instead of overwritten; a target the check
+  recorded absent is staged beside it and installed with `os.link()`, which fails if another
+  process created one in the gap unless `--overwrite` consented (it replaces that path whatever
+  is there; a filesystem
   without hard links creates the name exclusively and copies the staged file into it, so the file
   that appeared is refused there too, and a reader may see the copy while it is being filled),
-  an existing target keeps the permission bits, group and access ACL it had when the staged file
-  took them (the staged file takes the target's group before its mode and its
-  `system.posix_acl_access` after it, and a writer that may not give the new file that group or
-  copy that ACL is refused with `output_group_not_settable` or `output_acl_not_preserved` instead
-  of replacing the file with one of another group or whose named users' permissions changed; a
-  concurrent change made after that moment is not tracked, and the owner is not restored, which
-  needs privilege), and the identity recorded
-  is the staged file's, or the copied inode's when the name had to be created,
-  not one read back after the install, while the concat lists, work files and manifests a tool
+  and the identity recorded
+  is the inode this call wrote (the staged file's, or the copied inode's when the name had to be
+  created), not one read back after the install, while the concat lists, work files and manifests a tool
   makes for itself stay plain `open()`. Code:
   `runner.refuse_changed_output()`, `replace_checked()`, `write_sidecar()`, `run()`,
   `place_output()`. Tests: `OutputChangedDuringRunTests` in `tests/test_contract.py`

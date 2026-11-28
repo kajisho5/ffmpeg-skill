@@ -10376,11 +10376,9 @@ class OutputChangedDuringRunTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(os, "setxattr"), "access ACLs need xattrs")
     def test_a_side_file_keeps_the_access_acl_of_the_file_it_replaces(self):
-        """#743 review: a mode-only copy loses the ACL's named users, and a 0640 whose mask
-        denies the owning group would hand that group read access. The staged file takes the
-        target's ACL; a writer that cannot copy it refuses instead of replacing the file."""
+        """#743 review: an existing target is written in place, so its access ACL and its named
+        users' permissions stay as they were (a staged replace lost them)."""
         import struct
-        from unittest import mock
         path = self.work / "edl.txt"
         path.write_text("theirs", encoding="utf-8")
         os.chmod(path, 0o640)
@@ -10395,54 +10393,35 @@ class OutputChangedDuringRunTests(unittest.TestCase):
         self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
         self.assertEqual(os.getxattr(path, "system.posix_acl_access"), blob)
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o640)
-        # a writer that cannot copy the ACL refuses, leaving the file and its ACL as they were
-        with mock.patch.object(self.runner.os, "setxattr",
-                               side_effect=PermissionError(1, "Operation not permitted")):
-            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours again\n"),
-                             ("input", "output_acl_not_preserved"))
         self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
-        self.assertEqual(os.getxattr(path, "system.posix_acl_access"), blob)
 
-    @unittest.skipIf(os.name == "nt", "group ownership is not kept on Windows")
-    def test_a_side_file_keeps_the_group_of_the_file_it_replaces(self):
-        """#743 review: write_sidecar() installs the staged inode with os.replace(), so a side
-        file restricted to a group (alice:editors) was replaced by one in the writer's group,
-        which keeps the mode and moves the file out of the group that restricted it. The
-        target's group is set on the staged file before chmod (chown clears setgid), and a
-        writer that may not set it is refused instead of replacing the file."""
-        from unittest import mock
+    @unittest.skipIf(os.name == "nt", "inode identity and hard links are not kept on Windows")
+    def test_an_existing_side_file_is_written_in_place_and_keeps_its_links(self):
+        """#743 review: an existing target is written in place under its lock, so its inode,
+        hard links and symlink are kept (the staged replace created a new inode and split a
+        hard-linked or symlinked file)."""
         path = self.work / "edl.txt"
         path.write_text("theirs", encoding="utf-8")
-        gid = os.stat(path).st_gid
-        staged = self.work / "staged.tmp"
-        staged.write_text("ours", encoding="utf-8")
-        other = gid + 1  # the staged file landed in the writer's group, not the target's
-        calls = []
-        with mock.patch.object(self.runner.os, "chown", lambda *a: calls.append(a)):
-            self.runner._keep_group(str(staged), str(path), gid, other)
-        self.assertEqual(calls, [(str(staged), -1, gid)], "the target's group is set on the staged file")
-        # a writer that may not set that group refuses: the file is not replaced with one of
-        # another group
-        with mock.patch.object(self.runner.os, "chown",
-                               side_effect=PermissionError(1, "Operation not permitted")):
-            self.assertEqual(self.call(self.runner._keep_group, str(staged), str(path), gid, other),
-                             ("input", "output_group_not_settable"))
-        # the staged file already in the target's group needs no change
-        with mock.patch.object(self.runner.os, "chown", side_effect=AssertionError("no chown needed")):
-            self.runner._keep_group(str(staged), str(path), gid, gid)
-        # write_sidecar() applies it to the target's group, and not to a new file it creates
-        seen = []
-        real = self.runner._keep_group
-
-        def record(tmp, final, target_gid, staged_gid):
-            seen.append((str(final), target_gid, staged_gid))
-            real(tmp, final, target_gid, staged_gid)
-
-        _common.STATE.overwrite = True  # consent to replace the existing file
-        with mock.patch.object(self.runner, "_keep_group", record):
-            self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
-        self.assertEqual([(final, target) for final, target, _staged in seen], [(str(path), gid)],
-                         "the replaced target's group is kept")
+        sibling = self.work / "edl-other-name.txt"
+        os.link(path, sibling)
+        inode = os.stat(path).st_ino
+        _common.STATE.overwrite = True  # consent to replace the file that is already there
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(path)), (None, None))
+        self.assertEqual(self.call(self.runner.write_sidecar, str(path), "ours\n"), (None, None))
+        self.assertEqual(path.read_text(encoding="utf-8"), "ours\n")
+        self.assertEqual(sibling.read_text(encoding="utf-8"), "ours\n", "the hard link is the same inode")
+        self.assertEqual(os.stat(path).st_ino, inode, "the inode is kept")
+        # a symlink stays a link; the file it points at is what is written
+        target = self.work / "target.txt"
+        target.write_text("old\n", encoding="utf-8")
+        link = self.work / "link.txt"
+        link.symlink_to(target.name)
+        self.assertEqual(self.call(self.runner.guard_sidecar, str(link)), (None, None))
+        _common.STATE.overwrite = True
+        self.assertEqual(self.call(self.runner.write_sidecar, str(link), "new\n"), (None, None))
+        self.assertTrue(link.is_symlink(), "the symlink is kept")
+        self.assertEqual(target.read_text(encoding="utf-8"), "new\n")
+        self.assertEqual(os.stat(link).st_ino, os.stat(target).st_ino)
 
     def test_the_identity_recorded_for_a_side_file_is_the_staged_file_not_a_foreign_one(self):
         """#743 review: write_sidecar() read the path back after the install, so a file another

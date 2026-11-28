@@ -12,7 +12,7 @@ import shlex
 import stat
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file, stream_copy_output
+from _common.runner import Context, ERROR_CODE, ERROR_RETRYABLE, STATE, same_file, stream_copy_output, write_sidecar
 
 
 # Characters that never belong in a message a calling agent reads (#400): C0 controls (a line
@@ -1275,11 +1275,7 @@ def write_plan(path: str, output: Optional[str], extra: Dict[str, Any], ctx: "Op
     if tool == "fit" and "timing" in extra:
         doc["timing"] = extra["timing"]
     try:
-        tmp = f"{path}.tmp{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(doc, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, path)
+        write_sidecar(path, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
     except OSError as exc:
         die(f"cannot write plan {path}: {exc}", kind="output")
     ctx.plan_written = True

@@ -420,9 +420,11 @@ def _cli(args, checking, stack):
                         staged = delivery
                     report["verification"] = [dict(step=k, ok=v) for k, v in gate["checks"].items()]
                 if STATE.overwrite:
-                    from _common.runner import refuse_changed_output
-                    refuse_changed_output(dest)
-                    os.replace(staged, dest)
+                    from _common.runner import _OutputLock, refuse_changed_output
+                    # under the destination's lock: the recheck and the replace are one step
+                    with _OutputLock(dest):
+                        refuse_changed_output(dest)
+                        os.replace(staged, dest)
                 else:
                     os.link(staged, dest)
         print_json(dict(status="completed", output=None if STATE.dry_run else dest, dry_run=STATE.dry_run,
