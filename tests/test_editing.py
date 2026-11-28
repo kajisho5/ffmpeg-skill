@@ -687,6 +687,45 @@ class EditingTests(MediaFixtures):
     def test_crop_negative_offset_refused(self):
         script("crop.py", self.src, "--x", "-5", "--y", "0", "--width", "100", "--height", "100", expect_fail=True)
 
+    def test_fit_rect_writes_crops_file_and_a_box_without_a_corner_is_centred(self):
+        """#683: crop.py is folded into fit.py. `fit.py --rect W:H:X:Y` runs crop.py's code and writes
+        the same pixels; without X:Y (crop.py: without --x/--y, or --center, #676) the box is centred."""
+        src = OUT / "rect683_src.mp4"
+        sh("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=0.4", "-f", "lavfi",
+           "-i", "sine=d=0.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", src)
+
+        def pixels(tool, *argv):
+            out = OUT / f"rect683_{tool}_{abs(hash(argv))}.mp4"
+            doc = json.loads(script(f"{tool}.py", src, *argv, "-o", out, "--json").stdout)
+            self.assertEqual(doc["status"], "completed", doc.get("error"))
+            return subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-map", "0:v", "-f", "rawvideo", "-"],
+                                  capture_output=True, check=True).stdout
+        corner = pixels("crop", "--x", "11", "--y", "20", "--width", "100", "--height", "80")
+        self.assertEqual(len(corner), 10 * 100 * 80 * 3 // 2)
+        self.assertEqual(pixels("fit", "--rect", "100:80:11:20"), corner)
+        self.assertEqual(pixels("crop", "--rect", "100:80:11:20"), corner)
+        centred = pixels("crop", "--x", "110", "--y", "80", "--width", "100", "--height", "80")
+        self.assertNotEqual(centred, corner)
+        for tool, argv in (("fit", ("--rect", "100:80")), ("crop", ("--width", "100", "--height", "80")),
+                           ("crop", ("--width", "100", "--height", "80", "--center")), ("crop", ("--rect", "100:80"))):
+            with self.subTest(tool=tool, argv=argv):
+                self.assertEqual(pixels(tool, *argv), centred)
+        # the same command line, the output name aside
+        plan = lambda tool, *argv: json.loads(script(f"{tool}.py", src, *argv, "-o", OUT / "rect683_plan.mp4",
+                                                     "--dry-run", "--json").stdout)["commands"]
+        self.assertEqual(plan("crop", "--x", "11", "--y", "20", "--width", "100", "--height", "80"), plan("fit", "--rect", "100:80:11:20"))
+        for tool, argv, said in (("fit", ("--rect", "100:80", "--aspect", "1:1"), "--aspect"),
+                                 ("fit", ("--rect", "100:80", "--fit", "blur"), "--fit"),
+                                 ("fit", ("--rect", "101:80"), "even"), ("fit", ("--rect", "100x80"), "W:H:X:Y"),
+                                 ("fit", ("--rect", "400:80"), "exceeds"),
+                                 ("crop", ("--x", "3", "--width", "100", "--height", "80"), "--x X --y Y"),
+                                 ("crop", ("--x", "3", "--y", "3", "--width", "100", "--height", "80", "--center"), "--x X --y Y"),
+                                 ("crop", ("--rect", "100:80", "--width", "100"), "--rect")):
+            with self.subTest(refused=argv):
+                proc = script(f"{tool}.py", src, *argv, "-o", OUT / "rect683_no.mp4", "--json", expect_fail=True)
+                self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+                self.assertIn(said, proc.stderr)
+
     # ---------------------------------------------------------------- sphere
     def test_sphere_extracts_a_flat_viewport(self):
         out = OUT / "sphere1.mp4"
@@ -4648,6 +4687,71 @@ class EditingTests(MediaFixtures):
         # the planned window and the measured margins are one rectangle
         self.assertEqual((crop["x"], 1920 - crop["x"] - crop["width"]), (cut["left"], cut["right"]), doc)
 
+    def test_fit_pad_and_blur_state_where_the_picture_lands(self):
+        """#581 part 2: --fit pad and --fit blur say where the picture sits in the frame as data, in
+        the dry run already, and it is the rectangle the run's own measurement finds: pad on the 4:2:0
+        grid of the line written (size and offset), the blur graph's overlay offset on the source's."""
+        src = OUT / "fit_placed_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1000x566:rate=30",
+           "-t", "0.5", "-c:v", "libx264", "-preset", "ultrafast", src)
+        keys = ("x", "y", "width", "height", "frame_width", "frame_height")
+        for fit, aspect, want in (("pad", "9:16", (0, 202, 334, 188)), ("blur", "9:16", (0, 202, 334, 189)),
+                                  ("pad", "4:3", (0, 30, 334, 188))):
+            argv = (src, "--aspect", aspect, "--width", "333", "--fit", fit)
+            plan = json.loads(script("fit.py", *argv, "--dry-run", "--json").stdout)
+            self.assertEqual(tuple(plan["placed"][k] for k in keys[:4]), want, (fit, aspect, plan["placed"]))
+            self.assertEqual((plan["placed"]["source_width"], plan["placed"]["source_height"]), (1000, 566))
+            doc = json.loads(script("fit.py", *argv, "-o", OUT / f"fit_placed_{fit}.mp4", "--json").stdout)
+            self.assertEqual({k: doc["placed"][k] for k in keys}, {k: doc["picture"][k] for k in keys}, (fit, aspect))
+        crop = json.loads(script("fit.py", src, "--aspect", "9:16", "--fit", "crop", "--dry-run", "--json").stdout)
+        self.assertNotIn("placed", crop)  # a crop states its window as `crop`
+
+    def test_cut_audition_is_cut_from_the_written_cut_on_the_path_it_took(self):
+        """#581 part 2: a stream-copy join is made at the keyframes, so a clip of the join made any
+        other way would be heard where the cut is not. Each clip is cut from the written file: the
+        copy's starts on the keyframe at 6.0 and keeps the beep before the asked 6.1; the
+        re-encode's starts at 6.1 and has none. The result says which path the cut took."""
+        src = OUT / "cut_audition_src.mp4"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*880*t)*between(t\\,5.9\\,6.09)':s=48000",
+           "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=30", "-t", "10", "-c:v", "libx264", "-preset", "veryfast",
+           "-g", "30", "-bf", "0", "-c:a", "aac", src)
+        adir = OUT / "cut_audition_dir"
+        heard = {}
+        for extra, path in (([], "copy"), (["--accurate"], "accurate")):
+            shutil.rmtree(adir, ignore_errors=True)
+            adir.mkdir()
+            argv = (src, "--segments", "1.2-3.1,6.1-8.2", "--audition", adir, "--audition-seconds", "1", *extra)
+            if not extra:
+                plan = json.loads(script("cut.py", *argv, "-o", OUT / "cut_audition_plan.mp4", "--dry-run", "--json").stdout)
+                self.assertEqual((plan["audition"]["count"], plan["audition"]["cuts"][0]["duration"]), (1, None), plan)
+                self.assertEqual(list(adir.iterdir()), [], "a dry run wrote audition files")
+            doc = json.loads(script("cut.py", *argv, "-o", OUT / f"cut_audition_{path}.mp4", "--json").stdout)
+            au, c = doc["audition"], doc["audition"]["cuts"][0]
+            if not extra:
+                # the sides are whole frames of the source's 30 fps grid, the dry run's and the run's alike:
+                # not of ffprobe's r_frame_rate guess for the written copy (240/1 on 6.1, a 0.984 s side on 9.0)
+                self.assertEqual([p["join_at"] for p in plan["audition"]["cuts"]], [r["join_at"] for r in au["cuts"]],
+                                 (plan["audition"], au))
+            self.assertEqual((doc["mode"], au["path"], doc["encoder"]), (path, path, "copy" if path == "copy" else "libx264"))
+            self.assertEqual(json.loads((adir / "index.json").read_text(encoding="utf-8"))["cuts"], au["cuts"])
+            self.assertEqual((c["source_in"], c["join_at"]), (6.0 if path == "copy" else 6.1, 1.0), c)
+            v = json.loads(sh("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                              "-of", "json", c["clip"]).stdout)["streams"][0]
+            self.assertEqual((v["width"], v["height"]), (480, 360))
+            self.assertTrue(c["audio"])
+            self.assertClose(c["duration"], 2.0, 0.05)
+            proc = sh("ffmpeg", "-hide_banner", "-nostats", "-i", c["clip"], "-af", "volumedetect", "-f", "null", "-")
+            heard[path] = float(re.search(r"max_volume: (-?[\d.]+|-inf) dB", proc.stderr).group(1).replace("-inf", "-200"))
+        self.assertGreater(heard["copy"], -20, heard)
+        self.assertLess(heard["accurate"], -60, heard)
+        for extra, reason in ((["--segments", "1-3", "--audition", adir], None), (["--segments", "1-3,5-6", "--audition-seconds", "1"], None),
+                              (["--segments", "1-3,5-6", "--audition", OUT / "cut_audition_missing"], "output_dir_missing")):
+            proc = sh(sys.executable, SCRIPTS / "cut.py", src, *extra, "-o", OUT / "cut_audition_refused.mp4", "--json",
+                      expect_fail=True)
+            err = json.loads(proc.stdout)["error"]
+            self.assertEqual((err["kind"], err.get("reason", reason)), ("input", reason), extra)
+
     def test_stream_span_falls_back_when_the_tail_was_not_read(self):
         """#566: a head+tail ffprobe can exit 0 with only the head packets, so a non-empty
         result is not proof that the tail was observed; fall back to the full packet scan."""
@@ -4944,6 +5048,27 @@ class OneClockTests(MediaFixtures):
             self.assertEqual(len(offsets), 12, offsets)
             self.assertInSync(offsets, msg=f"loop {name}")
             self.assertEqual(stream_spans(out)["video"][2], 360)
+
+    def test_loop_of_an_mpeg_ps_whose_sound_starts_late_keeps_every_frame_787(self):
+        """The concat demuxer gives an MPEG-PS's video no start time, so the first frame was taken to
+        sit at 0 and av_trim cut the sound's lead off the first repeat: 393 frames for 400, 15.72 s
+        for 16 s, verified False. The first frame's own time stands in for the missing start."""
+        src = OUT / "clock_loop_alate.mpg"
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", self._fx("alate_ps", audio_late=0.3),
+           "-c:v", "mpeg2video", "-q:v", "3", "-c:a", "mp2", src)
+        out = OUT / "clock_loop_alate_ps.mp4"
+        doc = json.loads(script("loop.py", src, "--times", "3", "--preset", "veryfast", "-o", out, "--overwrite", "--json").stdout)
+        self.assertTrue(doc["verified"], doc.get("wrote"))
+        # every frame of every repeat is there (the cut lead lost 8: 352 of 360), and no more than three
+        # of the file's lengths hold: an MPEG-PS's sound ends after its picture, and how much of that
+        # each repeat keeps differs between FFmpeg builds (361 on 6.1, 360 on 7.1)
+        length = float(json.loads(sh("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src).stdout)["format"]["duration"])
+        frames = stream_spans(out)["video"][2]
+        self.assertGreaterEqual(frames, 3 * stream_spans(src)["video"][2])
+        self.assertLessEqual(frames, math.ceil(3 * length * 30))
+        # a 4.012 s repeat is not a whole number of 30 fps frames, so each repeat's pictures land on the
+        # frame grid up to half a frame from their sound (+1, -11, +10 ms), never further
+        self.assertInSync(av_offsets_ms(out), tol=1000 / 30 / 2, msg="loop mpeg-ps")
 
     def test_multicam_audio_from_a_camera_whose_sound_starts_late(self):
         """The camera's sound was measured from its first sample, not its file's start (+1.274 s for

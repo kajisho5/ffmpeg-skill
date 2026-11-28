@@ -22,7 +22,7 @@ variant it does not show.
 | "loop this clip to fill 30 seconds" | `loop.py bg_loop.mp4 --duration 30` |
 | "make it vertical / 9:16 / square" | `fit.py input.mp4 --aspect 9:16 --fit pad` (or `--fit crop`; `--pad-fill blur` for blurred bars) |
 | "resize to a height/width" | `fit.py input.mp4 --height 1080` (or `--width`, or both for an exact frame) |
-| "crop to this exact box" (known x/y/w/h) | `crop.py input.mp4 --x 100 --y 0 --width 1080 --height 1920` |
+| "crop to this exact box" (known x/y/w/h) | `fit.py input.mp4 --rect 1080:1920:100:0` (W:H:X:Y; `crop.py --x 100 --y 0 --width 1080 --height 1920` is the same) |
 | "blurred background instead of black bars" | `fit.py input.mp4 --aspect 9:16 --fit blur` (whole picture kept, borders a blurred, darkened copy) |
 | "rotate 90 degrees", "mirror it" | `fit.py input.mp4 --rotate 90` / `fit.py input.mp4 --flip h` |
 | "the horizon is tilted" (known degrees) | `straighten.py tilted.mp4 --degrees -2.5` |

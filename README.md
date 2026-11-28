@@ -78,7 +78,7 @@ After an edit, ask your agent for the review page ("show me the review page"), o
 
 Left half is the input, right half is what the command produced. **[Every before/after demo, with the exact command under each one →](docs/demos.md)** — all of it built by `python3 demos/build.py`, so you can rebuild every frame of it yourself. The pictures come from [demos/footage/](demos/footage/README.md): clips AI-generated with Google Veo (the people and places do not exist) and a few shot on a phone. The sound is synthetic, and a few demos (HDR10, a panorama) use a synthetic picture.
 
-`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **42 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also callable as an MCP tool (`tools/list` advertises a core 12 by default to keep client context small, with `FFMPEG_SKILL_MCP_FULL=1` listing all 42; every tool is reachable by name through `tools/call` either way), and the whole set is described by a machine-readable contract.
+`ffmpeg-skill` is an [Agent Skill](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) for Claude Code, Cursor, Codex and any agent that reads `SKILL.md`. It teaches the agent a fixed workflow (probe → edit losslessly where possible → check → verify) and ships **41 tools** that do the actual work with `ffmpeg` / `ffprobe`: cut, join, silence removal, fit to duration and aspect, captions and karaoke, overlays and motion graphics, HDR → SDR and LUTs, audio clean-up and typed dynamics, sync with drift correction, multicam, loudness, delivery checks, whole-edit project rendering, batch folders. Every tool is also callable as an MCP tool (`tools/list` advertises a core 12 by default to keep client context small, with `FFMPEG_SKILL_MCP_FULL=1` listing all 41; every tool is reachable by name through `tools/call` either way), and the whole set is described by a machine-readable contract.
 
 If `ffmpeg` and `python3` are on your PATH, it works: offline, on footage you would rather not upload.
 
@@ -239,7 +239,7 @@ These are the rules the skill file gives the agent and the code enforces.
 1. **Probe first.** No tool decides from the file name. `probe.py` measures duration, fps (with variable-frame-rate detection), resolution, rotation, bit depth, HDR format including Dolby Vision, colour tags and every audio stream before anything is cut.
 2. **Lossless when possible.** `cut.py` and `loudness.py` stream-copy what they do not need to touch (`join.py` re-encodes so it can crossfade and conform mismatched clips; `--copy --transition none` joins clips that already match by stream copy). Re-encoding happens only when it must: frame-accurate cuts, filters, format changes, or a keyframe farther than the tolerance.
 3. **Plan before render.** Every tool takes `--dry-run` (print the ffmpeg command lines, write nothing; `verify` ignores it), `--plan FILE` (the dry run saved as a plan with fingerprinted inputs that `render.py FILE` executes later, refusing if an input changed; `render` and `verify` refuse it), `--json` (structured result with a probe of the output), `--fast` (preview quality), `--progress` (percent and ETA), `--timeout` (a hung ffmpeg is killed and reported, never waited on forever; Ctrl-C or SIGTERM likewise stops the running ffmpeg, removes its partial output and reports `kind: interrupted`) and `--overwrite` (explicit consent before an existing output is replaced). A test runs every tool whose contract says its dry run runs no ffmpeg (`ffmpeg_execution: none`, plus `cut` and `metadata` without their measuring flags) under `--dry-run` behind a fake ffmpeg and asserts that no ffmpeg call happened and no file appeared; another runs every tool the contract says supports `--dry-run` (all but `verify`) behind an ffmpeg that logs each decode, and asserts that no file appeared and that every tool that decoded is one the contract lists as `analysis_only`.
-4. **Machine-readable contract.** `contract --json` describes all 42 tools: input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists all 42 by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
+4. **Machine-readable contract.** `contract --json` describes all 41 tools (and `crop`, an alias of `fit --rect` since 4.19, marked `alias_of`): input schema generated from the parser, output schema, role, required and conditional FFmpeg capabilities, dry-run support, the verification tools to run afterwards, whether a visual check is required, `mutates_input: false`. `provides` lists them by a cross-repository Capability id (`ffmpeg-skill.cut`, `ffmpeg-skill.loudness`, ...) for [`kajisho5/AI-video-production-OS`](https://github.com/kajisho5/AI-video-production-OS)'s `CapabilityContract.provides` — see `docs/contract.md`.
 5. **Contract-derived MCP.** `mcp/server.py` builds its `tools/list` from the contract. Tool names, order and `inputSchema` cannot drift from the scripts; a test keeps the two byte-identical.
 6. **Capability detection.** `doctor` reads `ffmpeg -encoders / -decoders / -filters / -bsfs` and reports which of the components the tools need are present on this build (libx264, libass, zscale, loudnorm, xfade, …), before a job fails inside ffmpeg.
 7. **Unknown is not missing.** When a listing cannot be read (a layout the parser does not know, ffmpeg exiting non-zero) the affected capabilities are `unknown`: never `missing`, never silently `available`. An installed filter is not reported absent; a failed detection is not a pass.
@@ -249,7 +249,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 ## Tools
 
-42 public tools, all Python 3.10+ standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool except `export.py`, `render.py` and `batch.py` (a preset or the project decides there) takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8) and, with `export.py`, `--hw`/`--no-hw` (Apple VideoToolbox on Apple Silicon, opt-in; see `doctor` below), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
+41 public tools, all Python 3.10+ standard library, all with `--help`, `--dry-run`, `--json`, `--plan FILE` (a dry run written as a plan `render.py` executes later), non-zero exit and a reason on stderr on failure. `--json-brief` (1.11.0) prints the same result document trimmed to what a caller acts on — status, output, `verified`, a compact `summary` of the output probe, the tool's own keys and the command count instead of the command lines — for roughly a third of the bytes; `--json` itself is unchanged. Every re-encoding tool except `export.py`, `render.py` and `batch.py` (a preset or the project decides there) takes `--codec h264|hevc|av1|prores` and `--quality N` (1.8) and, with `export.py`, `--hw`/`--no-hw` (Apple VideoToolbox on Apple Silicon, opt-in; see `doctor` below), and every time flag takes seconds, `mm:ss`, `hh:mm:ss.fff` or SMPTE `hh:mm:ss:ff` with an optional `@fps` suffix (1.9).
 
 **Analysis and inspection**
 
@@ -266,9 +266,8 @@ These are the rules the skill file gives the agent and the code enforces.
 | `cut.py` | In/out or multi-segment cuts, lossless `-c copy` first, re-encode fallback, `--accurate` for frame-exact video and sample-exact audio, `--smart` for a frame-exact H.264 cut that re-encodes only the partial GOPs at the cut points (matched to the source, verified against its packets and frames) and copies the rest, an SDR HEVC source re-encodes as HEVC (`--no-keep-hevc` for x264), a single `.mp4`/`.mov` copy keeps its edit list, so the picture starts at `--start` unless a keyframe lands later (`start_snapped` then says so; `--no-edit-list` for 2.x's shifted start), `snapped_segments` says where a copy can land, checked against the keyframes it was cut from (`copy_drift_large` suggests `--accurate`), `--vfr-guard` to choose the VFR check (`sampled` by default); reports `precision`; `--snap beats` moves the in/out points onto a measured beat, or refuses when there is no measurable pulse ; `--remove A-B,...` drops ranges and keeps the rest |
 | `join.py` | Concatenate clips end to end (the default; `--transition fade` or another xfade transition crossfades), normalising size, fps, sample rate and channel layout (the widest clip's, or `--channels`); audio-only inputs are joined as audio; `--list parts.txt` reads generated segments (TTS lines) and checks every one first — missing, empty or unreadable parts are all named in one refusal, or skipped and reported with `--on-missing skip` ; `--copy --transition none` joins clips with matching streams by stream copy, measured afterwards, and refuses a mismatch by name; `--transition none --audio-lead S` / `--audio-lag S` make a J-cut / L-cut (the next sound starts S before its picture / the last sound runs S past the picture change; sync kept) |
 | `silence.py` | Detect and remove dead air (jump cuts) with a margin around speech (`--margin`, 0.2 s each side); list or export the cut list, or a source-to-output time map (`--timemap`, JSON or CSV); reports the level at every cut and warns where one may land in a breath or a word's tail; `--filler` also removes filler words, but only where a speech engine timed them; `--speech-aware` keeps a breath inside a sentence and cuts only at sentence-boundary pauses, composing with `--filler` through the same `keep_ranges()`; `--margin-lead` / `--margin-tail` keep different amounts before and after speech, and with word timings `--sentence-min-silence` / `--sentence-margin-tail` give the pause after a sentence end (the transcript's punctuation) its own floor and tail |
-| `fit.py` | Fit to a duration (choose a method for large speed changes), aspect ratio (pad, crop or blurred fill) or exact size. `picture` measures the written frame. `crop_check` flags discarded motion or detail and can suggest `--crop-x`/`--crop-y`. Rotate 90/180/270, flip h/v and force constant fps. |
-| `crop.py` | Crop to an exact pixel rectangle (`--x --y --width --height`) — distinct from `fit.py --fit crop`, which crops to an aspect ratio it computes itself |
-| `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `crop.py`-ready rectangle that removes them — analysis only, writes no file; `--motion-centre` reports the per-second motion centroid instead, for a 9:16 reframe — report only, the calling agent picks the crop, no auto-reframing |
+| `fit.py` | Fit to a duration (choose a method for large speed changes), aspect ratio (pad, crop or blurred fill) or exact size; `--rect W:H:X:Y` cuts an exact pixel box, no scaling (`W:H` alone is centred; `crop.py --x --y --width --height` is an alias that runs the same code). `picture` measures the written frame. `crop_check` flags discarded motion or detail and can suggest `--crop-x`/`--crop-y`. Rotate 90/180/270, flip h/v and force constant fps. |
+| `cropdetect.py` | Measure existing black letterbox/pillarbox bars and report the `fit.py --rect`-ready rectangle that removes them — analysis only, writes no file; `--motion-centre` reports the per-second motion centroid instead, for a 9:16 reframe — report only, the calling agent picks the crop, no auto-reframing |
 | `deinterlace.py` | Deinterlace interlaced source footage (`yadif`), `--mode frame`/`field`, `--parity` |
 | `denoise.py` | Reduce video noise/grain (`hqdn3d`), `--strength low/medium/high` or individual spatial/temporal overrides |
 | `redact.py` | Blur, pixelate, or (`--mode delogo`) interpolate away an exact pixel rectangle for the whole clip. The box is given: nothing here finds a face, a plate or a logo, and `delogo` is a border blend, not inpainting |
@@ -318,7 +317,7 @@ These are the rules the skill file gives the agent and the code enforces.
 
 | Tool | What it does |
 |---|---|
-| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays including the social sticker/hook/meme graphics and a picture-in-picture or chroma-keyed `video` layer sized for the final frame, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`, `--cache DIR`/`--from STAGE` (reuse the stages that did not change); the captions block takes the fit-size policy (`fit_size`, `min_size`, `fit_size_scope`) and the run reports the caption stage's counts as `caption`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table); `--export-timeline edit.fcpxml\|.edl\|.otio` (2.1) writes the cut as an editor timeline for Final Cut, DaVinci Resolve or Premiere instead of rendering it — clips, speed, dissolves, the music bed and chapter markers carry over, and `not_exported` names what stays behind; `--compare-project OLD.json` checks the render against the previous one with the change scope read from the two projects (a cue, a layer, a trim at either end, a whole-file setting) and refuses an edit no span states |
+| `render.py` | Render a whole edit from a declarative `project.json` (clips, transitions, captions, overlays including the social sticker/hook/meme graphics and a picture-in-picture or chroma-keyed `video` layer sized for the final frame, music and stem levels, loudness, export, chapter markers, check); `--init`, `--dry-run`, `--stop-after`, `--cache DIR`/`--from STAGE` (reuse the stages that did not change); the captions block takes the fit-size policy (`fit_size`, `min_size`, `fit_size_scope`) and the run reports the caption stage's counts as `caption`; `--template NAME INPUT` renders a shipped delivery template (`--template all` writes the whole social pack plus its table); `--export-timeline edit.fcpxml\|.edl\|.otio` (2.1) writes the cut as an editor timeline for Final Cut, DaVinci Resolve or Premiere instead of rendering it — clips, speed, dissolves, the music bed and chapter markers carry over, and `not_exported` names what stays behind; `--compare-project OLD.json` checks the render against the previous one with the change scope read from the two projects (a cue, a layer, a trim at either end, a whole-file setting) and refuses an edit no span states; one uncut clip with only fit, captions and loudness before a platform export (a `--template` with `--cues` and no logo or title) is encoded once, and `render_path` says `fused` or `staged` and `render_path_reason` why (`--staged` keeps one file per stage) |
 | `batch.py` | Apply a step recipe or a project to a folder with a content-hash cache; `--watch`; `--jobs N` processes several files at once under one shared `--timeout`. A step that writes must name `{out}` or its own `-o`/`--output`: one that writes its default output instead is refused (`step_writes_without_out`) |
 | `multicam.py` | Align any number of cameras and recorders by audio (with drift correction) and cut between them from a switch list; `--switch energy` auto-cuts to whichever camera is loudest at that moment instead of a hand-built list (audio level as a stand-in for who is talking: there is no speaker identification, so it needs each speaker on their own camera's mic), with `--min-shot` (minimum shot length) and `--edl` (write a plain START-END cut list, not a CMX EDL; for Premiere/Resolve use `--write-project` then `render.py --export-timeline`) |
 | `verify.py` | Run the toolchain on real device files and report PASS / FAIL per step |
@@ -376,7 +375,7 @@ npx ffmpeg-skill contract --json --static   # without environment detection
 npx ffmpeg-skill contract --json --tool cut # one tool's entry under `tools` (repeatable): ~60 KB, not ~950 KB
 ```
 
-The contract is generated from the code that runs, not maintained beside it. For each of the 42 tools (`ffmpeg-skill/<name>`) it states:
+The contract is generated from the code that runs, not maintained beside it. For each of the 41 tools (`ffmpeg-skill/<name>`, and the `crop` alias) it states:
 
 | Field | Meaning |
 |---|---|
@@ -389,7 +388,7 @@ The contract is generated from the code that runs, not maintained beside it. For
 | `requires_visual_verification` | the picture changed; inspect the contact sheet |
 | `audio_only`, `video_required` | whether an audio-only input is accepted or refused |
 | `mutates_input` | always `false` |
-| `stability` | `stable` for the 12 core tools, `beta` for the other 30 (since 4.0.0) |
+| `stability` | `stable` for the 12 core tools, `beta` for the other 29 (since 4.0.0) |
 | `idempotency_hint` | `bit_exact`, `content_equivalent`, `cached` or `environment_dependent` |
 
 Next to the tool list the document carries a top-level `deprecated` list (since 1.10): what the next major removes, since when, the replacement and the surface it lives on. It is empty in 3.0.0: Python 3.9 and FFmpeg 5.x, the two 2.x entries, moved to `removed` with what 2.0 removed, and `docs/contract.md` "What 2.0 changed" and "What 3.0 changed" are written from that.
@@ -407,7 +406,7 @@ Next to the tool list the document carries a top-level `deprecated` list (since 
 
 On Windows, `python3` is only on PATH if Python was installed from the Microsoft Store; a python.org install exposes `python` (or the `py` launcher) instead — if your MCP client reports the server failed to start, change `"command"` above to `"python"` (or the full path from `where python`).
 
-`mcp/server.py` is a stdio JSON-RPC transport with no tool table of its own. `tools/list` is derived from the contract at start-up, in contract order, with `inputSchema` translated from each tool's `input_schema`. By default it lists only the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`) so a client doesn't pay context for 30 schemas it rarely calls directly; set `FFMPEG_SKILL_MCP_FULL=1` to list all 42. Every tool, listed or not, is callable through `tools/call`, which maps structured arguments to argv and runs the named script; a raw `argv` form is accepted for compatibility and marked non-canonical. `python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
+`mcp/server.py` is a stdio JSON-RPC transport with no tool table of its own. `tools/list` is derived from the contract at start-up, in contract order, with `inputSchema` translated from each tool's `input_schema`. By default it lists only the core 12 (`render`, `look`, `caption`, `export`, `check`, `fit`, `cut`, `audio`, `loudness`, `graphics`, `silence`, `probe`) so a client doesn't pay context for 29 schemas it rarely calls directly; set `FFMPEG_SKILL_MCP_FULL=1` to list all 41 (an alias such as `crop` is callable, not listed). Every tool, listed or not, is callable through `tools/call`, which maps structured arguments to argv and runs the named script; a raw `argv` form is accepted for compatibility and marked non-canonical. `python3 mcp/server.py --list` prints the tools; `--call probe '{"inputs": ["a.mp4"]}'` runs one from the shell.
 
 No `inputSchema` lists `json` or `progress`: they are transport flags the server sets itself, not tool arguments (2.0; 1.x listed them unless `FFMPEG_SKILL_MCP_LEAN=1`). A client that still sends them is not refused.
 
@@ -426,13 +425,13 @@ For a small editing workflow, set the server's `env` to
 This lists tools to inspect, cut, reframe, export and check a clip. Add `caption` for subtitles
 or use a recipe from `prompts/list`. Tool names are comma-separated and the response keeps
 contract order. `FFMPEG_SKILL_MCP_FULL=1` takes precedence and lists all tools. Unlisted tools
-remain callable by name. See the [named list contract](docs/contract.md#default-toolslist-surface-core-12-opt-in-for-all-42).
+remain callable by name. See the [named list contract](docs/contract.md#default-toolslist-surface-core-12-opt-in-for-all-41).
 
 | `tools/list` profile | Measured JSON-RPC response | Rough tokens at 4 bytes per token |
 | --- | ---: | ---: |
-| Default 12 | 71.0 kB | 18,000 |
-| Full 42 | 190.9 kB | 48,000 |
-| Five-tool editing list above | 24.0 kB | 6,000 |
+| Default 12 | 75.4 kB | 19,000 |
+| Full 41 | 193.8 kB | 48,000 |
+| Five-tool editing list above | 26.4 kB | 6,600 |
 
 The byte counts include the JSON-RPC envelope and the final newline. Token counts
 depend on the client and tokenizer.
@@ -479,7 +478,7 @@ The short list for humans. The agent-facing version, with the reasoning, is the 
 - **Outputs are never overwritten silently.** An existing output path is refused (`kind: input`, `error.reason: output_exists`, before anything runs); pass `--overwrite` where a replacement is intended.
 - **Nothing happens silently.** A refusal names its `error.reason` and `error.details`; a stale output lock taken over, a run without a lock, a plan input nobody could fingerprint, a fallback (an odd-sized frame scaled to even, a substituted font, libaom for SVT-AV1), a skipped step and every warning are recorded in `diagnostics` and on stderr (codes: `json_output.diagnostic_codes`); tools that draw text name the font face they drew with (`font_used`; libass draws a glyph that face lacks from another, not named). A refused plan and a lock takeover also append a line to an audit log (`<plan>.audit.jsonl`, or `render.py --audit-log FILE`). A degraded or partial result says so: `render.py`'s `verified` is every stage's, an unmeasured loudness or a report section that could not be built is a failing verification step, `export.py` reports `trimmed`, `multicam.py`'s `cuts` name the camera rendered, and `batch.py` rows carry the failing step's `error`, `verified`, and a row for every input after Ctrl-C.
 - **Long masters need a longer `--timeout`.** The default is 1800 s per ffmpeg call, which is there to catch a hang. A full re-encode of an hour of 1080p at the default preset ran past it on a 4-core machine (see [A one-hour recording](#a-one-hour-recording)). Pass `--timeout 0` or a larger value, or `--fast`. Analysis and stream-copy cuts are far below it.
-- **Long chains belong in a plan.** Three hand-chained re-encodes lose quality and are hard to change; `render.py` runs the whole edit from one JSON file, and `--dry-run` shows every ffmpeg command before anything is written.
+- **Long chains belong in a plan.** Three hand-chained re-encodes lose quality and are hard to change; `render.py` runs the whole edit from one JSON file, and `--dry-run` shows every ffmpeg command before anything is written. Each stage writes a file of its own at a fast intermediate preset, except a project of one uncut clip with only fit, captions and loudness before a platform export, which is encoded once (#357).
 
 ## FAQ
 
@@ -494,25 +493,25 @@ the skill, open an issue with the FFmpeg option, the kind of footage it applies
 to, and the result you need. New options are added as typed flags with tests
 and appear in the CLI and MCP schemas through the same contract.
 
-### Why 42 tools? Isn't that overkill?
+### Why 41 tools? Isn't that overkill?
 
 One tool per job, because each job promises something different, and the tool measures that promise after the run. `loudness.py` re-measures integrated loudness and true peak. `cut.py` reports how far a cut snapped to a keyframe. `silence.py` returns the ranges it kept. `export.py` checks the preset's maximum length. A value a tool cannot read fails that step as `not_measured`; it does not pass. One tool with a mode flag would need as large a schema, and its checks would be vaguer.
 
-An agent does not read 42 schemas. Over MCP, `tools/list` advertises the core 12 (bold below). The other 30 are called by name through `tools/call` when a job needs one, and `FFMPEG_SKILL_MCP_FULL=1` lists all 42. The groups are the ones in [Tools](#tools).
+An agent does not read 41 schemas. Over MCP, `tools/list` advertises the core 12 (bold below). The other 29 are called by name through `tools/call` when a job needs one, and `FFMPEG_SKILL_MCP_FULL=1` lists all 41. The groups are the ones in [Tools](#tools).
 
 <!-- why42:start -->
 | Group | MCP default / all | Tools |
 |---|---|---|
 | Analysis and inspection | 2 / 3 | **probe**, **look**, scenes |
-| Editing | 3 / 24 | **cut**, **fit**, **silence**, join, crop, cropdetect, deinterlace, denoise, redact, sphere, straighten, insert, background, reverse, stabilize, sequence, waveform, freeze, pad, speedramp, loop, broll, metadata, grid |
+| Editing | 3 / 23 | **cut**, **fit**, **silence**, join, cropdetect, deinterlace, denoise, redact, sphere, straighten, insert, background, reverse, stabilize, sequence, waveform, freeze, pad, speedramp, loop, broll, metadata, grid |
 | Audio | 2 / 3 | **audio**, **loudness**, sync |
 | Picture | 2 / 4 | **caption**, **graphics**, overlay, color |
 | Delivery | 2 / 4 | **export**, **check**, proxy, report |
 | Orchestration | 1 / 4 | **render**, batch, multicam, verify |
-| **Total** | **12 / 42** | |
+| **Total** | **12 / 41** | |
 <!-- why42:end -->
 
-Without the other 30, an agent writes raw ffmpeg for those jobs, and a mistake there often still exits 0:
+Without the other 29, an agent writes raw ffmpeg for those jobs, and a mistake there often still exits 0:
 
 - `stabilize.py` runs vidstab in two passes, and the second pass needs the first pass's transforms file.
 - `color.py` builds the HDR-to-SDR chain. With a wrong colour tag the run still finishes, and the picture comes out washed out.
@@ -625,7 +624,7 @@ No. `fit.py --fit crop` keeps one fixed window, centred unless you pass `--crop-
 the clip where it moves (`cut.py`) and give each segment its own `--crop-x`, then `join.py` them. Check
 `crop_check.review_points` for sampled moments when luma motion or edge detail falls
 outside the kept window. Use `look.py OUTPUT --at TIME` with an indicated
-`output_time_estimate` to inspect one. `crop.py` cuts the rectangle you pass.
+`output_time_estimate` to inspect one. `fit.py --rect` cuts the rectangle you pass.
 `cropdetect.py --motion-centre` reports where motion sat each second. `sphere.py`
 points a 360 view where you aim it. Subject framing still needs visual review.
 
@@ -850,7 +849,22 @@ On Codex CLI 0.167.0, if the marketplace is already current but the cached plugi
 rerun `codex plugin add ffmpeg-skill@ffmpeg-skill` after the release reaches the `plugin` branch.
 This refreshes the cache without a separate uninstall and sets the plugin to enabled in your Codex user config.
 
+A copy made by hand (see "Without Node" above) is updated by copying the same files again from a newer clone or release, replacing the old ones.
+
 `npx ffmpeg-skill@4.1.3` installs that exact version, for a setup that should not move. What changed between two versions is in [CHANGELOG.md](CHANGELOG.md), one short section per release. Within 4.x an update does not break a call to one of the 12 stable tools (see [Stability](#stability)).
+
+### Troubleshooting an installed copy
+
+Run these checks in the environment that runs the skill, not just in a separate shell. Run the first command from the directory that holds the installed copy's `scripts/`: the skill's own directory for a copy made by `npx ffmpeg-skill`, a Claude Code plugin or a copy by hand, and the plugin's top directory (the one that contains `skills/`) for the Codex plugin:
+
+```bash
+python3 scripts/_contract.py doctor --json  # from the directory that holds scripts/
+npx ffmpeg-skill doctor --json              # checks the invoked npm package, not a plugin copy
+```
+
+- **It works in my terminal but not in my agent.** Compare `ffmpeg_path` and `ffprobe_path` against the binaries seen by the agent (a copy older than 3.13.0 does not report them: update it first, see [Updating](#updating)). Use both binaries from the same build, and restart the host after changing the PATH it inherits. If the direct Python command fails, check `python3 --version` (3.10 or newer); on Windows, use `python` or `py -3` if `python3` is unavailable.
+- **A specific tool won't run.** In the installed copy's report, look under `tools` (for example, `tools.stabilize`) for that tool's `usable` status and any `fix` message. See [Quick start](#quick-start) for how to interpret the overall status.
+- **The agent still uses an older version.** Use the installed copy's `version` in the report, then follow [Updating](#updating) for that installation route. A newer version reported by the npm command doesn't establish that the agent's own copy was updated.
 
 ## Requirements
 
@@ -862,7 +876,7 @@ This refreshes the cache without a separate uninstall and sets the plugin to ena
 
 ## Stability
 
-4.x splits the promise by tool: the 12 core tools (`stability: stable` in `contract --json`) keep every tool name, CLI argument, JSON output key and exit code working until 5.0, as every tool did in 3.x; the other 30 (`beta`) may drop or rename an argument or an output key in a minor release after one minor of notice in `deprecated`. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-4x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. Releases are batched: related fixes and features ship together as one version rather than one version per merged pull request, so a dependent project sees fewer, larger steps. Pin a tagged version, not `main`. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed). 4.0.0 is the third: it split the promise by tool (above), made `export.py` exit non-zero when a video delivery misses a required property, made `fit.py --duration` ask for `--method` before a retime beyond 1.15x, turned on content checks in the delivery templates, and gave unusable inputs their own `error.reason` -- see [docs/contract.md](docs/contract.md#what-40-changed).
+4.x splits the promise by tool: the 12 core tools (`stability: stable` in `contract --json`) keep every tool name, CLI argument, JSON output key and exit code working until 5.0, as every tool did in 3.x; the other 29 (`beta`) may drop or rename an argument or an output key in a minor release after one minor of notice in `deprecated`. The full list of what is promised and what is not, and the three-step deprecation policy, is in [docs/contract.md](docs/contract.md#stability-guarantee-4x). It is enforced by a test that pins every tool's argument names against a snapshot, so a breaking change fails CI instead of slipping into a patch. Releases are batched: related fixes and features ship together as one version rather than one version per merged pull request, so a dependent project sees fewer, larger steps. Pin a tagged version, not `main`. 2.0.0 made the five changes announced since 1.10.0 -- `--crf` removed in favour of `--quality` (except on `export.py`, whose preset chooses the encoder), an existing output refused without `--overwrite`, `probe`'s `hdr` narrowed to a real HDR signal, `json`/`progress` out of the MCP schema, the `result_v2` preview withdrawn -- listed with what to change in [docs/contract.md](docs/contract.md#what-20-changed) and under `removed` in `contract --json`. 3.0.0 is the second break: it removed FFmpeg 5.x and Python 3.9 (announced in 2.14.0 and 2.10.9), made `cut.py` keep an `.mp4`/`.mov` copy's edit list, keep an SDR HEVC source HEVC and use `--vfr-guard sampled` by default (`--no-edit-list`, `--no-keep-hevc` and `--vfr-guard average` restore 2.x), and changed what `cut.py`'s `precision` (now the least exact segment's) and `keyframe_snapped` (now equal to `start_snapped`) mean (`contract_version` 2.0) -- see [docs/contract.md](docs/contract.md#what-30-changed). 4.0.0 is the third: it split the promise by tool (above), made `export.py` exit non-zero when a video delivery misses a required property, made `fit.py --duration` ask for `--method` before a retime beyond 1.15x, turned on content checks in the delivery templates, and gave unusable inputs their own `error.reason` -- see [docs/contract.md](docs/contract.md#what-40-changed).
 
 ## Development
 
@@ -871,7 +885,7 @@ npm test                      # tests/run_parallel.py (test_all.py's end-to-end 
 python3 tests/test_picture.py # one tool group on its own (analysis, editing, cut_copy, audio, picture, delivery, orchestration, accel, asr)
 npm run release-check         # pack, install, contract from the installed copy, MCP == contract, doctor, tests, contract evals
 npm run demo                  # python3 demos/build.py: the clips in demos/footage -> every before/after demo + docs/demos/*.gif
-npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run, one clip through 13 of the 42 scripts
+npm run demo:pipeline         # examples/make_demo.sh: the older single end-to-end run, one clip through 13 of the 41 scripts
 python3 evals/run.py --list   # agent eval prompts (see evals/); regex-only grading, runnable from any agent harness -- see evals/README.md "Running this from Cursor, Codex, or another harness"
 node bin/install.js --dir /tmp/skills   # try the installer without touching ~/.claude
 ```
