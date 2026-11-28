@@ -1494,7 +1494,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-grid 32|64|96] [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1542,11 +1542,15 @@ encoded alike (codec, pixel format or frame rate) are a WARN and a note. **When 
 compared (another frame size, another frame count, an unreadable frame count or a failed pass) the
 row is FAIL**, since "not measured" must not read as "nothing else changed". The measure: both
 pictures as 8-bit RGB, subtracted, each frame area-scaled to 32x18 tiles; a tile changed when its
-largest channel is above the floor (`--change-floor`, default 24 of 255). The JSON
+largest channel is above the floor (`--change-floor`, default 24 of 255). `--change-grid 64` or
+`96` (#442) cuts the frame finer, 30 or 20 px tiles at 1080p, with floors of 32 and 48 measured
+across libx264, libx265, libsvtav1, libaom-av1, libvpx-vp9 and ProRes; it is refused where a tile
+would be under 20 px (64 needs 1280x720, 96 needs 1920x1080). A 24x24 logo at 1080p is under the
+default floor and found at 96. The JSON
 `change_scope` document has `declared`, `observed`, `undeclared`, `declared_unchanged`, `floor`,
-`tile`, `frames` and `quiet_peak` (the largest tile that stayed under the floor: how close the
+`tile` (the grid used), `frames` and `quiet_peak` (the largest tile that stayed under the floor: how close the
 unchanged part came). Limits: a change much smaller than a tile is diluted (a full-contrast
-change needs about a tenth of a tile, 19x19 px at 1080p); a faint shift over the whole picture
+change needs about a tenth of a tile, 19x19 px at 1080p on the default grid); a faint shift over the whole picture
 stays under the floor in every tile, and `similarity` is the row for that; it compares the
 picture only; an edit that changes the length cannot be paired and FAILs as not compared, unless
 `--expect-removed` declares what it cut (below). Compare
