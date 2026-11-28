@@ -1280,14 +1280,10 @@ def main() -> int:
                      help="directory of emoji PNGs named by code point (1f389.png, 1f1ef-1f1f5.png) -- "
                           "Twemoji's assets/72x72 or Noto Emoji's png/128. Nothing is ever downloaded; "
                           "also read from brand.json styles.caption.emoji_assets and FFMPEG_SKILL_EMOJI_ASSETS")
-    emo.add_argument("--emoji-scale", type=float, default=1.0,
-                     help="emoji box as a multiple of the line's font size (default 1.0)")
-    emo.add_argument("--emoji-max", type=int, default=60,
-                     help="most emoji overlays one run may build (default 60)")
+    emo.add_argument("--emoji-scale", type=float, default=1.0, help="emoji box as a multiple of the line's font size (default 1.0)")
+    emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
     sty.add_argument("--max-lines", type=int, default=2, help="most lines one cue may occupy; a longer cue is split into consecutive cues (default 2)")
-    sty.add_argument("--fit-size", choices=["auto", "on", "off"], default="auto",
-                     help="shrink the caption size until the cue fits --max-lines, BEFORE splitting it: "
-                          "'auto' (default) only when no --size was given, 'on' always, 'off' keeps --size and splits the cue instead")
+    sty.add_argument("--fit-size", choices=["auto", "on", "off"], default="auto", help="shrink the caption size until the cue fits --max-lines, BEFORE splitting it: 'auto' (default) only when no --size was given, 'on' always, 'off' keeps --size and splits the cue instead")
     sty.add_argument("--min-size", type=int, default=None,
                      help="smallest size --fit-size may use, in ASS points (default 13 = 4.5%% of the frame height, "
                           "the legibility floor)")
@@ -1307,12 +1303,9 @@ def main() -> int:
                            "emboldened, past words in --color, upcoming words in --upcoming-color -- \\k/\\kf can only "
                            "interpolate colour, so this is the only way to also scale/embolden the active word")
     anim.add_argument("--highlight-color", default=None, help="karaoke fill/active-word colour RRGGBB (default FFD200 or brand primary)")
-    anim.add_argument("--upcoming-color", default=None,
-                      help="--karaoke-style word: colour RRGGBB for words not yet spoken (default B4B4B4)")
-    anim.add_argument("--karaoke-scale", type=float, default=112.0,
-                      help="--karaoke-style word: the active word's size as a percentage of the caption size (default 112)")
-    anim.add_argument("--karaoke-timing", choices=["even", "energy"], default="energy",
-                      help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
+    anim.add_argument("--upcoming-color", default=None, help="--karaoke-style word: colour RRGGBB for words not yet spoken (default B4B4B4)")
+    anim.add_argument("--karaoke-scale", type=float, default=112.0, help="--karaoke-style word: the active word's size as a percentage of the caption size (default 112)")
+    anim.add_argument("--karaoke-timing", choices=["even", "energy"], default="energy", help="how words are timed inside a cue: 'energy' follows the speech loudness in the audio (default), 'even' splits time equally")
     anim.add_argument("--write-ass", help="where to save the generated ASS (default: next to the output)")
     enc = ap.add_argument_group("encoding")
     enc.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)

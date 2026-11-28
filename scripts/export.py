@@ -587,10 +587,8 @@ def main() -> int:
                          "running time leaves after the audio, measured afterwards (H.264 presets; not with --crf or --hw)")
     # 4.0.0 (#579): a platform preset promises the platform's loudness, so it meets it by default
     norm = ap.add_mutually_exclusive_group()
-    norm.add_argument("--normalize", action="store_true",
-                      help="platform presets: normalize audio when it misses the loudness spec (the default since 4.0.0). Video is copied.")
-    norm.add_argument("--no-normalize", action="store_true",
-                      help="platform presets: measure and report the loudness but deliver the sound as it is (3.x's default)")
+    norm.add_argument("--normalize", action="store_true", help="platform presets: normalize audio when it misses the loudness spec (the default since 4.0.0). Video is copied.")
+    norm.add_argument("--no-normalize", action="store_true", help="platform presets: measure and report the loudness but deliver the sound as it is (3.x's default)")
     ap.add_argument("--alpha-mode", choices=["straight", "premultiplied"],
                     help="alpha presets (prores4444, prores4444xq, qtrle, vp9-alpha, hap-alpha): write the colour straight "
                          "(default, as decoded) or premultiplied by the alpha; written to the result as alpha_mode")

@@ -131,12 +131,9 @@ def main(force_route: Optional[str] = None) -> int:
     ap.add_argument("--write-ass", metavar="PATH",
                     help="where to save the generated ASS when the libass route is used (default: <output stem>_gfx.ass)")
     emo = ap.add_argument_group("emoji (1.15)")
-    emo.add_argument("--emoji", choices=["auto", "color", "png", "mono", "none"], default="auto",
-                     help="how emoji in the template text are drawn (see caption.py --emoji)")
-    emo.add_argument("--emoji-assets", metavar="DIR",
-                     help="directory of emoji PNGs named by code point (1f389.png); nothing is ever downloaded")
-    emo.add_argument("--emoji-scale", type=float, default=1.0,
-                     help="emoji box as a multiple of the line's font size (default 1.0)")
+    emo.add_argument("--emoji", choices=["auto", "color", "png", "mono", "none"], default="auto", help="how emoji in the template text are drawn (see caption.py --emoji)")
+    emo.add_argument("--emoji-assets", metavar="DIR", help="directory of emoji PNGs named by code point (1f389.png); nothing is ever downloaded")
+    emo.add_argument("--emoji-scale", type=float, default=1.0, help="emoji box as a multiple of the line's font size (default 1.0)")
     emo.add_argument("--emoji-max", type=int, default=60, help="most emoji overlays one run may build (default 60)")
     ap.set_defaults(crf=18)  # --quality's default (the --crf alias was removed in 2.0)
     ap.add_argument("--preset", default="medium", choices=X264_PRESETS, help="x264 preset")
