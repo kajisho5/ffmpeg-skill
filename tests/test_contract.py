@@ -3545,12 +3545,16 @@ sys.exit(fit.main())
         source = re.compile(r"""(?:["',;\]]|f["'])(anoisesrc|life|cellauto|sierpinski|gradients)(=[^"',;\[\s]+|(?=["']))""")
         python = re.compile(r"\brandom\.(?!Random\(\w)\w+\(|\bos\.urandom\(")
         found = []
-        for path in sorted([*(ROOT / "tests").glob("*.py"), *(ROOT / "demos").glob("*.py")]):
+        for path in sorted([*(ROOT / "tests").rglob("*.py"), *(ROOT / "demos").rglob("*.py")]):
+            if "out" in path.relative_to(ROOT).parts:  # what the tests write, not what they are
+                continue
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 code = line.split("#")[0] if not line.lstrip().startswith(("'", '"', "f'", 'f"')) else line
                 for m in source.finditer(code):
                     opts = m.group(2) or ""
-                    if "seed=" not in opts or m.group(1).startswith("grad") and not ("c0=" in opts and "c1=" in opts):
+                    given = dict(o.split("=", 1) for o in opts.lstrip("=").split(":") if "=" in o)
+                    colours = [given.get(f"c{i}", "random") for i in range(int(given.get("n", given.get("nb_colors", 2))))]
+                    if "seed=" not in opts or m.group(1).startswith("grad") and "random" in colours:
                         found.append(f"{path.name}:{n}: {m.group(0).lstrip(chr(34) + chr(39) + 'f,;]')}")
                 if python.search(code):
                     found.append(f"{path.name}:{n}: {line.strip()[:80]}")
