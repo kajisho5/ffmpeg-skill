@@ -4,10 +4,10 @@
 Wraps FFmpeg's cropdetect filter: it samples frames, finds the largest
 non-black rectangle common to (recent) frames, and reports it. This is a
 measurement only -- it writes no file. Feed the reported {x, y, width,
-height} to crop.py to actually remove the bars:
+height} to fit.py --rect W:H:X:Y to actually remove the bars:
 
   python3 cropdetect.py input.mp4
-  python3 crop.py input.mp4 --x 0 --y 140 --width 1920 --height 800
+  python3 fit.py input.mp4 --rect 1920:800:0:140
 
 Distinct from fit.py --fit crop, which crops to a *target aspect ratio* it
 computes itself (no black-bar detection involved) -- this tool instead
@@ -196,7 +196,7 @@ def main() -> int:
             info(f"no bars detected: full {sw}x{sh} frame is already content")
         else:
             info(f"detected crop={w}:{h}:{x}:{y} (source {sw}x{sh}, confidence {result['confidence']:.0%}) -- "
-                 f"crop.py {args.input} --x {x} --y {y} --width {w} --height {h}")
+                 f"fit.py {args.input} --rect {w}:{h}:{x}:{y}")
 
     if args.motion_centre:
         centre = motion_centre(args.input, args.seconds, args.samples, duration, sw, sh)
