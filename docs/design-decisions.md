@@ -145,6 +145,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.18.0 — a preview of the whole project, joins of a cut to listen to, and each clip's decisions (#581)](#after-4180--a-preview-of-the-whole-project-joins-of-a-cut-to-listen-to-and-each-clips-decisions-581)
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
+- [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
 - [After 4.18.0 — CI in two stages, the changed area first, and a weekly run on the next FFmpeg (#680)](#after-4180--ci-in-two-stages-the-changed-area-first-and-a-weekly-run-on-the-next-ffmpeg-680)
 <!-- contents:end -->
 
@@ -7631,6 +7632,38 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
   `test_json_brief_keeps_what_a_caller_decides_from_on_ordinary_edits`,
   `test_json_brief_keeps_the_verification_step_that_did_not_pass` (tests/test_editing.py),
   `test_skill_md_sends_an_ordinary_edit_to_json_brief` (tests/test_contract.py).
+## After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)
+
+- **SKILL.md's request table keeps a row only where the right command is not the obvious one**: an
+  option that must be there (`--segments`, `--filler --words`, `--snap beats`, `--width 1080`, `--mute`,
+  `--duration` on `export.py`), two tools that could both be meant (`overlay.py --video` and `insert.py`
+  for "insert", `audio.py --voice` and `denoise.py` for "hiss", `fit.py --fade-in` and `render.py`),
+  a request with no tool (`--brand`), and the rows a test or a measured miss depends on (filler, beats,
+  `--jobs auto`, `--cache`, the "make it vertical" row, `fit.py --fade-in`, `export.py --duration`,
+  `audio.py --mute`). 80 rows became 35. A request a model gets right from the tool's name ("reverse
+  this clip") moved to `references/requests.md`, which now holds every request (102 rows), and
+  SKILL.md names the moved tools in one line so none reads as missing.
+- **The tool names stay in SKILL.md even where their rows went.** "If none of the 41 scripts exposes
+  a feature, say so" is only safe when the model can see all 41 names; the table no longer lists
+  them, so the paragraph above it does.
+- **"Make it exactly 60 seconds" moved into the ask/assume line on duration**, which already said
+  `--method trim` and `fit_method_required` and now names `fit.py`; the MCP list sentence moved to
+  `references/flags.md`, which already had it; the timestamps reference row went (the Times line
+  above the table points there).
+- **The contract's `examples` read SKILL.md first, then `references/requests.md` for a tool SKILL.md's
+  table does not name**, so every tool keeps at least one example and a tool SKILL.md names keeps
+  exactly SKILL.md's rows. No line of shipped code was added (`skill_examples()`, net 0).
+- **The ceiling came down with the file: 180 lines and 16,000 bytes** (it was 220 and 30,000; the
+  file is now 175 lines and 14.8 KB). The table is the part that grows, and at the old ceiling the
+  fix was merging rows into two-request lines, which is harder to pick a command from.
+- **Not measured here.** Which rows a model needs was judged from the rule above, the routing tests
+  and the measured stumbles in `docs/stumbles.jsonl`, not from a new model run: the benchmark (#677)
+  and a first-try round need a model, and `tests/first_try.py` does not read SKILL.md (its agent
+  sees only the tool names). If a benchmark after this shows a request routed worse, its row comes
+  back.
+- Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
+  `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
+  `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
 ## After 4.18.0 — CI in two stages, the changed area first, and a weekly run on the next FFmpeg (#680)
 
 - **macOS and Windows wait for a green Linux stage on a pull request.** `ci.yml`'s `test-macos-windows`

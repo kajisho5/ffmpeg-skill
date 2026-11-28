@@ -1236,10 +1236,11 @@ class ContractTests(unittest.TestCase):
     def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
         """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
         (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
-        Every tool but an alias (#683: crop, out of the table) is named in that table somewhere, so
-        it has at least one example; a row's markdown backticks are stripped from `command`, and a row with
-        several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
-        `prompts` list rather than one string."""
+        #687: SKILL.md keeps only the rows whose command is not the obvious one; a tool its table
+        does not name takes its rows from references/requests.md, which has a row for every tool
+        but an alias (#683: crop), so every tool still has at least one example. A row's markdown
+        backticks are stripped from `command`, and a row with several quoted phrasings ("cut from
+        1:20 to 2:05", "trim the first 10 s") becomes a `prompts` list rather than one string."""
         by_name = {t["name"]: t for t in self.contract["tools"]}
         missing = [name for name, t in by_name.items() if not t.get("examples") and "alias_of" not in t]
         self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
@@ -1258,6 +1259,11 @@ class ContractTests(unittest.TestCase):
         broll = by_name["broll"]["examples"][0]
         self.assertIn("b|mix", broll["command"])
         self.assertIn("B-roll over this bit", broll["prompts"])
+        # #687: a tool SKILL.md's table names keeps only those rows; one it does not takes requests.md's
+        skill_table = (ROOT / "SKILL.md").read_text(encoding="utf-8").split("## Request \u2192 script", 1)[1]
+        self.assertNotIn("reverse.py", skill_table)
+        self.assertEqual(by_name["reverse"]["examples"], [{"prompts": ["reverse this clip"], "command": "reverse.py input.mp4"}])
+        self.assertTrue(all(e["command"] in skill_table.replace("`", "").replace("\\|", "|") for e in by_name["cut"]["examples"]))
 
     def test_provides_covers_every_tool_with_the_dotted_capability_id(self):
         provides = self.contract["provides"]
@@ -9819,12 +9825,13 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertIsNone(support["color_font"])
         self.assertIn("fontconfig", support["detail"])
 
-    def test_skill_md_stays_under_the_30kb_budget(self):
+    def test_skill_md_stays_under_its_byte_budget(self):
         """SKILL.md is loaded into every session: the 30 000-byte budget was a convention in
-        CONTRIBUTING.md, which is how it got to 51 free bytes. Now it is a test."""
+        CONTRIBUTING.md, which is how it got to 51 free bytes. Now it is a test. #687 lowered it to
+        16 000 bytes once the request table kept only the rows a model needs (14.8 KB)."""
         size = (ROOT / "SKILL.md").stat().st_size
-        self.assertLess(size, 30_000,
-                        f"SKILL.md is {size} bytes, {size - 30_000} over the 30,000-byte budget -- "
+        self.assertLess(size, 16_000,
+                        f"SKILL.md is {size} bytes, {size - 16_000} over the 16,000-byte budget -- "
                         "trim a line rather than raising the limit (see CONTRIBUTING.md)")
 
     # ------------------------------------------------- #234: child output is decoded as UTF-8
