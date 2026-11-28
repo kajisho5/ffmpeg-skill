@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ffmpeg-skill: give your coding agent a video editor</title>
-<meta name="description" content="An Agent Skill for Claude Code, Cursor, Codex and any MCP client: 42 local FFmpeg tools with a machine-readable contract. The agent probes the real file, edits, checks the result against the destination and looks at it. No cloud, no API keys, Python standard library only.">
+<meta name="description" content="An Agent Skill for Claude Code, Cursor, Codex and any MCP client: 41 local FFmpeg tools with a machine-readable contract. The agent probes the real file, edits, checks the result against the destination and looks at it. No cloud, no API keys, Python standard library only.">
 <meta name="theme-color" content="#0B0C10">
 <link rel="icon" href="brand/favicon.ico" sizes="48x48">
 <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
@@ -423,7 +423,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     <span class="v4" aria-hidden="true">v4</span>
     <div class="hero-grid">
       <div>
-        <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 42 tools</p>
+        <p class="eyebrow" data-i="hero.eye">Agent skill · local FFmpeg · 41 tools</p>
         <h1 class="dotted" id="hero-h" data-i="hero.h">Give your coding agent a video editor.</h1>
         <p class="intro" data-i="hero.p">Claude Code, Cursor, Codex or any MCP client edits your footage with local FFmpeg, then checks its own output.</p>
         <div class="term"><code id="c-main"><span class="p">$ </span>npx ffmpeg-skill setup</code><button class="copy" type="button" data-copy="c-main"><i class="ph ph-copy" aria-hidden="true"></i><span data-i="copy">Copy</span></button></div>
@@ -538,7 +538,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     <div class="tools">
       <div>
         <p class="eyebrow" id="tools-h" data-i="nav.tools">Tools</p>
-        <p class="big" aria-label="42">42</p>
+        <p class="big" aria-label="41">41</p>
         <p><span data-i="tools.p1">tools that do the actual work with </span><code>ffmpeg</code> / <code>ffprobe</code><span data-i="tools.p2">.</span></p>
       </div>
       <ul class="chips">
@@ -561,7 +561,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     <div class="agents" id="agents">
       <h2 class="eyebrow" data-i="nav.agents2">Built for agents</h2>
       <ul class="cards">
-        <li><h3>MCP</h3><p><span data-i="ag1.p1">Every tool is an MCP tool. A core 12 is listed by default to keep the client’s context small, all 42 with </span><code>FFMPEG_SKILL_MCP_FULL=1</code><span data-i="ag1.p2">.</span></p><span class="foot">tools/list · tools/call</span></li>
+        <li><h3>MCP</h3><p><span data-i="ag1.p1">Every tool is an MCP tool. A core 12 is listed by default to keep the client’s context small, all 41 with </span><code>FFMPEG_SKILL_MCP_FULL=1</code><span data-i="ag1.p2">.</span></p><span class="foot">tools/list · tools/call</span></li>
         <li><h3 data-i="ag2.h">Contract</h3><p data-i="ag2.p">One machine-readable contract describes the whole set: what each tool takes and writes, what it needs from FFmpeg, and how it is checked.</p><span class="foot">contract --json</span></li>
         <li><h3>SPEC</h3><p data-i="ag3.p">Each tool’s input schema is derived from the script’s own argument parser, never written by hand beside it. CI fails if the docs drift.</p><span class="foot">Self-Producing Execution Contract</span></li>
       </ul>
@@ -592,7 +592,7 @@ h1,h2,h3{letter-spacing:-0.045em}
         <h2 class="h3x" id="faq-h" data-i="faq.h">Questions people ask first</h2>
         <div class="faq">
           <details><summary><span data-i="q1">Can I pass raw ffmpeg arguments, or a filter_complex?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a1">No. Each operation is a script whose flags are its own argument parser, and that parser is what the contract and the MCP schema are built from. A caller-supplied filter graph, -vf string or other ffmpeg option is not an argument any script accepts.</div></details>
-          <details><summary><span data-i="q2">Why 42 tools? Isn’t that overkill?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a2">One tool per job, because each job promises something different and the tool measures that promise after the run. An agent does not read 42 schemas: over MCP it sees a core 12 and calls the other 30 by name when a job needs one.</div></details>
+          <details><summary><span data-i="q2">Why 41 tools? Isn’t that overkill?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a2">One tool per job, because each job promises something different and the tool measures that promise after the run. An agent does not read 41 schemas: over MCP it sees a core 12 and calls the other 29 by name when a job needs one.</div></details>
           <details><summary><span data-i="q3">What does “verified” check, and what can it not tell me?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a3">It covers what can be measured from the file: that it opens, its length, codecs, size and frame rate, and the tool’s own promise, such as loudness after normalising. A value that cannot be read fails as not_measured instead of passing. Whether it looks or sounds right is listed as unverified, so you look at the contact sheet.</div></details>
           <details><summary><span data-i="q4">How does ffmpeg-skill compare with Remotion?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a4">They complement each other. ffmpeg-skill edits footage you already have; Remotion renders a video from React components. remotion-ffmpeg-skill joins the two: it measures with this repo, draws in Remotion, then checks and delivers with this repo again.</div></details>
           <details><summary><span data-i="q5">Does it encode on the GPU?</span><i class="ph ph-plus" aria-hidden="true"></i></summary><div class="a" data-i="a5">On Apple Silicon, with VideoToolbox, when you ask for it with --hw or FFMPEG_SKILL_HW=1. Other GPU encoders are reported by doctor when your FFmpeg has them, but no tool encodes with them.</div></details>
@@ -665,7 +665,7 @@ h1,h2,h3{letter-spacing:-0.045em}
     "skip": "本文へスキップ",
     "nav.demos": "デモ", "nav.how": "しくみ", "nav.tools": "ツール", "nav.agents": "エージェント向け", "nav.agents2": "エージェントのために", "nav.faq": "よくある質問", "nav.docs": "ドキュメント", "nav.install": "インストール",
     "cta.install": "インストール", "cta.start": "はじめる", "cta.gh": "GitHub を見る", "copy": "コピー",
-    "hero.eye": "エージェントスキル · ローカル FFmpeg · 42 ツール",
+    "hero.eye": "エージェントスキル · ローカル FFmpeg · 41 ツール",
     "hero.h": "コーディング AI に、\n動画編集ソフトを。",
     "hero.p": "Claude Code、Cursor、Codex、そのほかの MCP クライアントが、あなたのパソコンの FFmpeg で映像を編集し、仕上がりを自分で確かめます。",
     "fact.1": "クラウド不要", "fact.2": "API キー不要", "fact.3": "Python 標準ライブラリだけ",
@@ -691,14 +691,14 @@ h1,h2,h3{letter-spacing:-0.045em}
     "c1": "カットと結合", "c2": "無音カット", "c3": "尺と縦横比を合わせる", "c4": "字幕とカラオケ", "c5": "重ね合わせとモーショングラフィックス", "c6": "HDR → SDR と LUT",
     "c7": "音声のクリーンアップとダイナミクス", "c8": "同期とズレ補正", "c9": "マルチカム", "c10": "ラウドネス", "c11": "納品チェック", "c12": "プロジェクト書き出し", "c13": "フォルダごとの一括処理",
     "ag.h": "あなただけでなく、機械にも読める。",
-    "ag1.p1": "どのツールも MCP のツールです。AI に渡す情報を小さく保つため、ふだんは主要な 12 個だけを見せ、", "ag1.p2": " で 42 個すべてを見せます。",
+    "ag1.p1": "どのツールも MCP のツールです。AI に渡す情報を小さく保つため、ふだんは主要な 12 個だけを見せ、", "ag1.p2": " で 41 個すべてを見せます。",
     "ag2.h": "契約", "ag2.p": "機械が読める 1 つの契約が、全ツールを説明します。何を受け取り何を書き出すか、FFmpeg に何が必要か、どう確かめるか。",
     "ag3.p": "各ツールの入力の定義は、スクリプト自身の引数の定義から自動で作られます。手で書き写すことはありません。説明がずれると CI が失敗します。",
     "in.h": "コマンドひとつ。", "in.lead": "このパソコンにあるエージェントすべてにスキルを入れ、FFmpeg が無ければパッケージマネージャーで入れ、最後にパソコンを点検します。下の行は、エージェントをひとつ選ぶときに使います。", "in.setup": "ぜんぶ一度に", "in.all": "3 つすべて", "in.doc": "パソコンを点検",
     "in.note": "FFmpeg 6.1 以上と Python 3.10 以上が必要です。オフラインで動きます。FFmpeg 本体の入れ方（macOS、Linux、Windows）は ", "in.link": "README", "in.end": " にあります。",
     "faq.h": "最初によく聞かれること",
     "q1": "ffmpeg の引数や filter_complex をそのまま渡せますか？", "a1": "渡せません。どの操作も、自分の引数の定義を持つスクリプトで、契約と MCP の入力の定義はそこから作られます。呼び出し側のフィルターグラフや -vf の文字列など、ffmpeg のオプションを受け取るスクリプトはありません。",
-    "q2": "ツールが 42 個は多すぎませんか？", "a2": "作業ごとに約束が違うので、作業ごとに 1 つのツールにし、実行後にその約束を測っています。AI が 42 個の定義を読むわけではありません。MCP では主要な 12 個が見え、残り 30 個は必要なときに名前で呼びます。",
+    "q2": "ツールが 41 個は多すぎませんか？", "a2": "作業ごとに約束が違うので、作業ごとに 1 つのツールにし、実行後にその約束を測っています。AI が 41 個の定義を読むわけではありません。MCP では主要な 12 個が見え、残り 29 個は必要なときに名前で呼びます。",
     "q3": "「確認済み」は何を確かめ、何がわからないのですか？", "a3": "ファイルから測れることです。開けるか、長さ、コーデック、サイズ、フレームレート、そしてツールごとの約束（音量をそろえたあとのラウドネスなど）。読み取れない値は合格にせず not_measured として失敗にします。見た目や聞こえ方が正しいかは unverified として示すので、コンタクトシートで確認します。",
     "q4": "Remotion とはどう違いますか？", "a4": "補い合う関係です。ffmpeg-skill は手元にある映像を編集し、Remotion は React の部品から映像を描きます。remotion-ffmpeg-skill が両方をつなぎ、このリポで測り、Remotion で描き、またこのリポで確かめて書き出します。",
     "q5": "GPU でエンコードしますか？", "a5": "Apple Silicon の VideoToolbox を、--hw か FFMPEG_SKILL_HW=1 で頼んだときに使います。ほかの GPU エンコーダーは、お使いの FFmpeg にあれば doctor が報告しますが、それでエンコードするツールはありません。",
@@ -711,7 +711,7 @@ h1,h2,h3{letter-spacing:-0.045em}
   };
   var META = {
     en: { title: document.title, desc: document.querySelector('meta[name="description"]').content },
-    ja: { title: "ffmpeg-skill：コーディング AI に、動画編集ソフトを", desc: "Claude Code、Cursor、Codex、MCP クライアントのためのエージェントスキル。ローカルの FFmpeg で動く 42 のツールと、機械が読める契約。実際のファイルを測り、編集し、出す先の基準で検査し、目で確認します。クラウドも API キーも不要。" }
+    ja: { title: "ffmpeg-skill：コーディング AI に、動画編集ソフトを", desc: "Claude Code、Cursor、Codex、MCP クライアントのためのエージェントスキル。ローカルの FFmpeg で動く 41 のツールと、機械が読める契約。実際のファイルを測り、編集し、出す先の基準で検査し、目で確認します。クラウドも API キーも不要。" }
   };
 
   var EN = {}, nodes = document.querySelectorAll("[data-i]");

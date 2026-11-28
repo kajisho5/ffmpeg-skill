@@ -333,23 +333,27 @@ function checkFfmpeg() {
 }
 
 // Scratch directories an install that was killed (or that failed before this was cleaned up in
-// the catch below) left next to the target: <name>.tmp-<pid>, each a partial copy with a SKILL.md.
+// the catch below) left next to the target: <name>.tmp-<pid>, a partial copy, and <name>.bak-<pid>,
+// the previous install moved aside by a run that died before the swap finished. Each holds a
+// SKILL.md, so an agent scanning the skills folder would find the skill twice.
 function staleScratchDirs(dir) {
   const parent = path.dirname(dir);
-  const prefix = `${path.basename(dir)}.tmp-`;
+  const base = path.basename(dir);
   let entries = [];
   try { entries = fs.readdirSync(parent); } catch (_) { return []; }
   return entries
-    .filter((e) => e.startsWith(prefix) && /^\d+$/.test(e.slice(prefix.length)))
-    .filter((e) => !processIsRunning(Number(e.slice(prefix.length))))
-    .map((e) => path.join(parent, e));
+    .map((e) => [e, e.startsWith(base) && /^\.(?:tmp|bak)-(\d+)$/.exec(e.slice(base.length))])
+    .filter(([, m]) => m && !processIsRunning(Number(m[1])))
+    .map(([e]) => path.join(parent, e));
 }
 
-// The number after ".tmp-" is the pid of the install that made the directory. One whose process
+// The number after ".tmp-" or ".bak-" is the pid of the install that made the directory. One whose process
 // is still running is that install's work in progress, not a leftover: removing it lets the
 // install recreate the directory with only the files it had not copied yet and then rename that
 // into place as a finished install. Signal 0 asks without signalling: ESRCH is "no such
-// process"; EPERM is a live process this user may not signal, so it counts as running.
+// process"; EPERM is a live process this user may not signal, so it counts as running. A dead
+// install's pid that an unrelated process has since reused keeps its folder until that process
+// ends: the guard errs toward keeping a leftover, never toward removing a live install's work.
 function processIsRunning(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
 }
@@ -401,6 +405,11 @@ for (const t of targets) {
       throw err;
     }
     if (hadOld) fs.rmSync(bakDir, { recursive: true, force: true });
+    // ones an earlier, ended run left: this install has replaced what they held (one that cannot be
+    // removed does not fail the install; --uninstall tries again)
+    for (const stale of staleScratchDirs(t.dir)) {
+      try { fs.rmSync(stale, { recursive: true, force: true }); } catch (_) { /* left for --uninstall */ }
+    }
     console.log(`installed ${t.label}: ${t.dir}`);
   } catch (err) {
     failed = true;
