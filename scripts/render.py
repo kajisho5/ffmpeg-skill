@@ -2458,7 +2458,8 @@ def main() -> int:
     fit_argv = [a for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth"))
                 if fit.get(k) is not None for a in option_args(flag, fit[k])]
     cap, ld, ex = proj.get("captions"), proj.get("loudness"), proj.get("export")
-    cap_argv = caption_argv(cap, rel) + brand_args + platform_args if cap else None
+    # a "captions" that is not an object is refused where the run reads it (a --stop-after before it does not)
+    cap_argv = caption_argv(cap, rel) + brand_args + platform_args if isinstance(cap, dict) and cap else None
     # #357: one encode where every stage's plan reads into it; `render_path` says which path ran, and why
     render_path = {"render_path": "staged", "render_path_reason": "no_encoding_export"}
     if ex_preset and "copy" not in PRESETS.get(resolve_platform(ex_preset), {}).get("video", ["copy"]):

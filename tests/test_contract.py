@@ -8203,9 +8203,9 @@ class BatchSourcePathTests(unittest.TestCase):
         leaves = {k for _, k in PROJECT_PATH_KEYS}
         src = (SCRIPTS / "render.py").read_text(encoding="utf-8")
         # project_input_files()'s add(value) and the audiogram stage read keys named around them;
-        # `brand` is the brand key, `ov[k]` an overlay's font_file
+        # `brand` is the brand key, `ov[k]` an overlay's font_file, `cap[key]` caption_argv's text, srt or ass
         indirect = {"au[k]": {"music", "replace", "effects"}, "ch": {"chapters"}, "p: Any": set(),
-                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}}
+                    "value": set(), "brand": {"brand"}, "ov[k]": {"font_file"}, "cap[key]": {"text", "srt", "ass"}}
         for arg in re.findall(r"\brel\(((?:[^()]|\([^()]*\))+)\)", src):
             named = re.findall(r"[\"'](\w+)[\"']", arg)
             keys = {named[-1]} if named else indirect.get(arg.strip())
