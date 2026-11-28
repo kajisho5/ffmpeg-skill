@@ -81,5 +81,45 @@ def main():
     print(f"{'full, twoloop':26s} exit {code}  {took:6.1f}s  {err.strip()[-200:]}")
 
 
+def loop_probe():
+    """loop.py on a clip whose sound starts 0.3 s late: 9.1 put repeats 2 and 3 at -12 and +9 ms.
+    The fixture's AAC is written by plain ffmpeg, so on 9.1 by its new default coder unless named."""
+    import json
+    import _fixtures as fx
+    print("\n== loop: the fixture's AAC, by coder")
+    for coder in (None, "twoloop"):
+        src = WORK / f"alate_{coder or 'default'}.mp4"
+        real = fx.sh
+        if coder:
+            def sh_named(*cmd, **kw):
+                cmd = list(cmd)
+                at = cmd.index("aac") + 1 if "aac" in cmd else None
+                if at:
+                    cmd[at:at] = ["-aac_coder", coder]
+                return real(*cmd, **kw)
+            fx.sh = sh_named
+        try:
+            fx.make_flash_beep(src, audio_late=0.3)
+        finally:
+            fx.sh = real
+        info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                               "stream=start_time,duration,duration_ts,nb_frames,initial_padding:stream_side_data",
+                               "-of", "json", str(src)], capture_output=True, text=True).stdout
+        pk = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "packet=pts,duration",
+                             "-of", "csv=p=0", str(src)], capture_output=True, text=True).stdout.split()
+        print(f"-- source, coder {coder or 'default'}: {json.dumps(json.loads(info or '{}').get('streams'))}")
+        print(f"   packets {len(pk)}, first {pk[:2]}, last {pk[-2:]}; flash-beep {fx.av_offsets_ms(src)} ms")
+        out = WORK / f"loop_{coder or 'default'}.mp4"
+        code, err, took = sh([sys.executable, ROOT / "scripts" / "loop.py", src, "--times", "3", "--preset", "veryfast",
+                              "-o", out, "--overwrite"], timeout=300)
+        print(f"   loop.py exit {code} {took:.1f}s; flash-beep {fx.av_offsets_ms(out) if code == 0 else err[-300:]} ms")
+        lst = WORK / "list.txt"
+        lst.write_text("".join(f"file '{src.as_posix()}'\n" for _ in range(3)), encoding="utf-8")
+        cat = WORK / f"cat_{coder or 'default'}.mp4"
+        code, err, _ = sh(BASE + ["-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", cat])
+        print(f"   concat -c copy exit {code}; flash-beep {fx.av_offsets_ms(cat) if code == 0 else err[-300:]} ms")
+
+
 if __name__ == "__main__":
     main()
+    loop_probe()
