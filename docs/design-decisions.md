@@ -529,7 +529,7 @@ exists. When a decision changes, edit the entry in the same PR.
   `test_a_side_file_a_tool_replaces_itself_is_rechecked`,
   `test_a_side_file_written_after_its_check_is_refused_and_one_left_alone_is_written`,
   `test_a_side_file_keeps_the_mode_of_the_file_it_replaces`,
-  `test_a_side_file_keeps_the_group_of_the_file_it_replaces`,
+  `test_an_existing_side_file_is_written_in_place_and_keeps_its_links`,
   `test_a_file_created_after_the_check_is_refused_without_hard_links`,
   `test_a_write_still_lands_without_hard_links`,
   `test_a_side_file_keeps_the_access_acl_of_the_file_it_replaces`,
