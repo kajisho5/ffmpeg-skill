@@ -2869,9 +2869,13 @@ class TimestampSeekTests(unittest.TestCase):
 
     @staticmethod
     def _rgb(path, at=None):
-        """The frame at `at` decoded from the start (or a PNG's one picture), as RGB bytes."""
-        pick = ["-vf", f"select=gte(t\\,{at - 0.001}),setparams=colorspace=bt709:range=tv"] if at is not None else []
-        return subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:V:0", *pick, "-frames:v", "1",
+        """The frame at `at` on the file's clock (its pts less the file's start_time, where cut.py
+        --start counts), decoded from the start, or a PNG's one picture, as RGB bytes. A select on
+        FFmpeg's own clock of a picture-only decode counted from the picture's start, 21 ms after
+        the TS's sound, and picked the frame after the cut's (#766)."""
+        origin = probe(str(path))["start_time"] or 0.0 if at is not None else 0.0
+        pick = ["-vf", f"setpts=PTS-{origin:.6f}/TB,select=gte(t\\,{at - 0.001}),setparams=colorspace=bt709:range=tv"] if at is not None else []
+        return subprocess.run(["ffmpeg", "-v", "error", "-copyts", "-i", str(path), "-map", "0:V:0", *pick, "-frames:v", "1",
                                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
 
     def test_a_frame_grab_and_a_cut_start_on_the_frame_asked_for(self):
@@ -2974,7 +2978,7 @@ class GeometryAuditAnalysisTests(unittest.TestCase):
     def test_contact_sheet_stamps_count_from_the_file_start_on_mpeg_ts(self):
         """An input -ss resets an MPEG-TS's timestamps differently from an MP4's, so the stamp
         (pts + seek) came out one seek late on TS. The sheet now keeps the file's own timestamps
-        counted from its start (-copyts -start_at_zero) and stamps each frame's pts as it is.
+        counted from its start (-copyts and a setpts to its start_time, #766) and stamps each frame's pts as it is.
         The stamp is drawn text, so the test reads the pts the stamp is drawn from: the same
         graph with showinfo in place of drawtext and tile."""
         self.assertGreater(probe(str(self.ts))["start_time"], 1.0)

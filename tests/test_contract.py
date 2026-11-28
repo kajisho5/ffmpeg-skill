@@ -6215,21 +6215,24 @@ sys.exit(fit.main())
         the seek point: the burned-in labels were half a slice early (8 s, 3x2: a tile showing
         0.667 s labelled 0.000). 1.x added the seek back, which an MPEG-TS's seek does not reset
         the same way (#411): the sheet now keeps the file's own timestamps counted from its start
-        (-copyts -start_at_zero) and stamps the plain pts; a sheet that starts at 0 (a clip with
-        only a handful of frames) does the same."""
+        (-copyts and a setpts to the file's start_time: -start_at_zero counted an MPEG-TS from its
+        picture's start, #766) and stamps the plain pts; a sheet that starts at 0 (a clip with only
+        a handful of frames) does the same, with no seek."""
         doc = json.loads(tool("look", self.src, "--tiles", "3x2", "--dry-run", "--json",
                               "-o", self.out("tc_sheet.png")).stdout)
         cmd = doc["commands"][0]
         seek = re.search(r"-ss (\d+\.\d+) ", cmd).group(1)
         self.assertGreater(float(seek), 0)
-        self.assertIn("-copyts -start_at_zero -ss", cmd)
+        self.assertIn("-copyts -ss", cmd)
+        self.assertIn("setpts=PTS-0.000000/TB,trim=start=", cmd)
         self.assertIn("pts\\:hms}", cmd)
         one = self.out("tc_one_frame.mp4")
         ffmpeg("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30", "-frames:v", "1", "-c:v", "libx264",
                "-preset", "veryfast", "-pix_fmt", "yuv420p", one)
         cmd = json.loads(tool("look", one, "--tiles", "2x2", "--dry-run", "--json",
                               "-o", self.out("tc_one.png")).stdout)["commands"][0]
-        self.assertIn("-ss 0.000000 ", cmd)
+        self.assertIn("-copyts -i ", cmd)
+        self.assertNotIn("-ss ", cmd)
         self.assertIn("pts\\:hms}", cmd)
 
     def test_boundary_sweep_p3_regressions(self):

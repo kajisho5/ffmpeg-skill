@@ -206,11 +206,10 @@ def sample_crop_frames(path: str, orient: List[str], sw: int, sh: int, start: fl
         if seek == previous_seek:
             continue
         previous_seek = seek
-        pre, post = seek_args(path, float(seek))  # an MPEG-TS seek starts early (#696)
-        remaining = start + length - float(seek) + (float(post[1]) if post else 0.0)
-        chain = ",".join([f"trim=end={remaining:.6f}"] + filters)
+        pre, head = seek_args(path, float(seek), start + length - float(seek))  # the file's clock, early on MPEG-TS (#696, #766)
+        chain = head + ",".join(filters)
         cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-               *pre, "-i", path, *post, "-map", "0:V:0", "-an", "-sn", "-dn",
+               *pre, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
                "-vf", chain, "-frames:v", "2", "-f", "rawvideo", "-"]
         proc = run_analysis(cmd, check=False, text=False, timeout_is_fatal=False)
         out = proc.stdout or b""

@@ -895,6 +895,15 @@ def seek_margin(meta: Optional[Dict[str, Any]], at: float, keyframe_seek: float 
     return max(0.0, min(TIMESTAMP_SEEK_MARGIN if by_timestamp else keyframe_seek, at))
 
 
+def picture_seek(meta: Optional[Dict[str, Any]], at: float = 0.0, keyframe_seek: float = SEEK_MARGIN,
+                 seconds: Optional[float] = None) -> Tuple[List[str], str]:
+    """The input options and chain head of a picture-only decode from `at` (for `seconds`) on the file's clock, where a cut
+    counts: FFmpeg counts an MPEG-TS/PS picture read alone from the picture's start (#766); the seek starts early (#696)."""
+    m, zero = seek_margin(meta, at, keyframe_seek), float((meta or {}).get("start_time") or 0.0)
+    trim = f"trim=start={at:.6f}" + ("" if seconds is None else f":end={at + seconds:.6f}") + "," if at > 0 or seconds is not None else ""
+    return ["-copyts"] + (["-ss", f"{at - m:.6f}"] if at > 0 else []), f"setpts=PTS{-zero:+.6f}/TB,{trim}"
+
+
 # ------------------------------------------------------- VideoToolbox (--hw)
 #
 # CRF -> VideoToolbox -q:v (1-100, higher = better): at each CRF the highest -q:v whose SSIM matched

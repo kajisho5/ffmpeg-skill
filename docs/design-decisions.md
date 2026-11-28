@@ -146,6 +146,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.19.0 — the last open items of #696](#after-4190--the-last-open-items-of-696)
+- [After 4.25.0 — a picture read alone counts from the file's start (#766)](#after-4250--a-picture-read-alone-counts-from-the-files-start-766)
 <!-- contents:end -->
 
 ## Time limits
@@ -7687,10 +7688,45 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
   sheet, the review page's stills and the analysis decodes (`probe.seek_args`: cropdetect's
   windows, its motion centre, fit's crop check, `scenes.py --shots`) take the 10 s margin on
   those demuxers only, so their MP4 commands are
-  unchanged. A GOP longer than 10 s still decodes nothing before its next keyframe. Seen and not
-  changed: on a TS whose sound starts 21 ms before its picture, FFmpeg counts a video-only decode
-  from the picture's start, so `look.py --at T` shows the frame one later than the one
-  `cut.py --start T` starts on, at 25 fps; that difference was there before this change, and
-  pinning look to the file's start is its own question. Tests: `TimestampSeekTests` (`.ts`, `.m2ts`, `.mts`,
+  unchanged. A GOP longer than 10 s still decodes nothing before its next keyframe. Where the
+  decode of the picture alone counts from (the file's start, as a cut does) is #766, below.
+  Tests: `TimestampSeekTests` (`.ts`, `.m2ts`, `.mts`,
   `.mpg` and an MP4 control, one keyframe: look's frame against the decoded one, compare, sheet,
   the cut's first frame).
+
+## After 4.25.0 — a picture read alone counts from the file's start (#766)
+
+- **A time named for the picture is on the file's clock, the one a cut's `--start` counts on.**
+  FFmpeg counts an MPEG-TS or MPEG-PS decode that reads the picture without the sound from the
+  picture's own first frame (measured on 6.1.1), while a decode of both streams, which every cut
+  is, counts from the file's start (`probe.start_time`, the earlier stream); `-start_at_zero`, which
+  the contact sheet used, counts from the picture too. On a `.ts` whose sound starts 21 ms before
+  its picture, at 25 fps, `look.py --at 2.5` showed frame 63 and `cut.py --start 2.5` started on 62.
+  With a 0.3 s lead, `look.py --at` and the review page's stills were 8 frames late (a still of an
+  `.mpg` 18), `scenes.py` put its cut 0.33-0.34 s early, and `check.py --levels` put its worst frame
+  0.32-0.34 s early on every container, MP4 included, because it counted from the picture's first frame.
+  `decision.picture_seek(meta, at, ..., seconds)` is the one decode of the picture from a time:
+  `-copyts`, the input seek `seek_margin()` early (#696), and `setpts=PTS-<start_time>/TB` with a
+  `trim` from `at` at the head of the chain. Its callers: `look.py` (`--at`, `--compare`, the
+  sheet), the review page's stills, `probe.seek_args` (cropdetect's windows and `--motion-centre`,
+  fit's crop check, `scenes.py --shots`, loop's seam check), `probe.detect_scenes` (`scenes.py`,
+  `metadata.py --auto-chapters --from scenes`) and `scenes.py --sheet`, and
+  `probe.measure_signal_range` (`check.py --levels`). MP4 with an edit-listed picture start and
+  Matroska with an offset already agreed with the cut, and still do; their commands now carry
+  `-copyts` and a `setpts` too. What changes on every container: `check.py --levels`' worst frame
+  and windows count from the file's start, where a picture that starts late was counted from its
+  own first frame. Tests: `test_guards.TimeGuard.test_a_picture_read_alone_counts_from_the_files_start`
+  (look, the review still, scenes, levels on `.mp4`, `.ts` and `.mpg` whose picture starts 0.3 s
+  after the sound, against the frame the file's own clock has there),
+  `TimestampSeekTests.test_a_frame_grab_and_a_cut_start_on_the_frame_asked_for` (its reference
+  frame is now picked on the file's clock: the 21 ms `.ts`, `.m2ts` and `.mts` failed it before).
+- **Seen in the sweep and not changed.** A stream copy of a `.ts` from T starts on the first
+  keyframe after T, because the demuxer seeks by timestamp; `snapped_segments` and the copy-drift
+  warning say so and `--accurate` cuts on the frame (#620). The copy counts T from the file's start
+  (its sound starts at T), so it is a keyframe landing, not this clock. The decode check's head
+  read (`emit.decode_step`) decodes the picture alone without `-copyts`; it asks whether frames
+  decode in the first second, and a window 21 ms or 0.3 s off holds frames all the same.
+  `check.py --expect-changed` and `--compare` pair frames by index (`setpts=N`) and take their
+  times from ffprobe's pts less the start: already the file's clock. The tools that render with a
+  time (freeze, redact, graphics, cut, fit) map the sound beside the picture when the source has
+  one, so their graphs count from the file's start; they were not measured one by one here.

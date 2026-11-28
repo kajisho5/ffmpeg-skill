@@ -132,15 +132,11 @@ MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".ts", ".mts", ".m
              ".png", ".jpg", ".jpeg", ".webp"} | AUDIO_MEDIA_EXT
 
 
-def seek_args(path: str, at: float) -> "Tuple[List[str], List[str]]":
-    """The input and output options of a decode of `path` from `at`: an input seek, and on a
-    demuxer that seeks by timestamp (decision.seek_margin) one that starts earlier and an output
-    seek that drops the margin. An MPEG-TS window read from a mid-GOP landing decoded nothing."""
-    from _common.decision import seek_margin
-    fmt = run([require_tool("ffprobe"), "-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", path],
-              quiet=True, check=False).stdout if at > 0 else ""
-    m = seek_margin({"format": (fmt or "").strip()}, at, 0.0)
-    return (["-ss", f"{at - m:.6f}"] if at > 0 else []), (["-ss", f"{m:.6f}"] if m > 0 else [])
+def seek_args(path: str, at: float, seconds: "Optional[float]" = None) -> "Tuple[List[str], str]":
+    """decision.picture_seek() for `path`: the input options and the filter head of a decode of its
+    picture from `at` (for `seconds`) on the file's clock, the seek early on MPEG-TS (#696, #766)."""
+    from _common.decision import picture_seek
+    return picture_seek(probe(path, required=False) or {}, at, 0.0, seconds)
 
 
 def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start: float = 0.0,
@@ -151,11 +147,9 @@ def decode_gray_frames(path: str, fps: float, width: int, height: int, *, start:
     but at 1.18.0's resolutions (tens of pixels a side, a few fps) a whole shot is a few KB, so
     piping raw frames through Python stays cheap and needs no extra dependency."""
     ffmpeg = require_tool("ffmpeg")
-    pre, post = seek_args(path, start)
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", *pre, "-i", path, *post]
-    if seconds is not None:
-        cmd += ["-t", f"{max(0.0, seconds):.3f}"]
-    cmd += ["-map", f"0:{PROBED_VIDEO}", "-vf", f"fps={fps:g},scale={width}:{height}:flags=area,format=gray",
+    pre, head = seek_args(path, start, None if seconds is None else max(0.0, seconds))
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", *pre, "-i", path]
+    cmd += ["-map", f"0:{PROBED_VIDEO}", "-vf", f"{head}fps={fps:g},scale={width}:{height}:flags=area,format=gray",
             "-f", "rawvideo", "-"]
     proc = run_analysis(cmd, check=False, text=False)
     if proc.returncode != 0 or not proc.stdout:
@@ -923,9 +917,10 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
             f":v='{out.format(lo=clo, hi=chi)}'")
     with tempfile.TemporaryDirectory(prefix="ffskill_levels_") as tmp:
         stats_file = os.path.join(tmp, "stats.txt")
-        vf = (f"signalstats=stat=brng,metadata=print:file={escape_filter_path(stats_file)},"
+        pre, head = seek_args(path, 0.0)  # each frame's time on the file's clock, where look --at reads it (#766)
+        vf = (f"{head}signalstats=stat=brng,metadata=print:file={escape_filter_path(stats_file)},"
               f"{mask},signalstats,metadata=print:file=-")
-        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_VIDEO}", "-an", "-sn", "-dn", "-vf", vf, "-f", "null", "-"]
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", *pre, "-i", path, "-map", f"0:{PROBED_VIDEO}", "-an", "-sn", "-dn", "-vf", vf, "-f", "null", "-"]
         proc = run_analysis(cmd, check=False, record=True)
         try:
             with open(stats_file, encoding="utf-8", errors="replace") as f:
@@ -935,11 +930,10 @@ def measure_signal_range(path: str, standard: str, window: float = 10.0,
     masks = _metadata_frames(proc.stdout or "", _MASK_KEYS)
     if proc.returncode != 0 or not own or len(own) != len(masks):
         return None
-    t0 = next((t for t, _ in own if t == t), 0.0)
     rows: List[Dict[str, Any]] = []
     for (t, s), (_, m) in zip(own, masks, strict=True):
         y, u, v = (m.get(k, 0.0) / top * 100.0 for k in ("YAVG", "UAVG", "VAVG"))
-        rows.append({"t": (t - t0) if t == t else None, "y": y, "u": u, "v": v, "brng": s.get("BRNG", 0.0) * 100.0,
+        rows.append({"t": t if t == t else None, "y": y, "u": u, "v": v, "brng": s.get("BRNG", 0.0) * 100.0,
                      "min": {k: s.get(k.upper() + "MIN") for k in "yuv"}, "max": {k: s.get(k.upper() + "MAX") for k in "yuv"}})
 
     def summary(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1398,8 +1392,9 @@ def detect_scenes(path: str, threshold: float, min_len: float, duration: float, 
     a real cut is a one-frame spike. On real footage this roughly doubles precision at
     equal recall compared with the raw scdet threshold."""
     ffmpeg = require_tool("ffmpeg")
-    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{PROBED_VIDEO}", "-an", "-vf",
-                         "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"])
+    pre, head = seek_args(path, 0.0)  # on the file's clock: a cut is a time a cut.py --start names (#766)
+    proc = run_analysis([ffmpeg, "-hide_banner", "-nostdin", *pre, "-i", path, "-map", f"0:{PROBED_VIDEO}", "-an", "-vf",
+                         head + "scale=320:-2,scdet=threshold=0,metadata=print:file=-", "-f", "null", "-"])
     # No `sc_pass=1` on scdet: on FFmpeg 5.x that option means "pass only the frames whose
     # score exceeds the threshold", so every truly static frame (score exactly 0 -- a title
     # card, colour bars) is dropped before metadata=print and the frame numbers are re-counted
