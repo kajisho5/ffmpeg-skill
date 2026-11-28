@@ -143,6 +143,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.1 — a caller's subtitle times, colours and LUTs are read in 0-9 (#765)](#after-4201--a-callers-subtitle-times-colours-and-luts-are-read-in-0-9-765)
 - [After 4.18.0 — a preview of the whole project, joins of a cut to listen to, and each clip's decisions (#581)](#after-4180--a-preview-of-the-whole-project-joins-of-a-cut-to-listen-to-and-each-clips-decisions-581)
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
+- [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
 - [After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)](#after-4200--caption-delivery-on-a-phone-capture-is-a-harness-not-a-fixture-729)
 - [After 4.20.0 — the social card's count comes from the contract](#after-4200--the-social-cards-count-comes-from-the-contract)
@@ -7558,6 +7559,48 @@ loudness, export), and only the export was kept.
   `test_a_template_render_is_one_encode_equivalent_to_the_staged_render`,
   `test_every_reason_for_the_staged_path_is_named`.
 
+## After 4.18.0 — an ordinary edit asks for the brief document (#682)
+
+SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--json` carries the output's full
+`probe`, every command line and the per-step `verification` list. A model reads all of it on every call.
+`--json-brief` (1.11.0) is the same document with those three replaced (`summary`, a count, the verdict in
+`verified`). The issue's rule: if brief is at most half, ordinary edits ask for it.
+
+- **Measured, offline.** The test suite's own clip (`tests/out/source.mp4`, 1280x720, 30 fps, 12 s, AAC) and
+  cue file, each edit run once with `--json` and once with `--json-brief` on FFmpeg 6.1; tokens approximated
+  as characters / 4 and as a split into words, single digits and single punctuation marks (no tokenizer
+  download, no model call).
+
+  | edit | `--json` bytes | ~tokens (chars/4, split) | `--json-brief` bytes | ~tokens (chars/4, split) | brief / full | largest keys of `--json` (bytes) |
+  |---|---|---|---|---|---|---|
+  | `cut --start 2 --end 6` | 5277 | 1319, 1916 | 1800 | 450, 690 | 0.34 | `probe` 1635, `verification` 1322, `commands` 349 |
+  | `fit --aspect 9:16` | 4102 | 1025, 1633 | 1767 | 441, 684 | 0.43 | `probe` 1636, `commands` 622, `diagnostics` 425 |
+  | `export --preset youtube` | 7290 | 1822, 2930 | 1156 | 289, 493 | 0.16 | `commands` 2387, `verification` 1855, `probe` 1642 |
+  | `caption --text cues.txt` | 3986 | 996, 1612 | 1478 | 369, 592 | 0.37 | `probe` 1641, `commands` 791, `caption` 411 |
+  | `audio --voice light` | 3288 | 822, 1335 | 953 | 238, 395 | 0.29 | `probe` 1629, `commands` 629, `audio` 134 |
+  | `loudness --target -14` | 4845 | 1211, 2024 | 1188 | 297, 538 | 0.25 | `probe` 1631, `commands` 1233, `verification` 707 |
+  | `silence` | 5383 | 1345, 2418 | 1735 | 433, 694 | 0.32 | `commands` 1917, `probe` 1652, `cut_points` 400 |
+  | `look --at 2` | 2427 | 606, 1024 | 528 | 132, 262 | 0.22 | `probe` 1209, `commands` 588, `outputs` 108 |
+  | **total** | 36598 | 9146, 14892 | 10605 | 2649, 4348 | 0.29 | |
+
+  `probe` is the largest key on six of the eight, `commands` on two (an ffmpeg line with a filter graph).
+  Brief already leaves `commands` out (a count stands in), as the issue suggested.
+- **Decided: an ordinary edit asks for `--json-brief`.** Every edit is under half (0.16 to 0.43, 0.29 over all),
+  so the one-call paragraph of SKILL.md says `--json-brief`, with `--json` named for the probe or the command
+  lines. Planning (`--dry-run --json`), deliveries and verification from the probe keep `--json`; `--json`
+  itself is unchanged, since programs and `render.py` read it.
+- **What the brief document keeps.** Every key the tool passed besides the three: `status`, `output`, `wrote`,
+  `verified`, `unverified`, `output_identity`, `diagnostics` (warning codes and messages) and the tool's own keys.
+  A failure is not trimmed: `die()` prints the same document, `error.kind`, `reason`, `message` and `hint`
+  included (byte-identical to `--json` for `cut.py` started past the end). One gap closed: a `verification` step that did
+  not pass now stays in the brief document (only those steps), because it is the reason `verified` is false and
+  the caller would otherwise run the edit again to read it.
+- **Not measured here:** the cost and correct answers of the agent benchmark (#677) before and after, which needs
+  model runs; the byte table is what this change rests on.
+- Code: `scripts/_common/emit.py` (`_brief`), SKILL.md's "One ordinary edit is one call". Tests:
+  `test_json_brief_keeps_what_a_caller_decides_from_on_ordinary_edits`,
+  `test_json_brief_keeps_the_verification_step_that_did_not_pass` (tests/test_editing.py),
+  `test_skill_md_sends_an_ordinary_edit_to_json_brief` (tests/test_contract.py).
 ## After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes
 
 - **`speedramp.py --speed F --start A --end B` is one span, the rest at 1x.** It is the shape the
