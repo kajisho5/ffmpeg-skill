@@ -1,9 +1,21 @@
 # The newest FFmpeg the Windows feed offers, on the tests that broke when it moved (#659).
 # ci.yml pins the version the suite passes on; this is where the next one is read before moving the pin.
-# Runs when asked, and on a pull request that changes this file or its probe.
+# Runs every week, when asked, and on a pull request that changes this file or its probe (the install and
+# the probe only, not the suite). A weekly or
+# manual run that fails, hangs or runs out of time opens one issue, or comments on the open one, with
+# the FFmpeg version and the failing tests' names (#680): the feed moved to 9.1 once and every
+# Windows job ran to its limit before anyone knew.
 name: ffmpeg next
 on:
+  schedule:
+    # Mondays 05:23 UTC; one Windows job a week
+    - cron: "23 5 * * 1"
   workflow_dispatch:
+    inputs:
+      force_failure:
+        description: "Skip the suite and take the failure path (opens or comments on the issue)"
+        type: boolean
+        default: false
   pull_request:
     paths: [".github/workflows/ffmpeg-next.yml", ".github/scripts/ffmpeg_next_probe.py", ".github/scripts/ffmpeg_next_tempo_probe.py"]
 
@@ -17,9 +29,16 @@ permissions:
 jobs:
   probe:
     runs-on: windows-latest
-    timeout-minutes: 30
+    # install (minutes), the probe (at most 30) and the suite (at most 100): a step's limit ends it first
+    timeout-minutes: 150
+    outputs:
+      version: ${{ steps.summary.outputs.version }}
+      failed: ${{ steps.summary.outputs.failed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.10"
@@ -36,4 +55,78 @@ jobs:
           ffmpeg -version | Select-Object -First 1
       - name: Probe
         shell: bash
+        timeout-minutes: 30
+        # it prints and never fails; a probe that breaks must not keep the suite from running
+        continue-on-error: true
         run: python .github/scripts/ffmpeg_next_probe.py
+      # the whole suite, as ci.yml runs it but unpinned. A command still running after 300 s is
+      # killed and fails its test by name (tests/_fixtures.py), so a hang is a failing test here and
+      # not the end of the job; the step limit is the backstop for anything else.
+      # not on a pull request: there the job checks the install and the probe, and the suite on the
+      # next FFmpeg is expected to fail (that is what the weekly run reports) and outlasts its limit
+      - name: Suite
+        if: ${{ !inputs.force_failure && github.event_name != 'pull_request' }}
+        shell: bash
+        timeout-minutes: 100
+        env:
+          FFSKILL_TEST_SH_LIMIT: "300"
+        run: python tests/run_parallel.py 2>&1 | tee suite.log
+      - name: Forced failure
+        if: ${{ inputs.force_failure }}
+        shell: bash
+        run: |
+          echo "FAIL: (no test ran: the force_failure input took the failure path)" > suite.log
+          exit 1
+      - name: Summary
+        id: summary
+        if: always()
+        shell: bash
+        run: |
+          version=$(ffmpeg -version 2>/dev/null | head -1)
+          echo "version=${version:-ffmpeg did not install or does not run}" >> "$GITHUB_OUTPUT"
+          {
+            echo "failed<<FAILED_TESTS_END"
+            grep -E '^(FAIL|ERROR): ' suite.log 2>/dev/null | sort -u | head -60 || true
+            grep -q ' modules in .* processes, ' suite.log 2>/dev/null || echo "(the suite did not reach its last line: it was stopped at its time limit or did not start)"
+            echo "FAILED_TESTS_END"
+          } >> "$GITHUB_OUTPUT"
+
+  # Opens one issue, or comments on the open one, after a weekly or manual run that did not pass. It is
+  # the only job with a write scope, and the scope is issues alone; it checks nothing out. A cancelled
+  # run (a newer one in the same group) reports nothing: every limit above is a step's, which fails.
+  report:
+    needs: probe
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.probe.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or comment on the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.probe.outputs.version }}
+          FAILED: ${{ needs.probe.outputs.failed }}
+          RESULT: ${{ needs.probe.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="ffmpeg next: the newest FFmpeg on the Windows feed fails the suite"
+          {
+            echo "The weekly run on the newest FFmpeg the Windows feed offers did not pass ($RESULT): $RUN_URL"
+            echo
+            echo "FFmpeg: ${VERSION:-unknown (the job ended before it said)}"
+            echo
+            echo "Failing tests:"
+            echo
+            echo '```'
+            echo "${FAILED:-(none named: see the run's log)}"
+            echo '```'
+          } > body.md
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md
+          fi

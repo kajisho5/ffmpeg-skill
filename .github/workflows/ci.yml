@@ -25,6 +25,10 @@ permissions:
   contents: read
 
 jobs:
+  # Stage 1, Linux (1x): what a contributor sees first. Stage 2 (macOS at 10x, Windows at 2x) starts
+  # only when this job and test-ffmpeg-7 are green on a pull request, so a change that breaks a test
+  # costs Linux minutes only (#680). The two test jobs are one matrix split by OS: together they are
+  # the jobs the single matrix had, under the same names.
   test:
     # a part takes 10 to 25 minutes; a filter graph that never ends on one FFmpeg (#514) ran
     # until the six-hour default
@@ -32,19 +36,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.10"]
+        os: [ubuntu-latest]
+        # The docs promise Python 3.10+ (3.0.0 removed 3.9); 3.10 is the floor and every OS runs it. Linux
+        # also runs the newest CPython, which proves the ceiling (3.11-3.12 sit between the two; a
+        # stdlib-only codebase that passes on both ends is very unlikely to break in the
+        # middle). Linux only: it bills at 1x, macOS at 10x. See #146.
+        python: ["3.10", "3.13"]
         # the suite on three machines at once (tests/run_parallel.py --part): about a third of the
         # wall time, and the standard runners cost nothing on a public repository
         part: [1, 2, 3]
-        # The docs promise Python 3.10+ (3.0.0 removed 3.9); 3.10 is the floor and every OS runs it. One extra Linux
-        # job on the newest CPython proves the ceiling too (3.11-3.12 sit between the two; a
-        # stdlib-only codebase that passes on both ends is very unlikely to break in the
-        # middle). Linux only: it bills at 1x, macOS at 10x. See #146.
-        include:
-          - {os: ubuntu-latest, python: "3.13", part: 1}
-          - {os: ubuntu-latest, python: "3.13", part: 2}
-          - {os: ubuntu-latest, python: "3.13", part: 3}
     # ubuntu-latest is Ubuntu 26.04, whose setup-python builds start above 3.10; keep the floor on
     # the newest image that has it (24.04, which also gives apt's FFmpeg 6.1, the FFmpeg floor)
     runs-on: ${{ matrix.python == '3.10' && startsWith(matrix.os, 'ubuntu') && 'ubuntu-24.04' || matrix.os }}
@@ -68,6 +68,65 @@ jobs:
         run: |
           grep -l packages.microsoft.com /etc/apt/sources.list.d/* 2>/dev/null | xargs -r sudo rm -f || true
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: ffmpeg version, listings and doctor
+        shell: bash
+        run: |
+          mkdir -p listings
+          ffmpeg -version | head -1 | tee listings/version.txt
+          ffmpeg -hide_banner -filters > listings/ffmpeg_filters.txt
+          ffmpeg -hide_banner -encoders > listings/ffmpeg_encoders.txt
+          ffmpeg -hide_banner -bsfs > listings/ffmpeg_bsfs.txt
+          head -9 listings/ffmpeg_filters.txt
+          # doctor exits 1 when a required capability is missing on this build (e.g. Homebrew without libass);
+          # that is reported, not hidden, but the listings must still be uploaded
+          python scripts/_contract.py doctor --json > listings/doctor.json || echo "doctor exit $?"
+          cat listings/doctor.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ffmpeg-listings-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.part }}
+          path: listings/
+      # this machine's third of test_all.py's modules and test_contract, sharded across its cores.
+      # A handful of test_contract tests drive the tools through POSIX shell shims (fake ffmpeg on
+      # PATH) and are skipIf'd on Windows; everything else runs on all three OSes.
+      # --first orders this part's work and nothing else: the modules that test the files changed since
+      # HEAD^1 (the base, in a pull request's merge commit) start first, so a failure there is
+      # in the log minutes earlier; the part still runs every one of its modules (#680)
+      - run: python tests/run_parallel.py --part ${{ matrix.part }}/3 --first git:HEAD^1
+      - run: node bin/install.js
+        if: matrix.part == 1
+      - name: Cross-module -k and reverse-order test isolation (Linux)
+        if: runner.os == 'Linux' && matrix.part == 1 && matrix.python == '3.10'
+        run: |
+          python3 -m unittest discover -s tests -k font -k fonts_dir -k frozen_1x
+          python3 -m unittest tests.test_picture tests.test_analysis -k fontfile -k font_flag_escapes
+
+  # Stage 2. On a pull request it waits for a green stage 1 and is skipped after a red one; on main
+  # and on a manual run it runs whatever stage 1 said, so a broken main is seen on every OS.
+  test-macos-windows:
+    needs: [test, test-ffmpeg-7]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.test.result == 'success' && needs.test-ffmpeg-7.result == 'success')) }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python: ["3.10"]
+        part: [1, 2, 3]
+    runs-on: ${{ matrix.os }}
+    name: test (${{ matrix.os }}, py${{ matrix.python }}, ${{ matrix.part }}/3)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history (not the default shallow depth-1 clone): test_contract.py's
+          # test_changelog_mentions_every_closed_issue_since_last_tag walks git log back to the
+          # latest tag to check CHANGELOG.md against "Closes #N" in commit bodies -- a shallow
+          # clone would make that check silently a no-op (no tag reachable to diff against).
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
       - name: Install ffmpeg (macOS)
         if: runner.os == 'macOS'
         # Homebrew's `ffmpeg` formula no longer links libass / freetype / harfbuzz / zimg, so it has no
@@ -126,14 +185,12 @@ jobs:
       # this machine's third of test_all.py's modules and test_contract, sharded across its cores.
       # A handful of test_contract tests drive the tools through POSIX shell shims (fake ffmpeg on
       # PATH) and are skipIf'd on Windows; everything else runs on all three OSes.
-      - run: python tests/run_parallel.py --part ${{ matrix.part }}/3
+      # --first orders this part's work and nothing else: the modules that test the files changed since
+      # HEAD^1 (the base, in a pull request's merge commit) start first, so a failure there is
+      # in the log minutes earlier; the part still runs every one of its modules (#680)
+      - run: python tests/run_parallel.py --part ${{ matrix.part }}/3 --first git:HEAD^1
       - run: node bin/install.js
         if: matrix.part == 1
-      - name: Cross-module -k and reverse-order test isolation (Linux)
-        if: runner.os == 'Linux' && matrix.part == 1 && matrix.python == '3.10'
-        run: |
-          python3 -m unittest discover -s tests -k font -k fonts_dir -k frozen_1x
-          python3 -m unittest tests.test_picture tests.test_analysis -k fontfile -k font_flag_escapes
 
   # The docs promise FFmpeg 6.1+ (3.0.0 removed 5.x); the matrix above runs 6.1 (apt on Ubuntu
   # 24.04), 8.x (Homebrew) and 9.x (gyan.dev). This Linux-only (1x cost) job pins 7.1, which
@@ -176,5 +233,6 @@ jobs:
         with:
           name: ffmpeg-listings-debian-trixie-ffmpeg7-${{ matrix.part }}
           path: listings/
-      - run: python3 tests/run_parallel.py --part ${{ matrix.part }}/3   # this machine's third, test_contract included
+      # this machine's third, test_contract included; the changed area first, as in the test job
+      - run: python3 tests/run_parallel.py --part ${{ matrix.part }}/3 --first git:HEAD^1
 

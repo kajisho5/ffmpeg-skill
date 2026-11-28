@@ -51,6 +51,7 @@ cd ffmpeg-skill
 npm run test:fast           # tests/test_contract.py only: contract, docs, dry runs (~3-4 min)
 npm test                    # everything: real encodes (test_all.py's modules, run in parallel by tests/run_parallel.py; about 21 min on 4 cores, 35 serially) + contract
 python3 tests/run_parallel.py --part 1/3   # one of CI's three machines' share (test_contract included); about a third of the time
+python3 tests/run_parallel.py --first git:origin/main   # the same run, the tests of the files you changed starting first
 npm run release-check       # packaging + installer + MCP + doctor + full suite
 python3 scripts/_contract.py doctor   # what this machine can actually run
 ```
@@ -84,7 +85,8 @@ would have caught the original bug isn't done yet.
 
 - Keep PRs focused — one fix or one small feature per PR.
 - Run `npm test` locally before opening; CI runs on Linux, macOS, and Windows, and
-  all three must pass.
+  all three must pass. On a pull request macOS and Windows start only after the Linux jobs pass
+  (#680), so a Linux failure is the first thing to fix.
 - Explain *why*, not just *what*, in the PR description — the reasoning is what
   future maintainers (human or agent) need most.
 - A `feat` PR updates every place the feature is stated: `README.md` (the tool
