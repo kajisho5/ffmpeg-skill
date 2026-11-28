@@ -115,8 +115,10 @@ _install_test_isolation()
 # The host's own defaults must not reach the suite (every tool subprocess inherits os.environ):
 # FFMPEG_SKILL_ASR_ENGINE, FFMPEG_SKILL_ASR_MODEL or a PARAKEET_* setting would change which speech
 # engine or model a --transcribe test drives, or where parakeet-mlx writes. Tests that exercise those
-# opt in with an explicit env.
-for _k in ("FFMPEG_SKILL_ASR_ENGINE", "FFMPEG_SKILL_ASR_MODEL", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL", "PARAKEET_OUTPUT_TEMPLATE"):
+# opt in with an explicit env. FFMPEG_SKILL_USAGE_LOG would append every test's runs to the host's
+# own usage record (#689); its tests set it to a file of their own.
+for _k in ("FFMPEG_SKILL_ASR_ENGINE", "FFMPEG_SKILL_ASR_MODEL", "PARAKEET_MODEL", "PARAKEET_CPP_MODEL", "PARAKEET_OUTPUT_TEMPLATE",
+           "FFMPEG_SKILL_USAGE_LOG"):
     os.environ.pop(_k, None)
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))

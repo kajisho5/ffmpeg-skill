@@ -146,6 +146,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.20.0 — a template render is encoded once (#357)](#after-4200--a-template-render-is-encoded-once-357)
 - [After 4.18.0 — an ordinary edit asks for the brief document (#682)](#after-4180--an-ordinary-edit-asks-for-the-brief-document-682)
 - [After 4.17.0 — SKILL.md keeps only the rows a model needs (#687)](#after-4170--skillmd-keeps-only-the-rows-a-model-needs-687)
+- [After 4.17.0 — a local, opt-in usage record (#689)](#after-4170--a-local-opt-in-usage-record-689)
 <!-- contents:end -->
 
 ## Time limits
@@ -7727,3 +7728,51 @@ SKILL.md asked for `--json` on an ordinary edit, and every writing tool's `--jso
 - Tests: `test_skill_md_stays_within_the_agent_reading_budget` (tests/test_orchestration.py),
   `test_skill_md_stays_under_its_byte_budget`, `test_examples_are_parsed_from_skill_md_and_cover_every_tool`,
   `test_skill_md_routes_the_1_17_features` (tests/test_contract.py).
+## After 4.17.0 — a local, opt-in usage record (#689)
+
+The owner's decision of 2026-11-27 on #689: option 1, a record that stays on the machine, and no
+upload. It exists so a user can attach something concrete to a report.
+
+- **Off unless the user turns it on, and then local only.** `FFMPEG_SKILL_USAGE_LOG` unset, empty
+  or `0` registers nothing and writes nothing anywhere; `1` is `ffmpeg-skill/usage.jsonl` under the
+  user's state directory, an absolute path is that file. There is no command that sends it and no
+  network code to send it with (`test_the_skill_never_fetches_an_emoji_asset` still finds no
+  network import in any `_common` module, where the record is written). Turning it on is the user's act: an MCP server's `env` or a shell, never the skill.
+- **Names and codes, never values.** A line is exactly `{tool, version, status, kind, reason, flags,
+  seconds, ffmpeg_major}`. `flags` are taken from the tool's own parser: an argument is recorded
+  only when it is an option string the tool defines (an abbreviation as the option it stands for),
+  so an option the tool does not know, a value, a positional or anything after `--` never reaches
+  the file, whatever it looks like. `kind` and `reason` are kept only as snake_case codes. A time of
+  day is not recorded: the counts need none, and it would say when someone works.
+- **One line per process, at exit, dry runs included.** The line is written by an exit hook that
+  `add_common()` registers, so it covers the tools that print their own document, a refusal, an
+  argparse error (`kind: usage`, exit 2) and a traceback (`kind: internal`). `die()` sets how the
+  run ended and `emit()` clears it, because a `die()` caught on the way (verify's in-process probe)
+  did not end the run. A tool another tool runs writes its own line. A dry run writes its line
+  too: it is the use the record exists to count, and the user asked for the file; "a dry run writes
+  nothing" is about the run's artifacts and side files, which it still does not write.
+- **The log path is guarded like an output, and never fails the run.** Not absolute, outside
+  `FFMPEG_SKILL_ROOTS` when that is set (the same `runner.outside_roots` the refusals use), a path
+  the command line names (any argument or `-o` target, existing or not), or not a regular file:
+  all of these are known before the run, so `start_usage_record()` (from `add_common()`) checks
+  them, records `usage_record_refused` with `warn()` and registers no exit hook, and the warning is
+  in the document's `diagnostics.warnings` like every other. The message names the variable and the
+  reason, not the path, as `doctor --usage` keeps the path out of its document. The run's document
+  and exit code never change, because a record of a run must not alter the run.
+- **A late failure is the one stderr-only line.** An OS error while appending, or a file the run
+  itself read or wrote (one no argument names) that turns out to be the log, can only be found in
+  the exit hook, after the document has been printed, so it cannot reach `diagnostics`: it is one
+  stderr line that starts `usage record:`, not `warning:`, since a `warning:` line is a promise that
+  the document carries it (`test_no_stderr_only_warning_is_left_in_the_sources`).
+- **The audit log is a different file and is unchanged.** It records events a later reader must
+  reconstruct, beside the files they concern; the usage record is the user's, in one place.
+- **`doctor --usage` prints counts as JSON and the path only on stderr**, so the document a user
+  pastes into an issue holds no directory name.
+- Code: `_common/emit.py` (`usage_log_path`, `start_usage_record`, `_usage_at_exit`),
+  `_common/runner.py` (`add_common`, `outside_roots`), `_contract.py` (`usage_summary`,
+  `doctor --usage`). Tests: `UsageRecordTests` (tests/test_contract.py):
+  `test_usage_record_is_off_unless_the_variable_turns_it_on`,
+  `test_usage_record_holds_option_names_never_a_value_a_path_or_text`,
+  `test_usage_record_of_a_failed_run_has_its_kind_and_reason`,
+  `test_usage_record_that_cannot_be_written_never_fails_the_tool`,
+  `test_usage_record_path_the_run_cannot_use_is_a_warning_in_the_document`.
