@@ -102,8 +102,8 @@ platforms change it and whoever uploads checks the current one. `check.py` WARNs
 - verdict thresholds — what passes, and where each number lives
 - probe.py — inspect
 - cut.py — cut / join segments
-- fit.py — target duration and/or aspect, rotate/flip
-- crop.py — crop to an exact pixel rectangle
+- fit.py — target duration and/or aspect, an exact box, rotate/flip
+- crop.py — alias of `fit.py --rect`
 - insert.py — still image to a timed silent clip, with Ken Burns zoom/pan
 - broll.py — cut away to a B-roll clip for a window and come back
 - metadata.py — chapter markers and title/artist/comment tags, streams copied
@@ -353,11 +353,12 @@ rather than treated as if every grid point were supported, as is one whose
 `render.py` forwards a project's `"snap": {"to": "beats", ...}` (project-wide
 or per clip) to this flag and reports what came back.
 
-### fit.py — target duration and/or aspect, rotate/flip
+### fit.py — target duration and/or aspect, an exact box, rotate/flip
 ```
 fit.py INPUT [--duration T --method speed|trim [--from-center] [--max-speed 4]]
              [--aspect 16:9|9:16|1:1|4:5|W:H --fit pad|crop|blur [--width W] [--height H] [--pad-color black] [--pad-fill color|blur [--pad-blur 20]]]
              [--rotate 90|180|270] [--flip h|v] [--fps N] [-o OUT]
+fit.py INPUT --rect W:H[:X:Y] [--fps N] [-o OUT]
              [--zoom in|out [--zoom-amount 1.3] [--zoom-start S] [--zoom-duration S] [--crop-x X] [--crop-y Y]]
 ```
 `speed` retimes video and audio together (pitch-preserving `atempo`). For
@@ -416,10 +417,15 @@ or past the output's end, a move past it, and
 the move, and `zoom.check` compares the output's frame count, timestamps, duration and rate with
 the source's packets; it is `measured: false` when the run also trims, retimes or regrids.
 
-### crop.py — crop to an exact pixel rectangle
+### crop.py — alias of `fit.py --rect`
 ```
-crop.py INPUT --x X --y Y --width W --height H [-o OUT]
+crop.py INPUT --width W --height H [--x X --y Y | --center] [-o OUT]
+crop.py INPUT --rect W:H[:X:Y] [-o OUT]
 ```
+Since 4.19 (#683) an alias: it runs the code `fit.py --rect W:H:X:Y` runs and writes the same
+file, and is left out of the tool count and `tools/list` (`alias_of: fit` in the contract).
+Without `--x/--y` (or with `--center`, or `--rect W:H`) the box is centred: x = (source width -
+W) / 2, rounded down. `fit.py --rect` takes no other reframe option in the same run.
 Crops to a literal `{x, y, width, height}` rectangle in source pixels —
 distinct from `fit.py --fit crop`, which crops to an *aspect ratio* and picks
 the rectangle for you. Use this when the rectangle is already known (a
@@ -439,7 +445,7 @@ cropdetect.py INPUT [--seconds N] [--samples N] [--limit F] [--round N] [--motio
 Measurement only -- writes no file. Samples `--samples` windows spread
 across the file (default 5, totalling `--seconds` 10s of footage) and
 reports the crop rectangle FFmpeg's `cropdetect` filter found most often, as
-`{x, y, width, height}` ready to hand to `crop.py`. `source_width` /
+`{x, y, width, height}` ready to hand to `fit.py --rect W:H:X:Y`. `source_width` /
 `source_height` are that same displayed frame: a 90° or 270° rotation swaps
 the stored size, because the filter measures the picture after ffmpeg applies
 the tag. Distinct from
@@ -1506,7 +1512,7 @@ measurements that combine with each other and with `--beats`/`--highlights`:
 
 ### check.py — pre-delivery compliance
 ```
-check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
+check.py INPUT --platform youtube|shorts|reels|tiktok|x|linkedin|facebook|broadcast|podcast|custom [--no-loudness] [--content] [--compare REF [--expect-changed SPAN[@X,Y,W,H]|none]... [--expect-audio-changed SPAN|none]... [--expect-removed SPAN]... [--change-grid 32|64|96] [--change-floor N]] [--levels bt709|ebu-r103 [--levels-window S] [--levels-tolerance PCT]] [--expect-identity SIZE:MTIME_NS] [--json]
          [--max-duration S] [--aspect 9:16] [--lufs -14] [--tp -1] [--max-mb N]
 ```
 PASS/WARN/FAIL per check with the script that fixes it. Run it as the final
@@ -1554,11 +1560,15 @@ encoded alike (codec, pixel format or frame rate) are a WARN and a note. **When 
 compared (another frame size, another frame count, an unreadable frame count or a failed pass) the
 row is FAIL**, since "not measured" must not read as "nothing else changed". The measure: both
 pictures as 8-bit RGB, subtracted, each frame area-scaled to 32x18 tiles; a tile changed when its
-largest channel is above the floor (`--change-floor`, default 24 of 255). The JSON
+largest channel is above the floor (`--change-floor`, default 24 of 255). `--change-grid 64` or
+`96` (#442) cuts the frame finer, 30 or 20 px tiles at 1080p, with floors of 32 and 48 measured
+across libx264, libx265, libsvtav1, libaom-av1, libvpx-vp9 and ProRes; it is refused where a tile
+would be under 20 px (64 needs 1280x720, 96 needs 1920x1080). A 24x24 logo at 1080p is under the
+default floor and found at 96. The JSON
 `change_scope` document has `declared`, `observed`, `undeclared`, `declared_unchanged`, `floor`,
-`tile`, `frames` and `quiet_peak` (the largest tile that stayed under the floor: how close the
+`tile` (the grid used), `frames` and `quiet_peak` (the largest tile that stayed under the floor: how close the
 unchanged part came). Limits: a change much smaller than a tile is diluted (a full-contrast
-change needs about a tenth of a tile, 19x19 px at 1080p); a faint shift over the whole picture
+change needs about a tenth of a tile, 19x19 px at 1080p on the default grid); a faint shift over the whole picture
 stays under the floor in every tile, and `similarity` is the row for that; it compares the
 picture only; an edit that changes the length cannot be paired and FAILs as not compared, unless
 `--expect-removed` declares what it cut (below). Compare

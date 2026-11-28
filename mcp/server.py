@@ -4,7 +4,7 @@
 Every public script in ../scripts becomes a callable tool, but tools/list defaults to
 advertising only the core 12 (_contract.MCP_CORE_TOOLS) to keep the schema dump small;
 set FFMPEG_SKILL_MCP_TOOLS to a comma-separated selection or FFMPEG_SKILL_MCP_FULL=1
-to list all 42. Every tool is still callable by name via tools/call. Tool names, order,
+to list all 41 (an alias such as crop is not listed). Every tool is still callable by name via tools/call. Tool names, order,
 inputSchema and the structured-argument mapping
 all come from the contract (scripts/_contract.py); this file is only the transport.
 Arguments are passed as a flat object (keys = argparse dests) or, for CLI compatibility,
@@ -223,7 +223,7 @@ def tool_list() -> List[Dict[str, Any]]:
     """
     all_specs = specs()
     if os.environ.get("FFMPEG_SKILL_MCP_FULL", "") not in ("", "0"):
-        return [_contract.mcp_tool(spec) for spec in all_specs.values()]
+        return [_contract.mcp_tool(spec) for spec in all_specs.values() if "alias_of" not in spec]
     raw = os.environ.get("FFMPEG_SKILL_MCP_TOOLS", "").strip()
     selected = {value.strip() for value in raw.split(",") if value.strip()} if raw else set(_contract.MCP_CORE_TOOLS)
     if raw:

@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-28",
+  "issue": 749,
+  "class": "automation",
+  "what": "overlay.py's --emoji-assets, --emoji-scale and --emoji-max were deprecated in 4.20.2 with removed_in 4.22.0 and were still there when main reached 4.22.1, so every PR's contract suite failed test_major_release_waits_for_the_deprecation_window until they were removed",
+  "escaped": "the version reaches a deprecation's removed_in through release.yml's bump commit, which carries [skip ci]: the suite that compares package.json with removed_in first runs on the next PR after the bump, so the overdue removal showed up as a failure on unrelated PRs rather than on the change that made the version",
+  "mechanism": null,
+  "why_none": "the window test already fails on the first run after the bump, which is how this was found; running the suite on the bump commit would cost a full CI run per release and still land after the merge. The removal is the fix, and the removed list keeps the three entries so the frozen 1.x snapshot test knows them"
+}

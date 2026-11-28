@@ -61,7 +61,7 @@ from typing import List, Optional, Tuple
 from _common.runner import ffmpeg_failure_extra, JsonTooDeep, fail_if_classified, read_json
 from _common import (beat_grid, snap_points, decode_pcm_mono, rms_envelope, BEAT_MIN_CONFIDENCE)
 from _common import require_tool
-from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, several_av_streams, signatures_match, stream_signature
+from _common.probe import PROBED_AUDIO, PROBED_VIDEO, TS_EXTS, probed_maps, sound_clock, several_av_streams, signatures_match, stream_signature
 from _common.runner import subtitle_codec_for, subtitle_container_holds, declare_time_map, segments_map, with_mapped_chapters
 from _common.decision import PAD_SOUND_FROM_ZERO, SEEK_MARGIN, delivered_rate, frame_rate, grid_at_or_after, stream_starts, on_frame as decision_on_frame
 from _common.timeline import output_timecode_args
@@ -1001,9 +1001,11 @@ def cut_one(src: str, start: float, end: float, dst: str, reencode: bool, crf: i
             # it (late against its picture) arrives at its offset from `start`; it is padded with
             # silence from 0, as the --segments re-cut pads it (av_trim), not rebased to its own
             # first sample, which moved it earlier and made the cut shorter than asked (#462 A46)
-            cmd = ffmpeg_base() + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=False)
+            # on the file's clock (-copyts and the shift): an MPEG-TS/PS decode of the sound alone counts from the sound (#787)
+            clock = bool(meta.get("start_time"))
+            cmd = ffmpeg_base() + ["-copyts"] * clock + ["-ss", f"{start:.6f}", "-i", src, "-t", f"{dur:.6f}"] + stream_maps(meta, dst, copy=False)
             pad = PAD_SOUND_FROM_ZERO if audio_codec_for(dst)[1] == "flac" else "aresample=async=1:first_pts=0"
-            cmd += ["-af", f"atrim=end={dur:.6f},{pad}"]
+            cmd += ["-af", f"{sound_clock(meta, start) + ',' if clock else ''}atrim=end={dur:.6f},{pad}"]
         else:
             # Seek SEEK_MARGIN early, then drop the margin on the output side, which decodes and
             # discards it from both streams alike. An input seek straight to `start` can land (the
@@ -1217,7 +1219,8 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
     An `intermediate` chunk keeps its audio as PCM, so the chunks join with no encoder priming
     between them and the audio is encoded once, for the final file."""
     has_a = bool(meta.get("audio"))
-    cmd = ffmpeg_base()
+    clock = not has_v and bool(meta.get("start_time"))  # the sound alone on the file's clock (#787)
+    cmd = ffmpeg_base() + ["-copyts"] * clock
     graph, pads = [], ""
     video = meta.get("video") or {}
     rate_arg = video.get("r_frame_rate") if has_v else None
@@ -1270,7 +1273,7 @@ def _join_chunk(src: str, segments: List[Tuple[float, float]], dst: str, meta: d
                 fades += f",afade=t=in:st=0:d={fade:.6f}"
             if fade > 0 and n < (len(segments) if total is None else total) - 1:
                 fades += f",afade=t=out:st={b - a - fade:.6f}:d={fade:.6f}"
-            graph.append(f"[{i}:{PROBED_AUDIO}]atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB,"
+            graph.append(f"[{i}:{PROBED_AUDIO}]{sound_clock(meta, s - m) + ',' if clock else ''}atrim=start={a:.6f}:end={b:.6f},asetpts=PTS-{a:.6f}/TB,"
                          f"aresample=async=1:first_pts=0{fades}[a{i}]")
             pads += f"[a{i}]"
     outs = ("[v]" if has_v else "") + ("[a]" if has_a else "")

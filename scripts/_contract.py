@@ -784,7 +784,7 @@ def output_schema(name: str, meta: Dict[str, Any], hw: bool = False) -> Dict[str
         extra = {"platform": {"type": "string"}, "ok": {"type": "boolean"}, "failed": {"type": "integer"}, "warnings": {"type": "integer"},
                  "input_identity": {"type": "object", "description": "2.24: {size, mtime_ns} of the file graded, the same shape as a writing tool's output_identity"},
                  "levels": {"type": "object", "description": "--levels only: {standard, reference, bit_depth, legal {y, c}: inclusive legal code ranges at the file's depth, window_seconds, frames, out_of_range_pct {y, u, v, chroma}: share of samples outside them (chroma: Cb and Cr samples together), brng_pct (signalstats BRNG: pixels with any component outside the fixed BT.601/709 nominal range), worst_frame {time, y_pct, chroma_pct}, min {y, u, v}, max {y, u, v}, windows: the same per --levels-window seconds ({start, end, ...})}"},
-                 "change_scope": {"type": "object", "description": "--expect-changed only, when the two files could be compared: {declared [{start, end, rect}], observed [{start, end, frames, rect [x, y, w, h], peak}]: every span with a tile above the floor, undeclared: the same for the tiles no declaration covers, declared_unchanged: declared spans in which nothing changed, floor, tile [columns, rows], frames, quiet_peak: the largest tile at or under the floor}. Times are this file's presentation times in seconds, rectangles are displayed pixels; removed [{start, end}]: the --expect-removed spans, in the reference's time"},
+                 "change_scope": {"type": "object", "description": "--expect-changed only, when the two files could be compared: {declared [{start, end, rect}], observed [{start, end, frames, rect [x, y, w, h], peak}]: every span with a tile above the floor, undeclared: the same for the tiles no declaration covers, declared_unchanged: declared spans in which nothing changed, floor (the --change-grid's own unless --change-floor), tile [columns, rows]: the grid used (--change-grid), frames, quiet_peak: the largest tile at or under the floor}. Times are this file's presentation times in seconds, rectangles are displayed pixels; removed [{start, end}]: the --expect-removed spans, in the reference's time"},
                  "audio_change_scope": {"type": "object", "description": "--expect-audio-changed only, when the two files could be compared: {declared [{start, end}], observed [{start, end, windows, peak}]: every run of windows that changed (peak: the largest difference against the signal in dB, null when only the level moved), undeclared: the same for the windows no declaration covers, declared_unchanged: declared spans in which nothing changed, window: seconds per window, floor {relative_db, level_db}, windows, quiet_peak: the largest difference against the signal in a window that did not change, in dB, null when none was above -70 dBFS}. Times are this file's seconds; only whole windows are compared; removed [{start, end}]: the --expect-removed spans, in the reference's time"},
                  "notes": {"type": "array", "items": {"type": "string"}, "description": "present when no --platform was named (youtube was assumed and judgement rows are WARN), when --compare paired a different number of frames than the reference has, or when --expect-changed or --expect-audio-changed compared two files that are not encoded alike"},
                  "checks": {"type": "array", "items": {"type": "object", "properties": {"check": {"type": "string", "description": "row name; --content adds black, frozen and silence; --compare adds similarity; --expect-changed adds change_scope; --expect-audio-changed adds audio_change_scope; --levels adds legal levels; --expect-identity adds identity; audio FAILs when the track is present but silent (peak <= -50 dBFS). A value that could not be read is \"could not measure\", never a PASS: duration FAILs under a --max-duration the caller stated (WARN under the platform table's limit or without one) when the file states no length, and black, frozen and silence are then WARN rows; loudness is WARN for audio shorter than one 400 ms block; --tp without --lufs (custom) measures the true peak row"}, "status": {"enum": ["PASS", "WARN", "FAIL"]}, "value": {}, "expected": {}, "fix": {"type": "string"}, "kind": {"enum": ["format", "judgement"]}, "basis": {"enum": ["requirement", "guidance"], "description": "where the expected value comes from. guidance: the duration and file size rows when their limit is the platform table's upload limit (scripts/_platforms.py, dated UPLOAD_LIMITS_AS_OF); such a row is PASS or WARN, never FAIL, is not counted in failed, and its reason says the uploader checks the platform's current limit. requirement: every other row, and the same two rows under --max-duration / --max-mb (the caller's own limit), which FAIL"}}}}}
@@ -1976,6 +1976,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
         # 1.20.0: SKILL.md's own request-table rows for this tool, machine-readable
         "examples": skill_examples().get(name, []),
         "role": meta["role"],
+        **({"alias_of": ALIASES[name]} if name in ALIASES else {}),
         # 4.0.0: what the 4.x promise covers for this tool (docs/contract.md, Stability guarantee (4.x))
         "stability": "stable" if name in STABLE_TOOLS else "beta",
         "capabilities": {"required": list(meta["required"]), "optional": _merge_optional(meta["optional"], (CODEC_CAPS if "codec" in schema["properties"] else [])
@@ -2019,7 +2020,8 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # step 1 (this list, --help text and the CHANGELOG) in a minor, step 2 keeps it working, step 3
 # removes it in the major. `where` says which surface a caller sees it on. Empty at 2.0.0 and at
 # 3.0.0: every deprecation announced in 1.x and 2.x was settled by its major (REMOVED below).
-DEPRECATED: List[Dict[str, str]] = []
+# A beta tool's argument goes in the minor release after the one that lists it (4.x's beta rule).
+DEPRECATED: List[Dict[str, str]] = []  # overlay.py's three emoji options (#749) go in 4.22.3, the beta rule
 
 # What each major removed or changed, with the version that deprecated each: the "Removed" half of
 # the policy's step 3, kept in the contract so a caller migrating can diff it instead of reading a
@@ -2046,7 +2048,11 @@ REMOVED: List[Dict[str, str]] = [
     {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)",
      "since": "2.14.0", "removed_in": "3.0.0", "where": "behaviour",
      "replacement": "FFmpeg 6.1 or later; every tool refuses an older one it can read (kind: missing_tool), and doctor reports it as unsupported"},
-]
+] + [
+    # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it (#749)
+    {"what": f"overlay.py {flag}", "since": "4.20.2", "removed_in": "4.22.3", "where": "cli",
+     "replacement": "none: it never had an effect (overlay.py draws text with drawtext); caption.py and graphics.py keep it"}
+    for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max")]
 
 
 MCP_JSON_EXEMPT = ("look", "probe")
@@ -2070,11 +2076,14 @@ READ_ONLY_ENV = "FFMPEG_SKILL_READ_ONLY"
 # 17-20's ground-truth `expect` lists actually name most often across the 118 agent prompts in
 # evals/agent_prompts*.json (render/look/caption/export/check each >=10 hits; fit/cut/audio/
 # loudness/graphics/silence/probe each >=6) -- not a hand-picked "starter" set. `tools/list`
-# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 42; the
-# other 30 stay reachable by name through tools/call either way, and `contract --json` always
-# describes all 42.
+# returns only these unless FFMPEG_SKILL_MCP_FULL=1 (anything but "" or "0") asks for all 41; the
+# other 29 stay reachable by name through tools/call either way, and `contract --json` always
+# describes all 41 and the aliases.
 MCP_CORE_TOOLS = ("render", "look", "caption", "export", "check", "fit", "cut", "audio", "loudness", "graphics", "silence", "probe")
-# 4.0.0: the tools whose surface 4.x promises not to break; the other 30 are "beta" (docs/contract.md).
+# 4.19 (#683): a tool folded into another keeps its script, MCP name and schema (callable by name, the 1.x
+# snapshot) and leaves what is advertised: the tool count, SKILL.md's table and tools/list, full or not
+ALIASES = {"crop": "fit"}
+# 4.0.0: the tools whose surface 4.x promises not to break; the other 29 are "beta" (docs/contract.md).
 STABLE_TOOLS = MCP_CORE_TOOLS
 MCP_STRUCTURED_NOTE = ("Structured arguments: keys are the input_schema property names (argparse dests), positionals "
                        "are passed by name, output -> -o. Or argv: the raw CLI list (non-canonical; all other keys are then ignored). "
