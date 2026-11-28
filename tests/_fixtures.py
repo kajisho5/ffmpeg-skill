@@ -685,8 +685,8 @@ class MediaFixtures(unittest.TestCase):
 
         # --- "real world" material: VFR, rotated phone clip, 5.1 audio, 10-bit HDR10 HEVC, long drifting pair
         cls.vfr = SHARED_OUT / "vfr.mp4"
-        # random(1) is seeded: FFmpeg's expression random() is a linear congruential generator whose
-        # state (variable 1) starts at 0, so the same frames are kept on every run (#696)
+        # random(1) is seeded: its state (variable 1) starts at 0, so one FFmpeg version keeps the same
+        # frames on every run (#696); the generator itself changed between versions (6.1 vs 8.0)
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", f"aevalsrc='{TONES}':s=48000",
            "-t", "12", "-vf", "select='gt(random(1)\\,0.3)'", "-fps_mode", "vfr",

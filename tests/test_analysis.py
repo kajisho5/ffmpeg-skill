@@ -2854,6 +2854,10 @@ class TimestampSeekTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        if not shutil.which("ffmpeg"):
+            if os.environ.get("CI"):
+                raise AssertionError("ffmpeg not on PATH -- in CI this is a broken install step")
+            raise unittest.SkipTest("ffmpeg not on PATH")
         OUT.mkdir(exist_ok=True)
         cls.mp4 = OUT / "tsseek.mp4"
         sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=25:d=4",
@@ -2915,6 +2919,38 @@ class TimestampSeekTests(unittest.TestCase):
                               f"{pts[want]:.6f}, file start {origin:.6f}); against frames {want - 1} (pts {pts[want - 1]:.6f}) "
                               f"and {want + 1} (pts {pts[want + 1]:.6f}): {near}; the cut's first frame pts "
                               f"{self._frame_pts(out)[:1]}; {subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True).stdout.splitlines()[:1]}; the cut ran {doc.get('commands')}")
+
+    def test_a_trim_s_fades_are_drawn_on_the_frames_it_delivers(self):
+        """#696 review: fit.py --method trim --from-center seeks a margin early and drops it on the
+        output side, and the fades ran on the margin's clock: --fade-in ended inside the dropped
+        margin, and --fade-out darkened the middle and left the end black (on a TS, with a 10 s
+        margin, the whole output). The first and last frames are dark and the middle is not."""
+        def luma(path, at):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:V:0", "-vf", f"select=gte(t\\,{at}),scale=32:18",
+                                  "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+            self.assertEqual(len(raw), 32 * 18, f"no frame at {at} s in {path}")
+            return sum(raw) / len(raw)
+        for ext in (".mp4", ".ts"):
+            with self.subTest(ext=ext):
+                out = OUT / f"tsseek_fade_{ext[1:]}.mp4"
+                doc = json.loads(script("fit.py", self.files[ext], "--duration", "2", "--method", "trim", "--from-center",
+                                        "--fade-in", "0.5", "--fade-out", "0.5", "-o", out, "--json").stdout)
+                self.assertEqual(doc["status"], "completed")
+                first, middle, last = luma(out, 0.0), luma(out, 1.0), luma(out, 1.95)
+                self.assertGreater(middle, 40, f"the middle is not faded: {first:.1f} / {middle:.1f} / {last:.1f}")
+                self.assertLess(first, middle / 3, f"the fade-in is on the first frame: {first:.1f} / {middle:.1f}")
+                self.assertLess(last, middle / 3, f"the fade-out is on the last frame: {middle:.1f} / {last:.1f}")
+
+    def test_cropdetect_does_not_read_the_margin_before_its_window(self):
+        """#696 review: an MPEG-TS window is decoded from 10 s before it and the output seek drops
+        that margin after the filter graph, so cropdetect logged the margin's readings too. Bars
+        only between the two windows (1.5-11 s of 13 s) are not in either window."""
+        src = OUT / "tsseek_bars.ts"
+        bars = ",".join(f"drawbox=x=0:y={y}:w=iw:h=40:color=black:t=fill:enable='between(t,1.5,11)'" for y in ("0", "ih-40"))
+        sh("ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=13", "-vf", bars,
+           "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-f", "mpegts", src)
+        doc = json.loads(script("cropdetect.py", src, "--samples", "2", "--seconds", "1", "--json").stdout)
+        self.assertEqual((doc["crop"]["width"], doc["crop"]["height"]), (320, 180), doc["crop"])
 
     @staticmethod
     def _frame_pts(path):

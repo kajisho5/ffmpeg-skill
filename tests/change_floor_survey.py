@@ -28,6 +28,7 @@ the largest of its channels):
 Hardware encoders (NVENC, QSV, VAAPI, VideoToolbox, AMF) are not measured: this machine has none.
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -52,7 +53,7 @@ FOOTAGE_NATIVE = {"ai_talk": (640, 430), "ai_talk_en": (854, 480)}
 SYNTHETIC = {
     "testsrc2": "testsrc2=size={w}x{h}:rate=24",
     "noise": "color=c=gray:size={w}x{h}:rate=24,noise=alls=40:allf=t+u",
-    "gradient": "gradients=size={w}x{h}:rate=24:speed=0.02:seed=1",
+    "gradient": "gradients=size={w}x{h}:rate=24:speed=0.02:seed=1:c0=0x203040:c1=0xc08050",
     "dark": "color=c=0x101418:size={w}x{h}:rate=24,noise=alls=12:allf=t+u,drawbox=x=iw/3:y=ih/3:w=iw/4:h=ih/4:color=0x302820:t=fill",
     "fast_pan": "testsrc2=size={w2}x{h}:rate=24,crop={w}:{h}:x='mod(n*{step},{w})':y=0",
 }
@@ -116,7 +117,9 @@ LOCK = threading.Lock()
 
 def mezzanine(work, name, size):
     w, h = size
-    out = work / f"m_{name}_{w}x{h}.mkv"
+    # named by the fixture as well: a resumed --work made before the fixture changed is not reused
+    digest = hashlib.sha1(SYNTHETIC.get(name, name).encode()).hexdigest()[:8]
+    out = work / f"m_{name}_{w}x{h}_{digest}.mkv"
     with LOCK:  # one writer per file: a second job read a half-written one
         if not out.exists():
             part = out.with_suffix(".part.mkv")
@@ -179,7 +182,7 @@ def measure(work, name, size, label, args):
     edited = tile_diffs(edit, ref, work, tag + "_e")
     for p in (ref, edit):
         p.unlink()
-    doc = {"source": name, "size": f"{w}x{h}", "config": label, "seconds": round(time.time() - started, 1), "grids": {}}
+    doc = {"source": name, "fixture": SYNTHETIC.get(name, name), "size": f"{w}x{h}", "config": label, "seconds": round(time.time() - started, 1), "grids": {}}
     for grid in GRIDS:
         gw = grid[0]
         frames = edited[gw]
@@ -255,12 +258,16 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     jobs = [j for j in plan(args.quick) if f" {j[2][1][1]} " in encoders]
     if args.only:
-        keep = set(args.only.split(","))
+        # the gradient source was "gradients" before it was seeded (#696): the old name still selects it
+        keep = {"gradient" if n == "gradient" + "s" else n for n in args.only.split(",")}
         jobs = [j for j in jobs if j[0] in keep]
     started = time.time()
     # every measurement is appended as it lands, and a re-run with the same --work skips what is there
     log = work / "results.jsonl"
     results = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    # a row measured on another fixture (the unseeded gradient before #696, which has no "fixture")
+    # is measured again, and left out of the summary
+    results = [r for r in results if r.get("fixture") == SYNTHETIC.get(r["source"], r["source"])]
     done = {(r["source"], r["size"], r["config"]) for r in results}
     jobs = [j for j in jobs if (j[0], f"{j[1][0]}x{j[1][1]}", j[2][0]) not in done]
     with ThreadPoolExecutor(args.jobs) as pool:
