@@ -118,6 +118,7 @@ variant and caveat) when a request is not below; it and `doctor --json`'s `tools
 | "keep only these parts", "remove the middle" | `cut.py in.mp4 --segments 0-1:00,1:30-2:00` (`--remove 1:00-1:30`) |
 | "cut out the pauses", "jump cuts", "just the real pauses, not inside a sentence" | `silence.py in.mp4` (`--speech-aware`) |
 | "cut the ums and uhs" | `silence.py in.mp4 --filler --words words.json` |
+| "cut where they say X", "right after 'sales'" | `scenes.py in.mp4 --find "X" --words words.json` gives each time's `start`/`end` and `words`; cut with `cut.py in.mp4 --words words.json --word-segments FIRST-LAST`. Where X is shown, not said: look with `look.py --tiles` |
 | "a 60 s highlight from this hour" | `scenes.py long.mp4 --highlights 6 --target 60 --edl picks.txt` (then `cut.py --segments` with picks.txt's lines joined by commas) |
 | "cut on the beat" | `cut.py in.mp4 --segments ... --snap beats --snap-source beats.json` (`scenes.py --beats`; a WAV/MP3 music bed too) |
 | "smooth slow motion" | `fit.py in.mp4 --duration 20 --smooth interpolate` (a 10 s clip at half speed; `--duration` is the target length) |

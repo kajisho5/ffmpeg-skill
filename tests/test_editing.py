@@ -6511,5 +6511,64 @@ class WordTimedCutTests(unittest.TestCase):
         self.assertFalse((self.dir / "out.mp4").exists())
 
 
+class SceneFindTests(unittest.TestCase):
+    """#692: scenes.py --find gives the times a word or phrase is said, from the words file cut.py
+    --words reads, and the word indices --word-segments takes. Shares WordTimedCutTests' clip;
+    its own transcript: "sales" twice (once full-width, with a comma), a phrase, and a longer word."""
+
+    @classmethod
+    def setUpClass(cls):
+        WordTimedCutTests.setUpClass.__func__(cls)  # the same clip, not its tests
+        cls.said = cls.dir / "said.json"
+        cls.said.write_text(json.dumps({"segments": [{"words": [
+            {"word": " Our", "start": 0.6, "end": 0.9, "probability": 0.9}, {"word": " Sales,", "start": 1.0, "end": 1.5, "probability": 0.8},
+            {"word": " grew.", "start": 1.6, "end": 2.0, "probability": 0.95}, {"word": " ＳＡＬＥＳ", "start": 2.2, "end": 2.7, "probability": 0.7},
+            {"word": " thank", "start": 4.0, "end": 4.2, "probability": 0.6}, {"word": " you!", "start": 4.2, "end": 4.6, "probability": 0.99},
+            {"word": " salesman", "start": 5.0, "end": 5.5}]}]}, ensure_ascii=False), encoding="utf-8")
+
+    def find(self, text, *args, words=None, fail=False):
+        proc = script("scenes.py", self.src, "--find", text, "--words", words or self.said, *args, "--json", expect_fail=fail)
+        return json.loads(proc.stdout)
+
+    def test_a_word_said_twice_a_phrase_once_and_the_words_own_times(self):
+        doc = self.find("sales")
+        self.assertEqual(doc["status"], "completed")
+        self.assertNotIn("scenes", doc)  # nothing but the transcript is read
+        # case, the comma and the full-width letters are set aside; "salesman" is another word
+        self.assertEqual([(m["text"], m["start"], m["end"], m["confidence"], m["words"]) for m in doc["find"]["matches"]],
+                         [("Sales,", 1.0, 1.5, 0.8, [1, 1]), ("ＳＡＬＥＳ", 2.2, 2.7, 0.7, [3, 3])])
+        self.assertEqual(doc["find"]["count"], 2)
+        phrase = self.find("Thank you")["find"]["matches"]
+        self.assertEqual([(m["text"], m["start"], m["end"], m["confidence"], m["words"]) for m in phrase],
+                         [("thank you!", 4.0, 4.6, 0.6, [4, 5])])
+        self.assertIsNone(self.find("salesman")["find"]["matches"][0]["confidence"])  # the file gives it none
+        second = self.find("sales", "--nth", "2")["find"]
+        self.assertEqual((second["count"], [m["words"] for m in second["matches"]]), (2, [[3, 3]]))
+
+    def test_not_said_is_an_answer_and_no_timings_is_refused(self):
+        for text, args in (("pizza", ()), ("sales", ("--nth", "3")), ("sale", ())):
+            with self.subTest(text=text, args=args):
+                doc = self.find(text, *args)
+                self.assertEqual((doc["status"], doc["find"]["matches"]), ("completed", []))
+                self.assertTrue(any(n.startswith("--find") for n in doc["notes"]), doc.get("notes"))
+        untimed = self.dir / "untimed.json"
+        untimed.write_text(json.dumps({"segments": [{"text": "sales were up"}]}))
+        for args, words in ((("--highlights", "2"), None), (("--nth", "0"), None), ((), untimed)):
+            with self.subTest(args=args, words=words):
+                self.assertEqual(self.find("sales", *args, words=words, fail=True)["error"]["kind"], "input")
+        proc = script("scenes.py", self.src, "--find", "sales", "--json", expect_fail=True)
+        self.assertEqual(json.loads(proc.stdout)["error"]["kind"], "input")
+
+    def test_the_indices_cut_the_span_it_found(self):
+        for match in self.find("sales")["find"]["matches"] + self.find("thank you")["find"]["matches"]:
+            with self.subTest(match=match["text"]):
+                out = self.dir / "found.mp4"
+                proc = script("cut.py", self.src, "--words", self.said, "--word-segments", "{}-{}".format(*match["words"]),
+                              "--accurate", "-o", out, "--json", "--dry-run")
+                cut = json.loads(proc.stdout)["word_segments"][0]
+                self.assertEqual(cut["transcript"], [match["start"], match["end"]])
+                self.assertEqual(cut["text"], match["text"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

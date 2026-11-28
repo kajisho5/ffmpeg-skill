@@ -988,6 +988,12 @@ Per-tool keys added in 1.17.1, all additive:
 | `text_unchanged` | `caption.py` | a sibling inside the `caption` block, **burn mode only** (`--mode mux` never touches the text and omits the key): `true` when the drawn text equals the cues that were handed in — nothing transcribed, no cue dropped, no cue **split** across two consecutive cues and no glyph stripped (`--emoji none`). Wrapping, line breaks and timing do not count: the words are the same. This tool never rewrites, shortens or translates a cue, so the key is a statement of what happened, not a judgement of the text |
 
 
+`scenes.py --find TEXT --words FILE` (#692) adds `find`: `{text, words_file, count, nth, matches:
+[{text, start, end, confidence, words: [first, last]}]}`, the times the words file gives, and the
+indices `cut.py --word-segments` takes. A run with `--find` measures nothing else (no `scenes`). Not said
+is `status: completed` with `matches: []` and a note; a words file with an untimed word is refused,
+`kind: input`.
+
 Per-tool keys added in 1.18.0, all additive:
 
 | key | tool | what it holds |

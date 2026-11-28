@@ -254,7 +254,7 @@ DRY_RUN_ANALYSIS = {
     "probe": "read-only tool; --dry-run changes nothing: ffprobe still runs, and only with --analyze ffmpeg decodes the first 20 s of each video input to sample picture levels",
     "sync": "audio is decoded to find the offset; the aligned output is not written",
     "multicam": "audio is decoded to align the cameras; the switched output is not written",
-    "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written",
+    "scenes": "scene and audio-peak measurement runs; --sheet and --edl are not written; --find reads only the --words file and answers as a real run does",
     "report": "probe and loudness measurements run (and check.py, with --platform); contact sheets are not drawn under --dry-run (a report_section_dry_run skip); the HTML is not written",
     "cropdetect": "the cropdetect filter runs over the sampled windows to measure bars; this tool never writes a file regardless of --dry-run",
     "silence": "with --profile or --extract-profile, pacing measurements run without publishing any file; otherwise silencedetect runs so the reported silences and keep ranges are real; the cut output is not written. --filler --transcribe also runs the speech engine (its word timings are what the filler spans are planned on), which may download a model on first use; so does --transcribe with --sentence-min-silence or --sentence-margin-tail",
@@ -720,7 +720,8 @@ EMITTED_KEYS: Dict[str, Dict[str, Any]] = {
         "highlights": {"type": "array", "description": "--highlights only: [{start, end, duration}] the proposed ranges"},
         "highlights_total": {"type": "number", "description": "--highlights only: the ranges' total seconds"},
         "highlights_rank_by": {"enum": ["audio", "duration"], "description": "--highlights only: --rank-by"},
-        "sheet": {"type": "string", "description": "--sheet only: the contact sheet path (under --dry-run the path that would be written; nothing is drawn)"}},
+        "sheet": {"type": "string", "description": "--sheet only: the contact sheet path (under --dry-run the path that would be written; nothing is drawn)"},
+        "find": {"type": "object", "description": "--find only (#692; no scene, scenes or audio_peaks then): {text, words_file, count (times said), nth, matches: [{text, start, end (the words' own times), confidence (the lowest word probability; null when a word has none), words: [first, last] (the indices cut.py --word-segments takes)}]}; matching ignores case, punctuation and full/half width and takes whole consecutive words; not said is completed with matches [] and a note"}},
     "batch": {
         "jobs": {"type": "integer", "description": "the parallelism actually applied"},
         "jobs_requested": {"type": ["integer", "null"], "description": "the --jobs asked for (auto resolved to a number)"},
