@@ -3237,7 +3237,9 @@ class PictureTests(MediaFixtures):
         240 px text column -- so it pinned wrong bytes. The re-pin keeps --fit-size off meaning
         exactly what it meant (the size is never shrunk); only the side margins, and the wrap
         budget that now agrees with them, differ. 2.10.3 added the header line `YCbCr Matrix: None`
-        (the colours are RGB, drawn in the video's own matrix), and nothing else."""
+        (the colours are RGB, drawn in the video's own matrix), and nothing else. 4.25.0's safe
+        zones (TikTok's sides 6 % and 17 %) re-pinned the side margins to 65 and 184, and the last
+        cue's word, wider than the narrower column at a size that is never shrunk, now breaks."""
         vert, cues = self._vertical(), self._fit_cues()
         ass = OUT / "cap_fit_off.ass"
         script("caption.py", vert, "--text", cues, "--platform", "tiktok", "--max-lines", "2",

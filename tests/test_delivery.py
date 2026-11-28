@@ -1652,6 +1652,23 @@ raise SystemExit(export.main())
         self.assertEqual(export_mod.PRESETS["facebook"]["max"], 14400.0,
                          "the drift review 12 found: facebook had no duration cap at all")
 
+    def test_a_vertical_apps_safe_zone_clears_the_ui_it_draws_on_a_phone(self):
+        """Reels' top 8 % ended above the status bar, notch and Reels header (about 250 of 1920 px on
+        a current phone), and its 12 % right edge inside the like/comment/share column (about 180
+        px): a title or a logo placed by --platform reels sat under them. No app publishes pixel
+        margins for an ordinary post, so each edge here is the smallest of the figures commonly
+        measured on a 1080x1920 frame (docs/design-decisions.md, "After 4.25.0"); the table may be
+        more generous, never less."""
+        sys.path.insert(0, str(SCRIPTS))
+        from _platforms import PLATFORMS
+        floor = {"tiktok": {"top": 0.125, "bottom": 0.22, "left": 0.06, "right": 0.17},
+                 "reels": {"top": 0.13, "bottom": 0.22, "left": 0.06, "right": 0.17},
+                 "shorts": {"top": 0.15, "bottom": 0.22, "left": 0.05, "right": 0.15}}
+        for name, edges in floor.items():
+            for edge, least in edges.items():
+                with self.subTest(platform=name, edge=edge):
+                    self.assertGreaterEqual(PLATFORMS[name]["safe"][edge], least)
+
     def test_every_template_caption_block_is_the_tables_safe_zone(self):
         """The templates must not restate the numbers the table exists to own: change a
         destination's safe zone and every shipped template follows, rather than keeping an old

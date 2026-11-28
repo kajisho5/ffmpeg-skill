@@ -1986,8 +1986,12 @@ class AnalysisTests(MediaFixtures):
         self.assertNotEqual(plain.read_bytes(), marked.read_bytes(), "--safe must mark the frame")
         cmd = [c for c in doc["commands"] if "drawbox" in c]
         self.assertTrue(cmd, doc["commands"])
-        self.assertIn("y=ih*(1-0.22)", cmd[0])
-        self.assertIn("x=iw*(1-0.14)", cmd[0])
+        # the table's own fractions, not numbers restated here: a new measurement moves both
+        sys.path.insert(0, str(SCRIPTS))
+        from _platforms import PLATFORMS
+        safe = PLATFORMS["tiktok"]["safe"]
+        self.assertIn(f"y=ih*(1-{safe['bottom']:g})", cmd[0])
+        self.assertIn(f"x=iw*(1-{safe['right']:g})", cmd[0])
 
     def test_look_guides_outline_broadcast_safe_areas_on_the_preview_only(self):
         """#423: --guides draws action (93 %), title (90 %) and the 4:3 centre cut on the PNG; the
