@@ -5165,7 +5165,12 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   each timed-out step's partial output and output lock in `--out`. A SIGTERM or Ctrl-C to
   `verify.py` itself stops the step it is running the same way (`stop_children()`); through the
   review of #530 the step was not tracked and ran on, writing, after `verify.py` had exited.
-  **On Windows** no SIGTERM handler can run (`terminate()` is TerminateProcess on the tool's own
+  A signal that arrives while the tool makes or removes an output lock, or between a child's start
+  and the moment it is tracked, is handled when that step ends (`runner._signals_held()`), and the
+  handler removes every lock the process holds itself: through 4.26.0 one inside the lock's
+  creation came out of `__enter__`, so no `__exit__` ran and the lock stayed (a macOS CI run of the
+  test below, whose 1 s limit reached `export.py` as it made its lock), and a child started but not
+  yet tracked was not stopped and wrote on. **On Windows** no SIGTERM handler can run (`terminate()` is TerminateProcess on the tool's own
   Python), so the tool and every process it started, its ffmpeg included, are killed at once with
   `%SystemRoot%\System32\taskkill.exe /T /F` (`terminate_tree()`), and the call returns once
   taskkill has. Nothing of the tool's own cleanup runs: its output lock stays, naming a process
@@ -5174,7 +5179,8 @@ on 3.8.5 (A50 and A52 are fixed in their own change). Each was reproduced on FFm
   unless `--overwrite` is given. Without taskkill, or when it fails or takes more than 30 s, only
   the tool is killed and its ffmpeg can run on. This branch runs on the Windows CI job only; here
   the choice of branch is tested with the kill call replaced. Code: `_common.runner._stop_child()`,
-  `terminate_tree()`. Tests: `test_a_child_past_its_ceiling_is_stopped_and_cleans_up`,
+  `terminate_tree()`, `_signals_held()`. Tests: `test_a_child_past_its_ceiling_is_stopped_and_cleans_up`,
+  `test_a_stop_inside_a_lock_s_making_or_a_child_s_start_leaves_nothing`,
   `test_a_sigterm_to_verify_stops_its_running_step`,
   `test_stopping_a_tool_picks_the_tree_kill_on_windows_only`,
   `test_on_windows_a_stopped_tool_takes_its_ffmpeg_with_it`.
