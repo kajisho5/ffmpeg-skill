@@ -1573,12 +1573,22 @@ _CODEC_OPTION_RE = re.compile(r"^-(?:c|codec)(?::([va])(?::\d+)?)?$|^-(v|a)codec
 
 
 # What each muxer takes, as (video encoders, sound encoders, what to say, the way out), by extension.
+# AVI and ASF store no presentation time, so the B-frame line of the H.264/HEVC encoders reads back
+# with none (#754) and a seek, `ffmpeg -ss 0` included, can decode no picture (ProRes in ASF none at all).
+_NO_PTS = "which stores no presentation time for B-frame H.264/HEVC, so a reader that seeks (ffmpeg -ss 0 included) can decode no picture from it"
+_NO_PTS_HINT = "name a .mp4, .mov or .mkv output"
 _CONTAINER_ENCODERS = {
     ".webm": (_WEBM_VIDEO_ENCODER_RE, _WEBM_AUDIO_ENCODER_RE, "WebM, which holds only VP8/VP9/AV1 video and Opus/Vorbis sound",
               "name a .mp4, .mov or .mkv output (Matroska holds what WebM refuses); a transparent VP9 WebM is --keep-alpha --alpha-codec vp9 or export.py --preset vp9-alpha"),
-    ".mxf": (re.compile(r"^(?:mpeg2video|dnxhd)$"), re.compile(r"^pcm_\w+$"), "MXF, which holds MPEG-2/DNxHD video and PCM sound (H.264 writes dts it rejects)",
+    ".mxf": (re.compile(r"^(?:mpeg2video|dnxhd)$"), re.compile(r"^pcm_\w+$"),
+             "MXF, which holds MPEG-2/DNxHD video and PCM sound (the tools' B-frame H.264 is stored without its reorder, so a read-back loses a frame)",
              "name a .mov (--codec prores) or .mkv output; cut.py without --accurate keeps an MXF's own streams"),
+    ".avi": (re.compile(r"^(?!(?:libx26[45]|h264_\w+|hevc_\w+)$)"), re.compile(""), "AVI, " + _NO_PTS, _NO_PTS_HINT),
+    ".wmv": (re.compile(r"^(?!(?:libx26[45]|h264_\w+|hevc_\w+|prores\w*)$)"), re.compile(""), "ASF, " + _NO_PTS, _NO_PTS_HINT),
 }
+_CONTAINER_ENCODERS[".mpg"] = _CONTAINER_ENCODERS[".mpeg"] = (re.compile(""), re.compile(r"^(?:mp2|libtwolame|libmp3lame|mp3|ac3|dca|pcm_dvd|pcm_s16be)$"),
+    "MPEG-PS, which holds MP1/MP2/MP3, AC-3, DTS and DVD PCM sound", "name a .mp4, .mov, .mkv or .ts output")
+_CONTAINER_ENCODERS[".asf"] = _CONTAINER_ENCODERS[".wmv"]
 
 
 def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
@@ -1614,10 +1624,28 @@ def _an_input_has(cmd: Sequence[str], kind: str) -> bool:
     return False
 
 
+def _copies_reordered_video(cmd: Sequence[str]) -> bool:
+    """True when an input of `cmd` from another container than the output's has B-frame video
+    (ffprobe's has_b_frames): loudness.py copied an MP4's H.264 into .avi, which kept no pts for
+    it (#754). A copy from the output's own container keeps what it had; a failed read is no."""
+    for path in shape_of(cmd).inputs:
+        if os.path.isfile(path) and _CONTAINER_ENCODERS.get(os.path.splitext(path)[1].lower()) is not _CONTAINER_ENCODERS[os.path.splitext(cmd[-1])[1].lower()]:
+            probe_cmd = guard_input_protocols([shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "V:0",
+                                               "-show_entries", "stream=has_b_frames", "-of", "csv=p=0", file_arg(path)])
+            try:
+                proc = subprocess.run(probe_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_probe_limit())
+                if proc.stdout.strip() not in ("", "0"):
+                    return True
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+    return False
+
+
 def _check_container_codecs(cmd: Sequence[str]) -> None:
-    """A `.webm` or `.mxf` output whose command encodes what the muxer cannot hold (the tools' H.264/HEVC
-    and AAC lines) is refused before anything runs, dry runs included, not after the encode started
-    (#488, MXF #736). A stream copy is left to the muxer: what it copies is not named in the command."""
+    """A `.webm`, `.mxf`, `.avi`, `.wmv`/`.asf` or `.mpg` output whose command encodes what the muxer cannot
+    hold (the tools' H.264/HEVC and AAC lines) is refused before anything runs, dry runs included, not
+    after the encode started (#488, MXF #736, AVI/ASF/MPEG-PS #754). A stream copy is left to the muxer,
+    except a copy of B-frame video into AVI/ASF (_copies_reordered_video())."""
     output = cmd[-1]
     rule = _CONTAINER_ENCODERS.get(os.path.splitext(output)[1].lower())
     if not rule:
@@ -1630,11 +1658,13 @@ def _check_container_codecs(cmd: Sequence[str]) -> None:
         stream, value = m.group(1) or m.group(2), cmd[i + 1]
         if value != "copy" and stream and not rule[0 if stream == "v" else 1].match(value):
             refused.append((stream, value))
+        elif value == "copy" and stream != "a" and rule[3] is _NO_PTS_HINT and _copies_reordered_video(cmd):
+            refused.append(("v", "a copy of B-frame video"))
     # only for a stream the output will have: asked last, and only when something would be refused
     refused = [value for stream, value in dict.fromkeys(refused) if _an_input_has(cmd, stream)]
     if refused:
         refuse("input", "output_container_codecs",
-               f"output {output!r} is {rule[2]}; this tool encodes {' and '.join(refused)} for it",
+               f"output {output!r} is {rule[2]}; this tool writes {' and '.join(refused)} for it",
                hint=rule[3], output=output, container=output.rsplit(".", 1)[1].lower(), encoders=refused)
 
 
@@ -2820,13 +2850,12 @@ def stream_copy_output(ctx: Context, output: str) -> bool:
                 and owned_identity(output) == identity)
 
 
-# FFmpeg 9.1 made a new coder (`nmr`) the AAC encoder's default, and it never returns on some
-# sound: mono at 192k behind 0.1 s or 2.5 s of silence ran until the time limit, a file of 48
-# bytes (#659; 64k to 160k, 256k, stereo and no silence all ended). From 9.1 on, every AAC track is
-# written with the coder that was the default until then, as on every older build; a command that
-# names a coder keeps it. `version` is for the test: the build on PATH otherwise.
+# FFmpeg 9.1's AAC encoder never returns on some mono sound with its new default coder (`nmr`)
+# and with `twoloop`, the default until 9.0 (a retimed track led by silence, at 160k and 192k;
+# #659). `fast` ended on every case measured, so from 9.1 on every AAC track names it; a command
+# that names a coder keeps it. `version` is for the test: the build on PATH otherwise.
 def pin_aac_coder(cmd: Sequence[str], version: "Optional[Tuple[int, int]]" = None) -> List[str]:
-    return [x for i, a in enumerate(cmd) for x in ([a, "-aac_coder", "twoloop"] if a == "aac" and i and "-aac_coder" not in cmd and (version or ffmpeg_version()) >= (9, 1) and re.fullmatch(r"-(c|codec):a(:\d+)?|-acodec", cmd[i - 1]) else [a])]
+    return [x for i, a in enumerate(cmd) for x in ([a, "-aac_coder", "fast"] if a == "aac" and i and "-aac_coder" not in cmd and (version or ffmpeg_version()) >= (9, 1) and re.fullmatch(r"-(c|codec):a(:\d+)?|-acodec", cmd[i - 1]) else [a])]
 
 
 def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Optional[Context]" = None) -> subprocess.CompletedProcess:

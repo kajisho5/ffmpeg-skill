@@ -474,7 +474,7 @@ ERROR_REASONS = {
     "output_extension_unsupported": "an output name ffmpeg would split into files it names itself (.m3u8, .m3u, .mpd, or a numbered pattern such as frame%03d.png in an image name: the skill writes one file per -o); or a media output named .wma (from -o or the input's default name) that the run would encode into: the skill has no WMA encoder line and writes .wma only as a stream copy of WMA sound (wmav1, wmav2, wmapro, wmalossless, wmavoice) with no picture; the hint names the audio extensions it writes (.wav, .flac, .mp3, .m4a, .aac, .ogg, .opus, .aif, .aiff, .caf, .mka); refused before ffmpeg runs (loudness.py and silence.py before their measuring pass), dry runs included; details: {output, extension, written}",
     "output_extension_audio_only": "a media output named with an audio-only extension (.wav, .m4a, .mp3, ...: every one the skill reads) whose command encodes a picture, that export.py, metadata.py or render.py would copy a picture into, or given to waveform.py: refused before delivery, dry runs included; name a video container, or extract the sound with cut.py or audio.py; details: {output, extension, encoders (empty for a copy and for waveform.py)}",
     "output_dir_not_writable": "the output's directory is not writable; details: {output, directory}",
-    "output_container_codecs": "a .webm or .mxf output whose command encodes video or sound the container cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis, MXF MPEG-2/DNxHD and PCM), refused before ffmpeg runs; details: {output, container, encoders}",
+    "output_container_codecs": "a .webm, .mxf, .avi, .wmv, .asf, .mpg or .mpeg output whose command encodes video or sound the container cannot hold (H.264/HEVC, AAC; WebM takes VP8/VP9/AV1 and Opus/Vorbis, MXF MPEG-2/DNxHD and PCM, MPEG-PS no AAC, and AVI/ASF, which store no presentation time for B-frame video, no H.264/HEVC nor a stream copy of B-frame video from another container), refused before ffmpeg runs; details: {output, container, encoders}",
     "timemap_path_taken": "silence.py --timemap names the same file as -o, --edl or --plan; details: {timemap, flag, path}",
     "output_locked": "another run holds the output's lock, or is taking a stale one over (why: takeover_in_progress), or a stale lock cannot be taken over safely because the filesystem gives no OS file lock (why: takeover_unavailable: delete it by hand); details: {lock, output, pid, pid_alive, deadline, why}",
     "plan_inputs_changed": "render.py PLAN: a fingerprinted input is missing or changed, or the ordered sequence differs; details: {plan, plan_sha256, checked_at, "
@@ -1019,32 +1019,33 @@ def skill_examples() -> Dict[str, List[Dict[str, Any]]]:
     `prompts` is a list because a row often gives several phrasings ("cut from 1:20 to 2:05",
     "trim the first 10 s") for the one `command`; `command` has the markdown backticks
     stripped but otherwise keeps the row's own text (including "or"/"then" alternatives).
+    #687: SKILL.md keeps only the rows whose command is not the obvious one, so a tool its table
+    does not name takes its rows from references/requests.md, the table every request is in.
     """
     examples: Dict[str, List[Dict[str, Any]]] = {}
-    try:
-        lines = (ROOT / "SKILL.md").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return examples
-    in_table = False
     esc_pipe = "\x00"  # a markdown-escaped "\|" (a literal pipe inside a cell, e.g. broll's --audio b\|mix) is not a column separator
-    for line in lines:
-        if line.startswith("| User says"):
-            in_table = True
+    for doc in ("SKILL.md", "references/requests.md"):
+        if not (ROOT / doc).is_file():
             continue
-        if not in_table:
-            continue
-        if not line.startswith("|"):
-            break
-        if line.startswith("|---") or line.startswith("|-----"):
-            continue
-        cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
-        if len(cells) != 2:
-            continue
-        prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
-        prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
-        command = re.sub(r"`([^`]*)`", r"\1", do)
-        for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
-            examples.setdefault(tool, []).append({"prompts": prompts, "command": command})
+        lines = (ROOT / doc).read_text(encoding="utf-8").splitlines()
+        found: Dict[str, List[Dict[str, Any]]] = {}
+        in_table = False
+        for line in lines:
+            if not in_table:
+                in_table = line.startswith("| User says")
+                continue
+            if not line.startswith("|"):
+                break
+            cells = line.strip().strip("|").replace("\\|", esc_pipe).split("|")
+            if len(cells) != 2 or line.startswith("|---"):
+                continue
+            prompt_cell, do = (c.replace(esc_pipe, "|").strip() for c in cells)
+            prompts = re.findall(r'"([^"]+)"', prompt_cell) or [prompt_cell.strip('"')]
+            command = re.sub(r"`([^`]*)`", r"\1", do)
+            for tool in dict.fromkeys(re.findall(r"`([a-z][a-z0-9_]*)\.py", do)):
+                found.setdefault(tool, []).append({"prompts": prompts, "command": command})
+        for tool, rows in found.items():
+            examples.setdefault(tool, rows)
     return examples
 
 

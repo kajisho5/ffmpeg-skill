@@ -6,6 +6,49 @@
 
 (nothing yet)
 
+## 4.26.3
+
+_Automated release: version and notes generated from pull requests merged since 4.26.2._
+
+### Fixed
+
+- An `.avi`, `.wmv` or `.asf` output of an H.264/HEVC encode, or of a stream copy of B-frame video
+  from another container, is refused before ffmpeg runs (`kind: input`, reason
+  `output_container_codecs`), dry runs included (#754). These containers store no presentation time
+  for B-frames, so a reader that seeks, `ffmpeg -ss 0` included, could decode no picture from the
+  file: `cut`, `cut --accurate`, `export`, `loop` and `loudness` completed with `verified: false`,
+  and the other tools said `verified: true` for the same video. Name a `.mp4`, `.mov` or `.mkv` output.
+  An `.mpg`/`.mpeg` output of an AAC encode is refused the same way: MPEG-PS takes no AAC, and every
+  re-encoding tool failed in the muxer after the encode started.
+  The `.mxf` refusal's reason now says what a read-back shows: MXF stores B-frame H.264 without its
+  reorder, so a read-back loses a frame (it said the muxer rejected the dts).
+- fix: refuse AVI/ASF outputs of B-frame video and correct the MXF reason (#754) (#771)
+
+## 4.26.2
+
+_Automated release: version and notes generated from pull requests merged since 4.26.1._
+
+### Fixed
+
+- **Windows CI installs FFmpeg 9.1.0 in place of 9.0.2, and three tests no longer rest on what a build does not promise (#659).** The time-outs on 9.1 were the AAC coder fixed in #660. `multicam --switch energy`'s test used two cameras that shared no sound, so the alignment put one 6 s late and the late picks were a tie that the encoder decided; its cameras now hear one scene. The loudness sync test's beeps measured a range of 0.1 LU, beside loudnorm's rule that a range of 0 is always dynamic; two of its beeps are now 6 dB down. `waveform.py`'s whole-argv test now expects the AAC coder the runner names from 9.1 on. The loop test allows half a frame when 9.1's AAC leaves the fixture 12 ms longer than a whole number of frames, as an MPEG-PS's repeats already do.
+- **On FFmpeg 9.1 and later every AAC track is written with `-aac_coder fast` (#659).** 9.1's encoder never returned on some mono sound with `twoloop`, the coder 4.3.0 named, as well as with its new default: `fit.py --method speed` to 0.91x and `speedramp.py` at 2x ran past 900 s. `fast` ended on every case measured. Older builds are unchanged, and a command that names a coder keeps it.
+- fix: on FFmpeg 9.1 the AAC coder named is fast; Windows CI on 9.1.0, and tests no longer rest on what a build does not promise (#659) (#779)
+
+## 4.26.1
+
+_Automated release: version and notes generated from pull requests merged since 4.26.0._
+
+### Changed
+
+- SKILL.md keeps only the request rows whose command is not the obvious one (80 rows to 35; 220
+  lines to 175, 19.6 KB to 14.8 KB). Every request, with its variants, is in
+  `references/requests.md`, which SKILL.md points to and which names every tool; the contract's
+  per-tool `examples` take a tool's rows from there when SKILL.md's table does not name it. The
+  SKILL.md ceiling is now 180 lines and 16,000 bytes, so the table cannot grow back (#687).
+- refactor: SKILL.md keeps only the rows a model needs (#687) (#777)
+
+Closes: #687
+
 ## 4.26.0
 
 _Automated release: version and notes generated from pull requests merged since 4.25.0._

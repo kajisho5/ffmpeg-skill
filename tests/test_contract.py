@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _contract  # noqa: E402
 from _common.runner import HW_ENV, HW_FORCED_ENV  # noqa: E402
 ENCODE_ENV = "FFMPEG_SKILL_ENCODE"  # EncodePolicyTests pins it to the runner's name
-from _fixtures import OUT, SHARED_OUT  # noqa: E402
+from _fixtures import OUT  # noqa: E402
 
 # The host's own GPU default must not reach the suite (every tool subprocess inherits os.environ):
 # a machine with FFMPEG_SKILL_HW=1 would put every encode on VideoToolbox. Tests that exercise it
@@ -1236,10 +1236,11 @@ class ContractTests(unittest.TestCase):
     def test_examples_are_parsed_from_skill_md_and_cover_every_tool(self):
         """1.20.0: contract --json's per-tool `examples` field is SKILL.md's own request table
         (the "User says" / "Do" rows), machine-readable -- not a hand-maintained second copy.
-        Every tool but an alias (#683: crop, out of the table) is named in that table somewhere, so
-        it has at least one example; a row's markdown backticks are stripped from `command`, and a row with
-        several quoted phrasings ("cut from 1:20 to 2:05", "trim the first 10 s") becomes a
-        `prompts` list rather than one string."""
+        #687: SKILL.md keeps only the rows whose command is not the obvious one; a tool its table
+        does not name takes its rows from references/requests.md, which has a row for every tool
+        but an alias (#683: crop), so every tool still has at least one example. A row's markdown
+        backticks are stripped from `command`, and a row with several quoted phrasings ("cut from
+        1:20 to 2:05", "trim the first 10 s") becomes a `prompts` list rather than one string."""
         by_name = {t["name"]: t for t in self.contract["tools"]}
         missing = [name for name, t in by_name.items() if not t.get("examples") and "alias_of" not in t]
         self.assertEqual(missing, [], "every tool should have at least one SKILL.md example")
@@ -1258,6 +1259,11 @@ class ContractTests(unittest.TestCase):
         broll = by_name["broll"]["examples"][0]
         self.assertIn("b|mix", broll["command"])
         self.assertIn("B-roll over this bit", broll["prompts"])
+        # #687: a tool SKILL.md's table names keeps only those rows; one it does not takes requests.md's
+        skill_table = (ROOT / "SKILL.md").read_text(encoding="utf-8").split("## Request \u2192 script", 1)[1]
+        self.assertNotIn("reverse.py", skill_table)
+        self.assertEqual(by_name["reverse"]["examples"], [{"prompts": ["reverse this clip"], "command": "reverse.py input.mp4"}])
+        self.assertTrue(all(e["command"] in skill_table.replace("`", "").replace("\\|", "|") for e in by_name["cut"]["examples"]))
 
     def test_provides_covers_every_tool_with_the_dotted_capability_id(self):
         provides = self.contract["provides"]
@@ -4240,7 +4246,7 @@ sys.exit(fit.main())
         BT.601 source each input read from that file is converted once (cut's segment join opens it
         once per segment), a mixed join/multicam/broll/overlay --video converts only the BT.601
         input, and copies, the prores master and an untagged source plan no conversion at all."""
-        s601 = SHARED_OUT / "c_source601.mp4"
+        s601 = self.out("c_source601.mp4")
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
@@ -4289,11 +4295,11 @@ sys.exit(fit.main())
         video (overlay --image) is converted at the end of its own chain, and an untagged main labelled
         BT.709 for it; grid.py converts each cell by its own tags and labels an untagged cell only
         beside a converted or already BT.709 cell. Two untagged cells need no label."""
-        s601 = SHARED_OUT / "c_source601.mp4"
+        s601 = self.out("c_source601.mp4")
         if not s601.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=smpte170m:transfer=smpte170m:colormatrix=smpte170m", "-c:a", "copy", s601)
-        s709 = SHARED_OUT / "c_source709.mp4"
+        s709 = self.out("c_source709.mp4")
         if not s709.exists():
             ffmpeg("-i", self.src, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-x264-params",
                    "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-c:a", "copy", s709)
@@ -4469,7 +4475,7 @@ sys.exit(fit.main())
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_range="pc")), "setparams=colorspace=bt709," + lim)
         self.assertEqual(_common.layer_base_chain(meta(pix_fmt="yuv420p", color_space="bt709")), "")
 
-        pc = SHARED_OUT / "c_source_pc.mkv"
+        pc = self.out("c_source_pc.mkv")
         if not pc.exists():
             ffmpeg("-i", self.src, "-t", "2", "-vf", "scale=out_range=pc,format=yuv420p", "-c:v", "ffv1", "-color_range", "pc",
                    "-c:a", "pcm_s16le", pc)
@@ -4893,7 +4899,10 @@ sys.exit(fit.main())
         self.assertEqual(doc["status"], "completed")
         r = doc["result"]
         self.assertLessEqual(float(r["input_tp"]), -0.9, r)
-        self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
+        # the retry path runs where the first AAC encode overshoots; FFmpeg 9.1's `fast` coder
+        # (the one runner.pin_aac_coder names there, #659) meets the ceiling on its first encode
+        if sys.modules["_common.runner"].ffmpeg_version() < (9, 1):
+            self.assertGreater(r["encodes"], 1, "the first AAC encode was expected to overshoot")
         doc = json.loads(tool("loudness", sq, "-I", "-14", "--tp", "-1", "--json", "-o", self.out("square_norm.wav")).stdout)
         self.assertEqual(doc["result"]["encodes"], 1)
         self.assertLessEqual(float(doc["result"]["input_tp"]), -0.9)
@@ -9659,12 +9668,13 @@ class DoctorDetectionTests(unittest.TestCase):
         self.assertIsNone(support["color_font"])
         self.assertIn("fontconfig", support["detail"])
 
-    def test_skill_md_stays_under_the_30kb_budget(self):
+    def test_skill_md_stays_under_its_byte_budget(self):
         """SKILL.md is loaded into every session: the 30 000-byte budget was a convention in
-        CONTRIBUTING.md, which is how it got to 51 free bytes. Now it is a test."""
+        CONTRIBUTING.md, which is how it got to 51 free bytes. Now it is a test. #687 lowered it to
+        16 000 bytes once the request table kept only the rows a model needs (14.8 KB)."""
         size = (ROOT / "SKILL.md").stat().st_size
-        self.assertLess(size, 30_000,
-                        f"SKILL.md is {size} bytes, {size - 30_000} over the 30,000-byte budget -- "
+        self.assertLess(size, 16_000,
+                        f"SKILL.md is {size} bytes, {size - 16_000} over the 16,000-byte budget -- "
                         "trim a line rather than raising the limit (see CONTRIBUTING.md)")
 
     # ------------------------------------------------- #234: child output is decoded as UTF-8
@@ -11118,6 +11128,65 @@ class Issue415Tests(unittest.TestCase):
                 self.assertEqual(probed.stdout.strip(), "pcm_s16le")
                 decoded = subprocess.run(["ffmpeg", "-v", "error", "-i", str(kept), "-f", "null", "-"], capture_output=True, text=True)
                 self.assertEqual(decoded.stderr.strip(), "")
+
+    def test_an_avi_or_asf_output_of_b_frame_video_is_refused_before_ffmpeg_runs(self):
+        """#754: AVI and ASF store no presentation time, so the tools' B-frame H.264 written there
+        read back with none: the files completed, and `ffmpeg -ss 0` of them decoded no picture
+        (cut --accurate and export said verified: false, undecodable; audio, color, crop and the
+        rest said verified: true). loudness.py's copy of an MP4's H.264 into .avi did the same.
+        Refused now, real and dry run alike; a source without B-frames, and a copy of an AVI into
+        AVI, are still written, and read back with every frame. The sweep's .mpg rows (MPEG-PS
+        takes no AAC: kind ffmpeg after the encode started) are refused by the same table."""
+        d = self.dir("avi_out")
+        src, flat = d / "in.mp4", d / "flat.mp4"
+        for path, bf in ((src, "3"), (flat, "0")):
+            # 320x240: an ASF of a 160x90 clip reads back after a seek (the AVI does not either way)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=2", "-f", "lavfi", "-i", "sine=r=48000:d=2",
+                   "-c:v", "libx264", "-bf", bf, "-pix_fmt", "yuv420p", "-c:a", "aac", path)
+
+        def frames_after_seek(path):
+            out = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", "0", "-i", str(path), "-map", "0:V:0",
+                                  "-f", "framecrc", "-"], capture_output=True, text=True).stdout
+            return sum(1 for ln in out.splitlines() if ln and not ln.startswith("#"))
+        # the premise, measured: the encoder line with B-frames reads back nothing, without them all 50
+        for ext in (".avi", ".wmv"):
+            for bf, want in (("3", 0), ("0", 50)):
+                plain = d / f"plain{bf}{ext}"
+                ffmpeg("-i", src, "-c:v", "libx264", "-bf", bf, "-c:a", "aac", plain)
+                self.assertEqual(frames_after_seek(plain), want, (ext, bf))
+        cases = [("cut", ["--start", "0.2", "--end", "1.5", "--accurate"]), ("loudness", []),
+                 ("export", ["--preset", "youtube"]), ("audio", ["--voice", "light"]), ("metadata", ["--title", "t"])]
+        for ext in (".avi", ".wmv", ".asf"):
+            # every tool for AVI; for ASF, one encode and one copy (the table entry is shared)
+            for name, argv in cases if ext == ".avi" else cases[:2]:
+                for dry in ((), ("--dry-run",)):
+                    with self.subTest(ext=ext, tool=name, dry=bool(dry)):
+                        out = d / f"{name}{ext}"
+                        doc = json.loads(tool(name, src, *argv, *dry, "-o", out, "--json", check=False).stdout)
+                        self.assertEqual(doc["status"], "failed", doc.get("verification"))
+                        err = doc["error"]
+                        self.assertEqual((err["kind"], err["reason"]), ("input", "output_container_codecs"), err)
+                        self.assertIn("presentation time", err["message"])
+                        self.assertFalse(out.exists())
+        # MPEG-PS takes no AAC: every re-encoding tool failed in the muxer after the encode started
+        for name, argv in cases[:3]:
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(ext=".mpg", tool=name, dry=bool(dry)):
+                    doc = json.loads(tool(name, src, *argv, *dry, "-o", d / f"{name}.mpg", "--json", check=False).stdout)
+                    self.assertEqual((doc["status"], doc["error"]["reason"]), ("failed", "output_container_codecs"), doc.get("error"))
+                    self.assertEqual(doc["error"]["details"]["encoders"], ["aac"])
+                    self.assertFalse((d / f"{name}.mpg").exists())
+        # still written: a copy of a source without B-frames, which reads back whole after a seek,
+        # and a copy of a B-frame AVI into AVI, which keeps what it had (its 50 frames read from
+        # the start, none after a seek, as the source's)
+        doc = json.loads(tool("loudness", flat, "-o", d / "flat.avi", "--json").stdout)
+        self.assertEqual((doc["status"], doc["verified"]), ("completed", True), doc.get("verification"))
+        self.assertEqual(frames_after_seek(d / "flat.avi"), 50)
+        doc = json.loads(tool("metadata", d / "plain3.avi", "--title", "t", "-o", d / "kept.avi", "--json").stdout)
+        self.assertEqual(doc["status"], "completed", doc.get("error"))
+        decoded = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(d / "kept.avi"), "-map", "0:V:0", "-f", "framecrc", "-"],
+                                 capture_output=True, text=True).stdout
+        self.assertEqual(sum(1 for ln in decoded.splitlines() if ln and not ln.startswith("#")), 50)
 
     def test_waveform_title_dry_run_says_its_planned_sizes_are_placeholders(self):
         """The dry run plans the title on a render it did not write: fontsize 0 in the plan,
