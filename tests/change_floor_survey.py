@@ -179,7 +179,7 @@ def measure(work, name, size, label, args):
     edited = tile_diffs(edit, ref, work, tag + "_e")
     for p in (ref, edit):
         p.unlink()
-    doc = {"source": name, "size": f"{w}x{h}", "config": label, "seconds": round(time.time() - started, 1), "grids": {}}
+    doc = {"source": name, "fixture": SYNTHETIC.get(name, name), "size": f"{w}x{h}", "config": label, "seconds": round(time.time() - started, 1), "grids": {}}
     for grid in GRIDS:
         gw = grid[0]
         frames = edited[gw]
@@ -255,12 +255,16 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     jobs = [j for j in plan(args.quick) if f" {j[2][1][1]} " in encoders]
     if args.only:
-        keep = set(args.only.split(","))
+        # the gradient source was "gradients" before it was seeded (#696): the old name still selects it
+        keep = {"gradient" if n == "gradient" + "s" else n for n in args.only.split(",")}
         jobs = [j for j in jobs if j[0] in keep]
     started = time.time()
     # every measurement is appended as it lands, and a re-run with the same --work skips what is there
     log = work / "results.jsonl"
     results = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    # a row measured on another fixture (the unseeded gradient before #696, which has no "fixture")
+    # is measured again, and left out of the summary
+    results = [r for r in results if r.get("fixture") == SYNTHETIC.get(r["source"], r["source"])]
     done = {(r["source"], r["size"], r["config"]) for r in results}
     jobs = [j for j in jobs if (j[0], f"{j[1][0]}x{j[1][1]}", j[2][0]) not in done]
     with ThreadPoolExecutor(args.jobs) as pool:
