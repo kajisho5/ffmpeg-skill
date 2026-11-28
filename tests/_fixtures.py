@@ -431,8 +431,12 @@ def pcm_of(command, path, channels=1):
     import shlex
     cmd = shlex.split(command)
     at = cmd.index("aac")
-    assert (cmd[at - 1], cmd[at + 1]) == ("-c:a", "-b:a"), cmd
-    cmd[at:at + 3], cmd[-1] = ["pcm_s16le"], str(path)
+    assert cmd[at - 1] == "-c:a", cmd
+    end = at + 1
+    if cmd[end:end + 1] == ["-aac_coder"]:  # named on FFmpeg 9.1 and later (#659): it goes with the AAC
+        end += 2
+    assert cmd[end] == "-b:a", cmd
+    cmd[at:end + 2], cmd[-1] = ["pcm_s16le"], str(path)
     sh(*cmd)
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", str(channels), "-f", "s16le", "-"],
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
