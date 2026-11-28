@@ -35,6 +35,52 @@ INSTALL_HINTS = {
 }
 
 MCP_PROGRESS_ENV = "FFMPEG_SKILL_MCP_PROGRESS"
+# render.py's one-pass render (#357) to its own children, as MCP_PROGRESS_ENV is: no flag, so not in
+# the contract. {input, output, meta, recipe, vf, af}: probe(input) reads as `meta` says (the frame
+# an earlier stage plans), and the ffmpeg command that writes `output` is printed instead of run
+# (`recipe`) or reads `input` through the earlier stages' filters (`vf`, `af`)
+STAGE_ENV = "FFMPEG_SKILL_STAGE"
+
+
+def stage_spec() -> Dict[str, Any]:
+    try:
+        spec = json.loads(os.environ.get(STAGE_ENV) or "{}")
+    except ValueError:
+        return {}
+    return spec if isinstance(spec, dict) else {}
+
+
+def planned_input(path: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    spec = stage_spec()
+    if spec.get("meta") and os.path.abspath(path) == os.path.abspath(spec.get("input") or "") and meta.get("video"):
+        return dict(meta, video=dict(meta["video"], **spec["meta"]))
+    return meta
+
+
+def _joined(pre: str, own: Optional[str]) -> str:
+    """`pre` then the tool's own chain; a trailing rate filter goes first when `pre` is a graph,
+    where it would lose the last frame (chain_with_rate())."""
+    head, _, last = (own or "").rpartition(",")
+    if ";" in pre and last.startswith("fps="):
+        return ",".join(x for x in (last, pre, head) if x)
+    return ",".join(x for x in (pre, own) if x)
+
+
+def _stage_command(cmd: List[str], ctx: "Context") -> List[str]:
+    spec = stage_spec()
+    if not spec or len(cmd) < 2 or os.path.abspath(cmd[-1]) != os.path.abspath(spec.get("output") or "-"):
+        return cmd
+    if spec.get("recipe"):
+        sys.stdout.write(json.dumps({"status": "recipe", "command": list(cmd), "notes": ctx.notes, "diagnostics": {
+            "warnings": ctx.warnings, "fallbacks": ctx.fallbacks, "skipped": ctx.skipped}, **ctx.recipe_extra}) + "\n")
+        sys.exit(0)
+    cmd = list(cmd)
+    for flag in ("-vf", "-af"):
+        if spec.get(flag[1:]) and flag in cmd:
+            cmd[cmd.index(flag) + 1] = _joined(spec[flag[1:]], cmd[cmd.index(flag) + 1])
+        elif spec.get(flag[1:]):
+            cmd[-1:-1] = [flag, spec[flag[1:]]]
+    return cmd
 _PROGRESS_PREFIX = "[ffmpeg-skill progress] "
 
 # For an FFmpeg that is on PATH but older than MIN_FFMPEG (#467 A226): reinstalling the
@@ -400,7 +446,7 @@ class Context:
                  "notes", "warnings", "fallbacks", "skipped", "audit_log", "stage_verification", "first_input", "audio_inputs", "video_inputs",
                  "source_timecode", "smpte_hint", "delivered", "expected_timecode", "time_mapped", "watched", "temp_dirs", "side_deliveries",
                  "_stream_copy_outputs", "_encoded_media", "measured_plan_inputs", "plan_generated_inputs",
-                 "sequence_frames_sha256", "encode_policy")
+                 "sequence_frames_sha256", "encode_policy", "recipe_extra")
 
     def __init__(self) -> None:
         self.reset()
@@ -461,6 +507,7 @@ class Context:
         # tool reported, tagged with `stage`, which emit() adds to this result's own so that
         # `verified` is the conjunction of every stage's (absorb_stage())
         self.stage_verification: List[Dict[str, Any]] = []
+        self.recipe_extra: Dict[str, Any] = {}  # what a stage adds to its recipe for render.py's one-pass render (#357)
 
 
 STATE = Context()
@@ -2781,7 +2828,7 @@ def run(cmd: Sequence[str], *, quiet: bool = False, check: bool = True, ctx: "Op
         # that conversion as a -vf; it joins the tool's own graph here, before anything records
         # or runs the command (color.py imports this module, hence the late import)
         from _common.color import fold_bt709_matrix
-        cmd = pin_aac_coder(fold_bt709_matrix(cmd))
+        cmd = _stage_command(pin_aac_coder(fold_bt709_matrix(cmd)), ctx)
         _check_no_overwrite_input(cmd)
         _check_output_path(cmd)
         _check_output_extension(cmd)

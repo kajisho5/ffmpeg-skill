@@ -70,13 +70,15 @@ import shutil
 import sys
 import tempfile
 import time
+from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from export import PRESETS, PLATFORM_OF
-from _platforms import PLATFORMS, caption_defaults, resolve as resolve_platform
+from _platforms import PLATFORMS, TP_TOLERANCE_DB, caption_defaults, resolve as resolve_platform
+from loudness import LUFS_TOLERANCE
 from _common import AUDIO_CODECS, guard_sidecar, STATE, add_common, aspect_ratio, display_size, frame_size, brand_caption_style, load_brand, apply_common, child_args, die, emit as _emit, info, option_args, probe, require_tool, run, run_tool, place_output, refuse_output_is_input, refuse_unwritten_output, _check_existing_output, _check_output_path, fingerprint, PLAN_VERSION, ffmpeg_version, X264_PRESETS
-from _common.runner import refuse_outside_roots, absent_word, path_denied, ENCODE_ENV, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination
+from _common.runner import refuse_outside_roots, absent_word, path_denied, ENCODE_ENV, HW_ENV, HW_FORCED_ENV, add_hw_orchestrator_args, child_exit_code, found_exe, kept_clause, kept_deliverables, mark_delivered, owned_identity, read_json, refuse_missing_components_first, remember_written, with_flags, kept_output, unwatch_destination, watch_destination, STAGE_ENV
 from _common.emit import absorb_stage, audit, is_output_shape_flag, record_fallback, record_skip, refuse, stderr_records, warn
 from _common.decision import brand_asset_files, rebase_project_paths
 from _common.probe import AUDIO_MEDIA_EXT
@@ -758,7 +760,7 @@ def _refuse_uncached_earlier_stage(stage: str) -> None:
             kind="input")
 
 
-def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> str:
+def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None, env: Optional[Dict[str, str]] = None) -> str:
     """Run a sibling script, forwarding --fast / --dry-run, returning its printed output path.
 
     With --cache and a named `stage`, an identical stage that ran before is served from the
@@ -813,7 +815,7 @@ def sh(script: str, *argv: Any, extra: List[str] = None, stage: str = None) -> s
     outside = bool(dest) and (not _in_work(dest) or _is_delivery(dest))
     if outside:
         watch_destination(dest)
-    proc = run_tool(cmd)
+    proc = run_tool(cmd, env={**os.environ, **env} if env else None)
     for is_command, line in stderr_records(proc.stderr):
         if is_command:
             STATE.commands.append(line)
@@ -1132,8 +1134,7 @@ def cache_lookup(stage: str, key: str, dest: str, tool: Optional[str] = None) ->
     PROJECT_SOURCE["timecode"].append(_timecode_verdict(result) if isinstance(result, dict) and "source_carry" in result
                                       else "unknown")
     if isinstance(result, dict):
-        if isinstance(result.get("picture"), dict):
-            _LAST_DOC["picture"] = result["picture"]
+        _LAST_DOC.update({k: result[k] for k in ("picture", "crop", "placed", "timing") if isinstance(result.get(k), dict)})
         absorb_stage(tool or stage, dict(result, status="completed", dry_run=False))  # tagged as the stage's tool, as a live run is
     else:
         # an entry written before the stage's result was kept: what the stage verified is unknown
@@ -1146,7 +1147,7 @@ def _stage_result(doc: Any) -> Dict[str, Any]:
     """What a cache entry keeps of the stage's own --json document, replayed on a hit."""
     if not isinstance(doc, dict):
         return {}
-    kept = {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics", "picture") if k in doc}
+    kept = {k: doc[k] for k in ("verified", "verification", "notes", "diagnostics", "picture", "crop", "placed", "timing") if k in doc}
     kept["source_carry"] = doc.get("source_carry")  # None too: the stage compared nothing (render's source_carry)
     return kept
 
@@ -1804,6 +1805,166 @@ def compare_plan(path: str, new: Dict[str, Any]) -> Dict[str, Any]:
             "expect_removed": flag(scope["removed"])[:len(scope["removed"])], "check": None, "ok": None}
 
 
+PREVIEW_LINES = 540  # --preview: the delivered frame's short side, never enlarged
+
+
+def preview_width(current: str, fit: Dict[str, Any], first: str) -> int:
+    """proxy.py's --width for --preview: the frame's short side at PREVIEW_LINES. The frame is the
+    written file's in a real run; a dry run's pending file has none, so it is the fit stage's frame
+    of the first clip's picture (frame_size), or that picture where nothing sizes it."""
+    w, h = display_size((probe(current) if os.path.isfile(current) else {}).get("video") or {})
+    if not (w and h):
+        w, h = display_size(probe(first).get("video") or {})
+        ratio = aspect_ratio(str(fit["aspect"])) if fit.get("aspect") else None
+        side = lambda k: int(fit[k]) if str(fit.get(k) or "").isdecimal() else None  # noqa: E731
+        if w and h and (ratio or side("width") or side("height")):
+            w, h = frame_size(ratio, side("width"), side("height"), w, h)  # the fit stage's own sizing rule
+    return 2 * round(w * min(1.0, PREVIEW_LINES / min(w, h)) / 2) if w and h else PREVIEW_LINES
+
+
+# ------------------------------------------------------------------ the one-pass render (#357)
+#
+# fit, captions and loudness are planned by their own tools (each stops at its encode and prints
+# that command: STAGE_ENV's recipe), against the frame the stage before declares; the export then
+# reads the source through their filters, so the picture and the sound are encoded once.
+def caption_argv(cap: Dict[str, Any], rel: Any) -> List[Any]:
+    """caption.py's arguments for a "captions" block, after its input and -o."""
+    for key, flag in (("text", "--text"), ("srt", "--srt"), ("ass", "--ass")):
+        if cap.get(key):
+            argv: List[Any] = [flag, rel(cap[key])]
+            break
+    else:
+        die("captions needs text, srt or ass")
+    for k, flag in (("font", "--font"), ("size", "--size"), ("color", "--color"), ("position", "--position"), ("margin", "--margin"), ("animate", "--animate"), ("highlight_color", "--highlight-color"), ("outline", "--outline"), ("lang", "--lang"), ("offset", "--offset"), ("max_lines", "--max-lines"), ("min_duration", "--min-duration"),
+                    ("fit_size", "--fit-size"), ("min_size", "--min-size"), ("fit_size_scope", "--fit-size-scope")):
+        if cap.get(k) is not None:
+            argv += option_args(flag, cap[k])
+    return argv + [flag for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")) if cap.get(k)]
+
+
+def export_options(ex: Dict[str, Any], proj: Dict[str, Any], output: str, loudness_stage: bool) -> List[Any]:
+    """export.py's arguments for an "export" block, after its input."""
+    argv: List[Any] = ["--preset", ex["preset"], "-o", output]
+    if ex.get("fit"):
+        argv += option_args("--fit", ex["fit"])
+    if ex.get("crf") is not None:
+        argv += option_args("--crf", ex["crf"])
+    normalize = ex.get("normalize")
+    if normalize is None and resolve_platform(ex["preset"]) in PLATFORM_OF and not loudness_stage:
+        # eval 8: a reels project without the key rendered fully, failed the loudness check and
+        # was rendered again; a platform preset with no loudness stage of its own gets the
+        # one-export behaviour by default ("normalize": false opts out)
+        normalize = True
+        warn(f"export: --normalize on by default for the {ex['preset']} preset (set \"normalize\": false to skip)",
+             "normalize_on_by_default", preset=ex["preset"])
+    if normalize:
+        return argv + ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
+    # export.py normalises a platform preset by default since 4.0.0 (#579): an opt-out, or a
+    # loudness stage of the project's own, has to say so or its level is overwritten
+    return argv + (["--no-normalize"] if resolve_platform(ex["preset"]) in PLATFORM_OF else [])  # an alias (youtube-shorts) too
+
+
+def fuse_blocker(proj: Dict[str, Any], args: Any, src: Optional[str], preset: str) -> Optional[str]:
+    """Why this project renders stage by stage; None when it renders in one pass."""
+    clip = (proj.get("clips") or [None])[0] if len(proj.get("clips") or []) == 1 else None
+    meta = probe(src) if src and isinstance(clip, dict) and os.path.isfile(src) else {}
+    video = meta.get("video") or {}
+    for reason, blocked in (("staged_requested", args.staged), ("cache", args.cache), ("stop_after", args.stop_after),
+                            ("preview", args.preview),  # a preview never writes the final, which the one-pass export does
+                            ("export_not_a_platform_preset", resolve_platform(preset) not in PLATFORM_OF),
+                            ("clips_cut_or_joined", not meta or any(clip.get(k) is not None for k in ("in", "out", "speed"))),
+                            *((f"{k}_stage", bool(proj.get(k))) for k in ("audiogram", "silence", "graphics", "overlays", "audio")),
+                            ("source_variable_frame_rate", video.get("variable_frame_rate_suspected")),
+                            ("source_rotated_or_anamorphic", video.get("rotation") or video.get("sample_aspect_ratio") not in (None, "1:1")),
+                            ("source_hdr", video.get("bt2020_or_hdr")),
+                            ("source_subtitle_or_data_streams", meta.get("subtitle_streams") or meta.get("data_streams")),
+                            ("source_several_audio_tracks", len(meta.get("audio_streams") or []) > 1)):
+        if blocked:
+            return reason
+    return None
+
+
+def stage_recipe(script: str, argv: List[Any], **spec: Any) -> Optional[Dict[str, Any]]:
+    """The stage's own planned encode, run as the stage would run but stopped before ffmpeg; None
+    when the stage refused or failed (the staged path then runs it and reports why)."""
+    cmd = [str(HERE / script)] + [str(a) for a in argv] + child_args() + ["--json"]
+    info("→ " + " ".join([script] + cmd[1:-1]) + " (planned for the one-pass render)")
+    proc = run_tool(cmd, env={**os.environ, STAGE_ENV: json.dumps(dict(spec, recipe=True))})
+    for is_command, line in stderr_records(proc.stderr):
+        if not is_command and line.strip():
+            info("    " + line)
+    try:
+        doc = json.loads(proc.stdout.strip() or "{}")
+    except ValueError:
+        doc = {}
+    if proc.returncode or doc.get("status") != "recipe":
+        return None
+    absorb_stage(Path(script).stem, doc)
+    return doc
+
+
+def _option(cmd: List[str], flag: str) -> Optional[str]:
+    return cmd[cmd.index(flag) + 1] if flag in cmd[:-1] else None
+
+
+def render_fused(src: str, work: Path, mid: str, fit: Dict[str, Any], fit_argv: List[Any], cap_argv: Optional[List[Any]],
+                 ld: Optional[Dict[str, Any]], export_argv: List[Any], output: str) -> "Tuple[Optional[str], Dict[str, Any]]":
+    """(None, the caption stage's report) after the one encode, or (the reason, {}) before any when
+    a stage's plan cannot be read into it."""
+    meta = probe(src)
+    chains: List[str] = []
+    planned: Optional[Dict[str, Any]] = None
+    if fit_argv:
+        doc = stage_recipe("fit.py", [src, "-o", str(work / f"fit{mid}")] + fit_argv, input=src, output=str(work / f"fit{mid}"))
+        cmd = (doc or {}).get("command") or []
+        if not doc:
+            return "fit_not_planned", {}  # fit refused or failed: the staged path runs it and says why
+        if any(f in cmd for f in ("-af", "-t", "-ss", "-filter_complex")) or cmd.count("-i") != 1:
+            return "fit_not_one_picture_chain", {}  # a retime, a trim, a fade or a graph of its own
+        if fit.get("fps") and abs(float(fit["fps"]) - float(meta["video"].get("fps") or 0)) > 1e-3:
+            return "fit_changes_frame_rate", {}
+        chain = _option(cmd, "-vf") or "null"
+        if _option(cmd, "-sws_flags"):  # the enlargement's Lanczos, on fit's own scale filters only
+            chain = re.sub(r"scale=([^,;\[]*)", lambda m: m.group(0) if "flags=" in m.group(1) else f"{m.group(0)}:flags={_option(cmd, '-sws_flags')}", chain)
+        chains.append(chain)
+        src_w, src_h = display_size(meta["video"])
+        aspect = aspect_ratio(str(fit["aspect"])) if fit.get("aspect") else None
+        w, h = (frame_size(aspect, *(int(fit[k]) if fit.get(k) else None for k in ("width", "height")), src_w, src_h)
+                if fit.get("aspect") or fit.get("width") or fit.get("height") else (src_w, src_h))
+        planned = {"width": w, "height": h, "sample_aspect_ratio": "1:1", "display_aspect": str(Fraction(w, h)).replace("/", ":"),
+                   **{key: _option(cmd, flag) for key, flag in (("pix_fmt", "-pix_fmt"), ("color_space", "-colorspace"),
+                                                                ("color_primaries", "-color_primaries"), ("color_transfer", "-color_trc"))
+                      if _option(cmd, flag)}}
+    report: Dict[str, Any] = {}
+    if cap_argv:
+        out = str(work / f"captioned{mid}")
+        doc = stage_recipe("caption.py", [src, "-o", out] + cap_argv, input=src, output=out, meta=planned)
+        cmd = (doc or {}).get("command") or []
+        if not doc:
+            return "captions_not_planned", {}
+        if "-filter_complex" in cmd or "-af" in cmd or cmd.count("-i") != 1:
+            return "captions_not_one_picture_chain", {}  # emoji overlays are inputs of their own
+        chains.append(_option(cmd, "-vf") or "null")
+        report = doc.get("caption") or {}
+    af = None
+    if ld and (meta.get("audio") or {}).get("codec"):
+        out = str(work / f"loudnorm{mid}")
+        argv = [src, "-o", out] + [a for k in ("lufs", "tp") if ld.get(k) is not None for a in option_args(f"--{k}", ld[k])]
+        af = _option((stage_recipe("loudness.py", argv, input=src, output=out) or {}).get("command") or [], "-af")
+        if not af:
+            return "loudness_not_planned", {}
+    sh("export.py", src, *export_argv, stage="export",
+       env={STAGE_ENV: json.dumps({"input": src, "output": output, "meta": planned, "vf": ",".join(chains) or None, "af": af})})
+    if ld and af and isinstance(_LAST_DOC.get("loudness"), dict) and not STATE.dry_run:
+        # loudness.py's own check, on the delivery the export measured: the stage wrote no file of its own
+        m, want = _LAST_DOC["loudness"], {k: float(default if ld.get(key) is None else ld[key]) for k, key, default in (("lufs", "lufs", -14.0), ("tp_max", "tp", -1.0))}
+        absorb_stage("loudness", {"status": "completed", "verification": [{
+            "step": "loudness", "property": "loudness", "stage": "loudness", "provenance": "user_specified", "measured_on": "delivery",
+            "ok": abs(m["lufs"] - want["lufs"]) <= LUFS_TOLERANCE and m["tp"] <= want["tp_max"] + TP_TOLERANCE_DB, "expected": want,
+            "measured": {"lufs": m["lufs"], "tp": m["tp"]}, "tolerance": {"lufs": LUFS_TOLERANCE, "tp": TP_TOLERANCE_DB}}]})
+    return None, report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("project", nargs="?", help="project.json, or a plan.json written by <tool> --plan")
@@ -1833,6 +1994,11 @@ def main() -> int:
                     help="the project of the previous render (its output is the reference): the change the two projects "
                          "differ by becomes check.py's --expect-changed/--expect-audio-changed/--expect-removed, checked "
                          "after the render; an edit no span states is refused before the first stage")
+    ap.add_argument("--staged", action="store_true",
+                    help="one file per stage; else one uncut clip with only fit, captions and loudness before a platform export is encoded once (render_path)")
+    ap.add_argument("--preview", action="store_true",
+                    help="render the whole project as the final is laid out, then a small fast encode of it, the short side at "
+                         f"{PREVIEW_LINES} px to <output>_preview.mp4; the final output is not written, the check stage not run")
     ap.add_argument("--stop-after", choices=["clips", "join", "silence", "fit", "captions", "graphics", "overlays", "audio", "loudness", "export"], help="stop after this stage (for iterating)")
     tpl = ap.add_argument_group("delivery templates (one command per destination)")
     tpl.add_argument("--template", metavar="NAME", help="render INPUT with a shipped template: " + ", ".join(template_names())
@@ -1865,6 +2031,12 @@ def main() -> int:
     if args.compare_project and (args.stop_after or args.export_timeline or args.write_project or args.init or args.list_templates):
         die("--compare-project checks a delivered render against the previous one: it does not combine with --stop-after, "
             "--export-timeline, --write-project, --init or --list-templates, which deliver none")
+    for flag, value in (("--stop-after", args.stop_after), ("--export-timeline", args.export_timeline),
+                        ("--write-project", args.write_project), ("--init", args.init), ("--list-templates", args.list_templates),
+                        ("--compare-project", args.compare_project)):
+        if args.preview and value:  # a preview is small and unchecked: no full-size render for --compare-project's check
+            die(f"--preview renders the whole project small; {flag} " + ("checks a full-size delivered render, and a preview "
+                "is a small one no check runs on" if flag == "--compare-project" else "makes no such render"), kind="input")
     if args.list_templates:
         list_templates()
         return 0
@@ -1892,7 +2064,8 @@ def main() -> int:
             # so --stop-after did not stop, --cache was not read and --work/--keep kept nothing
             for flag, value in (("--stop-after", args.stop_after), ("--cache", args.cache), ("--from", args.from_stage),
                                 ("--work", args.work), ("--keep", args.keep), ("--export-timeline", args.export_timeline),
-                                ("--compare-project", args.compare_project)):
+                                ("--compare-project", args.compare_project),
+                                ("--preview", args.preview)):
                 if value:
                     die(f"{flag} applies to one render, and --template {args.template} is a pack of {len(names)} "
                         f"({', '.join(names)}), each a full render of its own: name a single template to use {flag}")
@@ -1915,6 +2088,8 @@ def main() -> int:
         if "plan_version" in proj:
             if args.compare_project:
                 die("--compare-project compares two render.py projects; a plan runs one tool")
+            if args.preview:
+                die("--preview renders a project; a saved plan runs its own commands as written", kind="input")
             return execute_plan(proj, os.path.abspath(args.project))
         base = Path(args.project).resolve().parent
     validate_project(proj, timeline=bool(args.export_timeline), stop_after=args.stop_after)
@@ -1958,6 +2133,11 @@ def main() -> int:
     output = rel(proj.get("output") or "final.mp4")
     compared = compare_plan(args.compare_project, proj) if args.compare_project else None
     side = [os.path.abspath(args.compare_project), compared["reference"]] if compared else []
+    if args.preview:
+        if Path(output).suffix.lower() in AUDIO_EXT:
+            die(f"--preview makes a small picture, and {output} delivers sound only", kind="input")
+        # the final is laid out at its own frame by every stage (veryfast), then made small: never the final's name
+        final, output, STATE.fast = output, str(Path(output).with_name(Path(output).stem + "_preview.mp4")), True
     # the final stage is a copy from the work dir, so run()'s own guard never sees the sources
     # (review 5): every file the project names is passed here, not only the clips, or --overwrite
     # replaced a music bed or a brand file named as the output
@@ -2072,7 +2252,9 @@ def main() -> int:
     # reading render.py's JSON can see whether the type was shrunk to fit or a cue was split.
     caption_report: Optional[Dict[str, Any]] = None
     stage_pictures: Dict[str, Any] = {}
-    picture_fields: Dict[str, Any] = {}
+    # each clip's decisions as data (#581): its speed stage's factor, and the window the fit stage frames it with
+    plan_clips: List[Dict[str, Any]] = []
+    picture_fields: Dict[str, Any] = {"clips": plan_clips}
 
     CACHE.clear()
     CACHE.update(_fresh_cache())
@@ -2140,6 +2322,7 @@ def main() -> int:
         src = rel(c["src"])
         needs_cut = c.get("in") is not None or c.get("out") is not None
         part = str(work / f"clip{i:02d}{mid}")
+        plan_clips.append({"clip": i, "src": src, "speed_factor": 1.0, "crop": None, "placed": None})
         if needs_cut:
             argv: List[Any] = [src, "-o", part, "--accurate"]
             if c.get("in") is not None:
@@ -2176,6 +2359,9 @@ def main() -> int:
                 dur = (probe(part).get("duration") or 0.0) if not STATE.dry_run else planned_clip_length(c, src, i)
                 fitted = str(work / f"clip{i:02d}_speed{mid}")
                 sh("fit.py", part, "--duration", f"{dur / spd:.3f}", "--method", "speed", "-o", fitted, stage="clips")
+                # the stage's own factor; a dry run's pending cut has none, and the planned length is what it is built from
+                plan_clips[-1]["speed_factor"] = ((_LAST_DOC.get("timing") or {}).get("speed_factor")
+                                                  or round(dur / float(f"{dur / spd:.3f}"), 6))
                 part = fitted
         parts.append(part)
     stages_done.append("clips")
@@ -2208,7 +2394,7 @@ def main() -> int:
         stages_done.append("audiogram")
 
     if args.stop_after == "clips":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- join
@@ -2264,7 +2450,7 @@ def main() -> int:
         sh("join.py", *argv, stage="join")
         stages_done.append("join")
     if args.stop_after == "join":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- silence
@@ -2280,7 +2466,7 @@ def main() -> int:
         current = nxt
         stages_done.append("silence")
     if args.stop_after == "silence":
-        emit(current, stages=stages_done, intermediate_preset=_intermediate_used())
+        emit(current, stages=stages_done, intermediate_preset=_intermediate_used(), **picture_fields)
         return 0
 
     # ---- fit (duration and/or frame)
@@ -2309,13 +2495,46 @@ def main() -> int:
     if join_crop_size is not None:
         # Reuse the rounded canvas instead of deriving its second side from the joined file.
         fit["width"], fit["height"] = join_crop_size
-    if fit:
+    fit_argv = [a for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth"))
+                if fit.get(k) is not None for a in option_args(flag, fit[k])]
+    cap, ld, ex = proj.get("captions"), proj.get("loudness"), proj.get("export")
+    # a "captions" that is not an object is refused where the run reads it (a --stop-after before it does not)
+    cap_argv = caption_argv(cap, rel) + brand_args + platform_args if isinstance(cap, dict) and cap else None
+    # #357: one encode where every stage's plan reads into it; `render_path` says which path ran, and why
+    render_path = {"render_path": "staged", "render_path_reason": "no_encoding_export"}
+    if ex_preset and "copy" not in PRESETS.get(resolve_platform(ex_preset), {}).get("video", ["copy"]):
+        render_path["render_path_reason"] = fuse_blocker(proj, args, rel(clips[0]["src"]) if isinstance(clips[0], dict) else None, ex_preset)
+    if render_path["render_path_reason"] is None:
+        if ld and not _has_sound(current, proj, rel):
+            record_skip("the loudness stage is not run: the video has no audio", "loudness_no_audio", stage="loudness")
+            ld = None
+        why, fused_caption = render_fused(current, work, mid, fit, fit_argv, cap_argv, ld, export_options(ex, proj, output, bool(ld)), output)
+        render_path.update(render_path="fused" if why is None else "staged", render_path_reason=why)
+    fused = render_path["render_path"] == "fused"
+    info(f"render path: {render_path['render_path']}" + (f" ({render_path['render_path_reason']})" if not fused else ""))
+    if fused:
+        stages_done += [st for st, on in (("fit", fit), ("captions", cap), ("loudness", ld), ("export", True)) if on]
+        caption_report = fused_caption or None
+        if cap and cap.get("text"):
+            captioned_srt = {"srt": str(work / "captioned.srt"), "video": str(work / f"captioned{mid}"), "cached": False}
+        if isinstance(_LAST_DOC.get("picture"), dict):
+            stage_pictures["export"] = _LAST_DOC["picture"]
+            picture_fields.update(picture=stage_pictures["export"], stage_pictures=stage_pictures)
+    if fit and not fused:
         nxt = str(work / f"fit{mid}")
-        argv = [current, "-o", nxt]
-        for k, flag in (("duration", "--duration"), ("method", "--method"), ("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"), ("fps", "--fps"), ("smooth", "--smooth")):
-            if fit.get(k) is not None:
-                argv += option_args(flag, fit[k])
-        sh("fit.py", *argv, stage="fit")
+        sh("fit.py", current, "-o", nxt, *fit_argv, stage="fit")
+        framed = dict(_LAST_DOC)
+        shape = [a for k, flag in (("aspect", "--aspect"), ("fit", "--fit"), ("width", "--width"), ("height", "--height"))
+                 if fit.get(k) is not None for a in option_args(flag, fit[k])]
+        if STATE.dry_run and len(clips) == 1 and not ag and shape and not os.path.exists(current):
+            # the fit stage's input is a cut not written yet; the cut and the speed stage keep the
+            # clip's picture, so fit.py's own dry run of that picture states the same window
+            proc = run_tool([str(HERE / "fit.py"), rel(clips[0]["src"]), *shape, "-o", nxt, "--overwrite", *child_args(), "--json"])
+            framed = json.loads(proc.stdout or "{}") if proc.returncode == 0 else framed
+        if len(clips) == 1 and not ag:  # several clips are framed by join.py, whose window is not stated
+            plan_clips[0].update(crop=framed.get("crop"), placed=framed.get("placed"))
+        if _LAST_DOC.get("timing"):
+            picture_fields["timing"] = _LAST_DOC["timing"]
         if isinstance(_LAST_DOC.get("picture"), dict):
             stage_pictures["fit"] = _LAST_DOC["picture"]
             picture_fields.update(picture=stage_pictures["fit"], stage_pictures=stage_pictures)
@@ -2326,26 +2545,9 @@ def main() -> int:
         return 0
 
     # ---- captions
-    cap = proj.get("captions")
-    if cap:
+    if cap and not fused:
         nxt = str(work / f"captioned{mid}")
-        argv = [current, "-o", nxt]
-        if cap.get("text"):
-            argv += ["--text", rel(cap["text"])]
-        elif cap.get("srt"):
-            argv += ["--srt", rel(cap["srt"])]
-        elif cap.get("ass"):
-            argv += ["--ass", rel(cap["ass"])]
-        else:
-            die("captions needs text, srt or ass")
-        for k, flag in (("font", "--font"), ("size", "--size"), ("color", "--color"), ("position", "--position"), ("margin", "--margin"), ("animate", "--animate"), ("highlight_color", "--highlight-color"), ("outline", "--outline"), ("lang", "--lang"), ("offset", "--offset"), ("max_lines", "--max-lines"), ("min_duration", "--min-duration"),
-                        ("fit_size", "--fit-size"), ("min_size", "--min-size"), ("fit_size_scope", "--fit-size-scope")):
-            if cap.get(k) is not None:
-                argv += option_args(flag, cap[k])
-        for k, flag in (("karaoke", "--karaoke"), ("bold", "--bold"), ("box", "--box")):
-            if cap.get(k):
-                argv.append(flag)
-        sh("caption.py", *(argv + brand_args + platform_args), stage="captions")
+        sh("caption.py", current, "-o", nxt, *cap_argv, stage="captions")
         # the SRT caption.py generated from the cue file, beside its intermediate (#510); a cache hit
         # places the video only, so there is none then
         captioned_srt = {"srt": os.path.splitext(nxt)[0] + ".srt", "video": nxt, "cached": bool(_LAST_DOC.get("cached"))}
@@ -2446,13 +2648,12 @@ def main() -> int:
         return 0
 
     # ---- loudness
-    ld = proj.get("loudness")
-    if ld and not _has_sound(current, proj, rel):
+    if ld and not fused and not _has_sound(current, proj, rel):
         # a template's loudness stage on a silent source (screen recording, timelapse, drone) used
         # to fail the render after the picture stages had run, while the dry run said it would work
         record_skip("the loudness stage is not run: the video has no audio", "loudness_no_audio", stage="loudness")
         ld = None
-    if ld:
+    if ld and not fused:
         nxt = str(work / f"loudnorm{mid}")
         argv = [current, "-o", nxt]
         if ld.get("lufs") is not None:
@@ -2467,28 +2668,11 @@ def main() -> int:
         return 0
 
     # ---- export
-    ex = proj.get("export")
-    if ex and ex.get("preset"):
-        argv = [current, "--preset", ex["preset"], "-o", output]
-        if ex.get("fit"):
-            argv += option_args("--fit", ex["fit"])
-        if ex.get("crf") is not None:
-            argv += option_args("--crf", ex["crf"])
-        normalize = ex.get("normalize")
-        if normalize is None and resolve_platform(ex["preset"]) in PLATFORM_OF and not proj.get("loudness"):
-            # eval 8: a reels project without the key rendered fully, failed the loudness check and
-            # was rendered again; a platform preset with no loudness stage of its own gets the
-            # one-export behaviour by default ("normalize": false opts out)
-            normalize = True
-            warn(f"export: --normalize on by default for the {ex['preset']} preset (set \"normalize\": false to skip)",
-                 "normalize_on_by_default", preset=ex["preset"])
-        if normalize:
-            argv += ["--normalize"]  # one export that meets the platform's loudness (export.py --normalize)
-        elif resolve_platform(ex["preset"]) in PLATFORM_OF:  # an alias (youtube-shorts) too
-            # export.py normalises a platform preset by default since 4.0.0 (#579): an opt-out, or a
-            # loudness stage of the project's own, has to say so or its level is overwritten
-            argv += ["--no-normalize"]
-        sh("export.py", *argv, stage="export")
+    if fused:
+        pass
+    elif ex and ex.get("preset"):
+        exported = str(work / ("exported" + Path(final).suffix)) if args.preview else output
+        sh("export.py", current, *export_options(ex, proj, exported, bool(proj.get("loudness"))), stage="export")
         preset = PRESETS.get(ex["preset"]) or PRESETS[resolve_platform(ex["preset"])]
         if preset["w"]:
             # An older cached export (or a width-only preset) can resize without a report.
@@ -2498,7 +2682,8 @@ def main() -> int:
                 stage_pictures["export"] = _LAST_DOC["picture"]
                 picture_fields.update(picture=stage_pictures["export"], stage_pictures=stage_pictures)
         stages_done.append("export")
-    else:
+        current = exported
+    elif not args.preview:
         if stages_done != ["clips"]:
             refuse_unwritten_output(output)  # a stage's file, not the WMA source itself (#517)
         # A container match alone lets an MPEG-4 picture be delivered under a .m4a name.
@@ -2517,6 +2702,11 @@ def main() -> int:
         if not STATE.dry_run:
             place_output(current, output)
         info(("[dry-run] would copy" if STATE.dry_run else "copied") + f" final stage to {output}")
+    if args.preview:
+        # the delivery as laid out, made small: proxy.py, the shared small fast encode (veryfast, quality 30)
+        sh("proxy.py", current, "--width", str(preview_width(current, fit, rel(clips[0]["src"]))), "-o", output)
+        picture_fields.pop("picture", None)  # the frame the stages sized, not this file's
+        stages_done.append("preview")
     current = output
     if not STATE.dry_run:
         mark_delivered(output)  # the chapters and check stages run on it: a stop from here keeps it, and says so (#415)
@@ -2527,7 +2717,7 @@ def main() -> int:
         if not args.keep and not args.work:
             shutil.rmtree(work, ignore_errors=True)
         emit(output, stages=stages_done, check=None, cache=cache_report(args.cache),
-             intermediate_preset=_intermediate_used(), caption_srt=caption_srt, **picture_fields)
+             intermediate_preset=_intermediate_used(), caption_srt=caption_srt, **render_path, **picture_fields)
         return 0
 
     # ---- chapters (metadata.py on the delivered file: streams copied, markers written)
@@ -2565,7 +2755,9 @@ def main() -> int:
     # {"content": true} stage without a platform used to be skipped without a word)
     wants_check = bool(ck) and (bool(ck.get("platform")) or ck.get("content") is True)
     check_label = ck.get("platform") if ck and ck.get("platform") else "content"
-    if wants_check and STATE.dry_run:
+    if wants_check and args.preview:
+        record_skip("the check stage is not run: a preview is not the delivery", "check_preview", platform=ck.get("platform"))
+    elif wants_check and STATE.dry_run:
         record_skip("[dry-run] the check stage is not run: a dry run writes no output to check",
                     "check_dry_run", platform=ck.get("platform"), content=ck.get("content") is True)
     elif wants_check:
@@ -2632,7 +2824,7 @@ def main() -> int:
                                                                                   or "check.py graded no change_scope row"))
         die(f"rendered {output} but " + " and ".join(why),
             kind="verification", output=output, dry_run=STATE.dry_run, stages=stages_done, check=check_result,
-            compare_project=compared, probe=probe(output, role="output"))
+            compare_project=compared, probe=probe(output, role="output"), **render_path)
     info(f"rendered {output} via {' → '.join(stages_done)}")
     # One entry per snapped clip, `clip` naming which. A single-clip project keeps the shape a
     # caller reads today by also carrying the first entry's keys at the top level.
@@ -2640,11 +2832,11 @@ def main() -> int:
     if snap_reports:
         snap_report = dict(snap_reports[0])
         snap_report["clips"] = snap_reports
-    emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report(args.cache),
+    emit(output, stages=stages_done, check=check_result, snap=snap_report, cache=cache_report(args.cache), preview=args.preview or None,
          caption=caption_report, intermediate_preset=_intermediate_used(), caption_srt=caption_srt,
          verification=([{"step": "check", "ok": True, "platform": ck.get("platform")}] if check_result else [])
          + ([{"step": "compare_project", "ok": True}] if compared and compared["ok"] else []),
-         compare_project=compared, **picture_fields)
+         compare_project=compared, **render_path, **picture_fields)
     return 0
 
 

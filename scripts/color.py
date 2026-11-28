@@ -29,6 +29,7 @@ passes with up to 1 % of one frame's luma or chroma samples out of range.
 import argparse
 import json
 import os
+import re
 import sys
 from typing import List, Optional
 
@@ -426,7 +427,7 @@ def refuse_bad_cube(path: str) -> None:
     """--lut given a .cube that holds no complete 3D LUT (#404): lut3d failed on it with "Invalid
     data found when processing input", which reads as an unreadable video and got that hint. Only
     .cube is checked (lut3d's other formats are left to it), by what lut3d itself needs: a
-    LUT_3D_SIZE line and size^3 rows that start with three numbers."""
+    LUT_3D_SIZE line and size^3 rows that start with three numbers, in ASCII as lut3d reads them (#765)."""
     if os.path.splitext(path)[1].lower() != ".cube":
         return
     size = rows = 0
@@ -437,11 +438,11 @@ def refuse_bad_cube(path: str) -> None:
                 words = line.split()
                 if not words or words[0].startswith("#"):
                     continue
-                if words[0] == "LUT_3D_SIZE" and len(words) > 1 and words[1].isdigit():
+                if words[0] == "LUT_3D_SIZE" and len(words) > 1 and re.fullmatch(r"[0-9]+", words[1]):
                     size = int(words[1])
                 elif words[0] == "LUT_1D_SIZE":
                     one_d = True
-                elif len(words) >= 3:
+                elif len(words) >= 3 and "".join(words[:3]).isascii():
                     try:
                         [float(w) for w in words[:3]]
                         rows += 1
