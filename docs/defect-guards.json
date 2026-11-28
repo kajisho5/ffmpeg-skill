@@ -4,7 +4,8 @@
   "classes": {
     "time": {
       "test": "test_guards.TimeGuard.test_no_tool_leaves_chapters_at_the_source_times",
-      "how": "emit.source_carry says chapters_not_retimed for any output of another length whose chapters were carried by a tool that declared no time map (runner.with_mapped_chapters, runner.declare_time_map)"
+      "also": "test_guards.TimeGuard.test_a_sound_read_alone_counts_from_the_files_start",
+      "how": "emit.source_carry says chapters_not_retimed for any output of another length whose chapters were carried by a tool that declared no time map (runner.with_mapped_chapters, runner.declare_time_map); and a sound read or rendered alone counts from the file's start on a .ts as on an .mp4 of the same content whose sound starts late (probe.sound_clock, #787): the reads in test_a_late_sounds_place_is_the_same_in_every_sound_only_read, the renders of cut, loudness, audio and silence and check's dropouts in the guard named here"
     },
     "claim": {
       "test": "test_guards.SweepGuards.test_a_result_never_says_less_than_the_output_lost",

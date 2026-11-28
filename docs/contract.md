@@ -26,7 +26,7 @@ The contract is derived from the code that runs, not maintained beside it:
 | Field | Meaning | Changes when |
 |---|---|---|
 | `contract_version` | shape of this document (`2.0`) | a key is renamed, removed or changes meaning |
-| `skill.version` | the npm / package.json version (`4.21.1`) | any release |
+| `skill.version` | the npm / package.json version (`4.22.2`) | any release |
 
 A release that adds a tool or a flag keeps `contract_version`; a breaking change to the
 ToolSpec shape bumps it. Consumers pin on `contract_version` and read `skill.version`
@@ -186,7 +186,7 @@ removes a tool, a flag or an output key.
   "deprecated": [],
   "removed": [{"what": "...", "since": "1.10.0", "replacement": "...", "removed_in": "2.0.0", "where": "cli | json | mcp | behaviour"},
               {"what": "running on FFmpeg 5.x (the requirements.ffmpeg floor)", "since": "2.14.0", "replacement": "FFmpeg 6.1 or later; ...", "removed_in": "3.0.0", "where": "behaviour"}],
-  "skill": {"id": "ffmpeg-skill", "version": "4.21.1", "execution_mode": "local", "kind": "execution",
+  "skill": {"id": "ffmpeg-skill", "version": "4.22.2", "execution_mode": "local", "kind": "execution",
             "entrypoints": {"cli": "...", "mcp": "...", "contract": "...", "doctor": "..."},
             "not_provided": ["AI reasoning", "decisions", "production plans", "project IR", "approvals", "network access", "transcription engine"]},
   "requirements": {"python": ">=3.10 (standard library only)", "ffmpeg": ">=6.1", "ffprobe": ">=6.1"},
@@ -301,7 +301,9 @@ the two files could not be compared, and WARNs when a declared span did not chan
 SPAN|none` is the sound's side (#442): an `audio_change_scope` row from a windowed difference of the two
 decoded tracks (0.1 s windows, same length only), graded the same way, with the `audio_change_scope` document.
 `--expect-removed START-END` (#442 phase 3) declares what a cut took out of the reference, which is
-then compared with those spans removed; both documents gain `removed`. `--expect-identity SIZE:MTIME_NS`
+then compared with those spans removed; both documents gain `removed`. `--change-grid 32|64|96`
+(#442) sets the tiles across (60, 30 or 20 px at 1080p; down is 9/16 of it), each with its own surveyed floor,
+and is refused where a tile would be under 30 px (64 needs 1920 px across, 96 needs 2880); `change_scope`'s `tile` names the grid used. `--expect-identity SIZE:MTIME_NS`
 adds `identity`, against the `output_identity` every writing tool reports (2.24). `--levels
 bt709|ebu-r103` adds `legal levels` (the share of luma and chroma samples outside the legal range,
 counted in every frame; FAIL when one frame passes `--levels-tolerance`, 1 %) and the `levels`

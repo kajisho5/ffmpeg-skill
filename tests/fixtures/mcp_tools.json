@@ -216,6 +216,7 @@
    "argv",
    "aspect",
    "change_floor",
+   "change_grid",
    "compare",
    "content",
    "dry_run",

@@ -139,6 +139,7 @@ exists. When a decision changes, edit the entry in the same PR.
 - [After 4.16.0 — materials for a review page: joins to listen to, and the crop window as data (#581)](#after-4160--materials-for-a-review-page-joins-to-listen-to-and-the-crop-window-as-data-581)
 - [After 4.16.0 — house encoder settings (#576)](#after-4160--house-encoder-settings-576)
 - [After 4.18.0 — crop.py folded into fit.py (#683)](#after-4180--croppy-folded-into-fitpy-683)
+- [After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)](#after-4190--the-change-floor-surveyed-across-encoders-and-a-finer-grid---change-grid-442)
 - [After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes](#after-4200--first-try-leftovers-of-676-one-span-on-speedramp-and-a-try-the-tool-takes)
 - [After 4.20.0 — caption delivery on a phone capture is a harness, not a fixture (#729)](#after-4200--caption-delivery-on-a-phone-capture-is-a-harness-not-a-fixture-729)
 - [After 4.20.0 — the social card's count comes from the contract](#after-4200--the-social-cards-count-comes-from-the-contract)
@@ -7284,6 +7285,89 @@ encode facts a result carried, and `FFMPEG_SKILL_HW` the only machine default.
   `test_fit_rect_writes_crops_file_and_a_box_without_a_corner_is_centred` (tests/test_editing.py),
   `test_docs_tool_count_matches_the_real_tool_list`, `test_mcp_tools_match_contract`,
   `test_mcp_tool_surface_matches_the_frozen_1x_snapshot` (tests/test_contract.py).
+
+## After 4.19.0 — the change floor surveyed across encoders, and a finer grid: `--change-grid` (#442)
+
+- **The survey.** `tests/change_floor_survey.py` (stdlib, about 15 minutes; not a test) turns each
+  source into a 1.5 s, 24 fps lossless 4:2:0 mezzanine and encodes it twice per setting: untouched,
+  and with four edits at their own frames (a caption cue, a 60x60 logo, a 24x24 logo, a colour
+  tweak of the whole frame, sizes in 1080p pixels). It measures with `change_tiles()`'s own graph
+  on three grids: **spill**, the largest tile no edit covers (edited against untouched, same
+  settings: the comparison the docs ask for); **untouched**, the largest tile of the untouched
+  encode against the mezzanine (what a re-encode alone gives); and each edit's smallest score, the
+  least of its frames' largest tile inside it. Sources: every clip in `demos/footage` (the twelve
+  1080p ones and the two small ones at their own size) and five synthetic pictures (testsrc2,
+  noise, gradients, dark low-light, a fast pan); all thirteen settings on the seven hardest at
+  1080p, four common ones on the rest, the seven `--quick` ones at 720p and 480p on four of them.
+  201 encodes, FFmpeg 6.1.1. Largest values on tiles of 20 px and more (spill / untouched):
+
+  | encode (pairs) | 32x18 (60 px at 1080p) | 64x36 (30 px) | 96x54 (20 px) |
+  |---|---|---|---|
+  | libx264 crf 18 medium (7) | 6 / 5 | 7 / 6 | 8 / 8 |
+  | libx264 crf 23 medium (27) | 12 / 11 | 13 / 12 | 14 / 12 |
+  | libx264 crf 23 veryfast (7) | 12 / 11 | 13 / 13 | 16 / 16 |
+  | libx264 crf 28 medium (27) | 18 / 21 | 22 / 22 | 22 / 22 |
+  | libx264 crf 35 medium (7) | 19 / 26 | 24 / 27 | 32 / 37 |
+  | libx265 crf 28 fast (27) | 16 / 20 | 18 / 21 | 18 / 21 |
+  | libx265 crf 34 fast (7) | 18 / 22 | 20 / 25 | 31 / 37 |
+  | libsvtav1 crf 35 preset 10 (7) | 17 / 18 | 18 / 19 | 21 / 21 |
+  | libsvtav1 crf 50 preset 10 (27) | 29 / 31 | 32 / 46 | 36 / 43 |
+  | libaom-av1 crf 35 cpu-used 8 realtime (17) | 17 / 16 | 20 / 27 | 42 / 42 |
+  | libvpx-vp9 crf 33 cpu-used 8 realtime (17) | 12 / 14 | 14 / 15 | 14 / 15 |
+  | prores (prores_aw) proxy (17) | 2 / 17 | 2 / 18 | 3 / 19 |
+  | prores standard (7) | 1 / 3 | 2 / 3 | 2 / 3 |
+  | smallest caption cue | 33 | 72 | 103 |
+  | smallest 60x60 logo | 67 | 103 | 117 |
+  | smallest 24x24 logo | 6 | 24 | 54 |
+  | smallest colour tweak | 6 | 6 | 7 |
+
+  The footage stays lower (its largest spill was 21, veo_rain at libsvtav1 crf 50, and 15 at
+  libx264 crf 28); the largest values are testsrc2's sharp detail and the noise picture. A finer tile averages fewer pixels, so the encoder's error rises
+  with it: at 64x36 testsrc2 at 480p (13 px tiles) reached 49 to 66 with libsvtav1 crf 50 and
+  libaom-av1, at 96x54 (9 px) 99 and 105.
+- **24 stays the floor of the 32x18 grid.** It is above every surveyed setting's spill except
+  libsvtav1 crf 50 below 720p (29 at 480p, 24 at 720p, on testsrc2), a quality nobody delivers at,
+  and under the smallest real edit (33, a caption at 480p, ProRes proxy). The untouched side
+  passes it only at the lowest qualities (libx264 crf 35, libsvtav1 crf 50): comparing a render
+  with its source instead of with a render of the same settings is what the docs already warn
+  about. Not per encoder: the floor would then depend on settings check.py cannot read (CRF,
+  preset), and the common ones of every encoder fit under one number.
+- **`--change-grid 32|64|96`, each with its own floor: 24, 32, 48.** The floor for 64 is above
+  every surveyed spill on 20 px tiles and more (32 at most, libsvtav1 crf 50; 22 for the common
+  settings), the one for 96 above libaom-av1 realtime's 42, the largest at that grid. The real
+  edits stay above both: a caption at 72 and 103, a 60x60 logo at 103 and 117. A 24x24 logo
+  scored 6 to 19 on the default grid (missed), 24 to 73 at 64 (found when it does not straddle
+  four tiles) and 54 or more at 96 (20 px tiles, which are now refused, below): a change that
+  small needs 64 at 1080p, where it is found when it falls inside one tile, or 96 on a 2880 px picture. `--change-floor` still
+  replaces the grid's floor. The grid is in the row ("floor 32 on 64x36 tiles") and in
+  `change_scope.tile`. Code: `probe.CHANGE_FLOORS`, `check.change_scope_row()`. Tests:
+  `test_check_change_grid_finds_a_logo_smaller_than_a_tile_442`,
+  `test_check_change_floor_holds_for_every_available_encoder_442` (each surveyed encoder this build
+  has, at a common setting, testsrc2 with a 60x60 logo: 720p at 32, 1080p at 64, 2880x1620 at 96,
+  no undeclared change; an encoder the build lacks is skipped).
+- **A finer grid is refused where its tiles are under 30 px** (64 needs 1920x1080, 96 needs
+  2880x1620; the narrower tile side counts, so a 1080x1920 picture, 17 px across at 64, has
+  neither). Under 20 px a re-encode alone passed the floors (above). The survey allowed 20 px
+  (64 at 720p, 96 at 1080p), and CI on macOS (FFmpeg 9.0.2, a libsvtav1 newer than the survey's
+  1.7.0) found what that costs: libsvtav1 crf 35 preset 10, testsrc2 at 720p on 64x36 tiles, the
+  untouched and the logo encode differed by 143 on one 20 px tile at (100, 80) for 2 frames, far
+  from the logo (quiet peak 31); 1.7.0 gives 15 there. 143 is above every real edit's score, so no
+  floor separates it: an encoder that moves bits to fine moving detail when an edit takes some
+  changes a tile that small for real. On 30 px tiles and more the same encoder passed. The owner's
+  decision (2026-11-27): the finer grids need 30 px tiles, and lose 1080p at 96, rather than keep a
+  grid that can call an untouched tile changed. The 32x18 default keeps its behaviour on every size. Three choices and not any
+  number: each is a floor that was measured.
+- **The grid and the floor need `--expect-changed`.** Without it neither is used, so either is
+  refused, as is a grid outside the three.
+- **Not measured: hardware encoders** (NVENC, Quick Sync, VAAPI, VideoToolbox, AMF; this machine
+  has none), libaom-av1 and libvpx-vp9 at their slower "good" settings, 10-bit and HDR pictures.
+  A clip that passes the floor untouched is a reason for `--change-floor`, and its numbers a
+  reason to add a row here. The colour tweak (brightness +0.03, saturation 1.15) is not found on
+  any grid, as the limit of the tiles says: `similarity` is the row for a faint change over the
+  whole picture.
+- **A 96x54 frame costs more.** Each frame is 15,552 bytes instead of 1,728 and a changed frame's
+  mask holds up to 5,184 bits: an hour at 30 fps in which every frame changed is about 70 MB of
+  masks (10 MB at 32x18).
 
 ## After 4.20.0 — first-try leftovers of #676: one span on speedramp, and a `try:` the tool takes
 

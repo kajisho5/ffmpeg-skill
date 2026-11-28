@@ -6,6 +6,48 @@
 
 (nothing yet)
 
+## 4.22.2
+
+_Automated release: version and notes generated from pull requests merged since 4.22.1._
+
+### Fixed
+
+- The installer removes the `ffmpeg-skill.bak-<pid>` an interrupted upgrade left next to the skill, which agents loaded as a second copy (#717, thanks @thejesh23).
+- fix: the installer removes an interrupted upgrade's ffmpeg-skill.bak-<pid> (carries #717) (#794)
+
+## 4.22.1
+
+_Automated release: version and notes generated from pull requests merged since 4.22.0._
+
+### Fixed
+
+- A sound-only decode of an MPEG-TS or MPEG-PS counts from the file's start, as the picture does since #766: `decode_pcm_mono` (so `sync.py`, `scenes.py`, `multicam.py`), silencedetect times (`silence.py`'s cut levels, `metadata.py --auto-chapters`), `waveform.py`'s stills, `caption.py`'s karaoke energy split and the WAV an ASR engine transcribes all read the file's clock now (#787).
+- `sync.py --replace-audio` counts the second file's sound from the file's start too, and `-copyts` no longer drags the reference's own start into the written picture: a `.ts` reference at 1.467 s kept its picture there beside a sound at 0, and a trimmed head was padded back (#787).
+- A sound-only render of an MPEG-TS or MPEG-PS counts from the file's start too: on a `.ts`, `.m2ts` or `.mpg` whose sound starts after its picture, `cut.py`, `loudness.py`, `audio.py` and `silence.py` wrote a `.wav` without the sound's lead (a burst at 1.0 s came out at 0.72 s), and `check.py --content` put each dropout that much early (#787).
+- `loop.py` on an MPEG-PS whose sound starts late keeps its first repeat whole: the concat demuxer gives such a file's video no start time, so the sound's lead was cut off the first repeat (15.72 s for 16 s, `verified: false`) (#787).
+- fix: a sound-only render of MPEG-TS or MPEG-PS counts from the file's start too (#787) (#793)
+- docs: troubleshoot the installed skill copy (carries #719) (#795)
+
+## 4.22.0
+
+_Automated release: version and notes generated from pull requests merged since 4.21.1._
+
+### Added
+
+- `check.py --change-grid 32|64|96` (with `--expect-changed`): the frame in finer tiles, 30 or 20 px
+  at 1080p, each grid with its own floor (24, 32, 48), so a change smaller than a 60x60 tile is
+  found; the row names the grid (`floor 32 on 64x36 tiles`) and `change_scope.tile` holds it. A
+  grid whose tiles would be under 20 px is refused (#442).
+- The change floor surveyed across libx264, libx265, libsvtav1, libaom-av1, libvpx-vp9 and ProRes
+  at 1080p, 720p and 480p (`tests/change_floor_survey.py`, `docs/design-decisions.md`): the
+  default of 24 stays. Hardware encoders were not measured.
+
+### Changed
+
+- `check.py --change-floor` without `--expect-changed` is refused, as `--change-grid` is: neither is
+  used without it (before, the floor was taken and ignored) (#442).
+- feat: check.py --change-grid and the change floor surveyed across encoders (#442) (#768)
+
 ## 4.21.1
 
 _Automated release: version and notes generated from pull requests merged since 4.21.0._
