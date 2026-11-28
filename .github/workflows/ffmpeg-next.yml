@@ -36,4 +36,4 @@ jobs:
           ffmpeg -version | Select-Object -First 1
       - name: Probe
         shell: bash
-        run: python .github/scripts/ffmpeg_next_tempo_probe.py  # experiment branch (#659)
+        run: python .github/scripts/ffmpeg_next_tempo_probe.py  # experiment branch (#659): end of an AAC track by coder
