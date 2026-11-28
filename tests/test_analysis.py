@@ -2907,7 +2907,7 @@ class TimestampSeekTests(unittest.TestCase):
                     self.fail(f"the cut starts on the frame at 2.5 s: PSNR {got:.2f} against frame {want} (pts "
                               f"{pts[want]:.6f}, file start {origin:.6f}); against frames {want - 1} (pts {pts[want - 1]:.6f}) "
                               f"and {want + 1} (pts {pts[want + 1]:.6f}): {near}; the cut's first frame pts "
-                              f"{self._frame_pts(out)[:1]}")
+                              f"{self._frame_pts(out)[:1]}; {subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True).stdout.splitlines()[:1]}; the cut ran {doc.get('commands')}")
 
     @staticmethod
     def _frame_pts(path):
