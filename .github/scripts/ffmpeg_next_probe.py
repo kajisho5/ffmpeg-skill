@@ -136,3 +136,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # the two retimed mono tracks that ran past 900 s with `twoloop` (#659, 2026-11-28), by part
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ffmpeg_next_tempo_probe
+    ffmpeg_next_tempo_probe.main()
+    ffmpeg_next_tempo_probe.loop_probe()
