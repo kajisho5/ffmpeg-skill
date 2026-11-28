@@ -711,7 +711,7 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("already_released", block[block.index("        run:"):])
         self.assertIn("steps.registry_state.outcome == 'failure' || steps.cosign.outcome == 'failure' || steps.mcp_registry.outcome == 'failure'", block)
         scorecard = (ROOT / ".github" / "workflows" / "scorecard.yml").read_text(encoding="utf-8")
-        self.assertIn("ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e", scorecard)
+        self.assertIn("ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5", scorecard)
         self.assertIn("publish_results: true", scorecard)
         self.assertIn("branch_protection_rule:", scorecard)
         self.assertIn("security-events: write", scorecard)
