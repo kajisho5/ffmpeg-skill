@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 from _platforms import PLATFORMS, PLATFORM_CHOICES, resolve as resolve_platform
-from _common.probe import SILENT_PEAK_DBFS, refuse_not_a_still, square_pixels, square_pixels_note
+from _common.probe import SILENT_PEAK_DBFS, refuse_not_a_still, sound_clock, square_pixels, square_pixels_note
 from _common import still_input_args  # noqa: E402
 from _common import (add_common, apply_common, aac_args, color_hex, default_output, die, draws_chroma, emit, ffmpeg_base,
                      info, load_brand, pad_filters, probe, rgb_chain_to_bt709, run, STATE, validate_color, video_args, X264_PRESETS,
@@ -103,13 +103,15 @@ def _waveform_stills(args, meta: dict, rate: int) -> int:
         out, start, length = row["output"], row["start"], row["window_seconds"]
         label = f"Cut {row['time']:.3f} s  |  Window {length:.3f} s"
         chain = (
-            f"[0:a:{args.audio_stream}]aresample=async=1:first_pts=0,apad,atrim=end_sample={round(length * rate)},"
+            f"[0:a:{args.audio_stream}]{sound_clock(meta, start)},apad,atrim=end_sample={round(length * rate)},"
             f"showwavespic=s={args.width}x{args.height - 32}:split_channels={int(args.split_channels)}:colors={args.color},"
             "format=rgb24,pad=iw:ih+32:0:32:color=black,"
             f"drawbox=x={row['marker_x']}:y=32:w=2:h=ih-32:c=0xFFAA44:t=fill,"
             f"drawtext={face}text='{label}':fontsize=14:fontcolor=white:x=8:y=8[still]"
         )
-        run(ffmpeg_base() + ["-ss", f"{start:.6f}", "-t", f"{length:.6f}", "-i", args.input,
+        # -copyts: an MPEG-TS/PS would otherwise have its sound shifted to start at the seek (#787);
+        # with it the seek is on the file's own clock, which is what sound_clock() shifts back to 0
+        run(ffmpeg_base() + ["-copyts", "-ss", f"{start:.6f}", "-t", f"{length:.6f}", "-i", args.input,
                              "-filter_complex", chain, "-map", "[still]", "-frames:v", "1", "-update", "1", out])
         if not STATE.dry_run:
             video = probe(out, role="output").get("video") or {}
