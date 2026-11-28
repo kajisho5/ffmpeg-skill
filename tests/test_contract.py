@@ -9808,6 +9808,14 @@ class DoctorDetectionTests(unittest.TestCase):
             for needle in needles:
                 self.assertIn(needle, table, f"{feature}: the routing table never names {needle}")
 
+    def test_skill_md_sends_an_ordinary_edit_to_json_brief(self):
+        """#682: the brief document measured 0.29 of --json's bytes over eight ordinary edits
+        (docs/design-decisions.md, "After 4.18.0"), so the one-call paragraph asks for it and
+        names --json for the probe and the commands it leaves out."""
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        paragraph = " ".join(text.split("**One ordinary edit is one call.**", 1)[1].split("\n\n", 1)[0].split())
+        self.assertIn("run it with `--json-brief` (`--json` for the probe or commands)", paragraph)
+
     def test_skill_md_sanctions_one_label_for_a_partial_result(self):
         """1.17.1: a partial result is `Done:` with the shortfall in `Notes:`. Agents were
         inventing `Done (partially):` because the rule only said what not to write."""

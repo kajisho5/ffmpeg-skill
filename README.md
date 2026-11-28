@@ -910,7 +910,7 @@ Contributing a change: see [CONTRIBUTING.md](CONTRIBUTING.md).
 | [docs/use-cases/](docs/use-cases/README.md) | six requests end to end: what you say, the commands, the result, what to check |
 | [README.ja.md](README.ja.md) | this README in Japanese |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | scope, dev setup, tests, PR expectations |
-| [docs/roadmap.md](docs/roadmap.md) | the release history from 1.8.0, one theme per minor, each marked shipped + evaluated, shipped with eval pending, or planned; and what 2.0.0 then removes |
+| [docs/roadmap.md](docs/roadmap.md) | the release history from 1.8.0, one theme per minor, each marked shipped + evaluated, shipped with eval pending, or planned; what 2.0.0 then removed; and what #633 leaves open after 4.x |
 | [docs/design-decisions.md](docs/design-decisions.md) | behaviours that look like bugs but are decisions, with rationale and the pinning test; read before filing a bug |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1; reports go through the SECURITY.md channel |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately |
