@@ -2016,7 +2016,7 @@ def tool_spec(name: str, version: str) -> Dict[str, Any]:
 # removes it in the major. `where` says which surface a caller sees it on. Empty at 2.0.0 and at
 # 3.0.0: every deprecation announced in 1.x and 2.x was settled by its major (REMOVED below).
 # A beta tool's argument goes in the minor release after the one that lists it (4.x's beta rule).
-DEPRECATED: List[Dict[str, str]] = []  # overlay.py's three emoji options (#749) go in 4.22.2, the beta rule
+DEPRECATED: List[Dict[str, str]] = []  # overlay.py's three emoji options (#749) go in 4.22.3, the beta rule
 
 # What each major removed or changed, with the version that deprecated each: the "Removed" half of
 # the policy's step 3, kept in the contract so a caller migrating can diff it instead of reading a
@@ -2045,7 +2045,7 @@ REMOVED: List[Dict[str, str]] = [
      "replacement": "FFmpeg 6.1 or later; every tool refuses an older one it can read (kind: missing_tool), and doctor reports it as unsupported"},
 ] + [
     # 4.x's beta rule: a beta tool's argument goes in a minor once one whole minor has listed it (#749)
-    {"what": f"overlay.py {flag}", "since": "4.20.2", "removed_in": "4.22.2", "where": "cli",
+    {"what": f"overlay.py {flag}", "since": "4.20.2", "removed_in": "4.22.3", "where": "cli",
      "replacement": "none: it never had an effect (overlay.py draws text with drawtext); caption.py and graphics.py keep it"}
     for flag in ("--emoji-assets", "--emoji-scale", "--emoji-max")]
 
